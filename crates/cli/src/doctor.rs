@@ -100,6 +100,31 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
         }
     }
 
+    // 6. model routing: models.json parses, agents dir counted
+    let models_path = cli.cwd.join(".sunmao/models.json");
+    if models_path.exists() {
+        print!("models.json ... ");
+        match std::fs::read_to_string(&models_path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        {
+            Some(_) => println!("OK"),
+            None => {
+                ok = false;
+                println!("FAIL (invalid JSON — selectors will not resolve)");
+            }
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(cli.cwd.join(".sunmao/agents")) {
+        let n = entries
+            .flatten()
+            .filter(|e| e.path().extension().map(|x| x == "md").unwrap_or(false))
+            .count();
+        if n > 0 {
+            println!("agents: {n} sub-agent definition(s)");
+        }
+    }
+
     println!();
     println!(
         "{}",

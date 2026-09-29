@@ -31,7 +31,16 @@ architecture: components joined by seams, every seam a contract.
   match) / `Bash` (embedded POSIX shell — identical syntax on Windows) /
   `Glob` / `Grep` (managed `rg` subprocess, no shell) / `JobOutput`
   (filesystem-state background jobs) / `HtmlArtifact` / `WebFetch` /
-  `Task` (depth-capped nested agents with named `.md` definitions)
+  `Task` (depth-capped nested agents with named `.md` definitions —
+  `model:` routes their adapter, `tools:`/`spawns:` whitelist their
+  surface, `run_in_background` detaches and pushes results back as
+  session facts)
+- **Model routing** — `.sunmao/models.json` names providers and `@route`
+  fallback chains; agent defs pin `model:` selectors and `/model` swaps
+  the session adapter mid-run (next request, never mid-stream)
+- **Prompt caching** — provider-agnostic usage normalization (Anthropic
+  `cache_*` / DeepSeek flat / OpenAI nested) plus Anthropic ephemeral
+  breakpoints; the TUI footer shows the live cache-hit rate
 - **Safety at three layers** — Read-before-Write gate (no blind overwrites),
   declarative `permissions` rules (`deny`/`ask`/`allow` globs), and an
   interactive approval gate for risky commands (prompts in REPL and TUI)
@@ -75,8 +84,10 @@ sunmao --base-url http://127.0.0.1:7863/v1 --api-key KEY --model MODEL
 
 sunmao --provider anthropic --base-url https://api.anthropic.com --api-key KEY --model MODEL
 
-# inside the REPL
+# inside the REPL / TUI
 /compact        # force context compaction
+/model [sel]    # list or switch the active model mid-session
+/resume [id]    # swap session log (bare = list recent)
 /<name>         # slash command → commands/<name>.md body injected as prompt
 
 sunmao --tui                        # terminal UI
@@ -100,6 +111,8 @@ sunmao --acp                        # ACP server (stdio)
 ├── commands/*.md        # slash commands
 ├── skills/*/SKILL.md    # loadable skill bodies
 ├── agents/*.md          # named sub-agent definitions (Task.subagent_type)
+│                        # frontmatter: model / tools / spawns
+├── models.json          # model routing — named providers + @route chains
 └── sessions/jobs/artifacts/   # runtime state (gitignored)
 
 .claude/settings.json    # also read — hooks + permissions merge

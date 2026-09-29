@@ -18,6 +18,8 @@ pub enum Focus {
     Scrollback,
     /// the approval card holds the keys
     Approval,
+    /// full-screen viewer for one block (Enter on a scrollback selection)
+    Viewer,
 }
 
 /// Approval card state. `parked` = user Esc'd to read the scrollback; the
@@ -78,6 +80,18 @@ pub struct App {
     /// `!` bash mode: the composer holds a shell command; submit wraps it
     /// for the Bash tool instead of sending it as a prompt.
     pub bash_mode: bool,
+    /// Full-screen viewer: (title, body) of the block being read. Lives in
+    /// app state so render stays pure.
+    pub viewer: Option<Viewer>,
+}
+
+/// Content of the full-screen viewer — title line + the block's full text
+/// (copy_text: header + complete output, not the 5-line preview).
+pub struct Viewer {
+    pub title: String,
+    pub body: String,
+    /// visual lines scrolled from the top
+    pub scroll: u16,
 }
 
 /// How a submitted line should be dispatched — the driver task interprets.
@@ -118,6 +132,7 @@ impl App {
             git_branch: None,
             last_usage: None,
             bash_mode: false,
+            viewer: None,
         };
         let mut banner = Block::new(BlockKind::Note);
         banner.text = format!(
@@ -367,6 +382,24 @@ impl App {
         self.blocks.get(self.selected).map(|b| b.copy_text())
     }
 
+    /// Enter the full-screen viewer for the selected block — the "expand"
+    /// half of scrollback browsing, the transcript itself stays compact.
+    pub fn open_viewer(&mut self) {
+        self.ensure_selection();
+        if let Some(b) = self.blocks.get(self.selected) {
+            let title = match &b.tool {
+                Some(t) => format!("{} {}", t.name, t.summary),
+                None => format!("{:?}", b.kind).to_lowercase(),
+            };
+            self.viewer = Some(Viewer {
+                title,
+                body: b.copy_text(),
+                scroll: 0,
+            });
+            self.focus = Focus::Viewer;
+        }
+    }
+
     // ── scroll helpers ───────────────────────────────────────────────────
 
     /// Keep pinned to the bottom when the user hasn't scrolled away.
@@ -393,6 +426,10 @@ impl App {
             }
             Focus::Scrollback => {
                 self.focus = Focus::Input;
+            }
+            Focus::Viewer => {
+                self.viewer = None;
+                self.focus = Focus::Scrollback;
             }
             Focus::Input => {
                 if self.busy {

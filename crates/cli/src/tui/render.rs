@@ -11,6 +11,12 @@ use super::theme::{self, THEME};
 use super::wrap;
 
 pub fn draw(f: &mut ratatui::Frame, app: &mut App) {
+    // Full-screen viewer takes over the whole frame — long outputs (diffs,
+    // build logs) get room instead of squeezing into an inline panel.
+    if app.focus == Focus::Viewer && app.viewer.is_some() {
+        draw_viewer(f, app, f.area());
+        return;
+    }
     // menu rows: border(1) + title+hint(1) + blank(1) + optional search row
     // + items(≤8) + scroll indicator(if any) + bottom border(1)
     let menu_rows = app
@@ -241,6 +247,55 @@ fn draw_input(f: &mut ratatui::Frame, app: &App, area: Rect) {
     f.set_cursor_position((area.x + prompt_w + col, area.y + 1 + row));
 }
 
+/// Full-screen viewer: title bar, scrollable body, hint footer. The body
+/// is the block's complete copy_text — no preview caps.
+fn draw_viewer(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(area);
+    if let Some(v) = &mut app.viewer {
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    format!(" {}", v.title),
+                    Style::default().fg(THEME.user).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  — full content", Style::default().fg(THEME.faint)),
+            ]))
+            .style(Style::default().bg(theme::base::BG_PANEL)),
+            chunks[0],
+        );
+        // wrap body to width so scrolling is by visual row
+        let width = chunks[1].width as usize;
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        for raw in v.body.lines() {
+            lines.extend(wrap::wrap_line(
+                &Line::from(Span::styled(
+                    raw.to_string(),
+                    Style::default().fg(THEME.text),
+                )),
+                width,
+            ));
+        }
+        let max_scroll = lines.len().saturating_sub(chunks[1].height as usize) as u16;
+        v.scroll = v.scroll.min(max_scroll);
+        f.render_widget(Paragraph::new(lines).scroll((v.scroll, 0)), chunks[1]);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " j/k scroll · g top · PgUp/PgDn · y copy · Esc/q back",
+                Style::default().fg(THEME.faint),
+            )))
+            .style(Style::default().bg(theme::base::BG)),
+            chunks[2],
+        );
+    }
+}
+
 fn draw_status(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let short_cwd = app
         .cwd
@@ -279,10 +334,13 @@ fn draw_status(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         let hints = match app.focus {
             Focus::Approval => "↑↓/Tab · 1-2 · Esc park".to_string(),
             Focus::Scrollback => format!(
-                "block {}/{} · j/k · e fold · y copy · g/G · Tab input",
+                "block {}/{} · j/k · Enter expand · e fold · y copy · g/G · Tab input",
                 app.selected + 1,
                 app.blocks.len()
             ),
+            // viewer takes over the whole frame; this arm only exists so the
+            // match is total if focus desyncs for a frame.
+            Focus::Viewer => "Esc back".to_string(),
             Focus::Input => {
                 let parked = app.approval.as_ref().map(|c| c.parked).unwrap_or(false);
                 if parked {

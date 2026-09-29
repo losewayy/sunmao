@@ -217,6 +217,13 @@ async fn main() -> anyhow::Result<()> {
     for tool in sunmao_core::mcp::connect_all(&cwd).await {
         registry.register_boxed(tool);
     }
+    // For --tui --resume: snapshot the durable events before the log moves
+    // into Context — the TUI replays them into transcript blocks.
+    let replay_events = if cli.tui && resumed {
+        sessions.events().await.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let interactive = cli.print.is_none() && !cli.acp;
     let (tx_approval, rx_approval) = tokio::sync::mpsc::unbounded_channel();
     let mut ctx_raw = Context::new(llm, sessions, registry, cwd.clone());
@@ -271,7 +278,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if cli.tui {
-        return tui::run(agent, &cli.model, cwd.clone(), rx_approval).await;
+        return tui::run(agent, &cli.model, cwd.clone(), rx_approval, replay_events).await;
     }
 
     let observer = StdoutObserver {

@@ -98,6 +98,7 @@ pub async fn run(
     model: &str,
     cwd: std::path::PathBuf,
     rx_approval: mpsc::UnboundedReceiver<ApprovalReq>,
+    replay: Vec<sunmao_core::SessionEvent>,
 ) -> Result<()> {
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
@@ -106,7 +107,7 @@ pub async fn run(
     let _ = io::stdout().execute(EnableBracketedPaste);
     let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
     let mut term = Terminal::new(backend)?;
-    let res = run_inner(&mut term, agent, model, cwd, rx_approval).await;
+    let res = run_inner(&mut term, agent, model, cwd, rx_approval, replay).await;
     let _ = io::stdout().execute(DisableBracketedPaste);
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
@@ -119,6 +120,7 @@ async fn run_inner(
     model: &str,
     cwd: std::path::PathBuf,
     mut rx_approval: mpsc::UnboundedReceiver<ApprovalReq>,
+    replay: Vec<sunmao_core::SessionEvent>,
 ) -> Result<()> {
     let agent = Arc::new(agent);
     let (tx_msg, mut rx_msg) = mpsc::unbounded_channel::<Msg>();
@@ -276,6 +278,9 @@ async fn run_inner(
     }
 
     let mut app = App::new(model, cwd.clone());
+    if !replay.is_empty() {
+        app.replay(&replay);
+    }
 
     loop {
         // synchronized-output bracket: terminals that grok CSI ?2026 render

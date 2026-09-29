@@ -400,6 +400,73 @@ impl App {
         }
     }
 
+    /// Rebuild the transcript from a session log on `--resume` — the same
+    /// blocks a live turn would have produced, all closed.
+    pub fn replay(&mut self, events: &[sunmao_core::SessionEvent]) {
+        use sunmao_core::SessionEvent as E;
+        use sunmao_llm::types::Role;
+        // assistant text that precedes a tool-call batch streams before the
+        // ToolCall events, same as live — order preserved by construction.
+        for ev in events {
+            match ev {
+                E::Started { .. } | E::Usage { .. } | E::Artifact { .. } => {}
+                E::Message { message } => match message.role {
+                    Role::User => {
+                        if let Some(c) = &message.content {
+                            if c.starts_with("[hook context]") {
+                                self.push_audit("hook injected context");
+                            } else if c.starts_with("<local-shell>") {
+                                // folded evidence — the real block comes
+                                // from the LocalShell event itself
+                            } else {
+                                self.echo_user(c);
+                            }
+                        }
+                    }
+                    Role::Assistant => {
+                        if let Some(c) = message.content.as_ref().filter(|c| !c.is_empty()) {
+                            self.stream(BlockKind::Assistant, c);
+                        }
+                    }
+                    _ => {}
+                },
+                E::ToolCall { call } => {
+                    let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
+                        .unwrap_or(serde_json::Value::Null);
+                    self.tool_start(
+                        &call.function.name,
+                        &sunmao_core::agent::call_summary(&call.function.name, &args),
+                    );
+                }
+                E::ToolResult {
+                    name, ok, output, ..
+                } => self.tool_done(name, *ok, output),
+                E::Hook { event, detail } => {
+                    self.push_audit(&format!("{event} — {detail}"));
+                }
+                E::LocalShell {
+                    command,
+                    exit_code,
+                    output,
+                } => {
+                    self.tool_start("!", &format!("$ {command}"));
+                    self.tool_done("!", *exit_code == 0, output);
+                }
+                E::Compacted { summary } => {
+                    self.blocks.clear();
+                    self.push_note(&format!("[context compacted] {summary}"));
+                }
+            }
+            // every replayed block is history — close text streams after
+            // each event; tool done-state waits for the final close_turn so
+            // a call→result pair isn't pre-marked interrupted.
+            for b in &mut self.blocks {
+                b.open = false;
+            }
+        }
+        self.close_turn(); // dangling tools → interrupted; busy=false
+    }
+
     // ── scroll helpers ───────────────────────────────────────────────────
 
     /// Keep pinned to the bottom when the user hasn't scrolled away.

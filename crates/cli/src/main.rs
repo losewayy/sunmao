@@ -170,8 +170,11 @@ async fn main() -> anyhow::Result<()> {
         registry.register_boxed(tool);
     }
     let interactive = cli.print.is_none() && !cli.acp;
+    let (tx_approval, rx_approval) = tokio::sync::mpsc::unbounded_channel();
     let mut ctx_raw = Context::new(llm, sessions, registry, cwd.clone());
-    if interactive {
+    if cli.tui {
+        ctx_raw.approval = Arc::new(tui::TuiApprover { tx: tx_approval });
+    } else if interactive {
         ctx_raw.approval = Arc::new(StdinApprover { interactive: true });
     }
     let ctx = Arc::new(ctx_raw);
@@ -231,7 +234,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if cli.tui {
-        return tui::run(agent, &cli.model).await;
+        return tui::run(agent, &cli.model, rx_approval).await;
     }
 
     let observer = StdoutObserver {

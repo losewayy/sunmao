@@ -37,9 +37,11 @@ struct Perms {
     deny: Vec<String>,
 }
 
+type RuleSet = (Vec<glob::Pattern>, Vec<glob::Pattern>, Vec<glob::Pattern>);
+
 #[derive(Default)]
 pub struct Permissions {
-    rules: HashMap<String, (Vec<glob::Pattern>, Vec<glob::Pattern>, Vec<glob::Pattern>)>,
+    rules: HashMap<String, RuleSet>,
 }
 
 impl Permissions {
@@ -87,10 +89,7 @@ impl Permissions {
         let allow = parse(p.allow);
         let ask = parse(p.ask);
         let deny = parse(p.deny);
-        let mut rules: HashMap<
-            String,
-            (Vec<glob::Pattern>, Vec<glob::Pattern>, Vec<glob::Pattern>),
-        > = HashMap::new();
+        let mut rules: HashMap<String, RuleSet> = HashMap::new();
         for tool in allow.keys().chain(ask.keys()).chain(deny.keys()) {
             rules.insert(
                 tool.clone(),

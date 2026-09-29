@@ -24,6 +24,42 @@ enum Msg {
     Live(LiveEvent),
     Key(KeyEvent),
     Paste(String),
+    /// approval request from a tool (risky command) — carries the reply channel
+    ApprovalReq(ApprovalReq),
+}
+
+/// A risky tool call suspended on user verdict (y/n).
+pub struct ApprovalReq {
+    pub tool: String,
+    pub detail: String,
+    pub why: String,
+    pub reply: tokio::sync::oneshot::Sender<bool>,
+}
+
+/// Approval seam for the TUI — risky calls suspend on a oneshot until the
+/// user presses y/n.
+pub struct TuiApprover {
+    pub tx: mpsc::UnboundedSender<ApprovalReq>,
+}
+
+#[async_trait::async_trait]
+impl sunmao_core::approval::Approver for TuiApprover {
+    async fn approve(&self, tool: &str, detail: &str, why: &str) -> bool {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if self
+            .tx
+            .send(ApprovalReq {
+                tool: tool.to_string(),
+                detail: detail.to_string(),
+                why: why.to_string(),
+                reply: tx,
+            })
+            .is_err()
+        {
+            return false;
+        }
+        rx.await.unwrap_or(false)
+    }
 }
 
 struct ChanObserver(mpsc::UnboundedSender<Msg>);
@@ -44,6 +80,8 @@ struct App {
     history: Vec<String>,
     hist_idx: Option<usize>,
     busy: bool,
+    /// a risky tool call awaiting y/n
+    pending_approval: Option<(String, String, String, tokio::sync::oneshot::Sender<bool>)>,
 }
 
 impl App {
@@ -118,12 +156,16 @@ fn char_to_byte(s: &str, char_idx: usize) -> usize {
         .unwrap_or(s.len())
 }
 
-pub async fn run(agent: AgentLoop, model: &str) -> Result<()> {
+pub async fn run(
+    agent: AgentLoop,
+    model: &str,
+    rx_approval: mpsc::UnboundedReceiver<ApprovalReq>,
+) -> Result<()> {
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
     let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
     let mut term = Terminal::new(backend)?;
-    let res = run_inner(&mut term, agent, model).await;
+    let res = run_inner(&mut term, agent, model, rx_approval).await;
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
     res
@@ -133,6 +175,7 @@ async fn run_inner(
     term: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     agent: AgentLoop,
     model: &str,
+    mut rx_approval: mpsc::UnboundedReceiver<ApprovalReq>,
 ) -> Result<()> {
     let agent = Arc::new(agent);
     let (tx_msg, mut rx_msg) = mpsc::unbounded_channel::<Msg>();
@@ -157,6 +200,16 @@ async fn run_inner(
                         }
                     }
                 }
+            }
+        });
+    }
+
+    // forward approval requests into the same channel
+    {
+        let tx_msg = tx_msg.clone();
+        tokio::spawn(async move {
+            while let Some(req) = rx_approval.recv().await {
+                let _ = tx_msg.send(Msg::ApprovalReq(req));
             }
         });
     }
@@ -190,6 +243,7 @@ async fn run_inner(
         history: Vec::new(),
         hist_idx: None,
         busy: false,
+        pending_approval: None,
     };
 
     loop {
@@ -224,6 +278,18 @@ async fn run_inner(
 
         match rx_msg.recv().await {
             None => break,
+            Some(Msg::ApprovalReq(ApprovalReq {
+                tool,
+                detail,
+                why,
+                reply,
+            })) => {
+                app.pending_approval = Some((tool, detail, why, reply));
+                app.push_line(Line::from(Span::styled(
+                    "[approve?] risky command — press y to allow, n to deny",
+                    Style::default().fg(Color::Yellow),
+                )));
+            }
             Some(Msg::Live(ev)) => match ev {
                 LiveEvent::Content(c) => {
                     app.busy = true;
@@ -254,6 +320,25 @@ async fn run_inner(
             Some(Msg::Paste(p)) => {
                 for c in p.chars() {
                     app.insert_char(c);
+                }
+            }
+            Some(Msg::Key(k)) if app.pending_approval.is_some() => {
+                let (tool, detail, why, reply) = app.pending_approval.take().unwrap();
+                match k.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') => {
+                        let _ = reply.send(true);
+                        app.push_line(Line::from(Span::styled(
+                            format!("[approved] {tool}: {detail}"),
+                            Style::default().fg(Color::Green),
+                        )));
+                    }
+                    _ => {
+                        let _ = reply.send(false);
+                        app.push_line(Line::from(Span::styled(
+                            format!("[denied] {tool}: {detail} — {why}"),
+                            Style::default().fg(Color::Red),
+                        )));
+                    }
                 }
             }
             Some(Msg::Key(k)) => match k.code {

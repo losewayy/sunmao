@@ -125,7 +125,7 @@ fn draw_slash_menu(f: &mut ratatui::Frame, m: &SlashMenu, area: Rect) {
             },
         ]),
         Line::from(Span::styled(
-            " ↑↓ navigate · Enter select · Tab complete · Esc cancel",
+            " ↑↓ navigate · Enter run · Tab complete · Esc cancel",
             Style::default().fg(THEME.faint),
         )),
         Line::from(""),

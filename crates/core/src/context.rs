@@ -23,8 +23,12 @@ pub struct Context {
     /// a resolved adapter here; the loop reads through `active_llm()` so the
     /// swap takes effect on the next request, never mid-stream.
     pub llm_override: std::sync::RwLock<Option<Arc<dyn ProviderAdapter>>>,
-    /// Active session's event log.
-    pub sessions: tokio::sync::Mutex<SessionLog>,
+    /// Active session's event log. `Arc` because detached Task sub-agents
+    /// (`run_in_background`) outlive their spawn call — they append their
+    /// `TaskDone` result straight into the parent's log when they finish.
+    /// Note: they hold the log that was active *at spawn time* — a /resume
+    /// mid-flight keeps results in the session that launched them.
+    pub sessions: Arc<tokio::sync::Mutex<SessionLog>>,
     /// Tool registry (native + managed + shell).
     pub tools: ToolRegistry,
     /// Audit ledger — permission checks and notable facts.
@@ -83,7 +87,7 @@ impl Context {
         Self {
             llm,
             llm_override: std::sync::RwLock::new(None),
-            sessions: tokio::sync::Mutex::new(sessions),
+            sessions: Arc::new(tokio::sync::Mutex::new(sessions)),
             tools,
             audit: AuditLog::new(),
             hooks: HookEngine::load(&cwd, "session"),

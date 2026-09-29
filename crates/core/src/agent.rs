@@ -134,7 +134,7 @@ fn ellipsize(s: &str, max: usize) -> String {
 
 /// Cap tool output carried in `LiveEvent::ToolDone` — frontends only need a
 /// preview; the full text already lands in the session log.
-fn truncate_output(s: &str) -> String {
+pub(crate) fn truncate_output(s: &str) -> String {
     const MAX: usize = 8 * 1024;
     if s.len() <= MAX {
         return s.to_string();

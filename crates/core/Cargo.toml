@@ -22,5 +22,11 @@ tokio.workspace = true
 tokio-stream.workspace = true
 tracing.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# spawnfate — the shell/preflight engine. Its model is Windows-only; the
+# preflight module no-ops elsewhere. path = sibling dev dependency; swap to
+# `version = "1"` once spawnfate 1.0 is on crates.io.
+spawnfate = { path = "../../../spawnfate" }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

@@ -70,6 +70,11 @@ pub struct App {
     pub last_esc: Option<Instant>,
     /// stash of a draft cleared by double-Esc (Ctrl+S restores)
     pub draft_stash: Option<String>,
+    /// git branch of `cwd`, probed at startup (None = not a repo / no git)
+    pub git_branch: Option<String>,
+    /// last observed provider usage — the footer renders prompt tokens as
+    /// "context filled" so the user sees context pressure before it bites.
+    pub last_usage: Option<sunmao_llm::types::Usage>,
 }
 
 /// How a submitted line should be dispatched — the driver task interprets.
@@ -105,6 +110,8 @@ impl App {
             toast: None,
             last_esc: None,
             draft_stash: None,
+            git_branch: None,
+            last_usage: None,
         };
         let mut banner = Block::new(BlockKind::Note);
         banner.text = format!(

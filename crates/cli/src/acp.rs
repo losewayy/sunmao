@@ -84,6 +84,7 @@ impl Observer for AcpObserver {
                 ));
             }
             LiveEvent::TurnEnd { .. } => {}
+            LiveEvent::Usage(_) => {}
             // audit facts: visible in local frontends; ACP clients get them
             // as agent message text so the rewrite/veto is never silent
             LiveEvent::Hook { event, detail } => {

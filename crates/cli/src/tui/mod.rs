@@ -38,6 +38,8 @@ enum Msg {
     Quit,
     /// approval request from a tool (risky command) — carries the reply channel
     ApprovalReq(ApprovalReq),
+    /// git branch probe finished — footer shows it next to the cwd
+    Branch(Option<String>),
 }
 
 /// A risky tool call suspended on user verdict.
@@ -213,6 +215,32 @@ async fn run_inner(
         });
     }
 
+    // probe the git branch off the UI thread — `git` may not exist or the
+    // cwd may not be a repo; None is a fine answer either way.
+    {
+        let tx_msg = tx_msg.clone();
+        let probe_cwd = cwd.clone();
+        tokio::spawn(async move {
+            let branch = tokio::task::spawn_blocking(move || {
+                let out = std::process::Command::new("git")
+                    .args(["rev-parse", "--abbrev-ref", "HEAD"])
+                    .current_dir(probe_cwd)
+                    .stdin(std::process::Stdio::null())
+                    .output()
+                    .ok()?;
+                if !out.status.success() {
+                    return None;
+                }
+                let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                (!b.is_empty() && b != "HEAD").then_some(b)
+            })
+            .await
+            .ok()
+            .flatten();
+            let _ = tx_msg.send(Msg::Branch(branch));
+        });
+    }
+
     let mut app = App::new(model, cwd.clone());
 
     loop {
@@ -245,6 +273,7 @@ async fn run_inner(
                 LiveEvent::Hook { event, detail } => {
                     app.push_audit(&format!("{event} — {detail}"));
                 }
+                LiveEvent::Usage(u) => app.last_usage = Some(u),
                 LiveEvent::TurnEnd { outcome } => {
                     app.close_turn();
                     if outcome != TurnOutcome::Completed {
@@ -253,6 +282,7 @@ async fn run_inner(
                 }
             },
             Some(Msg::Note(note)) => app.push_note(&note),
+            Some(Msg::Branch(b)) => app.git_branch = b,
             Some(Msg::Paste(p)) => {
                 for c in p.chars() {
                     app.insert_char(c);

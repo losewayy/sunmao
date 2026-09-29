@@ -49,6 +49,8 @@ enum Msg {
     /// 1 Hz heartbeat — redraws so the busy timer ticks while the model
     /// streams nothing (long thinking gaps would otherwise freeze it).
     Tick,
+    /// /resume swapped the session — replay these events into the transcript
+    Replay(Vec<sunmao_core::SessionEvent>),
 }
 
 /// A risky tool call suspended on user verdict.
@@ -162,6 +164,60 @@ async fn run_inner(
                             Err(e) => format!("[compact failed] {e:#}"),
                         };
                         let _ = tx_msg.send(Msg::Note(note));
+                        continue;
+                    }
+                    Submit::Resume(arg) => {
+                        match arg {
+                            None => {
+                                // list recent sessions, newest first
+                                let dir = driver_cwd.join(".sunmao/sessions");
+                                let mut entries: Vec<_> = std::fs::read_dir(&dir)
+                                    .map(|rd| {
+                                        rd.flatten()
+                                            .filter_map(|e| {
+                                                let p = e.path();
+                                                let stem =
+                                                    p.file_stem()?.to_string_lossy().to_string();
+                                                let m = e.metadata().ok()?.modified().ok()?;
+                                                Some((m, stem))
+                                            })
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                entries.sort_by_key(|b| std::cmp::Reverse(b.0));
+                                let list = entries
+                                    .iter()
+                                    .take(8)
+                                    .map(|(_, s)| format!("  /resume {s}"))
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                let _ = tx_msg.send(Msg::Note(if list.is_empty() {
+                                    "[no sessions]".into()
+                                } else {
+                                    format!("recent sessions:\n{list}")
+                                }));
+                            }
+                            Some(id) => {
+                                let p = std::path::PathBuf::from(&id);
+                                let path = if p.exists() {
+                                    p
+                                } else {
+                                    driver_cwd
+                                        .join(".sunmao/sessions")
+                                        .join(format!("{id}.jsonl"))
+                                };
+                                match sunmao_core::SessionLog::open_path(&path).await {
+                                    Ok(log) => {
+                                        let events = agent.swap_session(log).await;
+                                        let _ = tx_msg.send(Msg::Replay(events));
+                                    }
+                                    Err(e) => {
+                                        let _ = tx_msg
+                                            .send(Msg::Note(format!("[resume failed] {e:#}")));
+                                    }
+                                }
+                            }
+                        }
                         continue;
                     }
                     Submit::Bash(cmd) => {
@@ -370,6 +426,13 @@ async fn run_inner(
                 }
             }
             Some(Msg::Tick) => {} // just redraw
+            Some(Msg::Replay(events)) => {
+                app.blocks.clear();
+                app.selected = 0;
+                app.scroll_back = 0;
+                app.replay(&events);
+                app.push_note("[session resumed]");
+            }
             Some(Msg::Paste(p)) => app.insert_str(&p),
             Some(Msg::Key(k)) => {
                 if handle_key(&mut app, k, &tx_input, &tx_cancel) {
@@ -595,6 +658,9 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
             }
             Submit::Bash(cmd) => {
                 let _ = tx_input.send(Submit::Bash(cmd));
+            }
+            Submit::Resume(arg) => {
+                let _ = tx_input.send(Submit::Resume(arg));
             }
             Submit::Turn(t) => {
                 app.busy = true;

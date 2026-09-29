@@ -18,7 +18,7 @@ use sunmao_llm::{ChatRequest, StreamDelta};
 
 use crate::context::Context;
 use crate::hooks::HookEvent;
-use crate::session::SessionEvent;
+use crate::session::{SessionEvent, SessionLog};
 
 /// Live events the frontend can observe (stdout printer, later TUI/ACP).
 #[derive(Debug, Clone)]
@@ -198,6 +198,31 @@ impl AgentLoop {
                 output: output.to_string(),
             })
             .await;
+    }
+
+    /// Swap the active session log (TUI `/resume`): `log` becomes the fold
+    /// source for subsequent turns; returns its events so the frontend can
+    /// rebuild the transcript. Fires SessionStart(source=resume) like a
+    /// `--resume` startup would.
+    pub async fn swap_session(&self, log: SessionLog) -> Vec<SessionEvent> {
+        let events = log.events().await.unwrap_or_default();
+        {
+            let mut cur = self.ctx.sessions.lock().await;
+            *cur = log;
+        }
+        let _ = self
+            .ctx
+            .hooks
+            .fire(
+                HookEvent::SessionStart,
+                &self.ctx.cwd,
+                &crate::hooks::HookInput {
+                    source: Some("resume"),
+                    ..Default::default()
+                },
+            )
+            .await;
+        events
     }
 
     pub fn with_compact_threshold(mut self, n: usize) -> Self {

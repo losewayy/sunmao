@@ -49,7 +49,7 @@ pub fn draw(f: &mut ratatui::Frame, app: &mut App) {
     }
     if app.focus == Focus::Approval {
         if let Some(c) = &app.approval {
-            draw_card(f, c, chunks[2]);
+            draw_card(f, c, app.approval_backlog.len(), chunks[2]);
         }
     }
     draw_input(f, app, chunks[3]);
@@ -166,7 +166,7 @@ fn draw_slash_menu(f: &mut ratatui::Frame, m: &SlashMenu, area: Rect) {
     f.render_widget(Paragraph::new(rows), area);
 }
 
-fn draw_card(f: &mut ratatui::Frame, c: &ApprovalCard, area: Rect) {
+fn draw_card(f: &mut ratatui::Frame, c: &ApprovalCard, queued: usize, area: Rect) {
     let opt = |label: &str, sel: bool, color| {
         Span::styled(
             format!(" {} {label} ", if sel { "▸" } else { " " }),
@@ -187,6 +187,14 @@ fn draw_card(f: &mut ratatui::Frame, c: &ApprovalCard, area: Rect) {
                 format!("{}: {}", c.tool, c.detail),
                 Style::default().fg(THEME.text),
             ),
+            if queued > 0 {
+                Span::styled(
+                    format!("  +{queued} queued"),
+                    Style::default().fg(THEME.faint),
+                )
+            } else {
+                Span::raw("")
+            },
         ]),
         Line::from(vec![
             opt("1) allow once", c.selected == 0, THEME.ok),

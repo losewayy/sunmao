@@ -66,6 +66,11 @@ pub struct App {
     /// index into `blocks` while Focus::Scrollback
     pub selected: usize,
     pub approval: Option<ApprovalCard>,
+    /// approval requests that arrived while a card (or parked card) was
+    /// pending — resolved in arrival order, never dropped. A dropped
+    /// oneshot resolves to Deny on the core side, which would silently
+    /// refuse a call the user never saw.
+    pub approval_backlog: std::collections::VecDeque<ApprovalCard>,
     pub slash_menu: Option<SlashMenu>,
     /// multiline composer: Enter inserts \n, Alt/Shift+Enter sends
     pub multiline: bool,
@@ -152,6 +157,7 @@ impl App {
             focus: Focus::Input,
             selected: 0,
             approval: None,
+            approval_backlog: std::collections::VecDeque::new(),
             slash_menu: None,
             multiline: false,
             toast: None,
@@ -273,6 +279,30 @@ impl App {
         let mut b = Block::new(BlockKind::User);
         b.text = text.to_string();
         self.blocks.push(b);
+    }
+
+    /// A new approval request while a card is pending — active or parked —
+    /// queues behind it in arrival order. The card itself never gets
+    /// swapped out from under the user.
+    pub fn queue_approval(&mut self, card: ApprovalCard) {
+        if self.approval.is_none() {
+            self.approval = Some(card);
+            self.focus = Focus::Approval;
+        } else {
+            self.approval_backlog.push_back(card);
+            self.toast(format!(
+                "another approval queued ({} waiting)",
+                self.approval_backlog.len()
+            ));
+        }
+    }
+
+    /// After a verdict, surface the next queued request if any.
+    pub fn pop_approval(&mut self) {
+        if let Some(next) = self.approval_backlog.pop_front() {
+            self.approval = Some(next);
+            self.focus = Focus::Approval;
+        }
     }
 
     // ── composer ─────────────────────────────────────────────────────────

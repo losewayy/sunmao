@@ -397,7 +397,10 @@ async fn run_inner(
                 why,
                 reply,
             })) => {
-                app.approval = Some(ApprovalCard {
+                // requests queue behind a pending card — dropping the reply
+                // sender silently resolves to Deny, which would refuse calls
+                // the user never saw.
+                app.queue_approval(ApprovalCard {
                     tool,
                     detail,
                     why,
@@ -405,7 +408,6 @@ async fn run_inner(
                     selected: 0,
                     parked: false,
                 });
-                app.focus = Focus::Approval;
             }
             Some(Msg::Live(ev)) => match ev {
                 LiveEvent::Content(c) => app.stream(BlockKind::Assistant, &c),
@@ -528,7 +530,9 @@ fn resolve_card(app: &mut App, verdict: sunmao_core::approval::Approval) {
         };
         app.push_note(&format!("{mark} {}: {}", card.tool, card.detail));
     }
+    // the next queued request takes the focus back; else input owns it
     app.focus = Focus::Input;
+    app.pop_approval();
 }
 
 fn card_key(app: &mut App, k: KeyEvent) -> bool {
@@ -925,5 +929,36 @@ mod tests {
         assert_eq!(app.input, "/resume ");
         assert!(app.slash_menu.is_none());
         assert!(rx.try_recv().is_err(), "Tab must not submit anything");
+    }
+
+    /// A second approval request while a card is pending must queue, not
+    /// overwrite — dropping its oneshot resolves to Deny on the core side,
+    /// silently refusing a call the user never saw.
+    #[test]
+    fn pending_approval_card_is_never_overwritten() {
+        let card = |tool: &str| {
+            let (rtx, _rrx) = tokio::sync::oneshot::channel();
+            ApprovalCard {
+                tool: tool.into(),
+                detail: "cmd".into(),
+                why: "risky".into(),
+                reply: rtx,
+                selected: 0,
+                parked: false,
+            }
+        };
+        let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+        app.queue_approval(card("Bash"));
+        app.queue_approval(card("Write"));
+        assert_eq!(app.approval.as_ref().unwrap().tool, "Bash");
+        assert_eq!(app.approval_backlog.len(), 1);
+
+        resolve_card(&mut app, sunmao_core::approval::Approval::Once);
+        assert_eq!(app.approval.as_ref().unwrap().tool, "Write");
+        assert_eq!(app.focus, Focus::Approval);
+
+        resolve_card(&mut app, sunmao_core::approval::Approval::Deny);
+        assert!(app.approval.is_none());
+        assert_eq!(app.focus, Focus::Input);
     }
 }

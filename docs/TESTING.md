@@ -7,7 +7,7 @@ has (or should gain) a live pass against the real provider stack.
 ## Unit tests
 
 ```bash
-cargo test --workspace    # 20+ tests
+cargo test --workspace    # 28 tests
 ```
 
 Current coverage:
@@ -21,7 +21,8 @@ Current coverage:
 | `core::tool` | read-before-write gate (deny→read→allow), Edit normalization |
 | `core::hooks` | matcher semantics, live exit-2 veto via real subprocess |
 | `core::permissions` | deny>ask>allow>default matrix, glob specifiers |
-| `core::session` | event fold (message/tool_result/compaction boundary) |
+| `core::approval` | risk classifier catches destructive patterns |
+| `core::session` | event fold: messages, tool results, compaction boundary |
 
 The `MockProvider` in `agent::tests` is the pattern to reuse: `ProviderAdapter`
 is a trait, so scripted `Vec<StreamDelta>` queues drive the whole agent loop

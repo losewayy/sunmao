@@ -31,7 +31,7 @@ TUI.
 - tools: Read/Write/Edit/Bash/Glob/Grep/JobOutput/HtmlArtifact/WebFetch/Task
 
 **cli**
-- REPL (`/compact`, `/skills`, `/<command>`), `-p` one-shot, `--tui`,
+- REPL (`/compact`, `/<command>`), `-p` one-shot, `--tui`,
   `--acp`, `--resume`, `--fork`, `--sessions`, `--dataflow`, `--doctor`
 - TUI: char-indexed CJK input, unicode-width cursor, approval prompts,
   cooperative Ctrl-C cancel

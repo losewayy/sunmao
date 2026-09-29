@@ -16,7 +16,7 @@ per-key where merging applies (hooks/permissions/mcp).
 | `skills/*/SKILL.md` | frontmatter `name`/`description` + body | indexed; body read on demand |
 | `agents/*.md` | frontmatter `name`/`description` + body | `Task` tool `subagent_type` picks; body = sub-agent system prompt |
 | `plugin/` | same tree as a plugin root | "this project is a plugin" convention |
-| `plugins/<name>/` | plugin dir | contributes `commands/`, `skills/`, `agents/`, `plugin.json` fields |
+| `plugins/<name>/` | plugin dir | contributes `commands/`, `skills/`, `agents/` — its `plugin.json` is NOT currently merged (only the two top-level manifests are) |
 | `sessions/*.jsonl` | runtime state (gitignored) | session logs — `--resume`/`--fork`/`--dataflow` read these |
 | `jobs/{id}/` | runtime state | background `Bash` jobs — `output.log` + `output.idx` + `meta.json` |
 | `artifacts/` | runtime state | `HtmlArtifact` outputs |
@@ -31,7 +31,7 @@ per-key where merging applies (hooks/permissions/mcp).
 | `.claude/commands/*.md` | slash commands |
 | `.claude/agents/*.md` | sub-agent defs |
 | `.claude/skills/*/SKILL.md` | skill index |
-| `.claude/plugins/<name>/` | plugin bundles |
+| `.claude/plugins/<name>/` | `commands/`+`skills/`+`agents/` dirs only — manifest fields not merged |
 | `.claude-plugin/plugin.json` | plugin manifest at repo root |
 | `~/.agents/skills/*/SKILL.md` | ecosystem skills |
 

@@ -793,6 +793,7 @@ mod tests {
                     completion_tokens: 900,
                     total_tokens: 42_900,
                     cache_read_input_tokens: 0,
+                    cache_creation_input_tokens: 0,
                 },
             },
             E::Message {

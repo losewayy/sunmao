@@ -105,14 +105,88 @@ impl Tool {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, Deserialize)]
+/// Token accounting for one request. Providers disagree on where cache
+/// counters live (flat `prompt_cache_hit_tokens`, nested
+/// `prompt_tokens_details.cached_tokens`, Anthropic's
+/// `cache_*_input_tokens`) — the custom Deserialize normalizes them all
+/// into the same two fields so frontends and the session log see one shape.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct Usage {
-    #[serde(default)]
     pub prompt_tokens: u64,
-    #[serde(default)]
     pub completion_tokens: u64,
-    #[serde(default)]
     pub total_tokens: u64,
-    #[serde(default)]
+    /// tokens served from the provider's prompt cache (the saving)
     pub cache_read_input_tokens: u64,
+    /// tokens written into the cache this request (the cost)
+    pub cache_creation_input_tokens: u64,
+}
+
+impl<'de> Deserialize<'de> for Usage {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let v = serde_json::Value::deserialize(d)?;
+        let num = |keys: &[&str]| -> u64 {
+            for k in keys {
+                if let Some(n) = v.get(*k).and_then(|x| x.as_u64()) {
+                    return n;
+                }
+            }
+            0
+        };
+        let nested = |outer: &str, key: &str| -> u64 {
+            v.get(outer)
+                .and_then(|o| o.get(key))
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0)
+        };
+        Ok(Usage {
+            prompt_tokens: num(&["prompt_tokens", "input_tokens"]),
+            completion_tokens: num(&["completion_tokens", "output_tokens"]),
+            total_tokens: num(&["total_tokens"]),
+            cache_read_input_tokens: num(&["cache_read_input_tokens", "prompt_cache_hit_tokens"])
+                + nested("prompt_tokens_details", "cached_tokens")
+                + nested("input_tokens_details", "cached_tokens"),
+            cache_creation_input_tokens: num(&[
+                "cache_creation_input_tokens",
+                "prompt_cache_miss_tokens",
+            ]),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every provider's usage dialect must land in the same Usage shape —
+    /// Anthropic's cache_*_input_tokens, DeepSeek/DashScope's flat
+    /// prompt_cache_*, OpenAI's nested prompt_tokens_details.
+    #[test]
+    fn usage_deserializes_every_dialect() {
+        let anthropic: Usage = serde_json::from_str(
+            r#"{"input_tokens":1000,"output_tokens":50,"cache_read_input_tokens":800,"cache_creation_input_tokens":100}"#,
+        )
+        .unwrap();
+        assert_eq!(anthropic.prompt_tokens, 1000);
+        assert_eq!(anthropic.cache_read_input_tokens, 800);
+        assert_eq!(anthropic.cache_creation_input_tokens, 100);
+
+        let deepseek: Usage = serde_json::from_str(
+            r#"{"prompt_tokens":500,"completion_tokens":20,"total_tokens":520,"prompt_cache_hit_tokens":300,"prompt_cache_miss_tokens":200}"#,
+        )
+        .unwrap();
+        assert_eq!(deepseek.cache_read_input_tokens, 300);
+        assert_eq!(deepseek.cache_creation_input_tokens, 200);
+
+        let openai: Usage = serde_json::from_str(
+            r#"{"prompt_tokens":2048,"completion_tokens":64,"total_tokens":2112,"prompt_tokens_details":{"cached_tokens":1024}}"#,
+        )
+        .unwrap();
+        assert_eq!(openai.cache_read_input_tokens, 1024);
+
+        // a bare usage still parses — absent cache fields are zeros
+        let plain: Usage =
+            serde_json::from_str(r#"{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}"#)
+                .unwrap();
+        assert_eq!(plain.cache_read_input_tokens, 0);
+    }
 }

@@ -21,6 +21,8 @@ pub async fn report(session_path: &Path) -> anyhow::Result<Value> {
     let mut compactions = 0usize;
     let mut total_prompt = 0u64;
     let mut total_completion = 0u64;
+    let mut cache_read = 0u64;
+    let mut cache_write = 0u64;
 
     while let Some(line) = lines.next_line().await? {
         let Ok(ev) = serde_json::from_str::<SessionEvent>(&line) else {
@@ -39,6 +41,8 @@ pub async fn report(session_path: &Path) -> anyhow::Result<Value> {
             SessionEvent::Usage { usage } => {
                 total_prompt += usage.prompt_tokens;
                 total_completion += usage.completion_tokens;
+                cache_read += usage.cache_read_input_tokens;
+                cache_write += usage.cache_creation_input_tokens;
             }
             SessionEvent::ToolResult {
                 name, ok, output, ..
@@ -83,6 +87,14 @@ pub async fn report(session_path: &Path) -> anyhow::Result<Value> {
             "prompt": total_prompt,
             "completion": total_completion,
             "total": total_prompt + total_completion,
+            // the cost dial: what share of input came from the provider's
+            // cache instead of full-price compute
+            "cache_read": cache_read,
+            "cache_write": cache_write,
+            "cache_hit_pct": cache_read
+                .checked_mul(100)
+                .and_then(|n| n.checked_div(total_prompt + cache_read))
+                .unwrap_or(0),
         },
         "data_flow": {
             "files_read": files_read,

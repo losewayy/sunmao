@@ -118,6 +118,18 @@ impl AnthropicClient {
                 }
             }
         }
+        // cache breakpoint on the conversation tail: everything up to and
+        // including the last message becomes a reusable prefix — next turn's
+        // request pays only for the 1–2 new messages (rolling breakpoint).
+        if let Some(last) = out.last_mut() {
+            if let Some(blocks) = last
+                .get_mut("content")
+                .and_then(|c| c.as_array_mut())
+                .and_then(|a| a.last_mut())
+            {
+                blocks["cache_control"] = json!({"type": "ephemeral"});
+            }
+        }
         (system, out)
     }
 
@@ -130,21 +142,33 @@ impl AnthropicClient {
             "stream": true,
         });
         if let Some(s) = system {
-            body["system"] = s.into();
+            // breakpoint 1 — system is the biggest stable prefix. Structured
+            // form so cache_control lands on its block.
+            body["system"] = json!([{
+                "type": "text",
+                "text": s,
+                "cache_control": {"type": "ephemeral"},
+            }]);
         }
         if let Some(tools) = req.tools {
-            body["tools"] = serde_json::to_value(
-                tools
-                    .iter()
-                    .map(|t| {
-                        json!({
-                            "name": t.function.name,
-                            "description": t.function.description,
-                            "input_schema": t.function.parameters,
-                        })
+            let mut decls: Vec<Value> = tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "name": t.function.name,
+                        "description": t.function.description,
+                        "input_schema": t.function.parameters,
                     })
-                    .collect::<Vec<_>>(),
-            )?;
+                })
+                .collect();
+            // breakpoint 2 — the tool list sits between system and messages;
+            // marking its tail caches tools+system as one prefix. (Anthropic
+            // caches ≥1024 tokens per breakpoint — small requests just don't
+            // mark rather than erroring.)
+            if let Some(last) = decls.last_mut() {
+                last["cache_control"] = json!({"type": "ephemeral"});
+            }
+            body["tools"] = Value::Array(decls);
         }
 
         let resp = self
@@ -190,6 +214,10 @@ impl ProviderAdapter for AnthropicClient {
 #[derive(Deserialize)]
 #[serde(tag = "type")]
 enum Ev {
+    /// input + cache counters only appear here; output lives in
+    /// message_delta — the fold merges them into one Usage.
+    #[serde(rename = "message_start")]
+    MessageStart { message: MsgStart },
     #[serde(rename = "content_block_start")]
     BlockStart {
         index: u32,
@@ -204,6 +232,12 @@ enum Ev {
     },
     #[serde(other)]
     Other,
+}
+
+#[derive(Deserialize)]
+struct MsgStart {
+    #[serde(default)]
+    usage: Option<Usage>,
 }
 
 #[derive(Deserialize)]
@@ -278,15 +312,22 @@ fn fold_events(
 ) -> impl Stream<Item = anyhow::Result<StreamDelta>> + Send {
     let bytes = Box::pin(bytes);
     futures_util::stream::unfold(
-        (bytes, SseParser::new(), Vec::new().into_iter()),
-        |(mut bytes, mut parser, mut pending)| async move {
+        (
+            bytes,
+            SseParser::new(),
+            Vec::new().into_iter(),
+            None::<Usage>,
+        ),
+        |(mut bytes, mut parser, mut pending, mut start_usage)| async move {
             loop {
                 if let Some(d) = pending.next() {
-                    return Some((d, (bytes, parser, pending)));
+                    return Some((d, (bytes, parser, pending, start_usage)));
                 }
                 let chunk = match bytes.next().await {
                     Some(Ok(c)) => c,
-                    Some(Err(e)) => return Some((Err(e.into()), (bytes, parser, pending))),
+                    Some(Err(e)) => {
+                        return Some((Err(e.into()), (bytes, parser, pending, start_usage)))
+                    }
                     None => return None,
                 };
                 let mut deltas = Vec::new();
@@ -298,6 +339,20 @@ fn fold_events(
                                 continue;
                             }
                             match serde_json::from_str::<Ev>(&data) {
+                                // message_start's usage carries input/cache
+                                // counters — stash it; message_delta's Finish
+                                // merges both halves before surfacing.
+                                Ok(Ev::MessageStart { message }) => start_usage = message.usage,
+                                Ok(Ev::MessageDelta { delta, mut usage }) => {
+                                    if let (Some(u), Some(s)) = (&mut usage, &start_usage) {
+                                        u.prompt_tokens = s.prompt_tokens;
+                                        u.total_tokens = s.prompt_tokens + u.completion_tokens;
+                                        u.cache_read_input_tokens = s.cache_read_input_tokens;
+                                        u.cache_creation_input_tokens =
+                                            s.cache_creation_input_tokens;
+                                    }
+                                    deltas.extend(Ev::MessageDelta { delta, usage }.deltas());
+                                }
                                 Ok(ev) => deltas.extend(ev.deltas()),
                                 Err(e) => {
                                     deltas.push(Err(anyhow::anyhow!("bad event: {e}: {data}")))

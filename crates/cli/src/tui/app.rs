@@ -58,6 +58,9 @@ pub struct App {
     pub scroll_back: u16,
     pub history: Vec<String>,
     pub hist_idx: Option<usize>,
+    /// draft stashed while browsing history — Down past the newest entry
+    /// restores it instead of landing on an empty composer.
+    pub hist_draft: Option<String>,
     pub busy: bool,
     pub focus: Focus,
     /// index into `blocks` while Focus::Scrollback
@@ -132,6 +135,7 @@ impl App {
             scroll_back: 0,
             history: Vec::new(),
             hist_idx: None,
+            hist_draft: None,
             busy: false,
             focus: Focus::Input,
             selected: 0,
@@ -323,6 +327,7 @@ impl App {
         let text = std::mem::take(&mut self.input);
         self.cursor = 0;
         self.hist_idx = None;
+        self.hist_draft = None;
         self.slash_menu = None;
         if self.bash_mode {
             self.bash_mode = false;

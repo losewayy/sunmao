@@ -171,6 +171,27 @@ pub async fn run(base_url: &str, api_key: &str, model: &str) -> Result<()> {
         .on_receive_request(
             {
                 let agent = agent.clone();
+                async move |_req: v2::ListSessionsRequest,
+                            responder: Responder<v2::ListSessionsResponse>,
+                            _cx: V2ConnectionTo<Client>| {
+                    let map = agent.sessions.lock().unwrap();
+                    let infos: Vec<_> = map
+                        .keys()
+                        .map(|id| {
+                            v2::SessionInfo::new(
+                                v2::SessionId::new(id.clone()),
+                                v2::AbsolutePath::new(map[id].lock().unwrap().ctx.cwd.clone()),
+                            )
+                        })
+                        .collect();
+                    responder.respond(v2::ListSessionsResponse::new(infos))
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = agent.clone();
                 async move |req: v2::PromptRequest,
                             responder: Responder<v2::PromptResponse>,
                             cx: V2ConnectionTo<Client>| {

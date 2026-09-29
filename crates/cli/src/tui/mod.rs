@@ -134,6 +134,9 @@ async fn run_inner(
     replay: Vec<sunmao_core::SessionEvent>,
 ) -> Result<()> {
     let agent = Arc::new(agent);
+    let (tx_msg, mut rx_msg) = mpsc::unbounded_channel::<Msg>();
+    // sub-agent tool lifecycle relays through the sink — install once
+    agent.set_live_sink(Arc::new(ChanObserver(tx_msg.clone())));
     // session id before the driver takes ownership of `agent`
     let session_id = agent
         .session_path()
@@ -141,7 +144,6 @@ async fn run_inner(
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "?".into());
-    let (tx_msg, mut rx_msg) = mpsc::unbounded_channel::<Msg>();
     let (tx_input, mut rx_input) = mpsc::unbounded_channel::<Submit>();
     let (tx_cancel, mut rx_cancel) = mpsc::unbounded_channel::<()>();
 
@@ -236,6 +238,7 @@ async fn run_inner(
                         let _ = tx_msg.send(Msg::Live(LiveEvent::ToolStart {
                             name: "!".into(),
                             summary: format!("$ {cmd}"),
+                            depth: 0,
                         }));
                         let cwd = driver_cwd.clone();
                         let (ok, output, code) =
@@ -251,6 +254,7 @@ async fn run_inner(
                             name: "!".into(),
                             ok,
                             output,
+                            depth: 0,
                         }));
                         continue;
                     }
@@ -406,8 +410,17 @@ async fn run_inner(
             Some(Msg::Live(ev)) => match ev {
                 LiveEvent::Content(c) => app.stream(BlockKind::Assistant, &c),
                 LiveEvent::Reasoning(r) => app.stream(BlockKind::Thinking, &r),
-                LiveEvent::ToolStart { name, summary } => app.tool_start(&name, &summary),
-                LiveEvent::ToolDone { name, ok, output } => app.tool_done(&name, ok, &output),
+                LiveEvent::ToolStart {
+                    name,
+                    summary,
+                    depth,
+                } => app.tool_start(&name, &summary, depth),
+                LiveEvent::ToolDone {
+                    name,
+                    ok,
+                    output,
+                    depth,
+                } => app.tool_done(&name, ok, &output, depth),
                 LiveEvent::Hook { event, detail } => {
                     app.push_audit(&format!("{event} — {detail}"));
                 }

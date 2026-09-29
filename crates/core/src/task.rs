@@ -20,16 +20,32 @@ const MAX_DEPTH: u8 = 2;
 
 pub struct TaskTool;
 
-/// Subagent events aren't streamed to the outer observer — collect the final
-/// assistant text and return it as the tool result.
-struct CollectObserver {
+/// Collects the sub-agent's final assistant text for the tool result AND
+/// relays its tool lifecycle to the session's `live_sink` — the frontend
+/// sees `Task` blocks working through real calls instead of a frozen row.
+/// TurnEnd is swallowed: a sub-agent's end must not unwind the outer turn.
+struct RelayObserver {
     text: std::sync::Mutex<String>,
+    sink: Option<Arc<dyn Observer>>,
 }
 
-impl Observer for CollectObserver {
+impl Observer for RelayObserver {
     fn on_event(&self, ev: &LiveEvent) {
-        if let LiveEvent::Content(c) = ev {
-            self.text.lock().unwrap().push_str(c);
+        match ev {
+            LiveEvent::Content(c) => self.text.lock().unwrap().push_str(c),
+            // sub-agent lifecycle is the parent's business, not the UI's —
+            // forwarding TurnEnd would close the outer transcript early.
+            LiveEvent::TurnEnd { .. } => {}
+            LiveEvent::ToolStart { .. } | LiveEvent::ToolDone { .. } => {
+                if let Some(s) = &self.sink {
+                    s.on_event(ev);
+                }
+            }
+            _ => {
+                if let Some(s) = &self.sink {
+                    s.on_event(ev);
+                }
+            }
         }
     }
 }
@@ -106,6 +122,7 @@ impl ToolImpl for TaskTool {
             cancelled: std::sync::atomic::AtomicBool::new(false),
             read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),
             session_grants: ctx.session_grants.clone(),
+            live_sink: std::sync::OnceLock::new(),
         };
 
         let sub_ctx = Arc::new(sub_ctx);
@@ -121,8 +138,9 @@ impl ToolImpl for TaskTool {
             )
             .await;
         let agent = AgentLoop::new(sub_ctx.clone()).with_max_iterations(24);
-        let obs = CollectObserver {
+        let obs = RelayObserver {
             text: std::sync::Mutex::new(String::new()),
+            sink: ctx.live_sink.get().cloned(),
         };
         let outcome = agent.run_turn(&a.prompt, &obs).await;
         let _ = sub_ctx

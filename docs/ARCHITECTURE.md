@@ -63,8 +63,17 @@ search.rs  Glob (200-entry cap) + Grep (managed rg child, no shell)
 artifact.rs HtmlArtifact — emits durable Artifact session facts
 webmod.rs  WebFetch — naive tag-strip → readable text, ~24KB cap
 task.rs    Task — nested AgentLoop, depth-capped at 2, own session log,
-           subagent_type selects .claude/agents/*.md definitions
+           subagent_type selects .claude/agents/*.md definitions; defs carry
+           model:/tools:/spawns: frontmatter (route the adapter, trim the
+           registry, whitelist what the child may itself spawn);
+           run_in_background detaches — the finished child appends
+           TaskDone into the parent's session log (push delivery)
+models.rs  ModelResolver — .sunmao/models.json providers + @routes;
+           agent model: selectors and /model swaps resolve through it
 ```
+
+`ctx.sessions` is `Arc<Mutex<SessionLog>>` — background Task children
+outlive their spawn call and append into the parent log directly.
 
 ## Extension surfaces (what loads at startup)
 
@@ -91,6 +100,7 @@ the project layer). Prompt sections order: built-in assets → user → project
 ```rust
 SessionEvent::Started | Message | ToolCall | ToolResult
                   | Compacted | Artifact | Usage | Hook | LocalShell
+                  | TaskDone
 ```
 
 Append-only JSONL; the visible transcript is a pure fold over them. `messages()`
@@ -100,7 +110,13 @@ auditor-visible facts (input rewrites, vetoes, injected context, session
 grants) and stays out of the model-facing fold — rewrites are transparent to
 the model, durable for the auditor. `LocalShell` is the `!` companion: a
 user-run command folds in as a tagged `<local-shell>` user message, so the
-next turn sees the evidence.
+next turn sees the evidence. `TaskDone` is the background-sub-agent twin: a
+finished detached child folds in as a `<task-result>` user message carrying
+its capped output (full transcript in its own `sessions/<id>.jsonl`).
+
+The fold is also the resilience layer: corrupt lines warn-and-skip, and an
+assistant tool_call stranded without its result (crash mid-turn) gains a
+synthetic `[interrupted]` result — providers reject unpaired tool_use.
 
 The *transient* vocabulary going the other way is `LiveEvent` (`Content`,
 `Reasoning`, `ToolStart{name, summary}`, `ToolDone{name, ok, output}`,

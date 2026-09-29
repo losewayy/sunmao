@@ -466,7 +466,12 @@ impl App {
         // ToolCall events, same as live — order preserved by construction.
         for ev in events {
             match ev {
-                E::Started { .. } | E::Usage { .. } | E::Artifact { .. } => {}
+                E::Usage { usage } => {
+                    // the footer resumes the last recorded context pressure —
+                    // a resumed session shouldn't look emptier than it was.
+                    self.last_usage = Some(usage.clone());
+                }
+                E::Started { .. } | E::Artifact { .. } => {}
                 E::Message { message } => match message.role {
                     Role::User => {
                         if let Some(c) = &message.content {
@@ -700,5 +705,30 @@ mod tests {
         let t = app.blocks[1].tool.as_ref().unwrap();
         assert_eq!(t.done, Some(false));
         assert!(t.output.contains("interrupted"));
+    }
+
+    /// Resumed sessions keep their last recorded context pressure — the
+    /// footer's ctx readout must come back with the replay, not reset to
+    /// nothing.
+    #[test]
+    fn replay_restores_last_usage() {
+        let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+        app.replay(&[
+            E::Usage {
+                usage: sunmao_llm::types::Usage {
+                    prompt_tokens: 42_000,
+                    completion_tokens: 900,
+                    total_tokens: 42_900,
+                    cache_read_input_tokens: 0,
+                },
+            },
+            E::Message {
+                message: Message::user("hi"),
+            },
+        ]);
+        assert_eq!(
+            app.last_usage.as_ref().map(|u| u.prompt_tokens),
+            Some(42_000)
+        );
     }
 }

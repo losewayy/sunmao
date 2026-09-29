@@ -261,9 +261,18 @@ fn project_context(cwd: &std::path::Path) -> String {
             out.push_str(&format!("## {name}\n{text}\n\n"));
         }
     }
-    let skills_dir = cwd.join(".sunmao").join("skills");
-    if let Ok(entries) = std::fs::read_dir(&skills_dir) {
-        let mut lines = Vec::new();
+    let mut skills_dirs = vec![cwd.join(".sunmao").join("skills")];
+    // ecosystem scan — skills authored for other harnesses load unmodified
+    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+        let h = std::path::Path::new(&home);
+        skills_dirs.push(h.join(".claude").join("skills"));
+        skills_dirs.push(h.join(".agents").join("skills"));
+    }
+    let mut lines = Vec::new();
+    for skills_dir in skills_dirs {
+        let Ok(entries) = std::fs::read_dir(&skills_dir) else {
+            continue;
+        };
         for e in entries.flatten() {
             let skill = e.path().join("SKILL.md");
             if let Ok(text) = std::fs::read_to_string(&skill) {
@@ -280,9 +289,11 @@ fn project_context(cwd: &std::path::Path) -> String {
                 lines.push(format!("- {} — {} ({})", name, desc, skill.display()));
             }
         }
-        if !lines.is_empty() {
-            out.push_str("## Available skills (Read the SKILL.md path to load)\n");
-            out.push_str(&lines.join("\n"));
+    }
+    if !lines.is_empty() {
+        out.push_str("## Available skills (Read the SKILL.md path to load)\n");
+        for l in &lines {
+            out.push_str(l);
             out.push('\n');
         }
     }

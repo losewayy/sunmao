@@ -642,7 +642,20 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
                 }
                 return false;
             }
-            KeyCode::Tab | KeyCode::Enter => {
+            // Enter *runs* the highlighted command — selection + commit, the
+            // same contract every fuzzy menu in the terminal world ships.
+            // Half-typed fragments must never be submitted.
+            KeyCode::Enter => {
+                if let Some(m) = &app.slash_menu {
+                    let name = m.matches[m.selected].clone();
+                    app.input = format!("/{name}");
+                    app.cursor = app.input.chars().count();
+                    app.slash_menu = None;
+                }
+                return submit_app(app, tx_input);
+            }
+            // Tab stays the completion key: fill `/name ` so args can follow.
+            KeyCode::Tab => {
                 if let Some(m) = &app.slash_menu {
                     let name = m.matches[m.selected].clone();
                     app.input = format!("/{name} ");
@@ -685,38 +698,7 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
         {
             app.insert_newline();
         }
-        KeyCode::Enter => match app.submit() {
-            Submit::Quit => return true,
-            Submit::Note(n) => {
-                if !n.is_empty() {
-                    app.push_note(&n);
-                }
-            }
-            Submit::Compact => {
-                app.busy = true;
-                let _ = tx_input.send(Submit::Compact);
-            }
-            Submit::Bash(cmd) => {
-                let _ = tx_input.send(Submit::Bash(cmd));
-            }
-            Submit::Resume(arg) => {
-                let _ = tx_input.send(Submit::Resume(arg));
-            }
-            Submit::Turn(t) => {
-                if app.busy {
-                    // the driver drains submissions FIFO — tell the user
-                    // their input landed in the queue instead of looking
-                    // swallowed.
-                    app.queued_turns += 1;
-                    app.toast(format!(
-                        "queued #{} — runs after this turn",
-                        app.queued_turns
-                    ));
-                }
-                app.busy = true;
-                let _ = tx_input.send(Submit::Turn(t));
-            }
-        },
+        KeyCode::Enter => return submit_app(app, tx_input),
         KeyCode::Backspace => {
             if app.bash_mode && app.input.is_empty() {
                 // kimi-style: empty bash buffer eats the mode itself
@@ -804,6 +786,44 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
     false
 }
 
+/// Shared Enter-path: what the composer's Enter and the slash menu's
+/// select-run both do. `true` means quit.
+fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
+    match app.submit() {
+        Submit::Quit => return true,
+        Submit::Note(n) => {
+            if !n.is_empty() {
+                app.push_note(&n);
+            }
+        }
+        Submit::Compact => {
+            app.busy = true;
+            let _ = tx_input.send(Submit::Compact);
+        }
+        Submit::Bash(cmd) => {
+            let _ = tx_input.send(Submit::Bash(cmd));
+        }
+        Submit::Resume(arg) => {
+            let _ = tx_input.send(Submit::Resume(arg));
+        }
+        Submit::Turn(t) => {
+            if app.busy {
+                // the driver drains submissions FIFO — tell the user
+                // their input landed in the queue instead of looking
+                // swallowed.
+                app.queued_turns += 1;
+                app.toast(format!(
+                    "queued #{} — runs after this turn",
+                    app.queued_turns
+                ));
+            }
+            app.busy = true;
+            let _ = tx_input.send(Submit::Turn(t));
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -866,5 +886,44 @@ mod tests {
         app.input = "third".into();
         input_key(&mut app, key(KeyCode::Enter), &tx);
         assert_eq!(app.queued_turns, 1);
+    }
+
+    /// With the slash menu open, Enter *runs* the highlighted command — the
+    /// fragment in the buffer must never reach the model, and a lone "/"
+    /// must never be submitted as a turn.
+    #[test]
+    fn slash_menu_enter_runs_selection() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<Submit>();
+        let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+        // user typed "/com", menu highlights "compact"
+        for c in "/com".chars() {
+            app.insert_char(c);
+        }
+        let m = app.slash_menu.as_ref().expect("menu must open on /com");
+        assert_eq!(m.matches[m.selected], "compact");
+
+        input_key(&mut app, key(KeyCode::Enter), &tx);
+        // /compact resolves to the local Submit::Compact, never a Turn
+        assert!(matches!(rx.try_recv(), Ok(Submit::Compact)));
+        assert!(app.input.is_empty(), "submit drains the buffer");
+        assert!(app.slash_menu.is_none());
+    }
+
+    /// Tab remains the completion key: it fills `/name ` for args and does
+    /// NOT submit.
+    #[test]
+    fn slash_menu_tab_completes_without_submit() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<Submit>();
+        let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+        for c in "/res".chars() {
+            app.insert_char(c);
+        }
+        let m = app.slash_menu.as_ref().expect("menu must open on /res");
+        assert_eq!(m.matches[m.selected], "resume");
+
+        input_key(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.input, "/resume ");
+        assert!(app.slash_menu.is_none());
+        assert!(rx.try_recv().is_err(), "Tab must not submit anything");
     }
 }

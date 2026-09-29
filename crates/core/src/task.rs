@@ -105,6 +105,7 @@ impl ToolImpl for TaskTool {
             depth: ctx.depth + 1,
             cancelled: std::sync::atomic::AtomicBool::new(false),
             read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),
+            session_grants: ctx.session_grants.clone(),
         };
 
         let sub_ctx = Arc::new(sub_ctx);

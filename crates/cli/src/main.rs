@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use clap::Parser;
 use sunmao_core::agent::{AgentLoop, LiveEvent, Observer, TurnOutcome};
-use sunmao_core::approval::Approver;
+use sunmao_core::approval::{Approval, Approver};
 use sunmao_core::tool::builtin_registry;
 use sunmao_core::{Context, SessionLog};
 use sunmao_llm::OaiClient;
@@ -333,9 +333,9 @@ struct StdinApprover {
 
 #[async_trait::async_trait]
 impl Approver for StdinApprover {
-    async fn approve(&self, tool: &str, detail: &str, why: &str) -> bool {
+    async fn approve(&self, tool: &str, detail: &str, why: &str) -> Approval {
         if !self.interactive {
-            return true; // piped -p mode: don't hang waiting for stdin
+            return Approval::Once; // piped -p mode: don't hang waiting for stdin
         }
         let tool = tool.to_string();
         let detail = detail.to_string();
@@ -345,17 +345,21 @@ impl Approver for StdinApprover {
                 "
 [33m[approve?] {tool} — {why}
   {detail}
-  allow? [y/N][0m "
+  allow once [y] · allow session [a] · deny [N][0m "
             );
             std::io::stderr().flush().ok();
             let mut line = String::new();
             std::io::stdin().read_line(&mut line).ok()?;
-            Some(matches!(line.trim().to_lowercase().as_str(), "y" | "yes"))
+            Some(match line.trim().to_lowercase().as_str() {
+                "y" | "yes" => Approval::Once,
+                "a" | "always" => Approval::Session,
+                _ => Approval::Deny,
+            })
         })
         .await
         .ok()
         .flatten()
-        .unwrap_or(false)
+        .unwrap_or(Approval::Deny)
     }
 }
 

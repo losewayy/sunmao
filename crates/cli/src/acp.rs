@@ -97,7 +97,13 @@ struct AcpApprover {
 
 #[async_trait::async_trait]
 impl sunmao_core::approval::Approver for AcpApprover {
-    async fn approve(&self, tool: &str, detail: &str, why: &str) -> bool {
+    async fn approve(
+        &self,
+        tool: &str,
+        detail: &str,
+        why: &str,
+    ) -> sunmao_core::approval::Approval {
+        use sunmao_core::approval::Approval;
         let req = v2::RequestPermissionRequest::new(
             self.session_id.clone(),
             format!("{tool}: {why}"),
@@ -108,6 +114,11 @@ impl sunmao_core::approval::Approver for AcpApprover {
                     v2::PermissionOptionKind::AllowOnce,
                 ),
                 v2::PermissionOption::new(
+                    v2::PermissionOptionId::new("allow-session"),
+                    "Allow for this session",
+                    v2::PermissionOptionKind::AllowAlways,
+                ),
+                v2::PermissionOption::new(
                     v2::PermissionOptionId::new("deny"),
                     "Deny",
                     v2::PermissionOptionKind::RejectOnce,
@@ -116,12 +127,20 @@ impl sunmao_core::approval::Approver for AcpApprover {
         )
         .description(detail.to_string());
         match self.cx.send_request(req).block_task().await {
-            Ok(resp) => matches!(
-                resp.outcome,
+            Ok(resp) => match resp.outcome {
                 v2::RequestPermissionOutcome::Selected(ref s)
-                    if s.option_id.to_string() == "allow"
-            ),
-            Err(_) => false,
+                    if s.option_id.to_string() == "allow" =>
+                {
+                    Approval::Once
+                }
+                v2::RequestPermissionOutcome::Selected(ref s)
+                    if s.option_id.to_string() == "allow-session" =>
+                {
+                    Approval::Session
+                }
+                _ => Approval::Deny,
+            },
+            Err(_) => Approval::Deny,
         }
     }
 }

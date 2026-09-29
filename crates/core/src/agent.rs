@@ -195,8 +195,9 @@ impl AgentLoop {
     }
 
     /// The dispatch gate — declarative rules, then the hook's
-    /// `permissionDecision`, then the risky-pattern classifier as the
-    /// default prompt. `deny` rules are a hard refusal nothing overrides.
+    /// `permissionDecision`, session grants, then the risky-pattern
+    /// classifier as the default prompt. `deny` rules are a hard refusal
+    /// nothing overrides — a session grant never bypasses them.
     async fn gate_call(
         &self,
         tool: &str,
@@ -207,43 +208,51 @@ impl AgentLoop {
         use crate::permissions::Verdict;
         match self.ctx.permissions.check(tool, specifier) {
             Verdict::Deny => return Err("denied by permission rules".into()),
-            Verdict::Ask => {
-                if !self
-                    .ctx
-                    .approval
-                    .approve(tool, specifier, "matched ask rule")
-                    .await
-                {
-                    return Err("denied at approval prompt".into());
-                }
-                return Ok(());
-            }
             Verdict::PreApproved => return Ok(()),
-            Verdict::Default => {}
+            Verdict::Ask | Verdict::Default => {}
         }
-        match hook {
-            Some(H::Deny) => return Err("denied by hook".into()),
-            Some(H::Ask) => {
-                if !self
-                    .ctx
-                    .approval
-                    .approve(tool, specifier, "hook requested approval")
-                    .await
-                {
-                    return Err("denied at approval prompt".into());
-                }
-                return Ok(());
-            }
-            Some(H::Allow) => return Ok(()),
-            None => {}
+        if let Some(H::Deny) = hook {
+            return Err("denied by hook".into());
+        }
+        // Session grants sit after both deny gates but before every ask: a
+        // grant is a standing answer to a prompt, not an override of a veto.
+        if self.ctx.session_granted(tool, specifier) {
+            return Ok(());
+        }
+        if self.ctx.permissions.check(tool, specifier) == Verdict::Ask {
+            return self.ask(tool, specifier, "matched ask rule").await;
+        }
+        if let Some(H::Ask) = hook {
+            return self.ask(tool, specifier, "hook requested approval").await;
+        }
+        if let Some(H::Allow) = hook {
+            return Ok(());
         }
         // default: the risky-pattern classifier (Bash-shaped patterns today)
         if let Some(why) = crate::approval::classify(specifier) {
-            if !self.ctx.approval.approve(tool, specifier, why).await {
-                return Err(format!("denied by user approval gate ({why})"));
-            }
+            return self.ask(tool, specifier, why).await;
         }
         Ok(())
+    }
+
+    /// One approval prompt → verdict. `Session` is recorded in
+    /// `session_grants` and audited as a durable `Hook` fact.
+    async fn ask(&self, tool: &str, specifier: &str, why: &str) -> Result<(), String> {
+        match self.ctx.approval.approve(tool, specifier, why).await {
+            crate::approval::Approval::Session => {
+                self.ctx.grant_session(tool, specifier);
+                let mut log = self.ctx.sessions.lock().await;
+                let _ = log
+                    .append(&crate::SessionEvent::Hook {
+                        event: "approval.session".into(),
+                        detail: format!("{tool}: {specifier}"),
+                    })
+                    .await;
+                Ok(())
+            }
+            crate::approval::Approval::Once => Ok(()),
+            crate::approval::Approval::Deny => Err(format!("denied at approval gate ({why})")),
+        }
     }
 
     /// Ask the model to summarize the transcript, then commit a `Compacted`
@@ -944,6 +953,83 @@ mod tests {
             .find(|m| matches!(m.role, sunmao_llm::types::Role::Tool))
             .expect("tool result message");
         assert!(tool_msg.content.as_deref().unwrap().contains("policy"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Session grant: the first ask-rule hit prompts; a Session verdict is
+    /// recorded and the *identical* call passes without prompting again.
+    #[tokio::test]
+    async fn session_grant_skips_repeated_prompt() {
+        use crate::approval::{Approval, Approver};
+
+        struct SessionOnce(std::sync::atomic::AtomicUsize);
+        #[async_trait::async_trait]
+        impl Approver for SessionOnce {
+            async fn approve(&self, _t: &str, _d: &str, _w: &str) -> Approval {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Approval::Session
+            }
+        }
+
+        let dir = std::env::temp_dir().join(format!("sunmao-grant-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+        // an ask rule forces the approval path for this exact Glob pattern
+        std::fs::write(
+            dir.join(".sunmao/permissions.json"),
+            r#"{"permissions":{"ask":["Glob(**/*.rs)"]}}"#,
+        )
+        .unwrap();
+
+        let glob_call = || {
+            vec![
+                StreamDelta::ToolCalls(vec![
+                    ToolCallFragment {
+                        index: 0,
+                        id: Some("c".into()),
+                        name: Some("Glob".into()),
+                        arguments: None,
+                    },
+                    ToolCallFragment {
+                        index: 0,
+                        arguments: Some("{\"pattern\":\"**/*.rs\"}".into()),
+                        ..Default::default()
+                    },
+                ]),
+                StreamDelta::Finish {
+                    reason: Some("tool_calls".into()),
+                    usage: None,
+                },
+            ]
+        };
+        let provider = Arc::new(MockProvider {
+            responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                glob_call(),
+                glob_call(), // identical second call — grant should cover it
+                vec![
+                    StreamDelta::Content("done".into()),
+                    StreamDelta::Finish {
+                        reason: Some("stop".into()),
+                        usage: None,
+                    },
+                ],
+            ])),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let approver = Arc::new(SessionOnce(std::sync::atomic::AtomicUsize::new(0)));
+        let mut ctx_raw = Context::new(
+            provider,
+            SessionLog::ephemeral(),
+            builtin_registry(),
+            dir.clone(),
+        );
+        ctx_raw.approval = approver.clone();
+        let ctx = Arc::new(ctx_raw);
+        let agent = AgentLoop::new(ctx.clone());
+        let outcome = agent.run_turn("go", &NullObserver).await.unwrap();
+        assert!(matches!(outcome, TurnOutcome::Completed));
+        // the second identical call never reached the approver
+        assert_eq!(approver.0.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert!(ctx.session_granted("Glob", "**/*.rs"));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

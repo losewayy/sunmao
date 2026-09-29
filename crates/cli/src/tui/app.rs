@@ -26,7 +26,7 @@ pub struct ApprovalCard {
     pub tool: String,
     pub detail: String,
     pub why: String,
-    pub reply: tokio::sync::oneshot::Sender<bool>,
+    pub reply: tokio::sync::oneshot::Sender<sunmao_core::approval::Approval>,
     /// 0 = allow, 1 = deny (two-option card for now — scopes need a richer
     /// Approver API that doesn't exist yet)
     pub selected: usize,

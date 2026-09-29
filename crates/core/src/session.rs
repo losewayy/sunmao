@@ -30,6 +30,9 @@ pub enum SessionEvent {
     },
     /// Compaction boundary: earlier events are summarized away.
     Compacted { summary: String },
+    /// An HTML artifact was produced — human-facing deliverable registered
+    /// as a durable fact (SPEC §4.10).
+    Artifact { name: String, path: String, bytes: usize },
 }
 
 /// Append-only writer + replay reader for one session directory.

@@ -397,7 +397,11 @@ async fn run_inner(
                         app.cursor = app.input.chars().count();
                     }
                 }
-                KeyCode::PageUp => app.scroll_back = app.scroll_back.saturating_add(10),
+                KeyCode::PageUp => {
+                    // clamp at transcript length — visual lines ≥ raw lines
+                    let cap = app.lines.len() as u16;
+                    app.scroll_back = (app.scroll_back + 10).min(cap);
+                }
                 KeyCode::PageDown => app.scroll_back = app.scroll_back.saturating_sub(10),
                 KeyCode::Char(c) => app.insert_char(c),
                 _ => {}

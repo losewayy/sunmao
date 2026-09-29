@@ -4,45 +4,33 @@
 //! verdict. `AllowAll` is the non-interactive default; the REPL installs a
 //! stdin prompter, and future ACP frontends map to `session/request_permission`.
 
-/// Shell command risk patterns → why we ask. Substring matching is
-/// intentionally conservative: hooks and the audit log record every check.
-pub const RISKY_PATTERNS: &[(&str, &str)] = &[
-    ("rm -rf", "recursive force delete"),
-    ("rm -r ", "recursive delete"),
-    ("git push", "publishes history"),
-    ("git reset --hard", "discards work"),
-    ("git clean", "deletes untracked files"),
-    ("git checkout --", "discards changes"),
-    ("git restore .", "discards changes"),
-    ("del /s", "recursive delete"),
-    ("del /f /s", "forced recursive delete"),
-    ("rmdir /s", "recursive delete"),
-    ("Remove-Item -Recurse", "recursive delete"),
-    ("| sh", "piped-to-shell remote exec"),
-    ("| bash", "piped-to-shell remote exec"),
-    ("| pwsh", "piped-to-shell remote exec"),
-    ("| iex", "piped-to-shell remote exec"),
-    ("Invoke-Expression", "dynamic eval"),
-    ("curl", "network egress — inspect before allowing"),
-    ("wget ", "network egress"),
-    ("shutdown", "system power"),
-    ("reg delete", "registry mutation"),
-    ("reg add", "registry mutation"),
-    ("format ", "disk format"),
-    ("mkfs", "disk format"),
-    ("dd if=", "raw disk write"),
-    ("chmod 777", "world-writable perms"),
-    ("> /dev/", "raw device write"),
-    ("taskkill /f", "force process kill"),
-];
+/// Shell command risk patterns → why we ask. The table lives in
+/// `assets/risky-patterns.txt` — policy is data, editable without a rebuild;
+/// parsing happens once. Substring matching is intentionally conservative:
+/// hooks and the audit log record every check.
+fn risky_patterns() -> &'static Vec<(String, String)> {
+    static TABLE: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        include_str!("../assets/risky-patterns.txt")
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
+            .filter_map(|l| {
+                // `pattern | reason` — the pattern keeps its trailing space
+                // (deliberate: "rm -r " must not match "rm -rf").
+                l.split_once(" | ")
+                    .map(|(p, r)| (p.to_lowercase(), r.trim().to_string()))
+            })
+            .collect()
+    })
+}
 
 /// What a risky command matched, if anything.
 pub fn classify(command: &str) -> Option<&'static str> {
     let c = command.to_lowercase();
-    RISKY_PATTERNS
+    risky_patterns()
         .iter()
-        .find(|(pat, _)| c.contains(&pat.to_lowercase()))
-        .map(|(_, why)| *why)
+        .find(|(pat, _)| c.contains(pat))
+        .map(|(_, why)| why.as_str())
 }
 
 #[async_trait::async_trait]

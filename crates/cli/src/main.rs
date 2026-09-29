@@ -54,6 +54,9 @@ struct Cli {
     /// Run as an Agent Client Protocol server on stdio (Zed etc.).
     #[arg(long)]
     acp: bool,
+    /// List session logs and exit.
+    #[arg(long)]
+    sessions: bool,
     /// Resume an existing session log (id like `s-123` or a .jsonl path).
     #[arg(long)]
     resume: Option<String>,
@@ -126,6 +129,10 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
     let cli = Cli::parse();
+
+    if cli.sessions {
+        return list_sessions(&cli.session_dir);
+    }
 
     if cli.acp {
         return acp::run(&cli.base_url, &cli.api_key, &cli.model)
@@ -331,4 +338,32 @@ impl Approver for StdinApprover {
         .flatten()
         .unwrap_or(false)
     }
+}
+
+/// `sunmao sessions` — list local session logs.
+fn list_sessions(dir: &std::path::Path) -> anyhow::Result<()> {
+    let mut rows = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.extension().map(|x| x == "jsonl").unwrap_or(false) {
+                let meta = std::fs::metadata(&p).ok();
+                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                let name = p
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                rows.push((name, size));
+            }
+        }
+    }
+    rows.sort();
+    for (name, size) in &rows {
+        println!("{name}\t{size} B");
+    }
+    if rows.is_empty() {
+        println!("[no sessions in {}]", dir.display());
+    }
+    Ok(())
 }

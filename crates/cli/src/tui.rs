@@ -137,6 +137,7 @@ async fn run_inner(
     let agent = Arc::new(agent);
     let (tx_msg, mut rx_msg) = mpsc::unbounded_channel::<Msg>();
     let (tx_input, mut rx_input) = mpsc::unbounded_channel::<String>();
+    let (tx_cancel, mut rx_cancel) = mpsc::unbounded_channel::<()>();
 
     // driver task: consume submitted inputs, stream LiveEvents back
     {
@@ -144,7 +145,18 @@ async fn run_inner(
         tokio::spawn(async move {
             while let Some(input) = rx_input.recv().await {
                 let obs = ChanObserver(tx_msg.clone());
-                let _ = agent.run_turn(&input, &obs).await;
+                let mut turn = Box::pin(agent.run_turn(&input, &obs));
+                loop {
+                    tokio::select! {
+                        res = &mut turn => {
+                            let _ = res;
+                            break;
+                        }
+                        _ = rx_cancel.recv() => {
+                            agent.cancel(); // cooperative: loop sees it next iteration
+                        }
+                    }
+                }
             }
         });
     }
@@ -246,7 +258,19 @@ async fn run_inner(
             }
             Some(Msg::Key(k)) => match k.code {
                 KeyCode::Esc => break,
-                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => break,
+                // Ctrl-C: cancel the in-flight turn if busy, else exit
+                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if app.busy {
+                        app.busy = false;
+                        app.push_line(Line::from(Span::styled(
+                            "[cancelled]",
+                            Style::default().fg(Color::Red),
+                        )));
+                        let _ = tx_cancel.send(());
+                    } else {
+                        break;
+                    }
+                }
                 KeyCode::Enter => {
                     let text = app.submit();
                     if !text.trim().is_empty() {

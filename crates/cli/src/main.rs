@@ -251,10 +251,32 @@ async fn main() -> anyhow::Result<()> {
         if line.is_empty() {
             break;
         }
-        if line == "/compact" {
-            match agent.compact(&observer).await {
-                Ok(()) => println!("[compacted]"),
-                Err(e) => eprintln!("[compact failed] {e:#}"),
+        if line.starts_with('/') {
+            let name = line[1..].split_whitespace().next().unwrap_or("");
+            let rest = line[1 + name.len()..].trim();
+            if line == "/compact" {
+                match agent.compact(&observer).await {
+                    Ok(()) => println!("[compacted]"),
+                    Err(e) => eprintln!("[compact failed] {e:#}"),
+                }
+                continue;
+            }
+            match slash_command(&cwd, name) {
+                Some(body) => {
+                    let prompt = if rest.is_empty() {
+                        body
+                    } else {
+                        format!(
+                            "{body}
+
+{rest}"
+                        )
+                    };
+                    if let Err(e) = agent.run_turn(&prompt, &observer).await {
+                        eprintln!("[error] {e:#}");
+                    }
+                }
+                None => println!("[unknown command: /{name}]"),
             }
             continue;
         }
@@ -384,4 +406,22 @@ fn list_sessions(dir: &std::path::Path) -> anyhow::Result<()> {
         println!("[no sessions in {}]", dir.display());
     }
     Ok(())
+}
+
+/// Slash commands are Markdown files: `/review` → `.sunmao/commands/review.md`
+/// or `.claude/commands/review.md` (same convention, both dirs scanned).
+fn slash_command(cwd: &std::path::Path, name: &str) -> Option<String> {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return None;
+    }
+    for dir in [cwd.join(".sunmao/commands"), cwd.join(".claude/commands")] {
+        let p = dir.join(format!("{name}.md"));
+        if let Ok(t) = std::fs::read_to_string(&p) {
+            return Some(t);
+        }
+    }
+    None
 }

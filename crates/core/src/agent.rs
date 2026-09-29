@@ -64,6 +64,13 @@ impl AgentLoop {
         self
     }
 
+    /// Signal cooperative cancellation for the in-flight turn.
+    pub fn cancel(&self) {
+        self.ctx
+            .cancelled
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
     pub fn with_compact_threshold(mut self, n: usize) -> Self {
         self.compact_threshold = n;
         self
@@ -131,6 +138,10 @@ impl AgentLoop {
         input: &str,
         observer: &dyn Observer,
     ) -> anyhow::Result<TurnOutcome> {
+        self.ctx
+            .cancelled
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+
         // UserPromptSubmit hooks may inject context or veto the prompt.
         let prompt_outcome = self
             .ctx

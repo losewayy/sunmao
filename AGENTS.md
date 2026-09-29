@@ -131,6 +131,7 @@ live in [`docs/CODE-ARCHITECTURE.md`](docs/CODE-ARCHITECTURE.md). Follow them.
 | MCP client (stdio + HTTP) | `crates/core/src/mcp.rs` |
 | tools | `crates/core/src/tool/{mod,fs,shell,search,artifact,webmod}.rs` |
 | sub-agents | `crates/core/src/task.rs` + `agents.rs` |
+| model routing | `crates/core/src/models.rs` (ModelResolver — `.sunmao/models.json`) |
 | SSE parser | `crates/llm/src/sse.rs` |
 | OAI dialect | `crates/llm/src/oai.rs` |
 | Anthropic dialect | `crates/llm/src/anthropic.rs` |

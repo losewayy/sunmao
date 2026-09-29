@@ -64,6 +64,15 @@ pub enum SessionEvent {
         exit_code: i32,
         output: String,
     },
+    /// A detached `Task` (`run_in_background`) finished — push-style result
+    /// delivery: no polling, the next model read sees it as a tagged user
+    /// message. `id` doubles as the child's session-log name, so the full
+    /// transcript survives this event's capped `output`.
+    TaskDone {
+        id: String,
+        ok: bool,
+        output: String,
+    },
 }
 
 /// Where a session's event log lives — `<cwd>/.sunmao/sessions/<id>.jsonl`.
@@ -187,6 +196,9 @@ impl SessionLog {
                         exit_code,
                         output,
                     } => out.push(local_shell_message(command, *exit_code, output)),
+                    SessionEvent::TaskDone { id, ok, output } => {
+                        out.push(task_done_message(id, *ok, output))
+                    }
                     _ => {}
                 }
             }
@@ -211,6 +223,9 @@ impl SessionLog {
                     exit_code,
                     output,
                 } => out.push(local_shell_message(&command, exit_code, &output)),
+                SessionEvent::TaskDone { id, ok, output } => {
+                    out.push(task_done_message(&id, ok, &output))
+                }
                 _ => {}
             }
         }
@@ -224,6 +239,16 @@ impl SessionLog {
 fn local_shell_message(command: &str, exit_code: i32, output: &str) -> Message {
     Message::user(format!(
         "<local-shell>\n$ {command}\n{output}\n[exit {exit_code}]\n</local-shell>"
+    ))
+}
+
+/// Background sub-agent results fold in as a tagged user message — the
+/// model gets the verdict and capped output, and can open
+/// `.sunmao/sessions/<id>.jsonl` for the full transcript when it needs it.
+fn task_done_message(id: &str, ok: bool, output: &str) -> Message {
+    let status = if ok { "done" } else { "failed" };
+    Message::user(format!(
+        "<task-result id=\"{id}\" status=\"{status}\">\n{output}\n</task-result>"
     ))
 }
 

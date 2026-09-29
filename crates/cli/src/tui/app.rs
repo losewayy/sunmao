@@ -586,6 +586,14 @@ impl App {
                 E::Hook { event, detail } => {
                     self.push_audit(&format!("{event} — {detail}"));
                 }
+                E::TaskDone { id, ok, .. } => {
+                    // replays mirror the live `task.bg.done` audit line; the
+                    // model-facing <task-result> fold already carries output.
+                    self.push_audit(&format!(
+                        "task {id} — {}",
+                        if *ok { "done" } else { "failed" }
+                    ));
+                }
                 E::LocalShell {
                     command,
                     exit_code,

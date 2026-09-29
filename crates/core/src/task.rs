@@ -9,7 +9,9 @@
 //!
 //! Two call shapes: flat `{prompt, subagent_type?}` for one task, or
 //! `{context, tasks[]}` to fan out a batch — items run concurrently and
-//! results merge in order.
+//! results merge in order. `run_in_background: true` detaches instead: the
+//! call returns task ids immediately and each finished child pushes its
+//! result into the parent session as a `TaskDone` fact — no polling.
 
 use std::sync::Arc;
 
@@ -106,8 +108,10 @@ impl ToolImpl for TaskTool {
             "Delegate self-contained subtask(s) to sub-agents with the same toolset. \
              Returns the sub-agent's final message(s). Flat form: one `prompt`. \
              Batch form: `context` (shared background) + `tasks[]` — items run \
-             concurrently. Use for parallelizable or scope-isolated work; \
-             sub-agents cannot spawn further sub-agents beyond the depth cap.",
+             concurrently. `run_in_background: true` detaches each spawn: returns \
+             task ids now, and each finished sub-agent pushes its result into this \
+             session as a tagged message. Use for parallelizable or scope-isolated \
+             work; sub-agents cannot spawn further sub-agents beyond the depth cap.",
             json!({
                 "type": "object",
                 "properties": {
@@ -125,7 +129,8 @@ impl ToolImpl for TaskTool {
                             },
                             "required": ["prompt"]
                         }
-                    }
+                    },
+                    "run_in_background": {"type": "boolean", "description": "Detach: returns task ids; results arrive as tagged session messages when each sub-agent finishes"}
                 }
             }),
         )
@@ -138,6 +143,7 @@ impl ToolImpl for TaskTool {
             subagent_type: Option<String>,
             context: Option<String>,
             tasks: Option<Vec<TaskItem>>,
+            run_in_background: Option<bool>,
         }
         let a: Args = serde_json::from_value(args)?;
 
@@ -169,6 +175,23 @@ impl ToolImpl for TaskTool {
             _ => bail!("Task takes `prompt` (flat) or `tasks[]` (batch), not both"),
         };
 
+        // detached lane: ids now, results pushed into the session log later
+        if a.run_in_background.unwrap_or(false) {
+            let mut ids = Vec::with_capacity(items.len());
+            for it in &items {
+                ids.push(spawn_detached(ctx, &it.prompt, it.subagent_type.as_deref()).await);
+            }
+            return Ok(ToolResult {
+                output: format!(
+                    "{} background sub-agent(s) launched: {}\nresults arrive as <task-result> messages in this session; \
+                     full transcripts live at .sunmao/sessions/<id>.jsonl",
+                    ids.len(),
+                    ids.join(", ")
+                ),
+                ok: true,
+            });
+        }
+
         // fan out — each spawn gets its own lane + session file
         let futs: Vec<_> = items
             .iter()
@@ -198,8 +221,62 @@ impl ToolImpl for TaskTool {
 /// Run one sub-agent to completion: own context, own session file, own
 /// lane; relays its tool lifecycle to the parent's live sink.
 async fn spawn_one(ctx: &Context, prompt: &str, subagent_type: Option<&str>) -> ToolResult {
+    let (_sub_id, sub_ctx) = spawn_parts(ctx, subagent_type).await;
+    run_spawn(
+        Arc::new(sub_ctx),
+        prompt.to_string(),
+        ctx.live_sink.get().cloned(),
+    )
+    .await
+}
+
+/// Detached spawn (`run_in_background: true`): the tool returns an id at
+/// once; the child runs on its own task and, when it finishes, appends a
+/// `TaskDone` event straight into the *parent's* session log — push-style
+/// delivery, no polling. The result lands in the session that launched it,
+/// even across a /resume.
+async fn spawn_detached(ctx: &Context, prompt: &str, subagent_type: Option<&str>) -> String {
+    let (sub_id, sub_ctx) = spawn_parts(ctx, subagent_type).await;
+    let parent_log = ctx.sessions.clone();
+    let sink = ctx.live_sink.get().cloned();
+    let notify_sink = sink.clone();
+    let id = sub_id.clone();
+    let prompt = prompt.to_string();
+    tokio::spawn(async move {
+        let res = run_spawn(Arc::new(sub_ctx), prompt, sink).await;
+        // The child's own log already holds the full transcript — the
+        // parent record stays lean (capped), with `id` pointing there.
+        let output = crate::agent::truncate_output(&res.output);
+        {
+            let mut log = parent_log.lock().await;
+            let _ = log
+                .append(&SessionEvent::TaskDone {
+                    id: id.clone(),
+                    ok: res.ok,
+                    output,
+                })
+                .await;
+        }
+        if let Some(s) = notify_sink {
+            s.on_event(&LiveEvent::Hook {
+                event: "task.bg.done".into(),
+                detail: format!("{} — {}", id, if res.ok { "done" } else { "failed" }),
+            });
+        }
+    });
+    sub_id
+}
+
+/// Build the child's context: lane claimed *first* so it doubles as the
+/// session-file dedup suffix — two spawns in the same millisecond used to
+/// collide on `sub-<ms>` and share one log file.
+async fn spawn_parts(ctx: &Context, subagent_type: Option<&str>) -> (String, Context) {
+    let lane = ctx
+        .lane_counter
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        + 1;
     let sub_id = format!(
-        "sub-{}",
+        "sub-{}-l{lane}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -231,7 +308,8 @@ async fn spawn_one(ctx: &Context, prompt: &str, subagent_type: Option<&str>) -> 
     }
 
     // model routing: the def's `model:` selector resolves through the
-    // session's resolver; unresolvable/absent means inherit the parent.
+    // session's resolver; unresolvable/absent means inherit the parent's
+    // *active* adapter — a `/model` swap mid-session carries into children.
     let llm = def
         .as_ref()
         .and_then(|d| d.model.as_deref())
@@ -239,14 +317,10 @@ async fn spawn_one(ctx: &Context, prompt: &str, subagent_type: Option<&str>) -> 
         .unwrap_or_else(|| ctx.active_llm());
 
     // fresh context, one depth deeper, on its own lane
-    let lane = ctx
-        .lane_counter
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        + 1;
     let sub_ctx = Context {
         llm,
         llm_override: std::sync::RwLock::new(None),
-        sessions: tokio::sync::Mutex::new(log),
+        sessions: Arc::new(tokio::sync::Mutex::new(log)),
         tools: builtin_registry(),
         audit: crate::audit::AuditLog::new(),
         permissions: crate::permissions::Permissions::load(&ctx.cwd),
@@ -262,8 +336,17 @@ async fn spawn_one(ctx: &Context, prompt: &str, subagent_type: Option<&str>) -> 
         live_sink: std::sync::OnceLock::new(),
         models: ctx.models.clone(),
     };
+    (sub_id, sub_ctx)
+}
 
-    let sub_ctx = Arc::new(sub_ctx);
+/// Drive a built child context through one turn — SubagentStart/Stop hooks
+/// wrap the run and the final assistant text becomes the ToolResult.
+async fn run_spawn(
+    sub_ctx: Arc<Context>,
+    prompt: String,
+    sink: Option<Arc<dyn Observer>>,
+) -> ToolResult {
+    let lane = sub_ctx.lane;
     let _ = sub_ctx
         .hooks
         .fire(
@@ -278,10 +361,10 @@ async fn spawn_one(ctx: &Context, prompt: &str, subagent_type: Option<&str>) -> 
     let agent = AgentLoop::new(sub_ctx.clone()).with_max_iterations(24);
     let obs = RelayObserver {
         text: std::sync::Mutex::new(String::new()),
-        sink: ctx.live_sink.get().cloned(),
+        sink,
         lane,
     };
-    let outcome = agent.run_turn(prompt, &obs).await;
+    let outcome = agent.run_turn(&prompt, &obs).await;
     let _ = sub_ctx
         .hooks
         .fire(
@@ -304,5 +387,95 @@ async fn spawn_one(ctx: &Context, prompt: &str, subagent_type: Option<&str>) -> 
             output: format!("sub-agent failed: {e:#}"),
             ok: false,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::stream;
+    use sunmao_llm::types::Usage;
+    use sunmao_llm::{ChatRequest, DeltaStream, ProviderAdapter, StreamDelta};
+
+    struct MockProvider;
+    #[async_trait::async_trait]
+    impl ProviderAdapter for MockProvider {
+        async fn stream(&self, _req: ChatRequest<'_>) -> anyhow::Result<DeltaStream> {
+            Ok(Box::pin(stream::iter(vec![
+                Ok(StreamDelta::Content("bg done".into())),
+                Ok(StreamDelta::Finish {
+                    reason: Some("stop".into()),
+                    usage: Some(Usage::default()),
+                }),
+            ])))
+        }
+    }
+
+    /// run_in_background returns a task id at once, and the finished child
+    /// pushes a TaskDone fact into the *parent's* session log — the fold
+    /// then surfaces it as a tagged user message (push delivery, no polling).
+    #[tokio::test]
+    async fn bg_task_pushes_result_into_parent_log() {
+        let dir = std::env::temp_dir().join(format!("sunmao-bg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ctx = Context::new(
+            Arc::new(MockProvider),
+            SessionLog::ephemeral(),
+            builtin_registry(),
+            dir.clone(),
+        );
+
+        let res = TaskTool
+            .call(
+                json!({"prompt": "scout it", "run_in_background": true}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(res.ok);
+        assert!(res.output.contains("sub-"), "call returns the task id");
+
+        // the detached child appends TaskDone once it finishes — give it a
+        // moment, then check the parent's fold.
+        let mut found = false;
+        for _ in 0..200 {
+            let evs = ctx.sessions.lock().await.events().await.unwrap_or_default();
+            found = evs
+                .iter()
+                .any(|e| matches!(e, SessionEvent::TaskDone { ok: true, .. }));
+            if found {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(found, "bg task must append TaskDone to the parent log");
+
+        let msgs = ctx.sessions.lock().await.messages().await.unwrap();
+        assert!(
+            msgs.iter().any(|m| m
+                .content
+                .as_deref()
+                .is_some_and(|c| c.contains("<task-result") && c.contains("bg done"))),
+            "TaskDone must fold into a tagged user message"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Two spawns in the same millisecond used to share `sub-<ms>.jsonl` —
+    /// lane suffix must keep session files distinct.
+    #[tokio::test]
+    async fn spawn_ids_are_unique_within_a_millisecond() {
+        let dir = std::env::temp_dir().join(format!("sunmao-uniq-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ctx = Context::new(
+            Arc::new(MockProvider),
+            SessionLog::ephemeral(),
+            builtin_registry(),
+            dir.clone(),
+        );
+        let (a, _) = spawn_parts(&ctx, None).await;
+        let (b, _) = spawn_parts(&ctx, None).await;
+        assert_ne!(a, b, "concurrent spawns must not share a session id");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

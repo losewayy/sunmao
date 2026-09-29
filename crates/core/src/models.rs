@@ -212,6 +212,16 @@ impl ModelResolver {
         out.sort();
         out
     }
+
+    /// Completable selectors for `/model` argument completion: `@route`
+    /// names and `provider/` prefixes — model ids live provider-side and
+    /// can't be enumerated, so the prefix is the furthest we complete.
+    pub fn selectors(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.file.routes.keys().map(|r| format!("@{r}")).collect();
+        out.extend(self.file.providers.keys().map(|p| format!("{p}/")));
+        out.sort();
+        out
+    }
 }
 
 #[cfg(test)]

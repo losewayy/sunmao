@@ -200,7 +200,7 @@ pub async fn run(base_url: &str, api_key: &str, model: &str) -> Result<()> {
                     responder.respond(v2::PromptResponse::new(user_msg_id))?;
 
                     let session_id = req.session_id.clone();
-                    if let Err(e) = cx.spawn({
+                    cx.spawn({
                         let session = session.clone();
                         let cx = cx.clone();
                         async move {
@@ -231,9 +231,7 @@ pub async fn run(base_url: &str, api_key: &str, model: &str) -> Result<()> {
                             ));
                             Ok(())
                         }
-                    }) {
-                        return Err(e);
-                    }
+                    })?;
                     Ok(())
                 }
             },

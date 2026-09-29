@@ -12,10 +12,17 @@ use super::theme::{self, THEME};
 use super::wrap;
 
 pub fn draw(f: &mut ratatui::Frame, app: &mut App) {
+    // menu rows: border(1) + title+hint(1) + blank(1) + optional search row
+    // + items(≤8) + scroll indicator(if any) + bottom border(1)
     let menu_rows = app
         .slash_menu
         .as_ref()
-        .map(|m| m.matches.len().min(8) as u16)
+        .map(|m| {
+            let items = m.matches.len().min(8) as u16;
+            let search_row = u16::from(!m.fragment.is_empty());
+            let more_row = u16::from(m.matches.len() > 8 || m.selected >= 8);
+            4 + items + more_row + search_row
+        })
         .unwrap_or(0);
     let card_rows = if app.focus == Focus::Approval { 4 } else { 0 };
     let input_rows = (app.input.lines().count().max(1) as u16 + 2).clamp(3, 8);
@@ -83,23 +90,54 @@ fn draw_transcript(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_slash_menu(f: &mut ratatui::Frame, m: &SlashMenu, area: Rect) {
-    let rows: Vec<Line> = m
-        .matches
-        .iter()
-        .take(8)
-        .enumerate()
-        .map(|(i, name)| {
-            let sel = i == m.selected;
-            Line::from(Span::styled(
-                format!("{} /{name}", if sel { "▸" } else { " " }),
-                if sel {
-                    Style::default().fg(THEME.hi).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(THEME.muted)
-                },
-            ))
-        })
-        .collect();
+    let width = area.width as usize;
+    let rule = "─".repeat(width);
+    let mut rows: Vec<Line> = vec![
+        Line::from(Span::styled(rule.clone(), Style::default().fg(THEME.user))),
+        Line::from(vec![
+            Span::styled(
+                " Commands".to_string(),
+                Style::default().fg(THEME.user).add_modifier(Modifier::BOLD),
+            ),
+            if m.fragment.is_empty() {
+                Span::styled("  (type to search)", Style::default().fg(THEME.faint))
+            } else {
+                Span::raw("")
+            },
+        ]),
+        Line::from(Span::styled(
+            " ↑↓ navigate · Enter select · Tab complete · Esc cancel",
+            Style::default().fg(THEME.faint),
+        )),
+        Line::from(""),
+    ];
+    if !m.fragment.is_empty() {
+        rows.push(Line::from(vec![
+            Span::styled(" Search: ", Style::default().fg(THEME.user)),
+            Span::styled(m.fragment.clone(), Style::default().fg(THEME.text)),
+        ]));
+    }
+    // windowed view: keep `selected` inside an 8-row window
+    let start = m.selected.saturating_sub(7).min(m.matches.len().saturating_sub(8));
+    let end = (start + 8).min(m.matches.len());
+    for (i, name) in m.matches.iter().enumerate().take(end).skip(start) {
+        let sel = i == m.selected;
+        rows.push(Line::from(Span::styled(
+            format!("{} /{name}", if sel { " ❯" } else { "  " }),
+            if sel {
+                Style::default().fg(THEME.hi).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(THEME.muted)
+            },
+        )));
+    }
+    if m.matches.len() > 8 {
+        rows.push(Line::from(Span::styled(
+            format!(" ▼ {} of {}", m.selected + 1, m.matches.len()),
+            Style::default().fg(THEME.faint),
+        )));
+    }
+    rows.push(Line::from(Span::styled(rule, Style::default().fg(THEME.user))));
     f.render_widget(Paragraph::new(rows), area);
 }
 

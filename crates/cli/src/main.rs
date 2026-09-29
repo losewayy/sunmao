@@ -39,6 +39,9 @@ struct Cli {
         default_value = "global:deepseek-v4.1-flash"
     )]
     model: String,
+    /// Provider dialect: openai (default) or anthropic.
+    #[arg(long, default_value = "openai", env = "SUNMAO_PROVIDER")]
+    provider: String,
     /// Session log directory.
     #[arg(long, default_value = ".sunmao/sessions")]
     session_dir: PathBuf,
@@ -135,7 +138,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if cli.acp {
-        return acp::run(&cli.base_url, &cli.api_key, &cli.model)
+        return acp::run(&cli.base_url, &cli.api_key, &cli.model, &cli.provider)
             .await
             .map_err(|e| anyhow::anyhow!("acp: {e}"));
     }
@@ -148,7 +151,14 @@ async fn main() -> anyhow::Result<()> {
 
     let cwd = cli.cwd.canonicalize().context("bad --cwd")?;
 
-    let llm = Arc::new(OaiClient::new(&cli.base_url, &cli.api_key, &cli.model));
+    let llm: Arc<dyn sunmao_llm::ProviderAdapter> = match cli.provider.as_str() {
+        "anthropic" => Arc::new(sunmao_llm::AnthropicClient::new(
+            &cli.base_url,
+            &cli.api_key,
+            &cli.model,
+        )),
+        _ => Arc::new(OaiClient::new(&cli.base_url, &cli.api_key, &cli.model)),
+    };
     let (sessions, resumed) = match &cli.resume {
         Some(r) => {
             let p = PathBuf::from(r);

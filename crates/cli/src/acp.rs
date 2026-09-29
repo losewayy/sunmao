@@ -26,6 +26,7 @@ struct SunmaoAgent {
     base_url: String,
     api_key: String,
     model: String,
+    provider: String,
 }
 
 struct AcpObserver {
@@ -67,16 +68,34 @@ impl Observer for AcpObserver {
     }
 }
 
+impl SunmaoAgent {
+    fn new_llm(&self) -> Arc<dyn sunmao_llm::ProviderAdapter> {
+        match self.provider.as_str() {
+            "anthropic" => Arc::new(sunmao_llm::AnthropicClient::new(
+                self.base_url.clone(),
+                self.api_key.clone(),
+                self.model.clone(),
+            )),
+            _ => Arc::new(OaiClient::new(
+                self.base_url.clone(),
+                self.api_key.clone(),
+                self.model.clone(),
+            )),
+        }
+    }
+}
+
 fn invalid_params(msg: impl ToString) -> Error {
     Error::invalid_params().data(msg.to_string())
 }
 
-pub async fn run(base_url: &str, api_key: &str, model: &str) -> Result<()> {
+pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> Result<()> {
     let agent = Arc::new(SunmaoAgent {
         sessions: Mutex::new(HashMap::new()),
         base_url: base_url.to_string(),
         api_key: api_key.to_string(),
         model: model.to_string(),
+        provider: provider.to_string(),
     });
 
     Agent
@@ -112,11 +131,7 @@ pub async fn run(base_url: &str, api_key: &str, model: &str) -> Result<()> {
                             .as_millis()
                     );
                     let cwd = req.cwd.clone().into_inner();
-                    let llm = Arc::new(OaiClient::new(
-                        agent.base_url.clone(),
-                        agent.api_key.clone(),
-                        agent.model.clone(),
-                    ));
+                    let llm = agent.new_llm();
                     let sessions_dir = cwd.join(".sunmao").join("sessions");
                     let log = match SessionLog::open(&sessions_dir, &id).await {
                         Ok(l) => l,
@@ -185,6 +200,57 @@ pub async fn run(base_url: &str, api_key: &str, model: &str) -> Result<()> {
                         })
                         .collect();
                     responder.respond(v2::ListSessionsResponse::new(infos))
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = agent.clone();
+                async move |req: v2::ResumeSessionRequest,
+                            responder: Responder<v2::ResumeSessionResponse>,
+                            _cx: V2ConnectionTo<Client>| {
+                    let id = req.session_id.to_string();
+                    // already live in this process?
+                    if agent.sessions.lock().unwrap().contains_key(&id) {
+                        return responder.respond(v2::ResumeSessionResponse::new());
+                    }
+                    // reopen the on-disk log — events fold back into messages
+                    let log_path = req
+                        .cwd
+                        .clone()
+                        .into_inner()
+                        .join(".sunmao")
+                        .join("sessions")
+                        .join(format!("{id}.jsonl"));
+                    if !log_path.exists() {
+                        return responder.respond_with_error(invalid_params(format!(
+                            "no session log for {id}"
+                        )));
+                    }
+                    let cwd = req.cwd.clone().into_inner();
+                    let llm = agent.new_llm();
+                    let log = match SessionLog::open_path(&log_path).await {
+                        Ok(l) => l,
+                        Err(e) => {
+                            return responder
+                                .respond_with_error(invalid_params(format!("open log: {e:#}")))
+                        }
+                    };
+                    let mut registry = builtin_registry();
+                    for t in sunmao_core::mcp::connect_all(&cwd).await {
+                        registry.register_boxed(t);
+                    }
+                    let ctx = Arc::new(Context::new(llm, log, registry, cwd));
+                    agent.sessions.lock().unwrap().insert(
+                        id,
+                        Arc::new(Mutex::new(SessionState {
+                            agent: AgentLoop::new(ctx.clone()),
+                            ctx,
+                            next_msg: 0,
+                        })),
+                    );
+                    responder.respond(v2::ResumeSessionResponse::new())
                 }
             },
             agent_client_protocol::on_receive_request!(),

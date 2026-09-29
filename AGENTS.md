@@ -4,6 +4,31 @@ Read this before touching code. sunmao is a Rust agent harness kernel where
 the *seams are the architecture* — changes that violate a seam invariant are
 bugs even if they compile.
 
+## 隐私红线（最高优先级——先于一切其它规矩）
+
+**开源开源的是代码，不是人生。** 这个仓是公开仓；任何进入它的内容——
+commit、git 历史、`.crate` 包体、文档、注释、CI 产物——**一律不得携带
+作者私人信息**。违规即事故，无例外。
+
+禁止入库的（出现即红线）：
+- 个人动机/履历/求职/面试类文档（`docs/WHY.md` 已因此永久 gitignore）
+- 交接底稿/内部工作笔记（`docs/HANDOFF.md` 同上——它们存在本地，永不进仓）
+- 本机绝对路径（`F:\projects\`、`D:\worktable\`、`C:\Users\oooo`——
+  含代码注释、文档、错误示例、CI 配置）
+- 真实姓名、私人邮箱（GitHub noreply 别名除外）、电话、住址
+- 未公开的内部项目代号、内部事件复盘
+- 任何凭据：API key、token、cookie、`.env`、SSH 私钥
+
+**push 或 `cargo publish` 前强制闸**（一项不过就不许推）：
+1. `git log --all --name-only | sort -u` 全历史文件名过一遍——敏感文件名零命中
+2. `git grep` 全历史扫：绝对路径盘符、私人代号、履历类词汇
+3. `.gitignore` 已覆盖私人文档；**"先删文件再 commit"不算修复**——历史仍携带
+4. `cargo package --list` 确认打进 `.crate` 的每个文件都过了闸——
+   包体上传后**不可删除**，只能 yank
+5. 仓内出现过的隐私内容，唯一根治是**重写历史/删库重建**；追加删除 commit 无效
+
+发现泄露：立即上报，说清泄露面+根治方案，不许"删一个文件就算修好"。
+
 ## Workspace
 
 ```text

@@ -356,24 +356,76 @@ async fn main() -> anyhow::Result<()> {
         if let Some(cmd_line) = line.strip_prefix('/') {
             let name = cmd_line.split_whitespace().next().unwrap_or("");
             let rest = cmd_line[name.len()..].trim();
-            if line == "/compact" {
-                match agent.compact(&*observer, "manual").await {
-                    Ok(s) if s.is_empty() => println!("[compacted: nothing to fold]"),
-                    Ok(s) => println!("[compacted]\n{s}"),
-                    Err(e) => eprintln!("[compact failed] {e:#}"),
+            match name {
+                "quit" | "exit" | "q" => break,
+                "compact" => {
+                    match agent.compact(&*observer, "manual").await {
+                        Ok(s) if s.is_empty() => println!("[compacted: nothing to fold]"),
+                        Ok(s) => println!("[compacted]\n{s}"),
+                        Err(e) => eprintln!("[compact failed] {e:#}"),
+                    }
+                    continue;
                 }
-                continue;
+                "help" | "h" | "?" => {
+                    println!(
+                        "commands — /compact · /model [sel] · /resume [id] · /sessions · /help · /quit\n\
+                         `!cmd` runs locally; /name resolves .sunmao/commands + .claude/commands"
+                    );
+                    continue;
+                }
+                "model" => {
+                    if rest.is_empty() {
+                        let choices = agent.model_choices();
+                        if choices.is_empty() {
+                            println!("[no models.json — session model only]");
+                        } else {
+                            println!("available models:\n{}", choices.join("\n"));
+                        }
+                    } else {
+                        match agent.swap_model(rest) {
+                            Some(label) => {
+                                agent.record_model_change(rest, &label).await;
+                                println!("[model → {label}]");
+                            }
+                            None => {
+                                println!("[unknown selector: {rest} — try /model for the list]")
+                            }
+                        }
+                    }
+                    continue;
+                }
+                "sessions" => {
+                    list_sessions(&cwd.join(".sunmao").join("sessions"))?;
+                    continue;
+                }
+                "resume" => {
+                    if rest.is_empty() {
+                        list_sessions(&cwd.join(".sunmao").join("sessions"))?;
+                    } else {
+                        let p = std::path::PathBuf::from(rest);
+                        let path = if p.exists() {
+                            p
+                        } else {
+                            cwd.join(".sunmao/sessions").join(format!("{rest}.jsonl"))
+                        };
+                        match sunmao_core::SessionLog::open_path(&path).await {
+                            Ok(log) => {
+                                let events = agent.swap_session(log).await;
+                                println!("[resumed {rest} — {} events folded in]", events.len());
+                            }
+                            Err(e) => eprintln!("[resume failed] {e:#}"),
+                        }
+                    }
+                    continue;
+                }
+                _ => {}
             }
             match tui::slash::command_body(&cwd, name) {
                 Some(body) => {
                     let prompt = if rest.is_empty() {
                         body
                     } else {
-                        format!(
-                            "{body}
-
-{rest}"
-                        )
+                        format!("{body}\n\n{rest}")
                     };
                     if let Err(e) = agent.run_turn(&prompt, &*observer).await {
                         eprintln!("[error] {e:#}");

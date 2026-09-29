@@ -5,7 +5,6 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
@@ -174,63 +173,98 @@ impl SessionLog {
 
     /// Fold the whole log into the message list the provider sees.
     /// Durable facts → protocol messages, in order.
+    ///
+    /// Crash tolerance, both directions: a corrupt event line is skipped
+    /// with a warning (one bad write must not brick every future turn), and
+    /// a crash-stranded assistant tool_call gets a synthetic
+    /// "[interrupted]" tool_result — providers reject transcripts whose
+    /// tool_use has no matching result.
     pub async fn messages(&self) -> anyhow::Result<Vec<Message>> {
         let mut out = Vec::new();
         if self.file.is_none() {
             // ephemeral: fold the in-memory buffer through the same reduce
             for ev in &self.mem {
-                match ev {
-                    SessionEvent::Message { message } => out.push(message.clone()),
-                    SessionEvent::ToolResult {
-                        call_id, output, ..
-                    } => out.push(Message::tool_result(call_id.clone(), output.clone())),
-                    SessionEvent::Compacted { summary } => {
-                        out.clear();
-                        out.push(Message::system(format!(
-                            "[context compacted]
-{summary}"
-                        )));
-                    }
-                    SessionEvent::LocalShell {
-                        command,
-                        exit_code,
-                        output,
-                    } => out.push(local_shell_message(command, *exit_code, output)),
-                    SessionEvent::TaskDone { id, ok, output } => {
-                        out.push(task_done_message(id, *ok, output))
-                    }
-                    _ => {}
-                }
+                reduce_event(&mut out, ev);
             }
-            return Ok(out);
+            return Ok(repair_dangling_calls(out));
         }
         let file = tokio::fs::File::open(&self.path).await?;
         let mut lines = tokio::io::BufReader::new(file).lines();
         while let Some(line) = lines.next_line().await? {
-            let ev: SessionEvent = serde_json::from_str(&line)
-                .with_context(|| format!("corrupt event line: {line}"))?;
-            match ev {
-                SessionEvent::Message { message } => out.push(message),
-                SessionEvent::ToolResult {
-                    call_id, output, ..
-                } => out.push(Message::tool_result(call_id, output)),
-                SessionEvent::Compacted { summary } => {
-                    out.clear();
-                    out.push(Message::system(format!("[context compacted]\n{summary}")));
+            match serde_json::from_str::<SessionEvent>(&line) {
+                Ok(ev) => reduce_event(&mut out, &ev),
+                Err(e) => {
+                    tracing::warn!("{}: skipping corrupt event line — {e}", self.path.display())
                 }
-                SessionEvent::LocalShell {
-                    command,
-                    exit_code,
-                    output,
-                } => out.push(local_shell_message(&command, exit_code, &output)),
-                SessionEvent::TaskDone { id, ok, output } => {
-                    out.push(task_done_message(&id, ok, &output))
-                }
-                _ => {}
             }
         }
-        Ok(out)
+        Ok(repair_dangling_calls(out))
     }
+}
+
+/// One durable fact → zero or one protocol messages. Shared by both
+/// `messages()` paths so ephemeral and file-backed folds can't drift apart.
+fn reduce_event(out: &mut Vec<Message>, ev: &SessionEvent) {
+    match ev {
+        SessionEvent::Message { message } => out.push(message.clone()),
+        SessionEvent::ToolResult {
+            call_id, output, ..
+        } => out.push(Message::tool_result(call_id.clone(), output.clone())),
+        SessionEvent::Compacted { summary } => {
+            out.clear();
+            out.push(Message::system(format!("[context compacted]\n{summary}")));
+        }
+        SessionEvent::LocalShell {
+            command,
+            exit_code,
+            output,
+        } => out.push(local_shell_message(command, *exit_code, output)),
+        SessionEvent::TaskDone { id, ok, output } => out.push(task_done_message(id, *ok, output)),
+        _ => {}
+    }
+}
+
+/// A crash mid-turn (process kill, power loss) strands an assistant
+/// tool_call with no ToolResult event behind it — and providers (Anthropic
+/// especially) hard-reject a transcript whose tool_use lacks its result.
+/// Fold-time repair: every orphaned call id gets a legible interrupted
+/// result, appended after the run so the pairing stays adjacent.
+fn repair_dangling_calls(msgs: Vec<Message>) -> Vec<Message> {
+    let mut out: Vec<Message> = Vec::with_capacity(msgs.len() + 2);
+    // call ids seen on the last assistant message that still owe a result
+    let mut pending: Vec<String> = Vec::new();
+    for m in msgs {
+        match m.role {
+            sunmao_llm::types::Role::Assistant => {
+                if let Some(calls) = &m.tool_calls {
+                    pending.extend(calls.iter().map(|c| c.id.clone()));
+                }
+                out.push(m);
+            }
+            sunmao_llm::types::Role::Tool => {
+                if let Some(id) = &m.tool_call_id {
+                    pending.retain(|p| p != id);
+                }
+                out.push(m);
+            }
+            _ => {
+                for id in pending.drain(..) {
+                    out.push(Message::tool_result(
+                        id,
+                        "[interrupted: session ended before this call returned]",
+                    ));
+                }
+                out.push(m);
+            }
+        }
+    }
+    for id in pending.drain(..) {
+        out.push(Message::tool_result(
+            id,
+            "[interrupted: session ended before this call returned]",
+        ));
+    }
+    out
 }
 
 /// `!` local-shell facts fold in as a tagged user message — the model sees
@@ -397,6 +431,102 @@ mod tests {
                 ..
             }
         ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A corrupt JSONL line must not brick every future turn — the fold
+    /// skips it and keeps the good events on both sides.
+    #[tokio::test]
+    async fn corrupt_line_is_skipped_not_fatal() {
+        let dir = std::env::temp_dir().join(format!("sunmao-test-corrupt-{}", std::process::id()));
+        let mut log = SessionLog::open(&dir, "c").await.unwrap();
+        log.append(&SessionEvent::Message {
+            message: Message::user("before"),
+        })
+        .await
+        .unwrap();
+        {
+            use tokio::io::AsyncWriteExt;
+            let mut f = tokio::fs::OpenOptions::new()
+                .append(true)
+                .open(log.path())
+                .await
+                .unwrap();
+            f.write_all(b"{not json\n").await.unwrap();
+        }
+        log.append(&SessionEvent::Message {
+            message: Message::user("after"),
+        })
+        .await
+        .unwrap();
+        drop(log);
+
+        let log = SessionLog::open(&dir, "c").await.unwrap();
+        let msgs = log.messages().await.unwrap();
+        let texts: Vec<_> = msgs.iter().filter_map(|m| m.content.as_deref()).collect();
+        assert_eq!(texts, vec!["before", "after"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A crash-stranded assistant tool_call (no ToolResult event) would make
+    /// providers reject the whole transcript — the fold synthesizes an
+    /// interrupted result so resume-after-crash still works. Both paths.
+    #[tokio::test]
+    async fn dangling_tool_call_gets_interrupted_result() {
+        let call = ToolCall {
+            id: "c-dead".into(),
+            kind: "function".into(),
+            function: sunmao_llm::types::FunctionCall {
+                name: "Bash".into(),
+                arguments: "{}".into(),
+            },
+        };
+        let evs = [
+            SessionEvent::Message {
+                message: Message::user("run it"),
+            },
+            SessionEvent::Message {
+                message: Message::assistant(None, vec![call.clone()]),
+            },
+            // crash happens here — no ToolResult event
+            SessionEvent::Message {
+                message: Message::user("next prompt after resume"),
+            },
+        ];
+
+        // ephemeral path
+        let mut log = SessionLog::ephemeral();
+        for e in &evs {
+            log.append(e).await.unwrap();
+        }
+        let msgs = log.messages().await.unwrap();
+        let result = msgs
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some("c-dead"))
+            .expect("orphaned tool_call must gain a synthetic result");
+        assert!(result.content.as_deref().unwrap().contains("interrupted"));
+        // the repair lands before the following user message (adjacency)
+        let idx = msgs
+            .iter()
+            .position(|m| m.tool_call_id.as_deref() == Some("c-dead"))
+            .unwrap();
+        assert_eq!(msgs[idx + 1].role, sunmao_llm::types::Role::User);
+
+        // file-backed path
+        let dir = std::env::temp_dir().join(format!("sunmao-test-dangle-{}", std::process::id()));
+        let mut log = SessionLog::open(&dir, "d").await.unwrap();
+        for e in &evs {
+            log.append(e).await.unwrap();
+        }
+        drop(log);
+        let log = SessionLog::open(&dir, "d").await.unwrap();
+        let msgs = log.messages().await.unwrap();
+        assert!(
+            msgs.iter()
+                .any(|m| m.tool_call_id.as_deref() == Some("c-dead")
+                    && m.content.as_deref().unwrap().contains("interrupted")),
+            "file-backed fold must repair dangling calls too"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -31,6 +31,10 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+/// A hook process that outlives this budget is abandoned — hooks advise
+/// the loop, they must never be able to hang it.
+const HOOK_TIMEOUT_SECS: u64 = 60;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookEvent {
     SessionStart,
@@ -376,7 +380,18 @@ async fn run_hook_command(
             err_w,
         );
         let rt = tokio::runtime::Handle::current();
-        let code = rt.block_on(exec);
+        let code = match rt.block_on(tokio::time::timeout(
+            std::time::Duration::from_secs(HOOK_TIMEOUT_SECS),
+            exec,
+        )) {
+            Ok(code) => code,
+            Err(_) => {
+                // a hung hook must not stall the agent. The feed thread is
+                // deliberately NOT joined — joining a still-writing stdin
+                // would re-create the stall we're escaping.
+                anyhow::bail!("hook timed out after {HOOK_TIMEOUT_SECS}s");
+            }
+        };
         let _ = feed_thread.join();
         let mut out = Vec::new();
         let mut err = Vec::new();

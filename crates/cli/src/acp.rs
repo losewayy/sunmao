@@ -270,6 +270,13 @@ pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> 
                     });
                     ctx_raw.models = Some(agent.new_resolver(&cwd));
                     let ctx = Arc::new(ctx_raw);
+                    // sub-agent lifecycle + bg task results relay to the
+                    // client as session updates, same as the REPL's sink.
+                    let _ = ctx.live_sink.set(Arc::new(AcpObserver {
+                        connection: cx.clone(),
+                        session_id: session_id.clone(),
+                        msg_counter: std::sync::atomic::AtomicU64::new(0),
+                    }));
                     {
                         let mut l = ctx.sessions.lock().await;
                         let _ = l
@@ -373,6 +380,11 @@ pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> 
                     });
                     ctx_raw.models = Some(agent.new_resolver(&ctx_raw.cwd.clone()));
                     let ctx = Arc::new(ctx_raw);
+                    let _ = ctx.live_sink.set(Arc::new(AcpObserver {
+                        connection: cx.clone(),
+                        session_id: req.session_id.clone(),
+                        msg_counter: std::sync::atomic::AtomicU64::new(0),
+                    }));
                     agent.sessions.lock().unwrap().insert(
                         id,
                         Arc::new(Mutex::new(SessionState {

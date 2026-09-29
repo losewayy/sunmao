@@ -15,8 +15,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use crossterm::event::{
-    DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEvent,
-    KeyEventKind, KeyModifiers,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
+    EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
 };
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, BeginSynchronizedUpdate, EndSynchronizedUpdate,
@@ -44,6 +44,8 @@ enum Msg {
     ApprovalReq(ApprovalReq),
     /// git branch probe finished — footer shows it next to the cwd
     Branch(Option<String>),
+    /// mouse wheel — scrolls the transcript directly
+    Wheel(i16),
 }
 
 /// A risky tool call suspended on user verdict.
@@ -105,10 +107,14 @@ pub async fn run(
     // bracketed paste ON — without it terminals send paste as key events
     // and Msg::Paste never fires (the bulk-insert path is dead code).
     let _ = io::stdout().execute(EnableBracketedPaste);
+    // mouse capture: wheel scrolls the transcript; clicks we ignore (text
+    // selection on the alternate screen is the terminal's own business).
+    let _ = io::stdout().execute(EnableMouseCapture);
     let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
     let mut term = Terminal::new(backend)?;
     let res = run_inner(&mut term, agent, model, cwd, rx_approval, replay).await;
     let _ = io::stdout().execute(DisableBracketedPaste);
+    let _ = io::stdout().execute(DisableMouseCapture);
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
     res
@@ -242,6 +248,11 @@ async fn run_inner(
                     // Press/Repeat produce input, else every char doubles.
                     Event::Key(k) if k.kind != KeyEventKind::Release => Msg::Key(k),
                     Event::Paste(p) => Msg::Paste(p),
+                    Event::Mouse(m) => match m.kind {
+                        MouseEventKind::ScrollUp => Msg::Wheel(3),
+                        MouseEventKind::ScrollDown => Msg::Wheel(-3),
+                        _ => continue,
+                    },
                     _ => continue,
                 };
                 if tx_msg.send(m).is_err() {
@@ -328,6 +339,18 @@ async fn run_inner(
             },
             Some(Msg::Note(note)) => app.push_note(&note),
             Some(Msg::Branch(b)) => app.git_branch = b,
+            Some(Msg::Wheel(d)) => {
+                // wheel: scrolls transcript; in the viewer it scrolls that.
+                if app.focus == Focus::Viewer {
+                    if let Some(v) = &mut app.viewer {
+                        v.scroll = v.scroll.saturating_add_signed(-d);
+                    }
+                } else if d > 0 {
+                    app.scroll_back = app.scroll_back.saturating_add(d as u16);
+                } else {
+                    app.scroll_back = app.scroll_back.saturating_sub(-d as u16);
+                }
+            }
             Some(Msg::Paste(p)) => app.insert_str(&p),
             Some(Msg::Key(k)) => {
                 if handle_key(&mut app, k, &tx_input, &tx_cancel) {

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": ["Bash(cargo *)", "Bash(git status*)", "Read"],
+    "ask": ["Bash(git push*)", "Write(./src/**)"],
+    "deny": ["Bash(rm -rf *)", "Bash(format *)", "Bash(curl *)"]
+  }
+}

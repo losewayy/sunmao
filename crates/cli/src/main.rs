@@ -17,7 +17,7 @@ mod dataflow;
 mod tui;
 
 #[derive(Parser)]
-#[command(name = "sunmao", about = "agent harness kernel — 榫卯")]
+#[command(name = "sunmao", version, about = "agent harness kernel — 榫卯")]
 struct Cli {
     /// Launch the ratatui TUI instead of the REPL.
     #[arg(long)]

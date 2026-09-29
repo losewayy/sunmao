@@ -185,6 +185,20 @@ impl SunmaoAgent {
             )),
         }
     }
+
+    /// Model routing seam — same resolution as every other frontend.
+    fn new_resolver(&self, cwd: &std::path::Path) -> Arc<sunmao_core::models::ModelResolver> {
+        Arc::new(sunmao_core::models::ModelResolver::load(
+            cwd,
+            sunmao_core::models::ProviderDef {
+                base_url: self.base_url.clone(),
+                api_key_env: None,
+                api_key: Some(self.api_key.clone()),
+                dialect: self.provider.clone(),
+            },
+            "default",
+        ))
+    }
 }
 
 fn invalid_params(msg: impl ToString) -> Error {
@@ -252,6 +266,7 @@ pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> 
                         cx: cx.clone(),
                         session_id: session_id.clone(),
                     });
+                    ctx_raw.models = Some(agent.new_resolver(&cwd));
                     let ctx = Arc::new(ctx_raw);
                     {
                         let mut l = ctx.sessions.lock().await;
@@ -354,6 +369,7 @@ pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> 
                         cx: cx.clone(),
                         session_id: req.session_id.clone(),
                     });
+                    ctx_raw.models = Some(agent.new_resolver(&ctx_raw.cwd.clone()));
                     let ctx = Arc::new(ctx_raw);
                     agent.sessions.lock().unwrap().insert(
                         id,

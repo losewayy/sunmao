@@ -1,5 +1,7 @@
 //! Named sub-agent definitions — `.sunmao/agents/*.md`, `.claude/agents/*.md`.
-//! Frontmatter `name`/`description`, body becomes the sub-agent's system prompt.
+//! Frontmatter `name`/`description`/`model`, body becomes the sub-agent's
+//! system prompt. `model` is a `models.json` selector (`provider/model`,
+//! bare model id, or `@route`) — absent means inherit the parent's model.
 
 use std::path::Path;
 
@@ -7,6 +9,8 @@ pub struct AgentDef {
     pub name: String,
     pub description: String,
     pub system_prompt: String,
+    /// Optional model selector resolved through `ModelResolver`.
+    pub model: Option<String>,
 }
 
 /// Load all agent definitions under the convention dirs.
@@ -45,9 +49,10 @@ pub fn load_all(cwd: &Path) -> Vec<AgentDef> {
 fn parse(text: &str, path: &Path) -> Option<AgentDef> {
     let mut name = path.file_stem()?.to_string_lossy().to_string();
     let mut desc = String::new();
+    let mut model = None;
     let mut body = text;
 
-    // YAML-lite frontmatter: --- name: x description: y ---
+    // YAML-lite frontmatter: --- name: x description: y model: @route ---
     if let Some(rest) = text.strip_prefix("---") {
         if let Some(end) = rest.find("\n---") {
             for line in rest[..end].lines() {
@@ -57,6 +62,12 @@ fn parse(text: &str, path: &Path) -> Option<AgentDef> {
                 if let Some(v) = line.strip_prefix("description:") {
                     desc = v.trim().to_string();
                 }
+                if let Some(v) = line.strip_prefix("model:") {
+                    let v = v.trim();
+                    if !v.is_empty() {
+                        model = Some(v.to_string());
+                    }
+                }
             }
             body = &rest[end + 4..];
         }
@@ -65,5 +76,6 @@ fn parse(text: &str, path: &Path) -> Option<AgentDef> {
         name,
         description: desc,
         system_prompt: body.trim().to_string(),
+        model,
     })
 }

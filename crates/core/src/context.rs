@@ -53,6 +53,10 @@ pub struct Context {
     /// exists; first install wins, `None` = discard (the historical
     /// behaviour for `-p` and tests).
     pub live_sink: std::sync::OnceLock<Arc<dyn crate::agent::Observer>>,
+    /// Model routing seam — `models.json` + agent `model:` selectors resolve
+    /// through it. `None` = single-model session (the `llm` field is the
+    /// only adapter); sub-agent spawns then always inherit.
+    pub models: Option<Arc<crate::models::ModelResolver>>,
 }
 
 impl Context {
@@ -79,6 +83,7 @@ impl Context {
                 std::collections::HashSet::new(),
             )),
             live_sink: std::sync::OnceLock::new(),
+            models: None,
         }
     }
 

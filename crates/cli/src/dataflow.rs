@@ -27,7 +27,7 @@ pub async fn report(session_path: &Path) -> anyhow::Result<Value> {
         match ev {
             SessionEvent::Message { .. } => messages += 1,
             SessionEvent::Compacted { .. } => compactions += 1,
-            SessionEvent::ToolCall { .. } => {}
+            SessionEvent::Started { .. } | SessionEvent::ToolCall { .. } => {}
             SessionEvent::ToolResult {
                 name, ok, output, ..
             } => {
@@ -53,9 +53,9 @@ pub async fn report(session_path: &Path) -> anyhow::Result<Value> {
                 serde_json::from_str(v["call"]["function"]["arguments"].as_str().unwrap_or("{}"))
                     .unwrap_or(json!({}));
             match name {
-                "Read" => files_read.push(s(args, "path")),
-                "Write" | "Edit" => files_written.push(s(args, "path")),
-                "Bash" => shell_commands.push(s(args, "command")),
+                "Read" => files_read.push(s(&args, "path")),
+                "Write" | "Edit" => files_written.push(s(&args, "path")),
+                "Bash" => shell_commands.push(s(&args, "command")),
                 _ => {}
             }
         }

@@ -11,6 +11,7 @@ use sunmao_core::tool::builtin_registry;
 use sunmao_core::{Context, SessionLog};
 use sunmao_llm::OaiClient;
 
+mod dataflow;
 mod tui;
 
 #[derive(Parser)]
@@ -45,6 +46,9 @@ struct Cli {
     /// System prompt override.
     #[arg(long)]
     system: Option<String>,
+    /// Print a data-flow report for a session log file and exit.
+    #[arg(long)]
+    dataflow: Option<PathBuf>,
 }
 
 struct StdoutObserver {
@@ -111,6 +115,13 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
     let cli = Cli::parse();
+
+    if let Some(path) = &cli.dataflow {
+        let report = dataflow::report(path).await?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
     let cwd = cli.cwd.canonicalize().context("bad --cwd")?;
 
     let llm = Arc::new(OaiClient::new(&cli.base_url, &cli.api_key, &cli.model));

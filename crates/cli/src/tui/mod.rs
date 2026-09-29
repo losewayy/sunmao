@@ -599,6 +599,35 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
         KeyCode::Right => app.cursor = (app.cursor + 1).min(app.input.chars().count()),
         KeyCode::Home => app.cursor = 0,
         KeyCode::End => app.cursor = app.input.chars().count(),
+        // readline muscle memory: Ctrl+A/E = line ends, Ctrl+U = kill to
+        // start, Ctrl+W = kill word back. Char-indexed throughout.
+        KeyCode::Char('a') if k.modifiers.contains(KeyModifiers::CONTROL) => app.cursor = 0,
+        KeyCode::Char('e') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.cursor = app.input.chars().count()
+        }
+        KeyCode::Char('u') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+            // kill everything before the cursor
+            let byte_idx = app::char_to_byte(&app.input, app.cursor);
+            app.input.replace_range(..byte_idx, "");
+            app.cursor = 0;
+            app.refresh_slash_menu();
+        }
+        KeyCode::Char('w') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+            // kill the word back: trailing spaces, then non-space run
+            let chars: Vec<char> = app.input.chars().collect();
+            let mut i = app.cursor.min(chars.len());
+            while i > 0 && chars[i - 1].is_whitespace() {
+                i -= 1;
+            }
+            while i > 0 && !chars[i - 1].is_whitespace() {
+                i -= 1;
+            }
+            let from = app::char_to_byte(&app.input, i);
+            let to = app::char_to_byte(&app.input, app.cursor);
+            app.input.replace_range(from..to, "");
+            app.cursor = i;
+            app.refresh_slash_menu();
+        }
         KeyCode::Up => {
             if app.hist_idx.is_none() && !app.history.is_empty() {
                 app.hist_idx = Some(app.history.len() - 1);

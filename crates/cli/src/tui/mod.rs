@@ -354,7 +354,7 @@ fn scroll_key(app: &mut App, k: KeyEvent) -> bool {
 }
 
 fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
-    // slash popup holds the nav keys first
+    // slash popup holds the nav + completion keys first
     if app.slash_menu.is_some() {
         match k.code {
             KeyCode::Esc => {
@@ -373,7 +373,7 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
                 }
                 return false;
             }
-            KeyCode::Tab => {
+            KeyCode::Tab | KeyCode::Enter => {
                 if let Some(m) = &app.slash_menu {
                     let name = m.matches[m.selected].clone();
                     app.input = format!("/{name} ");

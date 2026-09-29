@@ -60,10 +60,13 @@ architecture: components joined by seams, every seam a contract.
   `~/.agents/skills`; slash commands from `commands/*.md`; sub-agent defs
   from `agents/*.md`; plugin bundles via `plugin.json`
 - **Frontends** — REPL (`sunmao`), one-shot (`sunmao -p`), TUI
-  (`sunmao --tui`, ratatui: block transcript with fold/copy/select,
-  card-style approval with parkable Esc, `/` slash popup, markdown-rendered
-  output, tool-call headers with arg digests + output preview panels,
-  tokyonight theme, multiline composer, CJK-correct cursor), ACP
+  (`sunmao --tui`, ratatui: block transcript with fold/copy/select and a
+  full-screen viewer, 3-option approval card (once/session/deny) with
+  parkable Esc, `/` slash popup, `!` local bash that folds into context,
+  `⚙` audit lines for hook facts, two-line footer with git branch +
+  context tokens, markdown-rendered output, tool-call headers with arg
+  digests + output preview panels, tokyonight theme, multiline composer,
+  grapheme-cluster wrapping, CJK-correct cursor), ACP
 
 ## Usage
 

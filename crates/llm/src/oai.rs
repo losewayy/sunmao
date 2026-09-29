@@ -86,7 +86,7 @@ impl OaiClient {
 
 /// Retryable provider failures: transport errors (connect/TLS/timeout) and
 /// 429/5xx status. Errors once deltas have flowed are fatal — we can't replay.
-fn retryable(e: &anyhow::Error) -> bool {
+pub(crate) fn retryable(e: &anyhow::Error) -> bool {
     let msg = e.to_string();
     msg.contains("provider request failed")
         || msg.starts_with("provider 429")

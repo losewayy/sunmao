@@ -3,11 +3,13 @@
 //! Hand-rolled SSE framing + incremental tool_call reassembly are the point:
 //! this crate is where sunmao owns the wire.
 
+pub mod anthropic;
 pub mod assemble;
 pub mod oai;
 pub mod sse;
 pub mod types;
 
+pub use anthropic::AnthropicClient;
 pub use oai::{ChatRequest, OaiClient};
 pub use sse::{SseEvent, SseParser};
 pub use types::*;

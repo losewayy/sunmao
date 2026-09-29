@@ -44,6 +44,8 @@ pub trait Observer: Send + Sync {
 pub struct AgentLoop {
     ctx: Arc<Context>,
     max_iterations: usize,
+    /// Estimated-token ceiling before auto-compaction (bytes/4 heuristic).
+    compact_threshold: usize,
 }
 
 impl AgentLoop {
@@ -51,12 +53,73 @@ impl AgentLoop {
         Self {
             ctx,
             max_iterations: 64,
+            compact_threshold: 180_000,
         }
     }
 
     pub fn with_max_iterations(mut self, n: usize) -> Self {
         self.max_iterations = n;
         self
+    }
+
+    pub fn with_compact_threshold(mut self, n: usize) -> Self {
+        self.compact_threshold = n;
+        self
+    }
+
+    /// Rough token estimate for the current transcript.
+    async fn est_tokens(&self) -> usize {
+        let msgs = self
+            .ctx
+            .sessions
+            .lock()
+            .await
+            .messages()
+            .await
+            .unwrap_or_default();
+        msgs.iter()
+            .map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0))
+            .sum::<usize>()
+            / 4
+    }
+
+    /// Ask the model to summarize the transcript, then commit a `Compacted`
+    /// boundary — the log fold turns it into a fresh system message.
+    pub async fn compact(&self, observer: &dyn Observer) -> anyhow::Result<()> {
+        let mut msgs = self.ctx.sessions.lock().await.messages().await?;
+        if msgs.is_empty() {
+            return Ok(());
+        }
+        msgs.push(Message::user(
+            "Summarize this conversation so far for context compaction: key decisions,              files touched, current state, and what remains. Be terse and factual.",
+        ));
+        let req = ChatRequest {
+            messages: &msgs,
+            tools: None,
+            max_tokens: Some(2048),
+            temperature: None,
+        };
+        let mut stream = self.ctx.llm.stream(req).await?;
+        let mut summary = String::new();
+        while let Some(d) = stream.next().await {
+            if let StreamDelta::Content(c) = d? {
+                summary.push_str(&c);
+            }
+        }
+        if summary.trim().is_empty() {
+            anyhow::bail!("compaction produced empty summary");
+        }
+        self.ctx
+            .sessions
+            .lock()
+            .await
+            .append(&SessionEvent::Compacted { summary })
+            .await?;
+        observer.on_event(&LiveEvent::ToolDone {
+            name: "compact".into(),
+            ok: true,
+        });
+        Ok(())
     }
 
     /// Run one turn: `input` is the user's message; returns when the model
@@ -76,6 +139,18 @@ impl AgentLoop {
 
         let mut outcome = TurnOutcome::Completed;
         for _ in 0..self.max_iterations {
+            if self.est_tokens().await > self.compact_threshold {
+                observer.on_event(&LiveEvent::ToolStart {
+                    name: "compact".into(),
+                });
+                if let Err(e) = self.compact(observer).await {
+                    observer.on_event(&LiveEvent::ToolDone {
+                        name: format!("compact failed: {e:#}"),
+                        ok: false,
+                    });
+                }
+            }
+
             let messages = self.ctx.sessions.lock().await.messages().await?;
             let decls = self.ctx.tools.declarations();
             let req = ChatRequest {

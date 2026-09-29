@@ -160,6 +160,13 @@ async fn main() -> anyhow::Result<()> {
         if line.is_empty() {
             break;
         }
+        if line == "/compact" {
+            match agent.compact(&observer).await {
+                Ok(()) => println!("[compacted]"),
+                Err(e) => eprintln!("[compact failed] {e:#}"),
+            }
+            continue;
+        }
         if let Err(e) = agent.run_turn(line, &observer).await {
             eprintln!("[error] {e:#}");
         }

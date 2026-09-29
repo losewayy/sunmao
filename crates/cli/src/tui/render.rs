@@ -63,13 +63,27 @@ fn draw_transcript(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     // sees — Paragraph::wrap would fold at draw time and desync the math.
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut sel_start = 0usize;
+    // per-block wrapped cache: a streaming token only re-wraps its own
+    // block — the rest replay from cache by (gen, width, selected).
+    app.render_cache.resize_with(app.blocks.len(), || None);
+    app.render_cache.truncate(app.blocks.len());
     for (i, b) in app.blocks.iter().enumerate() {
         let selected = in_scroll && i == app.selected;
         if selected {
             sel_start = lines.len();
         }
-        for l in b.render(selected, width) {
-            lines.extend(wrap::wrap_line(&l, width));
+        let hit = app.render_cache[i]
+            .as_ref()
+            .is_some_and(|(g, w, s, _)| *g == b.gen && *w == width && *s == selected);
+        if !hit {
+            let mut wrapped = Vec::new();
+            for l in b.render(selected, width) {
+                wrapped.extend(wrap::wrap_line(&l, width));
+            }
+            app.render_cache[i] = Some((b.gen, width, selected, wrapped));
+        }
+        if let Some((_, _, _, cached)) = &app.render_cache[i] {
+            lines.extend(cached.iter().cloned());
         }
     }
 

@@ -59,6 +59,10 @@ pub struct Block {
     pub collapsed: bool,
     /// A streaming block accepts appended chunks until the turn ends.
     pub open: bool,
+    /// bumped on every content mutation — the transcript render cache keys
+    /// on it, so a streaming block re-renders while everything else stays
+    /// cached.
+    pub gen: u64,
 }
 
 /// Output preview cap, in lines — the full text stays in the session log.
@@ -74,6 +78,7 @@ impl Block {
             tool: None,
             collapsed: matches!(kind, BlockKind::Thinking),
             open: matches!(kind, BlockKind::Assistant | BlockKind::Thinking),
+            gen: 0,
         }
     }
 
@@ -104,6 +109,7 @@ impl Block {
     /// next same-name call — visually folding a run of identical tools.
     /// Prior outputs stay in the panel; the newest digest leads the header.
     pub fn rearm_tool(&mut self, summary: &str) {
+        self.gen += 1;
         if let Some(t) = &mut self.tool {
             t.done = None;
             t.summary = summary.to_string();
@@ -116,6 +122,7 @@ impl Block {
     /// Record the verdict + (truncated) output of a finished call. Grouped
     /// calls append with a thin separator so the panel shows every run.
     pub fn finish_tool(&mut self, ok: bool, output: &str) {
+        self.gen += 1;
         if let Some(t) = &mut self.tool {
             t.done = Some(ok);
             t.elapsed = Some(t.started.elapsed().as_secs_f64());

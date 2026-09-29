@@ -88,6 +88,9 @@ pub struct App {
     /// turns submitted while a turn was running — footer shows the queue
     /// depth so a submitted-but-not-yet-started prompt isn't invisible.
     pub queued_turns: u16,
+    /// per-block wrapped-render cache, parallel to `blocks` — keyed on each
+    /// block's `gen` + draw width so streaming only re-renders its own block.
+    pub render_cache: Vec<Option<RenderEntry>>,
     /// Full-screen viewer: (title, body) of the block being read. Lives in
     /// app state so render stays pure.
     pub viewer: Option<Viewer>,
@@ -111,6 +114,10 @@ g/G ends · ! bash · / commands · Esc×2 stash draft · Ctrl+S restore · \
 Ctrl+A/E/U/W line edit · Ctrl-C cancel, ×2 quits
 commands — /compact · /multiline · /clear · /resume [id] · /help · /quit · \
 + every *.md in .sunmao/commands, .claude/commands, plugins/*/commands";
+
+/// One cached transcript entry: the block's `gen` and the width/selection
+/// it was wrapped at, plus the wrapped lines themselves.
+type RenderEntry = (u64, usize, bool, Vec<ratatui::text::Line<'static>>);
 
 /// How a submitted line should be dispatched — the driver task interprets.
 #[derive(Debug)]
@@ -155,6 +162,7 @@ impl App {
             last_usage: None,
             bash_mode: false,
             queued_turns: 0,
+            render_cache: Vec::new(),
             viewer: None,
             busy_since: None,
         };
@@ -176,7 +184,10 @@ impl App {
         }
         let last_ok = self.blocks.last_mut().filter(|b| b.kind == kind && b.open);
         match last_ok {
-            Some(b) => b.text.push_str(text),
+            Some(b) => {
+                b.text.push_str(text);
+                b.gen += 1;
+            }
             None => {
                 let mut b = Block::new(kind);
                 b.text = text.to_string();
@@ -226,7 +237,10 @@ impl App {
     /// never got its ToolDone — call it interrupted.
     pub fn close_turn(&mut self) {
         for b in &mut self.blocks {
-            b.open = false;
+            if b.open {
+                b.open = false;
+                b.gen += 1;
+            }
             if b.tool.as_ref().is_some_and(|t| t.done.is_none()) {
                 b.finish_tool(false, "interrupted");
             }
@@ -417,6 +431,7 @@ impl App {
         self.ensure_selection();
         if let Some(b) = self.blocks.get_mut(self.selected) {
             b.collapsed = !b.collapsed;
+            b.gen += 1;
         }
     }
 

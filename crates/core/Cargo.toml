@@ -24,8 +24,7 @@ tracing.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 # spawnfate — the shell/preflight engine. Its model is Windows-only; the
-# preflight module no-ops elsewhere. Pinned to the v1.0.0 commit; swap to
-# `version = "1"` once spawnfate 1.0 is on crates.io.
+# preflight module no-ops elsewhere.
 spawnfate = "0.1"
 
 [dev-dependencies]

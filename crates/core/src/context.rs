@@ -27,11 +27,14 @@ pub struct Context {
     pub hooks: HookEngine,
     /// Working directory tools resolve paths against.
     pub cwd: PathBuf,
+    /// Subagent nesting depth — Task tool refuses past MAX_DEPTH.
+    pub depth: u8,
     /// Cooperative cancellation — `session/cancel` sets it; the loop checks
     /// between iterations and before each tool call.
     pub cancelled: std::sync::atomic::AtomicBool,
     /// Files read this session — the Read-before-Write gate's ledger.
-    read_paths: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
+    /// (crate-visible so sub-agent contexts can construct one)
+    pub(crate) read_paths: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
 }
 
 impl Context {
@@ -48,6 +51,7 @@ impl Context {
             audit: AuditLog::new(),
             hooks: HookEngine::load(&cwd, "session"),
             cwd,
+            depth: 0,
             cancelled: std::sync::atomic::AtomicBool::new(false),
             read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),
         }

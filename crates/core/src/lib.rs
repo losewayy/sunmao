@@ -9,6 +9,7 @@ pub mod context;
 pub mod hooks;
 pub mod mcp;
 pub mod session;
+pub mod task;
 pub mod tool;
 
 pub use agent::{AgentLoop, TurnOutcome};

@@ -99,6 +99,7 @@ pub fn builtin_registry() -> ToolRegistry {
     r.register(GrepTool);
     r.register(JobOutputTool);
     r.register(HtmlArtifactTool);
+    r.register(crate::task::TaskTool);
     r
 }
 

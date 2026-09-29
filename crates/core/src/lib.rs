@@ -7,6 +7,7 @@ pub mod agent;
 pub mod audit;
 pub mod context;
 pub mod hooks;
+pub mod mcp;
 pub mod session;
 pub mod tool;
 

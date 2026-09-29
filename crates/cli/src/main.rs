@@ -115,7 +115,11 @@ async fn main() -> anyhow::Result<()> {
 
     let llm = Arc::new(OaiClient::new(&cli.base_url, &cli.api_key, &cli.model));
     let sessions = SessionLog::open(&cli.session_dir, &session_id()).await?;
-    let ctx = Arc::new(Context::new(llm, sessions, builtin_registry(), cwd));
+    let mut registry = builtin_registry();
+    for tool in sunmao_core::mcp::connect_all(&cwd).await {
+        registry.register_boxed(tool);
+    }
+    let ctx = Arc::new(Context::new(llm, sessions, registry, cwd));
 
     let default_system = concat!(
         "You are sunmao, a coding agent. Use tools to act on the filesystem. ",

@@ -36,13 +36,17 @@ pub struct ApprovalCard {
 }
 
 /// Slash-command popup state. Open while the composer is exactly a `/…`
-/// fragment with no whitespace; walks `slash::candidates`.
+/// fragment with no whitespace; walks `slash::candidates`. In `for_args`
+/// mode it completes the *argument* of an already-chosen builtin (today
+/// only `/model <selector>`) — the menu rows are selectors, not commands.
 pub struct SlashMenu {
     /// name list filtered by the fragment after `/`
     pub matches: Vec<String>,
     pub selected: usize,
-    /// the fragment after `/` that produced `matches` (drives the Search row)
+    /// the fragment that produced `matches` (drives the Search row)
     pub fragment: String,
+    /// true when completing a command argument instead of a command name
+    pub for_args: bool,
 }
 
 pub struct App {
@@ -104,6 +108,10 @@ pub struct App {
     pub viewer: Option<Viewer>,
     /// when the current turn started working — footer shows elapsed time
     pub busy_since: Option<Instant>,
+    /// completable `/model` selectors (`@routes` + `provider/` prefixes) —
+    /// the driver fills this once at startup; slash-menu arg completion
+    /// filters it.
+    pub model_selectors: Vec<String>,
 }
 
 /// Content of the full-screen viewer — title line + the block's full text
@@ -179,6 +187,7 @@ impl App {
             render_cache: Vec::new(),
             viewer: None,
             busy_since: None,
+            model_selectors: Vec::new(),
         };
         let mut banner = Block::new(BlockKind::Note);
         banner.text = format!(
@@ -373,24 +382,35 @@ impl App {
         }
     }
 
-    /// The composer is a slash fragment: starts with `/`, no whitespace yet.
+    /// The composer is a slash fragment: `/cmd` (command completion) or
+    /// `/model <arg>` (selector completion). Returns (is_args, fragment).
     /// Bash mode owns the buffer, so no slash menu there.
-    fn slash_fragment(&self) -> Option<&str> {
+    fn slash_fragment(&self) -> Option<(bool, &str)> {
         if self.bash_mode {
             return None;
         }
-        self.input
-            .strip_prefix('/')
-            .filter(|s| !s.chars().any(char::is_whitespace))
+        let rest = self.input.strip_prefix('/')?;
+        if let Some(frag) = rest.strip_prefix("model ") {
+            return Some((true, frag));
+        }
+        if rest.chars().any(char::is_whitespace) {
+            return None;
+        }
+        Some((false, rest))
     }
 
     pub fn refresh_slash_menu(&mut self) {
         match self.slash_fragment() {
-            Some(frag) => {
-                let matches = slash::candidates(&self.cwd)
+            Some((for_args, frag)) => {
+                let pool = if for_args {
+                    self.model_selectors.clone()
+                } else {
+                    slash::candidates(&self.cwd)
+                };
+                let matches: Vec<String> = pool
                     .into_iter()
                     .filter(|c| c.starts_with(frag) || c.contains(frag))
-                    .collect::<Vec<_>>();
+                    .collect();
                 if matches.is_empty() {
                     self.slash_menu = None;
                 } else {
@@ -403,6 +423,7 @@ impl App {
                         matches,
                         selected: sel,
                         fragment: frag.to_string(),
+                        for_args,
                     });
                 }
             }

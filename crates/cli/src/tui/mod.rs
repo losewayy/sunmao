@@ -146,6 +146,9 @@ async fn run_inner(
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "?".into());
+    // grab before the driver task takes `agent` — slash-menu arg completion
+    // filters this list for `/model <sel>`.
+    let model_selectors = agent.model_selectors();
     let (tx_input, mut rx_input) = mpsc::unbounded_channel::<Submit>();
     let (tx_cancel, mut rx_cancel) = mpsc::unbounded_channel::<()>();
 
@@ -410,6 +413,7 @@ async fn run_inner(
     }
 
     let mut app = App::new(model, cwd.clone(), &session_id);
+    app.model_selectors = model_selectors;
     if !replay.is_empty() {
         app.replay(&replay);
     }
@@ -687,13 +691,27 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
             }
             // Enter *runs* the highlighted command — selection + commit, the
             // same contract every fuzzy menu in the terminal world ships.
-            // Half-typed fragments must never be submitted.
+            // Half-typed fragments must never be submitted. In arg mode a
+            // `provider/` prefix completes like Tab (the arg isn't done),
+            // a leaf selector submits `/model sel`.
             KeyCode::Enter => {
-                if let Some(m) = &app.slash_menu {
-                    let name = m.matches[m.selected].clone();
+                let (name, for_args) = match &app.slash_menu {
+                    Some(m) => (m.matches[m.selected].clone(), m.for_args),
+                    None => return false,
+                };
+                app.slash_menu = None;
+                if for_args {
+                    if name.ends_with('/') {
+                        app.input = format!("/model {name}");
+                        app.cursor = app.input.chars().count();
+                        app.refresh_slash_menu();
+                        return false;
+                    }
+                    app.input = format!("/model {name}");
+                    app.cursor = app.input.chars().count();
+                } else {
                     app.input = format!("/{name}");
                     app.cursor = app.input.chars().count();
-                    app.slash_menu = None;
                 }
                 return submit_app(app, tx_input);
             }
@@ -701,9 +719,14 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
             KeyCode::Tab => {
                 if let Some(m) = &app.slash_menu {
                     let name = m.matches[m.selected].clone();
-                    app.input = format!("/{name} ");
+                    app.input = if m.for_args {
+                        format!("/model {name}")
+                    } else {
+                        format!("/{name} ")
+                    };
                     app.cursor = app.input.chars().count();
                     app.slash_menu = None;
+                    app.refresh_slash_menu();
                 }
                 return false;
             }

@@ -115,7 +115,11 @@ fn draw_slash_menu(f: &mut ratatui::Frame, m: &SlashMenu, area: Rect) {
         Line::from(Span::styled(rule.clone(), Style::default().fg(THEME.user))),
         Line::from(vec![
             Span::styled(
-                " Commands".to_string(),
+                if m.for_args {
+                    " Models".to_string()
+                } else {
+                    " Commands".to_string()
+                },
                 Style::default().fg(THEME.user).add_modifier(Modifier::BOLD),
             ),
             if m.fragment.is_empty() {
@@ -144,8 +148,14 @@ fn draw_slash_menu(f: &mut ratatui::Frame, m: &SlashMenu, area: Rect) {
     let end = (start + 8).min(m.matches.len());
     for (i, name) in m.matches.iter().enumerate().take(end).skip(start) {
         let sel = i == m.selected;
+        // arg mode completes selectors (no leading slash)
+        let label = if m.for_args {
+            format!("  {name}")
+        } else {
+            format!("/{name}")
+        };
         rows.push(Line::from(Span::styled(
-            format!("{} /{name}", if sel { " ❯" } else { "  " }),
+            format!("{} {}", if sel { " ❯" } else { "  " }, label),
             if sel {
                 Style::default().fg(THEME.hi).add_modifier(Modifier::BOLD)
             } else {

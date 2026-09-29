@@ -230,6 +230,16 @@ impl AgentLoop {
             .unwrap_or_default()
     }
 
+    /// Completable `/model` selectors — `@route` names + `provider/`
+    /// prefixes. The slash menu completes args against these.
+    pub fn model_selectors(&self) -> Vec<String> {
+        self.ctx
+            .models
+            .as_ref()
+            .map(|m| m.selectors())
+            .unwrap_or_default()
+    }
+
     /// Signal cooperative cancellation for the in-flight turn.
     pub fn cancel(&self) {
         self.ctx

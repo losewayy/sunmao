@@ -787,7 +787,12 @@ impl ToolImpl for HtmlArtifactTool {
             })
             .await?;
         Ok(ToolResult {
-            output: format!("artifact '{}' → {} ({} bytes)", a.name, path.display(), bytes),
+            output: format!(
+                "artifact '{}' → {} ({} bytes)",
+                a.name,
+                path.display(),
+                bytes
+            ),
             ok: true,
         })
     }

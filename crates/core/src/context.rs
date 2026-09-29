@@ -27,6 +27,9 @@ pub struct Context {
     pub hooks: HookEngine,
     /// Working directory tools resolve paths against.
     pub cwd: PathBuf,
+    /// Cooperative cancellation — `session/cancel` sets it; the loop checks
+    /// between iterations and before each tool call.
+    pub cancelled: std::sync::atomic::AtomicBool,
     /// Files read this session — the Read-before-Write gate's ledger.
     read_paths: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
 }
@@ -45,6 +48,7 @@ impl Context {
             audit: AuditLog::new(),
             hooks: HookEngine::load(&cwd, "session"),
             cwd,
+            cancelled: std::sync::atomic::AtomicBool::new(false),
             read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }

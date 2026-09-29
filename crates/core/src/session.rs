@@ -32,7 +32,11 @@ pub enum SessionEvent {
     Compacted { summary: String },
     /// An HTML artifact was produced — human-facing deliverable registered
     /// as a durable fact (SPEC §4.10).
-    Artifact { name: String, path: String, bytes: usize },
+    Artifact {
+        name: String,
+        path: String,
+        bytes: usize,
+    },
 }
 
 /// Append-only writer + replay reader for one session directory.

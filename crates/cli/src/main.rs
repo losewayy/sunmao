@@ -11,6 +11,7 @@ use sunmao_core::tool::builtin_registry;
 use sunmao_core::{Context, SessionLog};
 use sunmao_llm::OaiClient;
 
+mod acp;
 mod dataflow;
 mod tui;
 
@@ -49,6 +50,9 @@ struct Cli {
     /// Print a data-flow report for a session log file and exit.
     #[arg(long)]
     dataflow: Option<PathBuf>,
+    /// Run as an Agent Client Protocol server on stdio (Zed etc.).
+    #[arg(long)]
+    acp: bool,
 }
 
 struct StdoutObserver {
@@ -115,6 +119,12 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
     let cli = Cli::parse();
+
+    if cli.acp {
+        return acp::run(&cli.base_url, &cli.api_key, &cli.model)
+            .await
+            .map_err(|e| anyhow::anyhow!("acp: {e}"));
+    }
 
     if let Some(path) = &cli.dataflow {
         let report = dataflow::report(path).await?;

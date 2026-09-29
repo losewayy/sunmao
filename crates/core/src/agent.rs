@@ -42,6 +42,7 @@ pub trait Observer: Send + Sync {
     fn on_event(&self, ev: &LiveEvent);
 }
 
+#[derive(Clone)]
 pub struct AgentLoop {
     ctx: Arc<Context>,
     max_iterations: usize,
@@ -155,6 +156,14 @@ impl AgentLoop {
 
         let mut outcome = TurnOutcome::Completed;
         for _ in 0..self.max_iterations {
+            if self
+                .ctx
+                .cancelled
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                outcome = TurnOutcome::Other("cancelled".into());
+                break;
+            }
             if self.est_tokens().await > self.compact_threshold {
                 observer.on_event(&LiveEvent::ToolStart {
                     name: "compact".into(),

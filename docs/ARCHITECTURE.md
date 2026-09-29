@@ -90,20 +90,22 @@ the project layer). Prompt sections order: built-in assets → user → project
 
 ```rust
 SessionEvent::Started | Message | ToolCall | ToolResult
-                  | Compacted | Artifact | Usage | Hook
+                  | Compacted | Artifact | Usage | Hook | LocalShell
 ```
 
 Append-only JSONL; the visible transcript is a pure fold over them. `messages()`
 implements that fold — `Compacted` clears and re-seeds; `ToolResult` becomes
 `Role::Tool` messages; `Usage` is accounting, not content; `Hook` records
-auditor-visible facts (input rewrites, vetoes, injected context) and stays
-out of the model-facing fold — rewrites are transparent to the model,
-durable for the auditor.
+auditor-visible facts (input rewrites, vetoes, injected context, session
+grants) and stays out of the model-facing fold — rewrites are transparent to
+the model, durable for the auditor. `LocalShell` is the `!` companion: a
+user-run command folds in as a tagged `<local-shell>` user message, so the
+next turn sees the evidence.
 
 The *transient* vocabulary going the other way is `LiveEvent` (`Content`,
 `Reasoning`, `ToolStart{name, summary}`, `ToolDone{name, ok, output}`,
-`TurnEnd`) — what `Observer` sinks see live. It never persists; frontends
-that want full tool output read the session log.
+`Hook{event, detail}`, `Usage`, `TurnEnd`) — what `Observer` sinks see live.
+It never persists; frontends that want full tool output read the session log.
 
 ## Frontends
 
@@ -111,12 +113,17 @@ that want full tool output read the session log.
 sunmao              stdin/stdout REPL — /compact, /skills, /<command>
 sunmao -p "..."     one-shot; exit code encodes outcome
 sunmao --tui        ratatui: block transcript (fold/copy OSC52/select via
-                    Tab+j/k/e), parkable approval card, `/` slash popup,
+                    Tab+j/k/e, Enter opens a full-screen viewer), 3-option
+                    approval card (once / session / deny, parkable Esc),
+                    `/` slash popup, `!` local bash (runs through
+                    deno_task_shell directly, folds into context),
                     markdown-rendered assistant text, multiline composer,
-                    CJK width-correct cursor; Esc is layered (park/clear/
-                    hint), Ctrl-C cancels or quits. Semantic theme
-                    (tokyonight), user-prompt band, tool blocks with arg
-                    digest + output panel, same-tool verb-grouping
+                    grapheme-cluster wrapping, CSI ?2026 synced frames,
+                    two-line footer (branch + live context tokens); Esc is
+                    layered (park/clear/hint), Ctrl-C cancels or quits.
+                    Semantic theme (tokyonight), user-prompt band, tool
+                    blocks with arg digest + output panel, same-tool
+                    verb-grouping, ⚙ audit lines for hook facts
 sunmao --acp        ACP v2 stdio server: initialize, session/{new,list,
                     resume,prompt,close}, cancel, session/request_permission
 ```

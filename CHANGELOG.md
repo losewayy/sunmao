@@ -30,12 +30,31 @@ TUI.
   the new fields
 
 **cli/TUI (latest)**
+- `!` **local bash mode** — `!` on the empty composer (or a literal
+  `!cmd` line) runs the command through the same deno_task_shell path
+  the Bash tool uses, with zero LLM tokens and no approval; the run
+  lands as `SessionEvent::LocalShell` and folds into the next turn's
+  context as a tagged `<local-shell>` message
+- approval card is **3-option**: allow once / allow for session / deny —
+  session grants live on the Context (`session_grants`), are shared with
+  Task sub-agents, and audit as `SessionEvent::Hook{"approval.session"}`
+- `⚙` **audit blocks** — `LiveEvent::Hook` surfaces hook rewrites,
+  vetoes, injected context, and session grants in the transcript (REPL
+  prints them, ACP forwards them as agent text)
+- **two-line footer**: `● state · model · cwd (branch) · mode · ctx Nk`
+  over the hints/toast line; branch probed at startup, tokens from
+  `LiveEvent::Usage`
+- **full-screen viewer**: scrollback `Enter` expands the block (wrapped
+  body, j/k/PgUp/PgDn/g, `y` copy, Esc/q back)
+- slash menu matches the shared design language: `─` rules, title +
+  `(type to search)`, Search row, `❯` pointer, windowed scroll —
+  and `Enter` applies the highlighted command
+- rendering mechanics: CSI `?2026` synchronized frames, bulk bracketed
+  paste, grapheme-cluster wrapping (`unicode-segmentation` — ZWJ emoji
+  and combining marks never tear), CJK width-correct cursor
 - transcript is **block-structured**: user/assistant/thinking/tool/note are
   distinct blocks — `Tab` enters block browse, `j/k` select, `e` folds
   (thinking starts folded), `y` copies via OSC 52, `g/G` jump ends
-- approval is a **card** with parkable focus: `↑↓/Tab` choose, `1-2/Enter`
-  pick, `y/n` quick-answer, `Esc` parks the card so you can scroll the
-  transcript (status bar offers `Tab` back), `Ctrl-C` denies
 - `/` opens a **slash menu** above the composer: builtins + convention-dir
   `.md` commands fuzzy-filtered, `↑↓` walk, `Tab` completes
 - assistant blocks render **markdown** (headings/emphasis/`code`/fenced

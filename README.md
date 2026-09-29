@@ -61,7 +61,8 @@ architecture: components joined by seams, every seam a contract.
 - **Frontends** — REPL (`sunmao`), one-shot (`sunmao -p`), TUI
   (`sunmao --tui`, ratatui: block transcript with fold/copy/select,
   card-style approval with parkable Esc, `/` slash popup, markdown-rendered
-  output, multiline composer, CJK-correct cursor), ACP
+  output, tool-call headers with arg digests + output preview panels,
+  tokyonight theme, multiline composer, CJK-correct cursor), ACP
 
 ## Usage
 

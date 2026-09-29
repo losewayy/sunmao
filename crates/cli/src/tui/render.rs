@@ -2,12 +2,13 @@
 //! composer, status bar. Pure draw: all state lives in `app.rs`.
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block as WBlock, Borders, Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
 use super::app::{self, App, ApprovalCard, Focus, SlashMenu};
+use super::theme::{self, THEME};
 
 pub fn draw(f: &mut ratatui::Frame, app: &mut App) {
     let menu_rows = app
@@ -44,6 +45,7 @@ pub fn draw(f: &mut ratatui::Frame, app: &mut App) {
 
 fn draw_transcript(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let in_scroll = app.focus == Focus::Scrollback;
+    let width = area.width as usize;
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut sel_start = 0usize;
     for (i, b) in app.blocks.iter().enumerate() {
@@ -51,7 +53,7 @@ fn draw_transcript(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         if selected {
             sel_start = lines.len();
         }
-        lines.extend(b.render(selected));
+        lines.extend(b.render(selected, width));
     }
 
     // keep the selected block inside the viewport when browsing
@@ -69,6 +71,7 @@ fn draw_transcript(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     app.scroll_back = app.scroll_back.min(cap);
 
     let transcript = Paragraph::new(lines)
+        .style(Style::default().fg(THEME.text))
         .wrap(Wrap { trim: false })
         .scroll((app.scroll_back, 0));
     f.render_widget(transcript, area);
@@ -85,11 +88,9 @@ fn draw_slash_menu(f: &mut ratatui::Frame, m: &SlashMenu, area: Rect) {
             Line::from(Span::styled(
                 format!("{} /{name}", if sel { "▸" } else { " " }),
                 if sel {
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
+                    Style::default().fg(THEME.hi).add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::Gray)
+                    Style::default().fg(THEME.muted)
                 },
             ))
         })
@@ -98,44 +99,78 @@ fn draw_slash_menu(f: &mut ratatui::Frame, m: &SlashMenu, area: Rect) {
 }
 
 fn draw_card(f: &mut ratatui::Frame, c: &ApprovalCard, area: Rect) {
-    let opt = |label: &str, sel: bool| {
+    let opt = |label: &str, sel: bool, color| {
         Span::styled(
             format!(" {} {label} ", if sel { "▸" } else { " " }),
             if sel {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(color).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(THEME.muted)
             },
         )
     };
     let lines = vec![
-        Line::from(Span::styled(
-            format!("[approve?] {}: {}", c.tool, c.detail),
-            Style::default().fg(Color::Yellow),
-        )),
         Line::from(vec![
-            opt("1) allow", c.selected == 0),
+            Span::styled(
+                " approve? ",
+                Style::default().fg(THEME.warn).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{}: {}", c.tool, c.detail),
+                Style::default().fg(THEME.text),
+            ),
+        ]),
+        Line::from(vec![
+            opt("1) allow", c.selected == 0, THEME.ok),
             Span::raw("   "),
-            opt("2) deny", c.selected == 1),
+            opt("2) deny", c.selected == 1, THEME.err),
             Span::styled(
                 format!("   why: {}", c.why),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(THEME.faint),
             ),
         ]),
         Line::from(Span::styled(
-            "↑↓/Tab choose · 1-2/Enter pick · y/n quick · Esc park · Ctrl-C deny",
-            Style::default().fg(Color::DarkGray),
+            " ↑↓/Tab choose · 1-2/Enter pick · y/n quick · Esc park · Ctrl-C deny",
+            Style::default().fg(THEME.faint),
         )),
     ];
-    let p = Paragraph::new(lines).block(WBlock::default().borders(Borders::TOP));
+    let p = Paragraph::new(lines).block(
+        WBlock::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(THEME.warn)),
+    );
     f.render_widget(p, area);
 }
 
 fn draw_input(f: &mut ratatui::Frame, app: &App, area: Rect) {
-    let input = Paragraph::new(format!("❯ {}", app.input))
-        .block(WBlock::default().borders(Borders::TOP))
+    let prompt = theme::prompt_glyph();
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, l) in app.input.split('\n').enumerate() {
+        let prefix = if i == 0 {
+            Span::styled(
+                prompt.to_string(),
+                Style::default().fg(THEME.user).add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled("  ".to_string(), Style::default().fg(THEME.faint))
+        };
+        lines.push(Line::from(vec![
+            prefix,
+            Span::styled(l.to_string(), Style::default().fg(THEME.text)),
+        ]));
+    }
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            prompt.to_string(),
+            Style::default().fg(THEME.user),
+        )));
+    }
+    let input = Paragraph::new(lines)
+        .block(
+            WBlock::default()
+                .borders(Borders::TOP)
+                .border_style(Style::default().fg(THEME.faint)),
+        )
         .wrap(Wrap { trim: false });
     f.render_widget(input, area);
     // cursor: row = newlines before cursor; col = width of last-line prefix
@@ -147,33 +182,57 @@ fn draw_input(f: &mut ratatui::Frame, app: &App, area: Rect) {
         .next()
         .map(UnicodeWidthStr::width)
         .unwrap_or(0) as u16;
-    f.set_cursor_position((area.x + 2 + col, area.y + 1 + row));
+    let prompt_w = UnicodeWidthStr::width(prompt) as u16;
+    f.set_cursor_position((area.x + prompt_w + col, area.y + 1 + row));
 }
 
 fn draw_status(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    let text = if let Some(t) = app.toast_text() {
-        format!(" {t} ")
+    let short_cwd = app
+        .cwd
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| app.cwd.display().to_string());
+    let mode = if app.multiline { "ml" } else { "1line" };
+    let ctx = format!("{} · {short_cwd} · {mode}", app.model);
+
+    let line = if let Some(t) = app.toast_text() {
+        Line::from(vec![
+            Span::styled(format!(" {ctx} "), Style::default().fg(THEME.faint)),
+            Span::styled(
+                format!(" {t} "),
+                Style::default().fg(THEME.hi).add_modifier(Modifier::BOLD),
+            ),
+        ])
     } else {
-        match app.focus {
-            Focus::Approval => " approval card — ↑↓/Tab · 1-2 · Esc park ".to_string(),
+        let (state, scol) = if app.busy {
+            ("● working", THEME.running)
+        } else {
+            ("○ idle", THEME.ok)
+        };
+        let hints = match app.focus {
+            Focus::Approval => "↑↓/Tab · 1-2 · Esc park".to_string(),
             Focus::Scrollback => format!(
-                " block {}/{} — j/k move · e fold · y copy · g/G ends · Tab input ",
+                "block {}/{} · j/k · e fold · y copy · g/G · Tab input",
                 app.selected + 1,
                 app.blocks.len()
             ),
             Focus::Input => {
-                let state = if app.busy { "working…" } else { "idle" };
                 let parked = app.approval.as_ref().map(|c| c.parked).unwrap_or(false);
                 if parked {
-                    format!(" {state} · card parked — Tab returns ")
+                    "card parked — Tab returns".to_string()
                 } else {
-                    format!(" {state} · Tab blocks · / commands · Esc Esc clear · Ctrl-C quit ")
+                    "Tab blocks · / commands · Esc×2 clear · Ctrl-C quit".to_string()
                 }
             }
-        }
+        };
+        Line::from(vec![
+            Span::styled(format!(" {state} "), Style::default().fg(scol)),
+            Span::styled(format!("{ctx} "), Style::default().fg(THEME.muted)),
+            Span::styled(format!(" {hints} "), Style::default().fg(THEME.faint)),
+        ])
     };
     f.render_widget(
-        Paragraph::new(text).style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new(line).style(Style::default().bg(theme::base::BG)),
         area,
     );
 }

@@ -44,6 +44,8 @@ pub struct SlashMenu {
 pub struct App {
     /// project dir — slash commands and command .md resolution anchor here.
     pub cwd: std::path::PathBuf,
+    /// model name shown in the status bar
+    pub model: String,
     pub blocks: Vec<Block>,
     pub input: String,
     /// cursor as *char index* into `input` — never a byte offset.
@@ -85,6 +87,7 @@ impl App {
     pub fn new(model: &str, cwd: std::path::PathBuf) -> Self {
         let mut app = Self {
             cwd,
+            model: model.to_string(),
             blocks: Vec::new(),
             input: String::new(),
             cursor: 0,
@@ -126,33 +129,50 @@ impl App {
         self.follow_tail();
     }
 
-    pub fn push_tool(&mut self, name: &str, ok: Option<bool>) {
-        let glyph = match ok {
-            None => "→",
-            Some(true) => "✓",
-            Some(false) => "✗",
-        };
-        // a running tool block gets updated in place on ToolDone
-        if ok.is_some() {
-            if let Some(b) = self
-                .blocks
-                .last_mut()
-                .filter(|b| b.kind == BlockKind::Tool && b.text.starts_with("→"))
+    /// A tool call started. Verb-grouping: when the previous block is the
+    /// same tool finished, re-arm it (one `Read ×3` row instead of three).
+    pub fn tool_start(&mut self, name: &str, summary: &str) {
+        if let Some(prev) = self.blocks.last_mut() {
+            if prev.kind == BlockKind::Tool
+                && prev
+                    .tool
+                    .as_ref()
+                    .is_some_and(|t| t.name == name && t.done.is_some())
             {
-                b.text = format!("{glyph} {name}");
+                prev.rearm_tool(summary);
                 return;
             }
         }
-        let mut b = Block::new(BlockKind::Tool);
-        b.text = format!("{glyph} {name}");
-        self.blocks.push(b);
+        self.blocks.push(Block::new_tool(name, summary));
         self.follow_tail();
     }
 
-    /// Turn ended: close open streaming blocks.
+    /// A tool call finished — backfills the matching running block.
+    pub fn tool_done(&mut self, name: &str, ok: bool, output: &str) {
+        if let Some(b) = self
+            .blocks
+            .iter_mut()
+            .rev()
+            .find(|b| b.is_running_tool(name))
+        {
+            b.finish_tool(ok, output);
+        } else {
+            // ToolDone without a start (shouldn't happen) — note it.
+            let mark = if ok { "✓" } else { "✗" };
+            self.push_note(&format!("{mark} {name}"));
+            return;
+        }
+        self.follow_tail();
+    }
+
+    /// Turn ended: close open streaming blocks; a tool still marked running
+    /// never got its ToolDone — call it interrupted.
     pub fn close_turn(&mut self) {
         for b in &mut self.blocks {
             b.open = false;
+            if b.tool.as_ref().is_some_and(|t| t.done.is_none()) {
+                b.finish_tool(false, "interrupted");
+            }
         }
         self.busy = false;
     }

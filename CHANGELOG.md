@@ -23,6 +23,11 @@ TUI.
 - risk table moved to `assets/risky-patterns.txt` — policy is a data file
 - `assets/` convention: kernel-owned prose/policy ships as files via
   `include_str!`, never string literals in `.rs` (CODE-ARCHITECTURE rule 6)
+- `LiveEvent` carries richer payload for frontends:
+  `ToolStart{name, summary}` (one-line arg digest) and
+  `ToolDone{name, ok, output}` (≤8 KiB preview) — the TUI draws header +
+  output panel from them, the REPL prints the digest inline, ACP ignores
+  the new fields
 
 **cli/TUI (latest)**
 - transcript is **block-structured**: user/assistant/thinking/tool/note are
@@ -42,6 +47,12 @@ TUI.
 - Windows double-typing fixed: `KeyEventKind::Release` filtered at the
   event source — crossterm reports Press+Release on Windows
 - `tui/` split into `mod/app/blocks/md/render/slash` (god-file rule)
+- **visual pass** (design study of grok-build's scrollback, implemented
+  independently): semantic tokyonight theme (`tui/theme.rs`), your prompts
+  render as a `❯` full-width band (long ones collapse), tool blocks show
+  `✓ Name <arg digest>` headers with a dim output-preview panel ("N more
+  lines"), consecutive same-name calls verb-group into `×N`, status bar
+  shows model · cwd · mode; glyphs degrade on legacy ConHost
 
 **llm**
 - OAI dialect: hand-rolled SSE, tool_calls fragment reassembly, reasoning

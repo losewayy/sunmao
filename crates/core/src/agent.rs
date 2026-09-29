@@ -25,9 +25,22 @@ use crate::session::SessionEvent;
 pub enum LiveEvent {
     Content(String),
     Reasoning(String),
-    ToolStart { name: String },
-    ToolDone { name: String, ok: bool },
-    TurnEnd { outcome: TurnOutcome },
+    /// Tool call began. `summary` is a one-line digest of the interesting
+    /// argument (path/command/pattern/…) for frontends to render.
+    ToolStart {
+        name: String,
+        summary: String,
+    },
+    /// Tool call finished. `output` carries the raw result so rich frontends
+    /// can preview it; simple frontends ignore it.
+    ToolDone {
+        name: String,
+        ok: bool,
+        output: String,
+    },
+    TurnEnd {
+        outcome: TurnOutcome,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,6 +53,77 @@ pub enum TurnOutcome {
 /// Observer sink — the REPL prints these, a GUI would render them.
 pub trait Observer: Send + Sync {
     fn on_event(&self, ev: &LiveEvent);
+}
+
+/// One-line argument digest for `LiveEvent::ToolStart.summary`: the single
+/// most interesting value per tool (the command for Bash, the path for file
+/// tools, …), falling back to compact `k=v` pairs for unknown tools.
+fn call_summary(name: &str, args: &serde_json::Value) -> String {
+    let obj = match args.as_object() {
+        Some(o) => o,
+        None => return String::new(),
+    };
+    let preferred: &[&str] = match name {
+        "Bash" => &["command"],
+        "Read" | "Write" | "Edit" => &["path"],
+        "Glob" | "Grep" => &["pattern", "path"],
+        "WebFetch" => &["url"],
+        "Task" => &["prompt"],
+        "JobOutput" => &["id"],
+        "HtmlArtifact" => &["name"],
+        _ => &[],
+    };
+    let mut out = String::new();
+    for k in preferred {
+        if let Some(v) = obj.get(*k).and_then(|v| v.as_str()) {
+            out = v.to_string();
+            break;
+        }
+    }
+    if out.is_empty() {
+        for (k, v) in obj.iter().take(3) {
+            let vs = v
+                .as_str()
+                .map(String::from)
+                .unwrap_or_else(|| v.to_string());
+            if !out.is_empty() {
+                out.push_str("  ");
+            }
+            out.push_str(k);
+            out.push('=');
+            out.push_str(&vs);
+        }
+    }
+    if name == "Bash" && obj.get("background").and_then(|v| v.as_bool()) == Some(true) {
+        out.push_str("  &");
+    }
+    ellipsize(&out, 90)
+}
+
+/// Flatten whitespace and cap at `max` chars, adding `…` when cut.
+fn ellipsize(s: &str, max: usize) -> String {
+    let flat: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut it = flat.chars();
+    let kept: String = it.by_ref().take(max).collect();
+    if it.next().is_some() {
+        format!("{kept}…")
+    } else {
+        kept
+    }
+}
+
+/// Cap tool output carried in `LiveEvent::ToolDone` — frontends only need a
+/// preview; the full text already lands in the session log.
+fn truncate_output(s: &str) -> String {
+    const MAX: usize = 8 * 1024;
+    if s.len() <= MAX {
+        return s.to_string();
+    }
+    let mut end = MAX;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…\n[truncated — {} bytes total]", &s[..end], s.len())
 }
 
 #[derive(Clone)]
@@ -127,6 +211,7 @@ impl AgentLoop {
         observer.on_event(&LiveEvent::ToolDone {
             name: "compact".into(),
             ok: true,
+            output: String::new(),
         });
         Ok(())
     }
@@ -177,11 +262,13 @@ impl AgentLoop {
             if self.est_tokens().await > self.compact_threshold {
                 observer.on_event(&LiveEvent::ToolStart {
                     name: "compact".into(),
+                    summary: String::new(),
                 });
                 if let Err(e) = self.compact(observer).await {
                     observer.on_event(&LiveEvent::ToolDone {
                         name: format!("compact failed: {e:#}"),
                         ok: false,
+                        output: String::new(),
                     });
                 }
             }
@@ -297,6 +384,7 @@ impl AgentLoop {
                     .await;
                 observer.on_event(&LiveEvent::ToolStart {
                     name: call.function.name.clone(),
+                    summary: call_summary(&call.function.name, &args_value),
                 });
 
                 let result = if let Some(reason) = pre.block_reason {
@@ -313,6 +401,7 @@ impl AgentLoop {
                 observer.on_event(&LiveEvent::ToolDone {
                     name: call.function.name.clone(),
                     ok: result.ok,
+                    output: truncate_output(&result.output),
                 });
 
                 // PostToolUse: hooks may inject context for the next turn.

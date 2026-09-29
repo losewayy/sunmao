@@ -7,6 +7,7 @@ mod blocks;
 mod md;
 mod render;
 pub mod slash;
+mod theme;
 
 use std::io;
 use std::sync::Arc;
@@ -233,8 +234,8 @@ async fn run_inner(
             Some(Msg::Live(ev)) => match ev {
                 LiveEvent::Content(c) => app.stream(BlockKind::Assistant, &c),
                 LiveEvent::Reasoning(r) => app.stream(BlockKind::Thinking, &r),
-                LiveEvent::ToolStart { name } => app.push_tool(&name, None),
-                LiveEvent::ToolDone { name, ok } => app.push_tool(&name, Some(ok)),
+                LiveEvent::ToolStart { name, summary } => app.tool_start(&name, &summary),
+                LiveEvent::ToolDone { name, ok, output } => app.tool_done(&name, ok, &output),
                 LiveEvent::TurnEnd { outcome } => {
                     app.close_turn();
                     if outcome != TurnOutcome::Completed {

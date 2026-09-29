@@ -4,10 +4,10 @@
 //! rules. Anything else degrades to plain text — never fails.
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-const CODE_BG: Color = Color::Rgb(28, 28, 34);
+use super::theme::THEME;
 
 pub fn render(src: &str) -> Vec<Line<'static>> {
     if src.trim().is_empty() {
@@ -43,17 +43,19 @@ pub fn render(src: &str) -> Vec<Line<'static>> {
             }
             Event::End(TagEnd::CodeBlock) => {
                 in_code_block = false;
-                let code_style = Style::default().fg(Color::Cyan).bg(CODE_BG);
+                let code_style = Style::default().fg(THEME.code).bg(THEME.panel_bg);
                 for l in code_buf.trim_end_matches('\n').split('\n') {
                     lines.push(Line::from(Span::styled(format!(" {l} "), code_style)));
                 }
                 code_buf.clear();
             }
             Event::Start(Tag::Heading { .. }) => {
-                style = style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+                style = style
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                    .fg(THEME.assistant);
             }
             Event::End(TagEnd::Heading(_)) => {
-                style = style.remove_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+                style = Style::default();
                 flush(&mut lines, &mut spans);
             }
             Event::Start(Tag::Strong) => style = style.add_modifier(Modifier::BOLD),
@@ -89,7 +91,7 @@ pub fn render(src: &str) -> Vec<Line<'static>> {
                     code_buf.push_str(&t);
                 } else {
                     let st = if in_quote {
-                        style.fg(Color::DarkGray)
+                        style.fg(THEME.faint)
                     } else {
                         style
                     };
@@ -100,7 +102,7 @@ pub fn render(src: &str) -> Vec<Line<'static>> {
                             if in_quote {
                                 spans.push(Span::styled(
                                     "▎ ".to_string(),
-                                    Style::default().fg(Color::DarkGray),
+                                    Style::default().fg(THEME.faint),
                                 ));
                             }
                         }
@@ -114,7 +116,7 @@ pub fn render(src: &str) -> Vec<Line<'static>> {
             Event::Code(t) => {
                 spans.push(Span::styled(
                     format!(" {t} "),
-                    Style::default().fg(Color::Cyan).bg(CODE_BG),
+                    Style::default().fg(THEME.code).bg(THEME.panel_bg),
                 ));
             }
             Event::SoftBreak | Event::HardBreak => {
@@ -128,13 +130,13 @@ pub fn render(src: &str) -> Vec<Line<'static>> {
                 flush(&mut lines, &mut spans);
                 lines.push(Line::from(Span::styled(
                     "─".repeat(40),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(THEME.faint),
                 )));
             }
             Event::TaskListMarker(done) => {
                 spans.push(Span::styled(
                     if done { "☑ " } else { "☐ " }.to_string(),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(THEME.faint),
                 ));
             }
             _ => {}

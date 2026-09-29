@@ -5,7 +5,7 @@ use std::io;
 use std::sync::Arc;
 
 use anyhow::Result;
-use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -221,7 +221,9 @@ async fn run_inner(
             let mut stream = EventStream::new();
             while let Some(Ok(ev)) = stream.next().await {
                 let m = match ev {
-                    Event::Key(k) => Msg::Key(k),
+                    // Windows consoles emit Press, Repeat AND Release — only
+                    // Press/Repeat produce input, else every char doubles.
+                    Event::Key(k) if k.kind != KeyEventKind::Release => Msg::Key(k),
                     Event::Paste(p) => Msg::Paste(p),
                     _ => continue,
                 };

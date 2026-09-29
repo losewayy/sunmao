@@ -333,7 +333,8 @@ async fn main() -> anyhow::Result<()> {
             let rest = cmd_line[name.len()..].trim();
             if line == "/compact" {
                 match agent.compact(&observer, "manual").await {
-                    Ok(()) => println!("[compacted]"),
+                    Ok(s) if s.is_empty() => println!("[compacted: nothing to fold]"),
+                    Ok(s) => println!("[compacted]\n{s}"),
                     Err(e) => eprintln!("[compact failed] {e:#}"),
                 }
                 continue;

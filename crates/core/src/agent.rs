@@ -333,7 +333,8 @@ impl AgentLoop {
 
     /// Ask the model to summarize the transcript, then commit a `Compacted`
     /// boundary — the log fold turns it into a fresh system message.
-    pub async fn compact(&self, observer: &dyn Observer, trigger: &str) -> anyhow::Result<()> {
+    /// Returns the summary so frontends can show what the fold produced.
+    pub async fn compact(&self, observer: &dyn Observer, trigger: &str) -> anyhow::Result<String> {
         // PreCompact may veto or annotate the compaction (the dialect's
         // snapshot hook point — context-mode hangs its state capture here).
         let pre = self
@@ -353,7 +354,7 @@ impl AgentLoop {
         }
         let mut msgs = self.ctx.sessions.lock().await.messages().await?;
         if msgs.is_empty() {
-            return Ok(());
+            return Ok(String::new());
         }
         msgs.push(Message::user(
             "Summarize this conversation so far for context compaction: key decisions,              files touched, current state, and what remains. Be terse and factual.",
@@ -378,7 +379,9 @@ impl AgentLoop {
             .sessions
             .lock()
             .await
-            .append(&SessionEvent::Compacted { summary })
+            .append(&SessionEvent::Compacted {
+                summary: summary.clone(),
+            })
             .await?;
         let _ = self
             .ctx
@@ -395,9 +398,9 @@ impl AgentLoop {
         observer.on_event(&LiveEvent::ToolDone {
             name: "compact".into(),
             ok: true,
-            output: String::new(),
+            output: summary.clone(),
         });
-        Ok(())
+        Ok(summary)
     }
 
     /// Run one turn: `input` is the user's message; returns when the model

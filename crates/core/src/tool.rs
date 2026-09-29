@@ -43,6 +43,10 @@ impl ToolRegistry {
         self.tools.insert(tool.name().to_string(), Box::new(tool));
     }
 
+    pub fn register_boxed(&mut self, tool: Box<dyn ToolImpl>) {
+        self.tools.insert(tool.name().to_string(), tool);
+    }
+
     pub fn declarations(&self) -> Vec<Tool> {
         self.tools.values().map(|t| t.decl()).collect()
     }

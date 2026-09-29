@@ -19,6 +19,8 @@ pub async fn report(session_path: &Path) -> anyhow::Result<Value> {
     let mut tool_calls: Vec<(String, bool)> = Vec::new();
     let mut messages = 0usize;
     let mut compactions = 0usize;
+    let mut total_prompt = 0u64;
+    let mut total_completion = 0u64;
 
     while let Some(line) = lines.next_line().await? {
         let Ok(ev) = serde_json::from_str::<SessionEvent>(&line) else {
@@ -30,6 +32,10 @@ pub async fn report(session_path: &Path) -> anyhow::Result<Value> {
             SessionEvent::Started { .. }
             | SessionEvent::ToolCall { .. }
             | SessionEvent::Artifact { .. } => {}
+            SessionEvent::Usage { usage } => {
+                total_prompt += usage.prompt_tokens;
+                total_completion += usage.completion_tokens;
+            }
             SessionEvent::ToolResult {
                 name, ok, output, ..
             } => {
@@ -69,6 +75,11 @@ pub async fn report(session_path: &Path) -> anyhow::Result<Value> {
         "tool_calls": tool_calls.len(),
         "tool_failures": tool_calls.iter().filter(|(_, ok)| !ok).count(),
         "compactions": compactions,
+        "tokens": {
+            "prompt": total_prompt,
+            "completion": total_completion,
+            "total": total_prompt + total_completion,
+        },
         "data_flow": {
             "files_read": files_read,
             "files_written": files_written,

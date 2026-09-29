@@ -105,7 +105,7 @@ impl Tool {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, Deserialize)]
 pub struct Usage {
     #[serde(default)]
     pub prompt_tokens: u64,

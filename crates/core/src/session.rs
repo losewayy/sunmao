@@ -37,6 +37,8 @@ pub enum SessionEvent {
         path: String,
         bytes: usize,
     },
+    /// Token usage for one LLM request — the accounting side of audit.
+    Usage { usage: sunmao_llm::types::Usage },
 }
 
 /// Append-only writer + replay reader for one session directory.

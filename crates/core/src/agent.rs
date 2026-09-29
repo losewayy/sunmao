@@ -217,7 +217,11 @@ impl AgentLoop {
                             assembler.push(f);
                         }
                     }
-                    StreamDelta::Finish { reason, .. } => {
+                    StreamDelta::Finish { reason, usage } => {
+                        if let Some(u) = &usage {
+                            let mut log = self.ctx.sessions.lock().await;
+                            let _ = log.append(&SessionEvent::Usage { usage: u.clone() }).await;
+                        }
                         finish_reason = reason.or(finish_reason);
                     }
                 }

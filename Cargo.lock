@@ -2753,6 +2753,7 @@ version = "0.0.0"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
+ "async-trait",
  "clap",
  "crossterm",
  "futures-util",

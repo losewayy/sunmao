@@ -95,6 +95,7 @@ impl ToolImpl for TaskTool {
             sessions: tokio::sync::Mutex::new(log),
             tools: builtin_registry(),
             audit: crate::audit::AuditLog::new(),
+            approval: ctx.approval.clone(),
             hooks: crate::hooks::HookEngine::load(&ctx.cwd, &sub_id),
             cwd: ctx.cwd.clone(),
             depth: ctx.depth + 1,

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use clap::Parser;
 use sunmao_core::agent::{AgentLoop, LiveEvent, Observer, TurnOutcome};
+use sunmao_core::approval::Approver;
 use sunmao_core::tool::builtin_registry;
 use sunmao_core::{Context, SessionLog};
 use sunmao_llm::OaiClient;
@@ -161,7 +162,12 @@ async fn main() -> anyhow::Result<()> {
     for tool in sunmao_core::mcp::connect_all(&cwd).await {
         registry.register_boxed(tool);
     }
-    let ctx = Arc::new(Context::new(llm, sessions, registry, cwd.clone()));
+    let interactive = cli.print.is_none() && !cli.acp;
+    let mut ctx_raw = Context::new(llm, sessions, registry, cwd.clone());
+    if interactive {
+        ctx_raw.approval = Arc::new(StdinApprover { interactive: true });
+    }
+    let ctx = Arc::new(ctx_raw);
 
     let default_system = concat!(
         "You are sunmao, a coding agent. Use tools to act on the filesystem. ",
@@ -281,4 +287,37 @@ fn project_context(cwd: &std::path::Path) -> String {
         }
     }
     out
+}
+
+/// Interactive approver for the REPL/-p: prints the risky command, y/n on stdin.
+struct StdinApprover {
+    interactive: bool,
+}
+
+#[async_trait::async_trait]
+impl Approver for StdinApprover {
+    async fn approve(&self, tool: &str, detail: &str, why: &str) -> bool {
+        if !self.interactive {
+            return true; // piped -p mode: don't hang waiting for stdin
+        }
+        let tool = tool.to_string();
+        let detail = detail.to_string();
+        let why = why.to_string();
+        tokio::task::spawn_blocking(move || {
+            eprint!(
+                "
+[33m[approve?] {tool} — {why}
+  {detail}
+  allow? [y/N][0m "
+            );
+            std::io::stderr().flush().ok();
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).ok()?;
+            Some(matches!(line.trim().to_lowercase().as_str(), "y" | "yes"))
+        })
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false)
+    }
 }

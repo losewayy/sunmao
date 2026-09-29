@@ -7,6 +7,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::approval::AllowAll;
+use crate::approval::Approver;
 use crate::audit::AuditLog;
 use crate::hooks::HookEngine;
 use crate::session::SessionLog;
@@ -27,6 +29,8 @@ pub struct Context {
     pub hooks: HookEngine,
     /// Working directory tools resolve paths against.
     pub cwd: PathBuf,
+    /// Approval gate — risky tool calls pause here for a verdict.
+    pub approval: Arc<dyn Approver>,
     /// Subagent nesting depth — Task tool refuses past MAX_DEPTH.
     pub depth: u8,
     /// Cooperative cancellation — `session/cancel` sets it; the loop checks
@@ -51,6 +55,7 @@ impl Context {
             audit: AuditLog::new(),
             hooks: HookEngine::load(&cwd, "session"),
             cwd,
+            approval: Arc::new(AllowAll),
             depth: 0,
             cancelled: std::sync::atomic::AtomicBool::new(false),
             read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),

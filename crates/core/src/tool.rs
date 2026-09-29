@@ -392,6 +392,17 @@ impl ToolImpl for BashTool {
             return spawn_background(&a.command, ctx).await;
         }
 
+        // approval gate for risky patterns — the audit seam's active half
+        if let Some(why) = crate::approval::classify(&a.command) {
+            let allowed = ctx.approval.approve("Bash", &a.command, why).await;
+            if !allowed {
+                return Ok(ToolResult {
+                    output: format!("denied by user approval gate ({why})"),
+                    ok: false,
+                });
+            }
+        }
+
         // deno_task_shell's internals are !Send (Rc<Cell> exit-code cells) —
         // every !Send value must be constructed *inside* the blocking closure.
         let command = a.command.clone();

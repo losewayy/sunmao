@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sunmao — Kernel Architecture</title>
+<style>
+  :root{
+    --bg:#0b0d11;
+    --bg-2:#11141a;
+    --panel:#14181f;
+    --panel-2:#181d26;
+    --line:#232a36;
+    --line-soft:#1c222c;
+    --fg:#e6eaf2;
+    --fg-dim:#98a2b3;
+    --fg-faint:#69748a;
+    --accent:#7dd3fc;
+    --accent-2:#a78bfa;
+    --accent-3:#34d399;
+    --warn:#fbbf24;
+    --danger:#fb7185;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;
+    background:
+      radial-gradient(900px 600px at 12% -8%, #16233a 0%, transparent 55%),
+      radial-gradient(800px 520px at 92% 4%, #241a3a 0%, transparent 50%),
+      var(--bg);
+    color:var(--fg);
+    font-family:var(--sans);
+    font-size:15px;
+    line-height:1.62;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1120px;margin:0 auto;padding:64px 28px 120px}
+
+  /* ---------- header ---------- */
+  header{border-bottom:1px solid var(--line);padding-bottom:32px;margin-bottom:52px}
+  .kicker{
+    font-family:var(--mono);font-size:11.5px;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--accent);margin:0 0 18px
+  }
+  h1{
+    font-size:clamp(34px,5.2vw,52px);line-height:1.04;letter-spacing:-.028em;
+    font-weight:680;margin:0 0 18px;
+    background:linear-gradient(96deg,#ffffff 8%,#bcd7f5 46%,#c3b6f7 96%);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  }
+  .lede{max-width:74ch;color:var(--fg-dim);font-size:16.5px;margin:0}
+  .lede code{font-family:var(--mono);font-size:.9em;color:var(--accent)}
+  .meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px}
+  .pill{
+    font-family:var(--mono);font-size:11.5px;color:var(--fg-dim);
+    background:var(--panel);border:1px solid var(--line);border-radius:999px;
+    padding:5px 12px;white-space:nowrap
+  }
+  .pill b{color:var(--fg);font-weight:600}
+
+  /* ---------- sections ---------- */
+  section{margin-top:74px;scroll-margin-top:24px}
+  .sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:8px}
+  .sec-num{
+    font-family:var(--mono);font-size:12px;color:var(--accent-2);
+    border:1px solid #2c2947;background:#181430;border-radius:7px;padding:2px 9px;
+    flex:none;transform:translateY(-3px)
+  }
+  h2{font-size:26px;letter-spacing:-.02em;font-weight:640;margin:0}
+  .sec-sub{color:var(--fg-faint);font-size:14px;margin:6px 0 30px;max-width:80ch}
+
+  /* ---------- pipeline ---------- */
+  .stage{
+    position:relative;display:grid;grid-template-columns:52px 1fr;gap:0 20px;
+    padding-bottom:26px
+  }
+  .stage:last-child{padding-bottom:0}
+  .rail{position:relative;display:flex;justify-content:center}
+  .rail::before{
+    content:"";position:absolute;top:34px;bottom:-26px;width:1px;
+    background:linear-gradient(180deg,var(--line) 0%,var(--line-soft) 100%)
+  }
+  .stage:last-child .rail::before{display:none}
+  .dot{
+    width:34px;height:34px;border-radius:10px;flex:none;z-index:1;
+    display:grid;place-items:center;
+    font-family:var(--mono);font-size:12.5px;font-weight:600;
+    background:var(--panel-2);border:1px solid var(--line);color:var(--fg-dim)
+  }
+  .stage.k-prompt .dot{color:var(--accent);border-color:#1d3f52;background:#0f2029}
+  .stage.k-hook  .dot{color:var(--warn);border-color:#4a3a12;background:#241d0c}
+  .stage.k-log   .dot{color:var(--accent-3);border-color:#17402f;background:#0d221a}
+  .stage.k-llm   .dot{color:var(--accent-2);border-color:#332b56;background:#1a1530}
+  .stage.k-tool  .dot{color:var(--danger);border-color:#4d2130;background:#260f17}
+  .card{
+    background:linear-gradient(180deg,var(--panel) 0%,#12161d 100%);
+    border:1px solid var(--line);border-radius:14px;padding:18px 20px;
+    box-shadow:0 1px 0 rgba(255,255,255,.02) inset
+  }
+  .stage.k-tool .card{border-color:#3a2029}
+  .card h3{margin:0 0 6px;font-size:15.5px;font-weight:620;letter-spacing:-.01em}
+  .card h3 .fn{
+    font-family:var(--mono);font-size:12px;font-weight:500;color:var(--fg-faint);margin-left:8px
+  }
+  .card p{margin:0;color:var(--fg-dim);font-size:14px}
+  .card p + p{margin-top:9px}
+  .card code, .note code{
+    font-family:var(--mono);font-size:.87em;color:#cfe4f7;
+    background:#0e1219;border:1px solid var(--line-soft);border-radius:5px;
+    padding:1px 5px
+  }
+  .ev{
+    display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;
+    background:#0e1219;border:1px solid var(--line-soft);border-radius:6px;
+    padding:2px 8px;margin:8px 6px 0 0;color:var(--fg-dim)
+  }
+  .ev i{width:5px;height:5px;border-radius:50%;background:var(--fg-faint);display:block}
+  .ev.g i{background:var(--accent-3)} .ev.w i{background:var(--warn)} .ev.b i{background:var(--accent)}
+  .brace{
+    font-family:var(--mono);font-size:11px;color:var(--fg-faint);
+    display:block;margin-top:10px;letter-spacing:.02em
+  }
+
+  /* loop bracket */
+  .loop{position:relative;margin:28px 0 28px;padding:22px 22px 20px 22px;
+    border:1px dashed #2a3444;border-radius:16px;background:rgba(19,24,32,.5)}
+  .loop-tag{
+    position:absolute;top:-10px;left:20px;font-family:var(--mono);font-size:10.5px;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--accent-2);
+    background:var(--bg);padding:0 10px
+  }
+
+  /* ---------- table ---------- */
+  .tbl-wrap{
+    border:1px solid var(--line);border-radius:16px;overflow:hidden;background:var(--panel)
+  }
+  table{width:100%;border-collapse:collapse;font-size:13.6px}
+  thead th{
+    text-align:left;font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--fg-faint);font-weight:500;
+    background:#0f131a;padding:13px 16px;border-bottom:1px solid var(--line)
+  }
+  tbody td{padding:14px 16px;border-bottom:1px solid var(--line-soft);vertical-align:top;color:var(--fg-dim)}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover td{background:#151a22}
+  td.name{color:var(--fg);font-weight:600;font-family:var(--mono);font-size:13px;white-space:nowrap}
+  td.name span{display:block;font-weight:400;font-family:var(--sans);color:var(--fg-faint);
+    font-size:11.5px;letter-spacing:.01em;margin-top:2px}
+  .tag{
+    display:inline-block;font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;
+    padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--fg-dim);
+    background:#0e1219;white-space:nowrap
+  }
+  .tag.trait{color:var(--accent);border-color:#1d3f52;background:#0f2029}
+  .tag.proc{color:var(--warn);border-color:#4a3a12;background:#241d0c}
+  .tag.conc{color:var(--accent-3);border-color:#17402f;background:#0d221a}
+  td.paths{font-family:var(--mono);font-size:11.5px;color:var(--fg-faint);line-height:1.75}
+
+  /* ---------- seams ---------- */
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:16px}
+  .seam{
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;
+    position:relative;overflow:hidden
+  }
+  .seam::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--fg-faint)}
+  .seam.s-trait::before{background:var(--accent)}
+  .seam.s-proc::before{background:var(--warn)}
+  .seam.s-data::before{background:var(--accent-3)}
+  .seam h4{margin:0 0 8px;font-size:14.5px;font-weight:620}
+  .seam h4 code{font-family:var(--mono);font-size:12.5px;color:var(--accent)}
+  .seam p{margin:0;font-size:13.4px;color:var(--fg-dim)}
+  .seam .verdict{
+    margin-top:12px;font-family:var(--mono);font-size:11px;color:var(--fg-faint);
+    border-top:1px solid var(--line-soft);padding-top:10px;letter-spacing:.02em
+  }
+
+  .note{
+    margin-top:26px;border:1px solid var(--line);border-left:2px solid var(--accent-2);
+    background:linear-gradient(90deg,rgba(167,139,250,.07),transparent 60%);
+    border-radius:0 12px 12px 0;padding:16px 20px;font-size:13.8px;color:var(--fg-dim)
+  }
+  .note strong{color:var(--fg)}
+  footer{
+    margin-top:92px;padding-top:26px;border-top:1px solid var(--line);
+    font-family:var(--mono);font-size:11.5px;color:var(--fg-faint);
+    display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px
+  }
+  @media (max-width:640px){
+    .wrap{padding:40px 18px 80px}
+    .stage{grid-template-columns:38px 1fr;gap:0 12px}
+    .dot{width:28px;height:28px;font-size:11px;border-radius:8px}
+    .rail::before{top:28px}
+    .card{padding:15px 16px}
+    tbody td,thead th{padding:11px 12px}
+    table{font-size:12.6px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <p class="kicker">sunmao · 榫卯 · harness kernel</p>
+    <h1>From prompt to tool call,<br>and the seams in between</h1>
+    <p class="lede">
+      A Rust agent harness whose organizing principle is joinery: the kernel is a bus of
+      replaceable <code>ctx.*</code> services, every extension crosses a process boundary,
+      and the single source of truth is an append-only event log. This page traces one turn
+      end-to-end, then maps the subsystem seams that make it swappable.
+    </p>
+    <div class="meta">
+      <span class="pill">source · <b>docs/SPEC.md</b>, <b>crates/core/src/agent.rs</b></span>
+      <span class="pill">kernel · <b>~2.2k LOC</b> in crates/core</span>
+      <span class="pill">status · <b>v0.2 in-tree</b></span>
+      <span class="pill">loop ceiling · <b>64 iterations / turn</b></span>
+    </div>
+  </header>
+
+  <!-- ================= 1. PIPELINE ================= -->
+  <section id="pipeline">
+    <div class="sec-head"><span class="sec-num">01</span><h2>The pipeline: prompt → tool call</h2></div>
+    <p class="sec-sub">
+      One <code>run_turn</code> inside <code>AgentLoop</code>. Everything durable becomes a
+      <code>SessionEvent</code> line; everything live becomes an <code>Observer</code> callback.
+      The frontend (REPL / TUI / ACP client) only ever sees those two streams.
+    </p>
+
+    <div class="stage k-prompt">
+      <div class="rail"><div class="dot">01</div></div>
+      <div class="card">
+        <h3>Prompt in <span class="fn">run_turn(input)</span></h3>
+        <p>Caller hands over a raw user string and an <code>Observer</code>. Cancellation is
+        re-armed (<code>ctx.cancelled.store(false)</code>) — a <code>session/cancel</code> from a
+        frontend sets it back to true mid-flight.</p>
+      </div>
+    </div>
+
+    <div class="stage k-hook">
+      <div class="rail"><div class="dot">02</div></div>
+      <div class="card">
+        <h3>UserPromptSubmit hooks <span class="fn">ctx.hooks.fire(UserPromptSubmit)</span></h3>
+        <p>External commands run before the prompt is committed. A hook may <b>veto</b>
+        (<code>block_reason</code> → turn aborts with <code>TurnOutcome::Other</code>) or <b>inject</b>
+        (<code>extra_context</code> → appended as <code>[hook context]</code> user messages).</p>
+        <span class="ev w"><i></i>block_reason</span>
+        <span class="ev b"><i></i>extra_context</span>
+      </div>
+    </div>
+
+    <div class="stage k-log">
+      <div class="rail"><div class="dot">03</div></div>
+      <div class="card">
+        <h3>Commit the user turn <span class="fn">sessions.append(Message)</span></h3>
+        <p>Exactly one <code>user/message</code> event is written to <code>{session}.jsonl</code>,
+        followed by any injected context. The log is the truth; the message list is a <em>fold</em>
+        over it, so replay and fork cost nothing extra.</p>
+        <span class="ev g"><i></i>SessionEvent::Message</span>
+      </div>
+    </div>
+
+    <div class="loop">
+      <span class="loop-tag">loop — up to 64 iterations</span>
+
+      <div class="stage k-llm">
+        <div class="rail"><div class="dot">04</div></div>
+        <div class="card">
+          <h3>Budget &amp; compaction <span class="fn">est_tokens() &gt; 180_000</span></h3>
+          <p>Bytes/4 estimate over the folded transcript. Crossing the ceiling triggers
+          <code>compact()</code>: the model summarizes, and a <code>Compacted</code> boundary event is
+          appended — the fold then resets to a fresh <code>system</code> message.</p>
+          <span class="ev w"><i></i>SessionEvent::Compacted</span>
+        </div>
+      </div>
+
+      <div class="stage k-llm">
+        <div class="rail"><div class="dot">05</div></div>
+        <div class="card">
+          <h3>Build the request <span class="fn">messages() + tools.declarations()</span></h3>
+          <p>Fold the log into protocol messages; ask the registry for tool schemas. The request is
+          a plain <code>ChatRequest</code> — no hidden state rides along.</p>
+        </div>
+      </div>
+
+      <div class="stage k-llm">
+        <div class="rail"><div class="dot">06</div></div>
+        <div class="card">
+          <h3>Stream the model <span class="fn">ctx.llm.stream(req)</span></h3>
+          <p>Hand-written SSE parsing. Deltas arrive as <code>Content</code>, <code>Reasoning</code>,
+          <code>ToolCalls</code> (fragmented!) and <code>Finish</code>. Content and reasoning are
+          forwarded live to the observer as they land — token-by-token, no buffering.</p>
+          <span class="ev b"><i></i>LiveEvent::Content</span>
+          <span class="ev b"><i></i>LiveEvent::Reasoning</span>
+          <span class="ev"><i></i>LiveEvent::Finish</span>
+        </div>
+      </div>
+
+      <div class="stage k-llm">
+        <div class="rail"><div class="dot">07</div></div>
+        <div class="card">
+          <h3>Reassemble tool calls <span class="fn">ToolCallAssembler.finish()</span></h3>
+          <p>OpenAI-compatible endpoints ship <code>tool_calls</code> as index-keyed fragments across
+          many chunks. The assembler stitches them back into complete calls — including tolerating
+          dirty payloads (null fragments, unknown finish reasons).</p>
+        </div>
+      </div>
+
+      <div class="stage k-log">
+        <div class="rail"><div class="dot">08</div></div>
+        <div class="card">
+          <h3>Commit the assistant message <span class="fn">sessions.append(Message)</span></h3>
+          <p>Content (if any) plus the assembled <code>tool_calls</code> land as one
+          <code>assistant/message</code>. From here the turn either ends or descends into tools.</p>
+          <span class="ev g"><i></i>SessionEvent::Message</span>
+        </div>
+      </div>
+
+      <div class="stage k-tool">
+        <div class="rail"><div class="dot">09</div></div>
+        <div class="card">
+          <h3>No tool calls? Turn ends <span class="fn">finish_reason → TurnOutcome</span></h3>
+          <p><code>stop</code>/<code>end_turn</code>/absent → <code>Completed</code>;
+          <code>length</code> → <code>LengthLimited</code>; anything else → <code>Other(reason)</code>.
+          The loop breaks and the <code>Stop</code> hook fires.</p>
+        </div>
+      </div>
+
+      <div class="stage k-log">
+        <div class="rail"><div class="dot">10</div></div>
+        <div class="card">
+          <h3>Record the dispatch <span class="fn">sessions.append(ToolCall)</span></h3>
+          <p>Every call is journaled <em>before</em> execution — so a crash mid-tool still leaves a
+          truthful record of intent.</p>
+          <span class="ev g"><i></i>SessionEvent::ToolCall ×N</span>
+        </div>
+      </div>
+
+      <div class="stage k-hook">
+        <div class="rail"><div class="dot">11</div></div>
+        <div class="card">
+          <h3>PreToolUse gate <span class="fn">ctx.hooks.fire(PreToolUse, name, input)</span></h3>
+          <p>Matcher-filtered hooks see the tool name and parsed arguments. A <code>block_reason</code>
+          short-circuits execution: the call returns a synthetic failed result the model can read.</p>
+          <span class="ev w"><i></i>veto → synthetic ToolResult{ok:false}</span>
+        </div>
+      </div>
+
+      <div class="stage k-tool">
+        <div class="rail"><div class="dot">12</div></div>
+        <div class="card">
+          <h3>Execute the tool <span class="fn">ctx.tools.call(name, args, ctx)</span></h3>
+          <p>Arguments are parsed to JSON, then dispatched by name. <code>Bash</code> routes through the
+          risk classifier and the approval gate before anything spawns; failures are returned as
+          <em>legible output</em>, not panics — models recover better from readable errors.</p>
+          <span class="ev"><i></i>unknown tool / bad args → ok:false</span>
+          <span class="ev w"><i></i>RISKY_PATTERNS → ctx.approval.approve()</span>
+        </div>
+      </div>
+
+      <div class="stage k-hook">
+        <div class="rail"><div class="dot">13</div></div>
+        <div class="card">
+          <h3>PostToolUse hooks <span class="fn">ctx.hooks.fire(PostToolUse, …, result)</span></h3>
+          <p>Hooks observe the result and may push <code>extra_context</code> back into the transcript
+          as user messages — the injection path that lets a hook steer the <em>next</em> iteration.</p>
+          <span class="ev b"><i></i>extra_context → [hook context]</span>
+        </div>
+      </div>
+
+      <div class="stage k-log">
+        <div class="rail"><div class="dot">14</div></div>
+        <div class="card">
+          <h3>Commit the result, iterate <span class="fn">sessions.append(ToolResult)</span></h3>
+          <p>The result is journaled with its <code>call_id</code>, then control returns to step 04.
+          Next iteration folds a longer log and re-streams the model.</p>
+          <span class="ev g"><i></i>SessionEvent::ToolResult</span>
+          <span class="ev"><i></i>↻ back to step 04</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="stage k-hook">
+      <div class="rail"><div class="dot">15</div></div>
+      <div class="card">
+        <h3>Stop &amp; hand back <span class="fn">hooks.fire(Stop) → LiveEvent::TurnEnd</span></h3>
+        <p>The terminal hook fires, the observer receives the <code>TurnOutcome</code>, and
+        <code>run_turn</code> returns. Frontends differ only in who implements <code>Observer</code>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 2. SUBSYSTEMS ================= -->
+  <section id="subsystems">
+    <div class="sec-head"><span class="sec-num">02</span><h2>The subsystem table</h2></div>
+    <p class="sec-sub">
+      Each row is a layer of the joinery. The <b>seam kind</b> column is the honest part: a trait
+      object earns its indirection, a concrete type is a concrete type until a second implementation
+      shows up (SPEC §9: seams must earn their keep — no speculative interfaces).
+    </p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:15%">Subsystem</th>
+            <th style="width:33%">Responsibility</th>
+            <th style="width:16%">Seam kind</th>
+            <th style="width:36%">Files &amp; status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="name">sessions<span>唯一事实源</span></td>
+            <td>Append-only <code>SessionEvent</code> log — one JSONL per session. Live message list is a fold; transcript, replay, fork and audit dataflow are derived for free.</td>
+            <td><span class="tag conc">concrete</span><br><span class="tag">Mutex&lt;SessionLog&gt;</span></td>
+            <td class="paths">core/src/session.rs · 129 LOC<br>Events: Started, Message, ToolCall, ToolResult, Compacted, Artifact — <b>in-tree</b></td>
+          </tr>
+          <tr>
+            <td class="name">llm<span>provider 适配缝</span></td>
+            <td>OpenAI Chat-Completions dialect first: hand-written SSE frame parsing, delta accumulation, fragmented <code>tool_calls</code> reassembly, lenient parsing of dirty third-party payloads.</td>
+            <td><span class="tag trait">trait object</span><br><span class="tag">dyn ProviderAdapter</span></td>
+            <td class="paths">llm/src/{oai,sse,assemble,types}.rs<br>A second dialect (Anthropic) is another plugin — <b>in-tree</b></td>
+          </tr>
+          <tr>
+            <td class="name">tools<span>受控执行管线</span></td>
+            <td>Scoped registry + dispatch. Names are aligned to the mainstream vocabulary (<code>Bash Read Write Edit Glob Grep JobOutput HtmlArtifact Task</code>) so hook matchers hit for free. Errors become legible output.</td>
+            <td><span class="tag conc">concrete</span><br><span class="tag">trait ToolImpl</span></td>
+            <td class="paths">core/src/tool.rs · 886 LOC<br>Three classes: native / managed subprocess / shell escape hatch — <b>in-tree</b></td>
+          </tr>
+          <tr>
+            <td class="name">hooks<span>兼容宣称的全部根据</span></td>
+            <td>Lifecycle event bus (SessionStart, UserPromptSubmit, Pre/PostToolUse, Stop, SessionEnd, SubagentStart/Stop) with a matcher registry. Hooks are <em>external processes</em> speaking the Claude JSON-stdio contract.</td>
+            <td><span class="tag proc">process boundary</span><br><span class="tag conc">concrete</span></td>
+            <td class="paths">core/src/hooks.rs · 337 LOC<br>Loads <code>.sunmao/hooks.json</code> + <code>.claude/settings*.json</code> unmodified — <b>in-tree</b></td>
+          </tr>
+          <tr>
+            <td class="name">audit<span>地基层</span></td>
+            <td>Two halves: the passive ledger (<code>AuditLog</code>) recording permission-relevant facts, and the active gate (<code>Approver</code>) that pauses risky <code>Bash</code> patterns for a verdict.</td>
+            <td><span class="tag trait">trait object</span><br><span class="tag">dyn Approver</span></td>
+            <td class="paths">core/src/{audit,approval}.rs · 108 LOC<br>24 RISKY_PATTERNS; <code>AllowAll</code> is the non-interactive default — <b>minimal v0.1</b></td>
+          </tr>
+          <tr>
+            <td class="name">mcp<span>消费生态</span></td>
+            <td>stdio MCP client built on <code>rmcp</code>. Server tools are wrapped as native <code>ToolImpl</code>s under the <code>mcp__{server}__{tool}</code> namespace — attributable in the audit trail, matchable by <code>mcp__*</code>.</td>
+            <td><span class="tag proc">process boundary</span><br><span class="tag">adapter → registry</span></td>
+            <td class="paths">core/src/mcp.rs · 154 LOC<br>Config: <code>.sunmao/mcp.json</code>, Claude mcpServers shape — <b>in-tree</b></td>
+          </tr>
+          <tr>
+            <td class="name">acp<span>生态出口</span></td>
+            <td>ACP server over JSON-RPC/stdio: <code>session/new</code>, <code>session/prompt</code>, <code>session/update</code> notifications, reverse <code>session/request_permission</code>. The TUI is just another client of the same session API.</td>
+            <td><span class="tag proc">protocol boundary</span><br><span class="tag">frontend bridge</span></td>
+            <td class="paths">cli/src/acp.rs (+ tui.rs, dataflow.rs)<br>Lets Zed &amp; any ACP client drive the kernel — <b>in-tree</b></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ================= 3. SEAMS ================= -->
+  <section id="seams">
+    <div class="sec-head"><span class="sec-num">03</span><h2>Where the seams are</h2></div>
+    <p class="sec-sub">
+      Three distinct kinds of cut, and they are not interchangeable. Confusing them is how a
+      seam-first kernel turns into abstraction tax.
+    </p>
+
+    <div class="grid">
+      <div class="seam s-trait">
+        <h4>In-process trait seams — <code>Context</code></h4>
+        <p>The kernel context is a struct of services. Exactly two are trait objects today:
+        <code>llm: Arc&lt;dyn ProviderAdapter&gt;</code> and <code>approval: Arc&lt;dyn Approver&gt;</code>
+        — each has (or imminently has) a second implementation. The rest
+        (<code>sessions</code>, <code>tools</code>, <code>audit</code>, <code>hooks</code>) are concrete
+        types, promoted to traits only when a real second impl appears.</p>
+        <div class="verdict">file: core/src/context.rs · 81 LOC · swap by constructing a new Context</div>
+      </div>
+
+      <div class="seam s-proc">
+        <h4>Process boundaries — the extension surface</h4>
+        <p>Crashes are isolated, languages don't matter, and every interaction is interceptable:
+        <b>hooks</b> (Claude contract, JSON on stdin), <b>MCP servers</b> (stdio), and the
+        <b>ACP bridge</b> outward. The extension never links into the kernel; it talks to it.</p>
+        <div class="verdict">failure model: a dead extension degrades a capability, never the agent</div>
+      </div>
+
+      <div class="seam s-data">
+        <h4>Data seams — the event log</h4>
+        <p>Every durable fact funnels through one append-only writer. The read side is a pure
+        fold. That single choke point is what makes transcript files, replay, fork, and
+        <code>dataflow --emit</code> "what data went where" reports free rather than bespoke features.</p>
+        <div class="verdict">file: core/src/session.rs · append() is the only mutation path</div>
+      </div>
+
+      <div class="seam s-proc">
+        <h4>Tool-execution seams — the three-class ladder</h4>
+        <p>Not a seam between modules but a deliberate gradient of opacity:
+        <b>native</b> (in-process Rust, structured <code>tool_input</code>, zero shell) →
+        <b>managed</b> (spawned binary, no shell, controlled env) →
+        <b>shell</b> (<code>Bash</code>: an opaque command string, the primary audit target).
+        Everything that can be native, is.</p>
+        <div class="verdict">the shell escape hatch is a deliberate exception, not the foundation</div>
+      </div>
+
+      <div class="seam s-trait">
+        <h4>Loop seam — the loop is a plugin</h4>
+        <p><code>AgentLoop</code> holds no kernel privilege. It is one driver over the same
+        <code>Context</code>; a minimal loop, a code-mode loop, or a strict-audit loop are all
+        <em>presets</em> — plugin stacking (<code>base → +tui → +acp → +strict-audit</code>),
+        not <code>--flag</code> branching.</p>
+        <div class="verdict">file: core/src/agent.rs · 332 LOC · "swap the loop, swap the product"</div>
+      </div>
+
+      <div class="seam s-data">
+        <h4>Interception seam — the pre/exec/post spine</h4>
+        <p>One tool call is a three-slot pipeline: <code>pre</code> (hooks + approval) →
+        <code>exec</code> (registry dispatch) → <code>post</code> (hooks + context injection).
+        Both ends are public to <code>ctx.audit</code> and <code>ctx.hooks</code>, so policy and
+        telemetry attach without the tool layer knowing they exist.</p>
+        <div class="verdict">file: core/src/agent.rs steps 11–13 · the wiring is in the loop, not the tools</div>
+      </div>
+    </div>
+
+    <div class="note">
+      <strong>The discipline that keeps this honest:</strong> a seam is only cut when a second
+      implementation already exists or is imminent — no empty interfaces "for the future." The
+      core has a line budget, every abstraction must save more code than it costs, and any state
+      has exactly one owner (session facts live only in the log; tool registrations live in one
+      table). Deleting is the cheapest maintenance. When the kernel can't justify the seam, it
+      ships the concrete thing and waits.
+    </div>
+  </section>
+
+  <footer>
+    <span>sunmao — joinery by seams; the repo is the contract.</span>
+    <span>derived from docs/SPEC.md + crates/core/src/agent.rs</span>
+  </footer>
+</div>
+</body>
+</html>

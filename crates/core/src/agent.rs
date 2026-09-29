@@ -37,7 +37,7 @@ pub enum TurnOutcome {
 }
 
 /// Observer sink — the REPL prints these, a GUI would render them.
-pub trait Observer: Send {
+pub trait Observer: Send + Sync {
     fn on_event(&self, ev: &LiveEvent);
 }
 

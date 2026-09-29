@@ -68,7 +68,7 @@ impl SseParser {
                 (field, value)
             }
             // "bare field name" = field with empty value
-            None => (&line[..], &[][..]),
+            None => (line, &[][..]),
         };
         match field {
             b"data" => self.data.push(String::from_utf8_lossy(value).into_owned()),
@@ -134,12 +134,7 @@ mod tests {
             }]
         );
         let evs = p.feed(b"ta: bye\n\n");
-        assert_eq!(
-            evs,
-            vec![SseEvent::Message {
-                data: "bye".into()
-            }]
-        );
+        assert_eq!(evs, vec![SseEvent::Message { data: "bye".into() }]);
     }
 
     #[test]
@@ -161,11 +156,6 @@ mod tests {
     fn strips_crlf() {
         let mut p = SseParser::new();
         let evs = p.feed(b"data: hi\r\n\r\n");
-        assert_eq!(
-            evs,
-            vec![SseEvent::Message {
-                data: "hi".into()
-            }]
-        );
+        assert_eq!(evs, vec![SseEvent::Message { data: "hi".into() }]);
     }
 }

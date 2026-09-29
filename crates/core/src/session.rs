@@ -96,9 +96,7 @@ impl SessionLog {
                 } => out.push(Message::tool_result(call_id, output)),
                 SessionEvent::Compacted { summary } => {
                     out.clear();
-                    out.push(Message::system(format!(
-                        "[context compacted]\n{summary}"
-                    )));
+                    out.push(Message::system(format!("[context compacted]\n{summary}")));
                 }
                 _ => {}
             }

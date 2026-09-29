@@ -23,6 +23,8 @@ pub struct Context {
     pub audit: AuditLog,
     /// Working directory tools resolve paths against.
     pub cwd: PathBuf,
+    /// Files read this session — the Read-before-Write gate's ledger.
+    read_paths: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
 }
 
 impl Context {
@@ -38,6 +40,24 @@ impl Context {
             tools,
             audit: AuditLog::new(),
             cwd,
+            read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
+    }
+
+    pub fn mark_read(&self, path: &std::path::Path) {
+        if let Ok(canon) = path.canonicalize() {
+            self.read_paths.lock().unwrap().insert(canon);
+        }
+        self.read_paths.lock().unwrap().insert(path.to_path_buf());
+    }
+
+    pub fn has_read(&self, path: &std::path::Path) -> bool {
+        let set = self.read_paths.lock().unwrap();
+        if set.contains(path) {
+            return true;
+        }
+        path.canonicalize()
+            .map(|c| set.contains(&c))
+            .unwrap_or(false)
     }
 }

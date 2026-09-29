@@ -91,6 +91,8 @@ pub fn builtin_registry() -> ToolRegistry {
     r.register(WriteTool);
     r.register(EditTool);
     r.register(BashTool);
+    r.register(GlobTool);
+    r.register(GrepTool);
     r
 }
 
@@ -132,6 +134,7 @@ impl ToolImpl for ReadTool {
         let text = tokio::fs::read_to_string(&path)
             .await
             .with_context(|| format!("cannot read {}", path.display()))?;
+        ctx.mark_read(&path);
         let offset = a.offset.unwrap_or(1).max(1);
         let limit = a.limit.unwrap_or(400);
         let body: Vec<String> = text
@@ -190,6 +193,17 @@ impl ToolImpl for WriteTool {
         }
         let a: Args = serde_json::from_value(args)?;
         let path = ctx.cwd.join(&a.path);
+        // Read-before-Write gate: overwriting a file the model hasn't read
+        // is how blind edits happen. New files are exempt.
+        if path.exists() && !ctx.has_read(&path) {
+            return Ok(ToolResult {
+                output: format!(
+                    "refused: {} exists but was not Read this session. Read it first.",
+                    path.display()
+                ),
+                ok: false,
+            });
+        }
         tokio::fs::write(&path, &a.content)
             .await
             .with_context(|| format!("cannot write {}", path.display()))?;
@@ -244,6 +258,16 @@ impl ToolImpl for EditTool {
             return Ok(ToolResult {
                 output: format!("created {}", path.display()),
                 ok: true,
+            });
+        }
+
+        if !ctx.has_read(&path) {
+            return Ok(ToolResult {
+                output: format!(
+                    "refused: {} was not Read this session. Read it first.",
+                    path.display()
+                ),
+                ok: false,
             });
         }
 
@@ -362,46 +386,46 @@ impl ToolImpl for BashTool {
             std::env::vars_os().collect();
         let timeout_secs = a.timeout_secs.unwrap_or(120);
 
-        let outcome = tokio::task::spawn_blocking(move || -> Result<(i32, String, String), String> {
-            let list = deno_task_shell::parser::parse(&command)
-                .map_err(|e| format!("cannot parse command: {e}"))?;
-            let state = deno_task_shell::ShellState::new(
-                env_vars,
-                cwd,
-                Default::default(),
-                Default::default(),
-            );
-            let (out_reader, out_writer) = deno_task_shell::pipe();
-            let (err_reader, err_writer) = deno_task_shell::pipe();
-            // empty stdin: tools must never block on the REPL's stdin
-            let (stdin_reader, stdin_writer) =
-                std::io::pipe().map_err(|e| e.to_string())?;
-            drop(stdin_writer);
-            let exec = deno_task_shell::execute_with_pipes(
-                list,
-                state,
-                deno_task_shell::ShellPipeReader::from_raw(stdin_reader),
-                out_writer,
-                err_writer,
-            );
-            let rt = tokio::runtime::Handle::current();
-            let code = rt
-                .block_on(tokio::time::timeout(
-                    std::time::Duration::from_secs(timeout_secs),
-                    exec,
+        let outcome =
+            tokio::task::spawn_blocking(move || -> Result<(i32, String, String), String> {
+                let list = deno_task_shell::parser::parse(&command)
+                    .map_err(|e| format!("cannot parse command: {e}"))?;
+                let state = deno_task_shell::ShellState::new(
+                    env_vars,
+                    cwd,
+                    Default::default(),
+                    Default::default(),
+                );
+                let (out_reader, out_writer) = deno_task_shell::pipe();
+                let (err_reader, err_writer) = deno_task_shell::pipe();
+                // empty stdin: tools must never block on the REPL's stdin
+                let (stdin_reader, stdin_writer) = std::io::pipe().map_err(|e| e.to_string())?;
+                drop(stdin_writer);
+                let exec = deno_task_shell::execute_with_pipes(
+                    list,
+                    state,
+                    deno_task_shell::ShellPipeReader::from_raw(stdin_reader),
+                    out_writer,
+                    err_writer,
+                );
+                let rt = tokio::runtime::Handle::current();
+                let code = rt
+                    .block_on(tokio::time::timeout(
+                        std::time::Duration::from_secs(timeout_secs),
+                        exec,
+                    ))
+                    .map_err(|_| format!("command timed out after {timeout_secs}s"))?;
+                let mut out_buf = Vec::new();
+                let mut err_buf = Vec::new();
+                out_reader.pipe_to(&mut out_buf).ok();
+                err_reader.pipe_to(&mut err_buf).ok();
+                Ok((
+                    code,
+                    String::from_utf8_lossy(&out_buf).into_owned(),
+                    String::from_utf8_lossy(&err_buf).into_owned(),
                 ))
-                .map_err(|_| format!("command timed out after {timeout_secs}s"))?;
-            let mut out_buf = Vec::new();
-            let mut err_buf = Vec::new();
-            out_reader.pipe_to(&mut out_buf).ok();
-            err_reader.pipe_to(&mut err_buf).ok();
-            Ok((
-                code,
-                String::from_utf8_lossy(&out_buf).into_owned(),
-                String::from_utf8_lossy(&err_buf).into_owned(),
-            ))
-        })
-        .await;
+            })
+            .await;
 
         let (code, stdout, stderr) = match outcome {
             Ok(Ok(v)) => v,
@@ -413,7 +437,6 @@ impl ToolImpl for BashTool {
             }
             Err(e) => bail!("shell task panicked: {e}"),
         };
-
 
         // context-efficient output discipline: cap at ~8KB per side
         const CAP: usize = 8 * 1024;
@@ -435,5 +458,218 @@ impl ToolImpl for BashTool {
             output: out,
             ok: code == 0,
         })
+    }
+}
+
+// ---------- Glob ----------
+
+pub struct GlobTool;
+
+#[async_trait::async_trait]
+impl ToolImpl for GlobTool {
+    fn name(&self) -> &'static str {
+        "Glob"
+    }
+
+    fn decl(&self) -> Tool {
+        Tool::function(
+            "Glob",
+            "Find files by glob pattern relative to the working directory. \
+             Returns matching paths (max 200), most recent first is not guaranteed.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "e.g. **/*.rs, src/**/*.toml"}
+                },
+                "required": ["pattern"]
+            }),
+        )
+    }
+
+    async fn call(&self, args: Value, ctx: &crate::context::Context) -> anyhow::Result<ToolResult> {
+        #[derive(Deserialize)]
+        struct Args {
+            pattern: String,
+        }
+        let a: Args = serde_json::from_value(args)?;
+        let full = ctx.cwd.join(&a.pattern);
+        let pat = full.to_string_lossy().replace('\\', "/");
+        let mut hits = Vec::new();
+        for entry in glob::glob(&pat).with_context(|| format!("bad pattern: {}", a.pattern))? {
+            if let Ok(p) = entry {
+                let rel = p
+                    .strip_prefix(&ctx.cwd)
+                    .map(|r| r.display().to_string())
+                    .unwrap_or_else(|_| p.display().to_string());
+                hits.push(rel);
+            }
+            if hits.len() >= 200 {
+                break;
+            }
+        }
+        let mut out = hits.join("\n");
+        if hits.len() >= 200 {
+            out.push_str("\n[truncated at 200]");
+        }
+        if hits.is_empty() {
+            out = "[no matches]".into();
+        }
+        Ok(ToolResult {
+            output: out,
+            ok: true,
+        })
+    }
+}
+
+// ---------- Grep (managed subprocess: rg, no shell) ----------
+
+pub struct GrepTool;
+
+#[async_trait::async_trait]
+impl ToolImpl for GrepTool {
+    fn name(&self) -> &'static str {
+        "Grep"
+    }
+
+    fn decl(&self) -> Tool {
+        Tool::function(
+            "Grep",
+            "Search file contents with ripgrep (regex). Returns file:line:match lines, capped at 8KB.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Regex pattern"},
+                    "path": {"type": "string", "description": "File/dir to search (default: cwd)"},
+                    "glob": {"type": "string", "description": "e.g. *.rs to filter files"}
+                },
+                "required": ["pattern"]
+            }),
+        )
+    }
+
+    async fn call(&self, args: Value, ctx: &crate::context::Context) -> anyhow::Result<ToolResult> {
+        #[derive(Deserialize)]
+        struct Args {
+            pattern: String,
+            path: Option<String>,
+            glob: Option<String>,
+        }
+        let a: Args = serde_json::from_value(args)?;
+
+        let mut cmd = tokio::process::Command::new("rg");
+        cmd.arg("--line-number")
+            .arg("--no-heading")
+            .arg("--color=never")
+            .arg("--max-columns=400")
+            .current_dir(&ctx.cwd)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
+        if let Some(g) = &a.glob {
+            cmd.arg("--glob").arg(g);
+        }
+        cmd.arg(&a.pattern);
+        if let Some(p) = &a.path {
+            cmd.arg(p);
+        }
+        let out = match cmd.output().await {
+            Ok(o) => o,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(ToolResult {
+                    output: "ripgrep (rg) not found on PATH".into(),
+                    ok: false,
+                })
+            }
+            Err(e) => return Err(e.into()),
+        };
+        const CAP: usize = 8 * 1024;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut res = if text.len() > CAP {
+            format!("{}…[truncated {} bytes]", &text[..CAP], text.len() - CAP)
+        } else {
+            text.into_owned()
+        };
+        if res.is_empty() {
+            res = "[no matches]".into();
+        }
+        // rg exit 1 = no matches (fine); >=2 = real error
+        Ok(ToolResult {
+            output: res,
+            ok: out.status.code().unwrap_or(2) <= 1,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::Context;
+    use crate::session::SessionLog;
+    use std::sync::Arc;
+    use sunmao_llm::ProviderAdapter;
+
+    struct StubLlm;
+
+    #[async_trait::async_trait]
+    impl ProviderAdapter for StubLlm {
+        async fn stream(
+            &self,
+            _req: sunmao_llm::ChatRequest<'_>,
+        ) -> anyhow::Result<sunmao_llm::DeltaStream> {
+            Ok(Box::pin(futures_util::stream::empty()))
+        }
+    }
+
+    fn test_ctx(dir: &std::path::Path) -> Arc<Context> {
+        Arc::new(Context::new(
+            Arc::new(StubLlm),
+            SessionLog::ephemeral(),
+            builtin_registry(),
+            dir.to_path_buf(),
+        ))
+    }
+
+    #[tokio::test]
+    async fn edit_refuses_unread_file() {
+        let dir = std::env::temp_dir().join(format!("sunmao-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("t.txt"), "hello world").unwrap();
+        let ctx = test_ctx(&dir);
+        let tool = EditTool;
+        let res = tool
+            .call(
+                json!({"path": "t.txt", "old_string": "hello", "new_string": "bye"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!res.ok);
+        assert!(res.output.contains("not Read this session"));
+        // after a Read, the same edit must succeed
+        let read = ReadTool;
+        read.call(json!({"path": "t.txt"}), &ctx).await.unwrap();
+        let res = tool
+            .call(
+                json!({"path": "t.txt", "old_string": "hello", "new_string": "bye"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(res.ok);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("t.txt")).unwrap(),
+            "bye world"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_allows_new_file_without_read() {
+        let dir = std::env::temp_dir().join(format!("sunmao-test-w-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ctx = test_ctx(&dir);
+        let res = WriteTool
+            .call(json!({"path": "n.txt", "content": "x"}), &ctx)
+            .await
+            .unwrap();
+        assert!(res.ok);
     }
 }

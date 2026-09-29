@@ -58,10 +58,9 @@ impl ToolCallAssembler {
             let args = if call.args.trim().is_empty() {
                 "{}".to_string()
             } else {
-                serde_json::from_str::<serde_json::Value>(&call.args)
-                    .with_context(|| {
-                        format!("tool call {index} ({}) arguments not valid JSON", call.name)
-                    })?;
+                serde_json::from_str::<serde_json::Value>(&call.args).with_context(|| {
+                    format!("tool call {index} ({}) arguments not valid JSON", call.name)
+                })?;
                 call.args
             };
             out.push(ToolCall {
@@ -81,7 +80,12 @@ impl ToolCallAssembler {
 mod tests {
     use super::*;
 
-    fn frag(index: u32, id: Option<&str>, name: Option<&str>, args: Option<&str>) -> ToolCallFragment {
+    fn frag(
+        index: u32,
+        id: Option<&str>,
+        name: Option<&str>,
+        args: Option<&str>,
+    ) -> ToolCallFragment {
         ToolCallFragment {
             index,
             id: id.map(String::from),
@@ -96,7 +100,12 @@ mod tests {
         a.push(&frag(0, Some("call_1"), Some("Edit"), None));
         a.push(&frag(0, None, None, Some("{\"path\":\"x\"")));
         a.push(&frag(0, None, None, Some(",\"old\":\"a\",\"new\":\"b\"}")));
-        a.push(&frag(1, Some("call_2"), Some("Bash"), Some("{\"cmd\":\"ls\"}")));
+        a.push(&frag(
+            1,
+            Some("call_2"),
+            Some("Bash"),
+            Some("{\"cmd\":\"ls\"}"),
+        ));
         let calls = a.finish().unwrap();
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].id, "call_1");

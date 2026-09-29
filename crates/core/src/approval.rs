@@ -35,8 +35,21 @@ pub fn classify(command: &str) -> Option<&'static str> {
 
 #[async_trait::async_trait]
 pub trait Approver: Send + Sync {
-    /// Return true to permit. `detail` is human-readable (the command).
-    async fn approve(&self, tool: &str, detail: &str, why: &str) -> bool;
+    /// `detail` is human-readable (the command). Frontends may offer a
+    /// session-scoped grant; `Once`/`Deny` are always safe defaults.
+    async fn approve(&self, tool: &str, detail: &str, why: &str) -> Approval;
+}
+
+/// The verdict a user gave at the approval seam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Approval {
+    /// Permit this call only.
+    Once,
+    /// Permit this call and every identical (tool, specifier) call for the
+    /// rest of the session — recorded as a `SessionEvent::Hook` fact.
+    Session,
+    /// Refuse.
+    Deny,
 }
 
 /// Non-interactive default: allow everything, audit the decision.
@@ -44,8 +57,8 @@ pub struct AllowAll;
 
 #[async_trait::async_trait]
 impl Approver for AllowAll {
-    async fn approve(&self, _tool: &str, _detail: &str, _why: &str) -> bool {
-        true
+    async fn approve(&self, _tool: &str, _detail: &str, _why: &str) -> Approval {
+        Approval::Once
     }
 }
 

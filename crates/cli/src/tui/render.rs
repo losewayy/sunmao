@@ -24,7 +24,7 @@ pub fn draw(f: &mut ratatui::Frame, app: &mut App) {
             4 + items + more_row + search_row
         })
         .unwrap_or(0);
-    let card_rows = if app.focus == Focus::Approval { 4 } else { 0 };
+    let card_rows = if app.focus == Focus::Approval { 5 } else { 0 };
     let input_rows = (app.input.lines().count().max(1) as u16 + 2).clamp(3, 8);
 
     let chunks = Layout::default()
@@ -118,7 +118,10 @@ fn draw_slash_menu(f: &mut ratatui::Frame, m: &SlashMenu, area: Rect) {
         ]));
     }
     // windowed view: keep `selected` inside an 8-row window
-    let start = m.selected.saturating_sub(7).min(m.matches.len().saturating_sub(8));
+    let start = m
+        .selected
+        .saturating_sub(7)
+        .min(m.matches.len().saturating_sub(8));
     let end = (start + 8).min(m.matches.len());
     for (i, name) in m.matches.iter().enumerate().take(end).skip(start) {
         let sel = i == m.selected;
@@ -137,7 +140,10 @@ fn draw_slash_menu(f: &mut ratatui::Frame, m: &SlashMenu, area: Rect) {
             Style::default().fg(THEME.faint),
         )));
     }
-    rows.push(Line::from(Span::styled(rule, Style::default().fg(THEME.user))));
+    rows.push(Line::from(Span::styled(
+        rule,
+        Style::default().fg(THEME.user),
+    )));
     f.render_widget(Paragraph::new(rows), area);
 }
 
@@ -164,16 +170,18 @@ fn draw_card(f: &mut ratatui::Frame, c: &ApprovalCard, area: Rect) {
             ),
         ]),
         Line::from(vec![
-            opt("1) allow", c.selected == 0, THEME.ok),
-            Span::raw("   "),
-            opt("2) deny", c.selected == 1, THEME.err),
-            Span::styled(
-                format!("   why: {}", c.why),
-                Style::default().fg(THEME.faint),
-            ),
+            opt("1) allow once", c.selected == 0, THEME.ok),
+            Span::raw(" "),
+            opt("2) allow session", c.selected == 1, THEME.ok),
+            Span::raw(" "),
+            opt("3) deny", c.selected == 2, THEME.err),
         ]),
         Line::from(Span::styled(
-            " ↑↓/Tab choose · 1-2/Enter pick · y/n quick · Esc park · Ctrl-C deny",
+            format!(" why: {}", c.why),
+            Style::default().fg(THEME.faint),
+        )),
+        Line::from(Span::styled(
+            " ↑↓/Tab choose · 1-3/Enter pick · y/a/n quick · Esc park · Ctrl-C deny",
             Style::default().fg(THEME.faint),
         )),
     ];

@@ -45,7 +45,7 @@ pub struct ApprovalReq {
     pub tool: String,
     pub detail: String,
     pub why: String,
-    pub reply: tokio::sync::oneshot::Sender<bool>,
+    pub reply: tokio::sync::oneshot::Sender<sunmao_core::approval::Approval>,
 }
 
 /// Approval seam for the TUI — risky calls suspend on a oneshot until the
@@ -56,7 +56,12 @@ pub struct TuiApprover {
 
 #[async_trait::async_trait]
 impl sunmao_core::approval::Approver for TuiApprover {
-    async fn approve(&self, tool: &str, detail: &str, why: &str) -> bool {
+    async fn approve(
+        &self,
+        tool: &str,
+        detail: &str,
+        why: &str,
+    ) -> sunmao_core::approval::Approval {
         let (tx, rx) = tokio::sync::oneshot::channel();
         if self
             .tx
@@ -68,9 +73,9 @@ impl sunmao_core::approval::Approver for TuiApprover {
             })
             .is_err()
         {
-            return false;
+            return sunmao_core::approval::Approval::Deny;
         }
-        rx.await.unwrap_or(false)
+        rx.await.unwrap_or(sunmao_core::approval::Approval::Deny)
     }
 }
 
@@ -270,7 +275,7 @@ fn handle_key(
     // Ctrl-C is global: cancel a busy turn, deny a live card, else quit.
     if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) {
         if app.focus == Focus::Approval {
-            resolve_card(app, false);
+            resolve_card(app, sunmao_core::approval::Approval::Deny);
             return false;
         }
         if app.busy {
@@ -293,16 +298,21 @@ fn handle_key(
     }
 }
 
-fn resolve_card(app: &mut App, allow: bool) {
+fn resolve_card(app: &mut App, verdict: sunmao_core::approval::Approval) {
     if let Some(card) = app.approval.take() {
-        let _ = card.reply.send(allow);
-        let mark = if allow { "[approved]" } else { "[denied]" };
+        let _ = card.reply.send(verdict);
+        let mark = match verdict {
+            sunmao_core::approval::Approval::Once => "[approved]",
+            sunmao_core::approval::Approval::Session => "[approved for session]",
+            sunmao_core::approval::Approval::Deny => "[denied]",
+        };
         app.push_note(&format!("{mark} {}: {}", card.tool, card.detail));
     }
     app.focus = Focus::Input;
 }
 
 fn card_key(app: &mut App, k: KeyEvent) -> bool {
+    use sunmao_core::approval::Approval;
     match k.code {
         KeyCode::Esc => app.on_esc(), // parks the card
         KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
@@ -312,18 +322,25 @@ fn card_key(app: &mut App, k: KeyEvent) -> bool {
         }
         KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Tab => {
             if let Some(c) = &mut app.approval {
-                c.selected = (c.selected + 1) % 2
+                c.selected = (c.selected + 1) % 3
             }
         }
-        KeyCode::Char('1') | KeyCode::Char('y') | KeyCode::Char('Y') => resolve_card(app, true),
-        KeyCode::Char('2') | KeyCode::Char('n') | KeyCode::Char('N') => resolve_card(app, false),
+        KeyCode::Char('1') | KeyCode::Char('y') | KeyCode::Char('Y') => {
+            resolve_card(app, Approval::Once)
+        }
+        KeyCode::Char('2') | KeyCode::Char('a') | KeyCode::Char('A') => {
+            resolve_card(app, Approval::Session)
+        }
+        KeyCode::Char('3') | KeyCode::Char('n') | KeyCode::Char('N') => {
+            resolve_card(app, Approval::Deny)
+        }
         KeyCode::Enter => {
-            let allow = app
-                .approval
-                .as_ref()
-                .map(|c| c.selected == 0)
-                .unwrap_or(false);
-            resolve_card(app, allow);
+            let v = match app.approval.as_ref().map(|c| c.selected).unwrap_or(0) {
+                1 => Approval::Session,
+                2 => Approval::Deny,
+                _ => Approval::Once,
+            };
+            resolve_card(app, v);
         }
         _ => {}
     }

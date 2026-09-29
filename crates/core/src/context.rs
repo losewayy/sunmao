@@ -41,6 +41,11 @@ pub struct Context {
     /// Files read this session — the Read-before-Write gate's ledger.
     /// (crate-visible so sub-agent contexts can construct one)
     pub(crate) read_paths: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
+    /// Session-scoped approval grants — `"tool\tspecifier"` keys the user
+    /// approved with `Approval::Session`. Exact-match only: a grant covers
+    /// the identical call, nothing broader. `Arc` so `Task` sub-agents share
+    /// the session's grants (they share the same interactive session).
+    pub session_grants: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 impl Context {
@@ -63,6 +68,9 @@ impl Context {
             depth: 0,
             cancelled: std::sync::atomic::AtomicBool::new(false),
             read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),
+            session_grants: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
         }
     }
 
@@ -81,5 +89,21 @@ impl Context {
         path.canonicalize()
             .map(|c| set.contains(&c))
             .unwrap_or(false)
+    }
+
+    /// A prior `Approval::Session` covers this exact call?
+    pub fn session_granted(&self, tool: &str, specifier: &str) -> bool {
+        self.session_grants
+            .lock()
+            .unwrap()
+            .contains(&format!("{tool}\t{specifier}"))
+    }
+
+    /// Record a session-scoped grant.
+    pub fn grant_session(&self, tool: &str, specifier: &str) {
+        self.session_grants
+            .lock()
+            .unwrap()
+            .insert(format!("{tool}\t{specifier}"));
     }
 }

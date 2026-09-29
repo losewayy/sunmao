@@ -29,6 +29,8 @@ pub struct Context {
     pub hooks: HookEngine,
     /// Working directory tools resolve paths against.
     pub cwd: PathBuf,
+    /// Declarative permission rules (.sunmao/permissions.json + .claude settings).
+    pub permissions: crate::permissions::Permissions,
     /// Approval gate — risky tool calls pause here for a verdict.
     pub approval: Arc<dyn Approver>,
     /// Subagent nesting depth — Task tool refuses past MAX_DEPTH.
@@ -48,6 +50,7 @@ impl Context {
         tools: ToolRegistry,
         cwd: PathBuf,
     ) -> Self {
+        let permissions = crate::permissions::Permissions::load(&cwd);
         Self {
             llm,
             sessions: tokio::sync::Mutex::new(sessions),
@@ -55,6 +58,7 @@ impl Context {
             audit: AuditLog::new(),
             hooks: HookEngine::load(&cwd, "session"),
             cwd,
+            permissions,
             approval: Arc::new(AllowAll),
             depth: 0,
             cancelled: std::sync::atomic::AtomicBool::new(false),

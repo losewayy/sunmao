@@ -393,14 +393,38 @@ impl ToolImpl for BashTool {
             return spawn_background(&a.command, ctx).await;
         }
 
-        // approval gate for risky patterns — the audit seam's active half
-        if let Some(why) = crate::approval::classify(&a.command) {
-            let allowed = ctx.approval.approve("Bash", &a.command, why).await;
-            if !allowed {
+        // declarative permission rules first (deny is hard refusal)
+        match ctx.permissions.check("Bash", &a.command) {
+            crate::permissions::Verdict::Deny => {
                 return Ok(ToolResult {
-                    output: format!("denied by user approval gate ({why})"),
+                    output: "denied by permission rules".into(),
                     ok: false,
-                });
+                })
+            }
+            crate::permissions::Verdict::Ask => {
+                if !ctx
+                    .approval
+                    .approve("Bash", &a.command, "matched ask rule")
+                    .await
+                {
+                    return Ok(ToolResult {
+                        output: "denied at approval prompt".into(),
+                        ok: false,
+                    });
+                }
+            }
+            crate::permissions::Verdict::PreApproved | crate::permissions::Verdict::Default => {}
+        }
+        if crate::permissions::Verdict::PreApproved != ctx.permissions.check("Bash", &a.command) {
+            // approval gate for risky patterns — the audit seam's active half
+            if let Some(why) = crate::approval::classify(&a.command) {
+                let allowed = ctx.approval.approve("Bash", &a.command, why).await;
+                if !allowed {
+                    return Ok(ToolResult {
+                        output: format!("denied by user approval gate ({why})"),
+                        ok: false,
+                    });
+                }
             }
         }
 

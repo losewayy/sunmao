@@ -225,6 +225,12 @@ impl AgentLoop {
         events
     }
 
+    /// Path of the active session log — the session's public identity
+    /// (`--resume`, `--dataflow`, `--fork` all take it).
+    pub async fn session_path(&self) -> std::path::PathBuf {
+        self.ctx.sessions.lock().await.path().to_path_buf()
+    }
+
     pub fn with_compact_threshold(mut self, n: usize) -> Self {
         self.compact_threshold = n;
         self

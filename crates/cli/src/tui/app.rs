@@ -122,7 +122,7 @@ pub enum Submit {
 }
 
 impl App {
-    pub fn new(model: &str, cwd: std::path::PathBuf) -> Self {
+    pub fn new(model: &str, cwd: std::path::PathBuf, session_id: &str) -> Self {
         let mut app = Self {
             cwd,
             model: model.to_string(),
@@ -149,7 +149,7 @@ impl App {
         };
         let mut banner = Block::new(BlockKind::Note);
         banner.text = format!(
-            "sunmao TUI — {model}\nEnter send · Esc/Ctrl-C quit · Tab browse blocks · / commands"
+            "sunmao TUI — {model} · session {session_id}\nEnter send · Esc/Ctrl-C quit · Tab browse blocks · / commands"
         );
         app.blocks.push(banner);
         app
@@ -607,7 +607,7 @@ mod tests {
     /// line — all closed.
     #[test]
     fn replay_rebuilds_block_transcript() {
-        let mut app = App::new("m", std::path::PathBuf::from("."));
+        let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
         app.replay(&[
             E::Message {
                 message: Message::user("fix the bug"),
@@ -661,7 +661,7 @@ mod tests {
     /// interrupted — same verdict close_turn gives a live-cancelled call.
     #[test]
     fn replay_marks_dangling_tool_interrupted() {
-        let mut app = App::new("m", std::path::PathBuf::from("."));
+        let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
         app.replay(&[E::ToolCall {
             call: call("c9", "Bash", r#"{"command":"rm -rf x"}"#),
         }]);

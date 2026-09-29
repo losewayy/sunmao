@@ -134,6 +134,13 @@ async fn run_inner(
     replay: Vec<sunmao_core::SessionEvent>,
 ) -> Result<()> {
     let agent = Arc::new(agent);
+    // session id before the driver takes ownership of `agent`
+    let session_id = agent
+        .session_path()
+        .await
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "?".into());
     let (tx_msg, mut rx_msg) = mpsc::unbounded_channel::<Msg>();
     let (tx_input, mut rx_input) = mpsc::unbounded_channel::<Submit>();
     let (tx_cancel, mut rx_cancel) = mpsc::unbounded_channel::<()>();
@@ -362,7 +369,7 @@ async fn run_inner(
         });
     }
 
-    let mut app = App::new(model, cwd.clone());
+    let mut app = App::new(model, cwd.clone(), &session_id);
     if !replay.is_empty() {
         app.replay(&replay);
     }

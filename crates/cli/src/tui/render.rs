@@ -330,11 +330,26 @@ fn draw_status(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         None => String::new(),
     };
     let ctx = match app.last_usage.as_ref().filter(|u| u.prompt_tokens > 0) {
-        Some(u) => format!(
-            "{} · {short_cwd} {branch} · {mode} · ctx {}",
-            app.model,
-            human_tokens(u.prompt_tokens)
-        ),
+        Some(u) => {
+            // cache-hit ratio is the cost dial — visible pressure to keep
+            // prefixes stable
+            let cached = if u.prompt_tokens > 0 && u.cache_read_input_tokens > 0 {
+                let pct = u
+                    .cache_read_input_tokens
+                    .checked_mul(100)
+                    .and_then(|n| n.checked_div(u.prompt_tokens + u.cache_read_input_tokens))
+                    .unwrap_or(0);
+                format!(" · ⚡{pct}%")
+            } else {
+                String::new()
+            };
+            format!(
+                "{} · {short_cwd} {branch} · {mode} · ctx {}{}",
+                app.model,
+                human_tokens(u.prompt_tokens),
+                cached
+            )
+        }
         None => format!("{} · {short_cwd} {branch} · {mode}", app.model),
     };
 

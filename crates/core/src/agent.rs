@@ -396,7 +396,28 @@ impl AgentLoop {
 
     /// Run one turn: `input` is the user's message; returns when the model
     /// stops calling tools or we hit the iteration ceiling.
+    ///
+    /// Frontends depend on TurnEnd to unwind their "working" state — so
+    /// even an Err path emits one (`Other("<error>")`) before propagating.
+    /// The error string doubles as the outcome detail; the observer's
+    /// transcript shows why the turn died instead of hanging.
     pub async fn run_turn(
+        &self,
+        input: &str,
+        observer: &dyn Observer,
+    ) -> anyhow::Result<TurnOutcome> {
+        match self.run_turn_inner(input, observer).await {
+            Ok(o) => Ok(o),
+            Err(e) => {
+                observer.on_event(&LiveEvent::TurnEnd {
+                    outcome: TurnOutcome::Other(format!("error: {e:#}")),
+                });
+                Err(e)
+            }
+        }
+    }
+
+    async fn run_turn_inner(
         &self,
         input: &str,
         observer: &dyn Observer,
@@ -746,6 +767,52 @@ mod tests {
     struct NullObserver;
     impl Observer for NullObserver {
         fn on_event(&self, _ev: &LiveEvent) {}
+    }
+
+    /// Records every LiveEvent — used to assert TurnEnd fires on the error
+    /// path (frontends unwind busy/spinner state from it; a missing TurnEnd
+    /// leaves the TUI stuck).
+    struct RecObserver(std::sync::Mutex<Vec<String>>);
+    impl Observer for RecObserver {
+        fn on_event(&self, ev: &LiveEvent) {
+            let tag = match ev {
+                LiveEvent::TurnEnd { outcome } => format!("TurnEnd:{outcome:?}"),
+                LiveEvent::Content(_) => "Content".into(),
+                LiveEvent::Reasoning(_) => "Reasoning".into(),
+                LiveEvent::ToolStart { .. } => "ToolStart".into(),
+                LiveEvent::ToolDone { .. } => "ToolDone".into(),
+                LiveEvent::Hook { .. } => "Hook".into(),
+                LiveEvent::Usage(_) => "Usage".into(),
+            };
+            self.0.lock().unwrap().push(tag);
+        }
+    }
+
+    #[tokio::test]
+    async fn error_path_still_emits_turn_end() {
+        // provider that always fails to establish the stream
+        struct FailProvider;
+        #[async_trait::async_trait]
+        impl ProviderAdapter for FailProvider {
+            async fn stream(&self, _req: ChatRequest<'_>) -> anyhow::Result<DeltaStream> {
+                anyhow::bail!("provider down")
+            }
+        }
+        let ctx = Arc::new(Context::new(
+            Arc::new(FailProvider),
+            SessionLog::ephemeral(),
+            builtin_registry(),
+            std::env::temp_dir(),
+        ));
+        let agent = AgentLoop::new(ctx);
+        let rec = RecObserver(std::sync::Mutex::new(Vec::new()));
+        let res = agent.run_turn("hi", &rec).await;
+        assert!(res.is_err(), "stream failure must propagate");
+        let events = rec.0.lock().unwrap();
+        assert!(
+            events.iter().any(|t| t.starts_with("TurnEnd:Other")),
+            "frontends need TurnEnd even on error — got {events:?}"
+        );
     }
 
     #[tokio::test]

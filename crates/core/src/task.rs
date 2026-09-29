@@ -103,11 +103,32 @@ impl ToolImpl for TaskTool {
             read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),
         };
 
-        let agent = AgentLoop::new(Arc::new(sub_ctx)).with_max_iterations(24);
+        let sub_ctx = Arc::new(sub_ctx);
+        let _ = sub_ctx
+            .hooks
+            .fire(
+                crate::hooks::HookEvent::SubagentStart,
+                &sub_ctx.cwd,
+                None,
+                Some(&json!({"prompt": a.prompt})),
+                None,
+            )
+            .await;
+        let agent = AgentLoop::new(sub_ctx.clone()).with_max_iterations(24);
         let obs = CollectObserver {
             text: std::sync::Mutex::new(String::new()),
         };
         let outcome = agent.run_turn(&a.prompt, &obs).await;
+        let _ = sub_ctx
+            .hooks
+            .fire(
+                crate::hooks::HookEvent::SubagentStop,
+                &sub_ctx.cwd,
+                None,
+                None,
+                None,
+            )
+            .await;
         let text = obs.text.lock().unwrap().clone();
         match outcome {
             Ok(_) => Ok(ToolResult {

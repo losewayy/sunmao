@@ -308,6 +308,11 @@ impl AgentLoop {
                 }
             }
         }
+        let _ = self
+            .ctx
+            .hooks
+            .fire(HookEvent::Stop, &self.ctx.cwd, None, None, None)
+            .await;
         observer.on_event(&LiveEvent::TurnEnd {
             outcome: outcome.clone(),
         });

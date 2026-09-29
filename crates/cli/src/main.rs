@@ -175,6 +175,15 @@ async fn main() -> anyhow::Result<()> {
         ctx_raw.approval = Arc::new(StdinApprover { interactive: true });
     }
     let ctx = Arc::new(ctx_raw);
+    ctx.hooks
+        .fire(
+            sunmao_core::hooks::HookEvent::SessionStart,
+            &ctx.cwd,
+            None,
+            None,
+            None,
+        )
+        .await;
 
     let default_system = concat!(
         "You are sunmao, a coding agent. Use tools to act on the filesystem. ",
@@ -207,7 +216,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     }
 
-    let agent = AgentLoop::new(ctx);
+    let agent = AgentLoop::new(ctx.clone());
 
     if let Some(prompt) = &cli.print {
         let obs = StdoutObserver {
@@ -253,6 +262,15 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("[error] {e:#}");
         }
     }
+    ctx.hooks
+        .fire(
+            sunmao_core::hooks::HookEvent::SessionEnd,
+            &ctx.cwd,
+            None,
+            None,
+            None,
+        )
+        .await;
     Ok(())
 }
 

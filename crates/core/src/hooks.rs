@@ -24,6 +24,8 @@ pub enum HookEvent {
     PostToolUse,
     Stop,
     SessionEnd,
+    SubagentStart,
+    SubagentStop,
 }
 
 impl HookEvent {
@@ -35,6 +37,8 @@ impl HookEvent {
             Self::PostToolUse => "PostToolUse",
             Self::Stop => "Stop",
             Self::SessionEnd => "SessionEnd",
+            Self::SubagentStart => "SubagentStart",
+            Self::SubagentStop => "SubagentStop",
         }
     }
 }

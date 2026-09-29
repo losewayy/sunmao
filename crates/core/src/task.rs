@@ -80,19 +80,10 @@ impl ToolImpl for TaskTool {
         let mut log = SessionLog::open(&dir, &sub_id)
             .await
             .unwrap_or_else(|_| SessionLog::ephemeral());
-        let sys_prompt = a
-            .subagent_type
-            .as_deref()
-            .and_then(|t| {
-                crate::agents::load_all(&ctx.cwd)
-                    .into_iter()
-                    .find(|d| d.name == t)
-                    .map(|d| d.system_prompt)
-            })
-            .unwrap_or_else(|| {
-                "You are a sunmao sub-agent. Complete the delegated task and reply                  concisely with the result."
-                    .into()
-            });
+        // agents/*.md named def wins; else the `subagent-default` prompt
+        // section — assembled by the same PromptAssembler as everything else.
+        let sys_prompt = crate::prompt::PromptAssembler::new(&ctx.cwd)
+            .assemble_subagent(a.subagent_type.as_deref());
         {
             let _ = log
                 .append(&SessionEvent::Message {

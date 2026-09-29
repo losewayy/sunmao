@@ -197,11 +197,12 @@ pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> 
                                 cwd: cwd.display().to_string(),
                             })
                             .await;
+                        // same assembled prompt as every other frontend —
+                        // the ACP path no longer drifts from the REPL's.
                         let _ = l
                             .append(&SessionEvent::Message {
                                 message: Message::system(
-                                    "You are sunmao, a coding agent. Use tools to act on the \
-                                     filesystem. Prefer dedicated tools over Bash.",
+                                    sunmao_core::prompt::PromptAssembler::new(&cwd).assemble(None),
                                 ),
                             })
                             .await;

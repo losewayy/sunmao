@@ -58,12 +58,34 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
         ".sunmao/hooks.json",
         ".sunmao/mcp.json",
         ".sunmao/permissions.json",
+        ".sunmao/prompt.md",
         ".claude/settings.json",
     ] {
         let p = cli.cwd.join(f);
         if p.exists() {
             println!("config {} present", f);
         }
+    }
+    if let Ok(entries) = std::fs::read_dir(cli.cwd.join(".sunmao/prompt.d")) {
+        for e in entries.flatten() {
+            println!(
+                "config .sunmao/prompt.d/{} present",
+                e.file_name().to_string_lossy()
+            );
+        }
+    }
+
+    // 5. prompt assembly preview — the same PromptAssembler every frontend
+    // runs; --system shows up as the complete override.
+    {
+        let assembled =
+            sunmao_core::prompt::PromptAssembler::new(&cli.cwd).assemble(cli.system.as_deref());
+        let first = assembled.lines().next().unwrap_or("");
+        println!(
+            "system prompt: {} bytes — first line: {}",
+            assembled.len(),
+            first
+        );
     }
 
     // 5. MCP servers: list without connecting (connection smoke is live-tested)

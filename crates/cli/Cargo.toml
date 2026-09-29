@@ -1,0 +1,19 @@
+[package]
+name = "sunmao"
+description = "sunmao CLI — agent harness kernel frontend"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sunmao"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+sunmao-core = { path = "../core" }
+sunmao-llm = { path = "../llm" }
+tokio.workspace = true
+tokio-stream.workspace = true
+tracing-subscriber.workspace = true

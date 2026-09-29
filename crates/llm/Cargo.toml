@@ -1,0 +1,21 @@
+[package]
+name = "sunmao-llm"
+description = "Provider protocol adapters for sunmao: hand-rolled SSE, OpenAI-compatible dialect first"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bytes = "1"
+async-trait.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

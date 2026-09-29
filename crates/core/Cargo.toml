@@ -1,0 +1,22 @@
+[package]
+name = "sunmao-core"
+description = "sunmao kernel: event-sourced sessions, tool registry, agent loop, seams"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+deno_task_shell.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sunmao-llm = { path = "../llm" }
+thiserror.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

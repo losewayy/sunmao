@@ -70,40 +70,9 @@ impl ToolImpl for BashTool {
             return spawn_background(&a.command, ctx, pre()).await;
         }
 
-        // declarative permission rules first (deny is hard refusal)
-        match ctx.permissions.check("Bash", &a.command) {
-            crate::permissions::Verdict::Deny => {
-                return Ok(ToolResult {
-                    output: "denied by permission rules".into(),
-                    ok: false,
-                })
-            }
-            crate::permissions::Verdict::Ask => {
-                if !ctx
-                    .approval
-                    .approve("Bash", &a.command, "matched ask rule")
-                    .await
-                {
-                    return Ok(ToolResult {
-                        output: "denied at approval prompt".into(),
-                        ok: false,
-                    });
-                }
-            }
-            crate::permissions::Verdict::PreApproved | crate::permissions::Verdict::Default => {}
-        }
-        if crate::permissions::Verdict::PreApproved != ctx.permissions.check("Bash", &a.command) {
-            // approval gate for risky patterns — the audit seam's active half
-            if let Some(why) = crate::approval::classify(&a.command) {
-                let allowed = ctx.approval.approve("Bash", &a.command, why).await;
-                if !allowed {
-                    return Ok(ToolResult {
-                        output: format!("denied by user approval gate ({why})"),
-                        ok: false,
-                    });
-                }
-            }
-        }
+        // permission rules + approval gate live in the dispatch pipeline
+        // (agent.rs::gate_call) — the hook's permissionDecision can only
+        // interpose there; the tool itself just executes.
 
         // deno_task_shell's internals are !Send (Rc<Cell> exit-code cells) —
         // every !Send value must be constructed *inside* the blocking closure.

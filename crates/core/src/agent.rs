@@ -126,6 +126,24 @@ fn truncate_output(s: &str) -> String {
     format!("{}…\n[truncated — {} bytes total]", &s[..end], s.len())
 }
 
+/// The string declarative rules glob over for a given tool: the command for
+/// Bash, the path for file tools, the pattern for search — whatever a rule
+/// like `Bash(npm *)` or `Read(./src/**)` is meant to match.
+fn specifier_for(tool: &str, args: &serde_json::Value) -> String {
+    let key = match tool {
+        "Bash" => "command",
+        "Read" | "Write" | "Edit" => "path",
+        "Glob" | "Grep" => "pattern",
+        "WebFetch" => "url",
+        "Task" => "prompt",
+        _ => "",
+    };
+    args.get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
 #[derive(Clone)]
 pub struct AgentLoop {
     ctx: Arc<Context>,
@@ -176,9 +194,78 @@ impl AgentLoop {
             / 4
     }
 
+    /// The dispatch gate — declarative rules, then the hook's
+    /// `permissionDecision`, then the risky-pattern classifier as the
+    /// default prompt. `deny` rules are a hard refusal nothing overrides.
+    async fn gate_call(
+        &self,
+        tool: &str,
+        specifier: &str,
+        hook: Option<crate::hooks::HookPermission>,
+    ) -> Result<(), String> {
+        use crate::hooks::HookPermission as H;
+        use crate::permissions::Verdict;
+        match self.ctx.permissions.check(tool, specifier) {
+            Verdict::Deny => return Err("denied by permission rules".into()),
+            Verdict::Ask => {
+                if !self
+                    .ctx
+                    .approval
+                    .approve(tool, specifier, "matched ask rule")
+                    .await
+                {
+                    return Err("denied at approval prompt".into());
+                }
+                return Ok(());
+            }
+            Verdict::PreApproved => return Ok(()),
+            Verdict::Default => {}
+        }
+        match hook {
+            Some(H::Deny) => return Err("denied by hook".into()),
+            Some(H::Ask) => {
+                if !self
+                    .ctx
+                    .approval
+                    .approve(tool, specifier, "hook requested approval")
+                    .await
+                {
+                    return Err("denied at approval prompt".into());
+                }
+                return Ok(());
+            }
+            Some(H::Allow) => return Ok(()),
+            None => {}
+        }
+        // default: the risky-pattern classifier (Bash-shaped patterns today)
+        if let Some(why) = crate::approval::classify(specifier) {
+            if !self.ctx.approval.approve(tool, specifier, why).await {
+                return Err(format!("denied by user approval gate ({why})"));
+            }
+        }
+        Ok(())
+    }
+
     /// Ask the model to summarize the transcript, then commit a `Compacted`
     /// boundary — the log fold turns it into a fresh system message.
-    pub async fn compact(&self, observer: &dyn Observer) -> anyhow::Result<()> {
+    pub async fn compact(&self, observer: &dyn Observer, trigger: &str) -> anyhow::Result<()> {
+        // PreCompact may veto or annotate the compaction (the dialect's
+        // snapshot hook point — context-mode hangs its state capture here).
+        let pre = self
+            .ctx
+            .hooks
+            .fire(
+                HookEvent::PreCompact,
+                &self.ctx.cwd,
+                &crate::hooks::HookInput {
+                    source: Some(trigger),
+                    ..Default::default()
+                },
+            )
+            .await;
+        if let Some(reason) = pre.block_reason {
+            anyhow::bail!("compaction blocked by hook: {reason}");
+        }
         let mut msgs = self.ctx.sessions.lock().await.messages().await?;
         if msgs.is_empty() {
             return Ok(());
@@ -208,6 +295,18 @@ impl AgentLoop {
             .await
             .append(&SessionEvent::Compacted { summary })
             .await?;
+        let _ = self
+            .ctx
+            .hooks
+            .fire(
+                HookEvent::PostCompact,
+                &self.ctx.cwd,
+                &crate::hooks::HookInput {
+                    source: Some(trigger),
+                    ..Default::default()
+                },
+            )
+            .await;
         observer.on_event(&LiveEvent::ToolDone {
             name: "compact".into(),
             ok: true,
@@ -230,7 +329,14 @@ impl AgentLoop {
         let prompt_outcome = self
             .ctx
             .hooks
-            .fire(HookEvent::UserPromptSubmit, &self.ctx.cwd, None, None, None)
+            .fire(
+                HookEvent::UserPromptSubmit,
+                &self.ctx.cwd,
+                &crate::hooks::HookInput {
+                    prompt: Some(input),
+                    ..Default::default()
+                },
+            )
             .await;
         if let Some(reason) = prompt_outcome.block_reason {
             return Ok(TurnOutcome::Other(format!("blocked by hook: {reason}")));
@@ -264,7 +370,7 @@ impl AgentLoop {
                     name: "compact".into(),
                     summary: String::new(),
                 });
-                if let Err(e) = self.compact(observer).await {
+                if let Err(e) = self.compact(observer, "auto").await {
                     observer.on_event(&LiveEvent::ToolDone {
                         name: format!("compact failed: {e:#}"),
                         ok: false,
@@ -338,14 +444,6 @@ impl AgentLoop {
                 break;
             }
 
-            {
-                let mut log = self.ctx.sessions.lock().await;
-                for call in &tool_calls {
-                    log.append(&SessionEvent::ToolCall { call: call.clone() })
-                        .await?;
-                }
-            }
-
             for call in tool_calls {
                 // malformed JSON args → failed result fed back, no dispatch
                 if let Some(err) = malformed.get(&call.id) {
@@ -354,6 +452,8 @@ impl AgentLoop {
                         ok: false,
                     };
                     let mut log = self.ctx.sessions.lock().await;
+                    log.append(&SessionEvent::ToolCall { call: call.clone() })
+                        .await?;
                     log.append(&SessionEvent::ToolResult {
                         call_id: call.id.clone(),
                         name: call.function.name.clone(),
@@ -367,21 +467,53 @@ impl AgentLoop {
                     .await?;
                     continue;
                 }
-                let args_value: serde_json::Value = serde_json::from_str(&call.function.arguments)
-                    .unwrap_or(serde_json::Value::Null);
+                let mut args_value: serde_json::Value =
+                    serde_json::from_str(&call.function.arguments)
+                        .unwrap_or(serde_json::Value::Null);
 
-                // PreToolUse: a hook may veto the call outright.
+                // PreToolUse: a hook may veto the call outright, rewrite its
+                // input (updatedInput — rtk's transparent command rewrite),
+                // or hand the gate a permissionDecision verdict.
                 let pre = self
                     .ctx
                     .hooks
                     .fire(
                         HookEvent::PreToolUse,
                         &self.ctx.cwd,
-                        Some(&call.function.name),
-                        Some(&args_value),
-                        None,
+                        &crate::hooks::HookInput {
+                            tool_name: Some(&call.function.name),
+                            tool_use_id: Some(&call.id),
+                            tool_input: Some(&args_value),
+                            ..Default::default()
+                        },
                     )
                     .await;
+
+                // Apply the rewrite before logging ToolCall: the log records
+                // what actually ran; the rewrite itself is a durable Hook fact.
+                if let Some(updated) = pre.updated_input {
+                    {
+                        let mut log = self.ctx.sessions.lock().await;
+                        let _ = log
+                            .append(&SessionEvent::Hook {
+                                event: "PreToolUse.updatedInput".into(),
+                                detail: format!(
+                                    "{}: {} → {}",
+                                    call.function.name, call.function.arguments, updated
+                                ),
+                            })
+                            .await;
+                    }
+                    args_value = updated;
+                }
+
+                {
+                    let mut log = self.ctx.sessions.lock().await;
+                    let mut call = call.clone();
+                    call.function.arguments = args_value.to_string();
+                    log.append(&SessionEvent::ToolCall { call }).await?;
+                }
+
                 observer.on_event(&LiveEvent::ToolStart {
                     name: call.function.name.clone(),
                     summary: call_summary(&call.function.name, &args_value),
@@ -393,10 +525,25 @@ impl AgentLoop {
                         ok: false,
                     }
                 } else {
-                    self.ctx
-                        .tools
-                        .call(&call.function.name, &call.function.arguments, &self.ctx)
+                    // Dispatch gate: declarative rules first (deny is a hard
+                    // refusal), then the hook's permissionDecision, then the
+                    // risky-pattern classifier as the default prompt.
+                    let specifier = specifier_for(&call.function.name, &args_value);
+                    match self
+                        .gate_call(&call.function.name, &specifier, pre.permission_decision)
                         .await
+                    {
+                        Ok(()) => {
+                            self.ctx
+                                .tools
+                                .call(&call.function.name, &args_value.to_string(), &self.ctx)
+                                .await
+                        }
+                        Err(denial) => crate::tool::ToolResult {
+                            output: denial,
+                            ok: false,
+                        },
+                    }
                 };
                 observer.on_event(&LiveEvent::ToolDone {
                     name: call.function.name.clone(),
@@ -411,9 +558,13 @@ impl AgentLoop {
                     .fire(
                         HookEvent::PostToolUse,
                         &self.ctx.cwd,
-                        Some(&call.function.name),
-                        Some(&args_value),
-                        Some(&result.output),
+                        &crate::hooks::HookInput {
+                            tool_name: Some(&call.function.name),
+                            tool_use_id: Some(&call.id),
+                            tool_input: Some(&args_value),
+                            tool_response: Some(&result.output),
+                            ..Default::default()
+                        },
                     )
                     .await;
 
@@ -439,7 +590,11 @@ impl AgentLoop {
         let _ = self
             .ctx
             .hooks
-            .fire(HookEvent::Stop, &self.ctx.cwd, None, None, None)
+            .fire(
+                HookEvent::Stop,
+                &self.ctx.cwd,
+                &crate::hooks::HookInput::default(),
+            )
             .await;
         observer.on_event(&LiveEvent::TurnEnd {
             outcome: outcome.clone(),
@@ -659,5 +814,136 @@ mod tests {
         let outcome = agent.run_turn("go", &NullObserver).await.unwrap();
         assert!(matches!(outcome, TurnOutcome::Other(ref s) if s == "cancelled"));
         assert_eq!(provider.calls.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    /// The rtk contract end-to-end through the real loop: PreToolUse hook
+    /// returns `hookSpecificOutput.updatedInput` → the tool executes the
+    /// REWRITTEN command, the log records a Hook fact + the effective
+    /// ToolCall, and the model sees the result of the rewritten command.
+    #[tokio::test]
+    async fn pretooluse_updated_input_rewrites_dispatch() {
+        let dir = std::env::temp_dir().join(format!("sunmao-rtk-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+        // the rtk hook shape: JSON on stdin, updatedInput on stdout
+        // write the hook's stdout JSON to a file the hook cats — avoids
+        // quoting an entire JSON doc inside a shell command string
+        std::fs::write(
+            dir.join("hook-response.json"),
+            r#"{"hookSpecificOutput":{"updatedInput":{"command":"echo rewritten"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join(".sunmao/hooks.json"),
+            r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"cat hook-response.json"}]}]}}"#,
+        )
+        .unwrap();
+        let provider = Arc::new(MockProvider {
+            responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                vec![
+                    StreamDelta::ToolCalls(vec![
+                        ToolCallFragment {
+                            index: 0,
+                            id: Some("call_1".into()),
+                            name: Some("Bash".into()),
+                            arguments: None,
+                        },
+                        ToolCallFragment {
+                            index: 0,
+                            arguments: Some("{\"command\":\"git status\"}".into()),
+                            ..Default::default()
+                        },
+                    ]),
+                    StreamDelta::Finish {
+                        reason: Some("tool_calls".into()),
+                        usage: None,
+                    },
+                ],
+                vec![
+                    StreamDelta::Content("done".into()),
+                    StreamDelta::Finish {
+                        reason: Some("stop".into()),
+                        usage: None,
+                    },
+                ],
+            ])),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let ctx = Arc::new(Context::new(
+            provider,
+            SessionLog::ephemeral(),
+            builtin_registry(),
+            dir.clone(),
+        ));
+        let agent = AgentLoop::new(ctx.clone());
+        let outcome = agent.run_turn("run it", &NullObserver).await.unwrap();
+        assert!(matches!(outcome, TurnOutcome::Completed));
+        // the tool result must be the REWRITTEN command's output
+        let msgs = ctx.sessions.lock().await.messages().await.unwrap();
+        let tool_msg = msgs
+            .iter()
+            .find(|m| matches!(m.role, sunmao_llm::types::Role::Tool))
+            .expect("tool result message");
+        assert_eq!(
+            tool_msg.content.as_deref().map(str::trim_end),
+            Some("rewritten")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A PreToolUse `permissionDecision:"deny"` (the newer dialect spelling)
+    /// must block the call before dispatch — same as exit-2 veto.
+    #[tokio::test]
+    async fn pretooluse_permission_deny_blocks() {
+        let dir = std::env::temp_dir().join(format!("sunmao-deny-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+        std::fs::write(
+            dir.join("hook-response.json"),
+            r#"{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"policy"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join(".sunmao/hooks.json"),
+            r#"{"hooks":{"PreToolUse":[{"matcher":"Bash|Read|Write","hooks":[{"type":"command","command":"cat hook-response.json"}]}]}}"#,
+        )
+        .unwrap();
+        let provider = Arc::new(MockProvider {
+            responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                vec![
+                    StreamDelta::ToolCalls(vec![ToolCallFragment {
+                        index: 0,
+                        id: Some("c".into()),
+                        name: Some("Bash".into()),
+                        arguments: Some("{\"command\":\"echo hi\"}".into()),
+                    }]),
+                    StreamDelta::Finish {
+                        reason: Some("tool_calls".into()),
+                        usage: None,
+                    },
+                ],
+                vec![
+                    StreamDelta::Content("ok".into()),
+                    StreamDelta::Finish {
+                        reason: Some("stop".into()),
+                        usage: None,
+                    },
+                ],
+            ])),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let ctx = Arc::new(Context::new(
+            provider,
+            SessionLog::ephemeral(),
+            builtin_registry(),
+            dir.clone(),
+        ));
+        let agent = AgentLoop::new(ctx.clone());
+        agent.run_turn("go", &NullObserver).await.unwrap();
+        let msgs = ctx.sessions.lock().await.messages().await.unwrap();
+        let tool_msg = msgs
+            .iter()
+            .find(|m| matches!(m.role, sunmao_llm::types::Role::Tool))
+            .expect("tool result message");
+        assert!(tool_msg.content.as_deref().unwrap().contains("policy"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

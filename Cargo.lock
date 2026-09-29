@@ -2942,8 +2942,9 @@ dependencies = [
 
 [[package]]
 name = "spawnfate"
-version = "1.0.0"
-source = "git+https://github.com/losewayy/spawnfate?rev=0c029fd57f98b49f0245e8436dcf6ffeb492ed3c#0c029fd57f98b49f0245e8436dcf6ffeb492ed3c"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a32061d88d7baf4e83363c7f5541f6d0eb4145f456924481c4e99a16ee7e573"
 dependencies = [
  "clap",
  "serde",

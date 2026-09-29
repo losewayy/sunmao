@@ -16,7 +16,7 @@ reqwest = { workspace = true, features = ["rustls"] }
 rmcp = { version = "3.5.0", features = ["client", "transport-io", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 serde.workspace = true
 serde_json.workspace = true
-sunmao-llm = { path = "../llm" }
+sunmao-llm = { path = "../llm", version = "0.2.0" }
 thiserror.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
@@ -26,7 +26,7 @@ tracing.workspace = true
 # spawnfate — the shell/preflight engine. Its model is Windows-only; the
 # preflight module no-ops elsewhere. Pinned to the v1.0.0 commit; swap to
 # `version = "1"` once spawnfate 1.0 is on crates.io.
-spawnfate = { git = "https://github.com/losewayy/spawnfate", rev = "0c029fd57f98b49f0245e8436dcf6ffeb492ed3c" }
+spawnfate = "0.1"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

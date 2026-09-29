@@ -4,13 +4,24 @@
 //! math counting logical lines instead — the two disagree on wide text.
 //!
 //! Style-preserving: each wrapped fragment keeps its source span's style.
+//! Grapheme-native: iteration and measurement run on `unicode-segmentation`
+//! grapheme clusters, so emoji/ZWJ sequences and combining marks move as
+//! units and measure as clusters instead of summing raw code points.
 
 use ratatui::text::{Line, Span};
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+/// Display width of `s`, summed over grapheme clusters — the same unit the
+/// rest of the renderer should measure in.
+pub fn display_width(s: &str) -> usize {
+    s.graphemes(true).map(UnicodeWidthStr::width).sum()
+}
+
 /// Break `line` into rows no wider than `width` (display columns). Word
-/// boundaries are preferred; an unbreakable long word is hard-split. Empty
-/// lines yield one empty row. `width == 0` returns the line unchanged.
+/// boundaries are preferred; an unbreakable long word is hard-split at
+/// grapheme edges. Empty lines yield one empty row. `width == 0` returns
+/// the line unchanged.
 pub fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
     if width == 0 {
         return vec![line.clone()];
@@ -20,8 +31,8 @@ pub fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
         return vec![line.clone()];
     }
 
-    // Flatten spans into (grapheme-ish char, style) pairs. Word wrap then
-    // operates on display columns; a '\n' inside a span forces a hard break.
+    // Flatten spans into (grapheme, style) pairs. Word wrap then operates
+    // on display columns; a '\n' inside a span forces a hard break.
     let mut out: Vec<Line<'static>> = Vec::new();
     let mut cur: Vec<Span<'static>> = Vec::new();
     let mut cur_w = 0usize;
@@ -46,16 +57,16 @@ pub fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
                       out: &mut Vec<Line<'static>>,
                       base| {
         if *word_w > width {
-            // long word: split hard at width
+            // long word: split hard at width, grapheme by grapheme
             for s in word.drain(..) {
-                for ch in s.content.chars() {
-                    let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-                    if *cur_w + cw > width {
+                for g in s.content.as_ref().graphemes(true) {
+                    let gw = UnicodeWidthStr::width(g);
+                    if *cur_w + gw > width {
                         push_row(out, cur, base);
                         *cur_w = 0;
                     }
-                    push_char(cur, ch, s.style);
-                    *cur_w += cw;
+                    push_g(cur, g, s.style);
+                    *cur_w += gw;
                 }
             }
             *word_w = 0;
@@ -72,25 +83,25 @@ pub fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
 
     let base = line.style;
     for span in &line.spans {
-        for ch in span.content.chars() {
-            if ch == '\n' {
+        for g in span.content.as_ref().graphemes(true) {
+            if g == "\n" {
                 // hard break: flush word then row
                 flush_word(&mut word, &mut word_w, &mut cur, &mut cur_w, &mut out, base);
                 push_row(&mut out, &mut cur, base);
                 cur_w = 0;
                 continue;
             }
-            let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-            if ch.is_whitespace() {
+            let gw = UnicodeWidthStr::width(g);
+            if g.trim().is_empty() && g != "\n" {
                 flush_word(&mut word, &mut word_w, &mut cur, &mut cur_w, &mut out, base);
                 // a space that doesn't fit just disappears at the wrap edge
-                if cur_w + cw <= width {
-                    push_char(&mut cur, ch, span.style);
-                    cur_w += cw;
+                if cur_w + gw <= width {
+                    push_g(&mut cur, g, span.style);
+                    cur_w += gw;
                 }
             } else {
-                word.push(Span::styled(ch.to_string(), span.style));
-                word_w += cw;
+                word.push(Span::styled(g.to_string(), span.style));
+                word_w += gw;
             }
         }
     }
@@ -101,18 +112,18 @@ pub fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
     out
 }
 
-/// Append `ch` to the last span when styles match, else push a new span —
-/// keeps wrapped rows from exploding into one span per character.
-fn push_char(cur: &mut Vec<Span<'static>>, ch: char, style: ratatui::style::Style) {
+/// Append `g` to the last span when styles match, else push a new span —
+/// keeps wrapped rows from exploding into one span per grapheme.
+fn push_g(cur: &mut Vec<Span<'static>>, g: &str, style: ratatui::style::Style) {
     if let Some(last) = cur.last_mut() {
         if last.style == style {
             let mut s = last.content.to_string();
-            s.push(ch);
+            s.push_str(g);
             last.content = s.into();
             return;
         }
     }
-    cur.push(Span::styled(ch.to_string(), style));
+    cur.push(Span::styled(g.to_string(), style));
 }
 
 /// Total visual rows `lines` occupy at `width`.
@@ -124,10 +135,7 @@ pub fn wrapped_height(lines: &[Line<'static>], width: usize) -> usize {
 /// Width of the longest word — used to sanity-check degenerate narrow widths.
 #[allow(dead_code)]
 pub fn max_word_width(s: &str) -> usize {
-    s.split_whitespace()
-        .map(UnicodeWidthStr::width)
-        .max()
-        .unwrap_or(0)
+    s.split_whitespace().map(display_width).max().unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -194,5 +202,32 @@ mod tests {
     #[test]
     fn empty_line_one_row() {
         assert_eq!(wrap_line(&plain(""), 10).len(), 1);
+    }
+
+    #[test]
+    fn zwj_emoji_never_splits_mid_cluster() {
+        // Family emoji = one cluster; a char-wise split would tear it.
+        let fam = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}"; // 👨‍👩‍👧
+        let line = plain(&format!("xx {fam} yy"));
+        let out = wrap_line(&line, 5);
+        // the cluster must land intact on one row — never sliced in half
+        assert!(out
+            .iter()
+            .any(|l| l.spans.iter().any(|s| s.content.as_ref().contains(fam))));
+        for l in &out {
+            let joined: String = l.spans.iter().map(|s| s.content.to_string()).collect();
+            assert!(display_width(&joined) <= 5);
+        }
+    }
+
+    #[test]
+    fn combining_marks_stay_attached() {
+        // e + combining acute = "é" as two code points, one cluster.
+        let out = wrap_line(&plain("e\u{0301}x"), 1);
+        let texts: Vec<String> = out
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.to_string()).collect())
+            .collect();
+        assert!(texts.iter().any(|t| t.contains("e\u{0301}")));
     }
 }

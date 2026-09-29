@@ -5,7 +5,6 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block as WBlock, Borders, Paragraph, Wrap};
-use unicode_width::UnicodeWidthStr;
 
 use super::app::{self, App, ApprovalCard, Focus, SlashMenu};
 use super::theme::{self, THEME};
@@ -236,9 +235,9 @@ fn draw_input(f: &mut ratatui::Frame, app: &App, area: Rect) {
     let col = before
         .rsplit('\n')
         .next()
-        .map(UnicodeWidthStr::width)
+        .map(wrap::display_width)
         .unwrap_or(0) as u16;
-    let prompt_w = UnicodeWidthStr::width(prompt) as u16;
+    let prompt_w = wrap::display_width(prompt) as u16;
     f.set_cursor_position((area.x + prompt_w + col, area.y + 1 + row));
 }
 

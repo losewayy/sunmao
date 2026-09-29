@@ -4,10 +4,10 @@
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use unicode_width::UnicodeWidthStr;
 
 use super::md;
 use super::theme::{self, THEME};
+use super::wrap::display_width;
 
 /// The kind decides chrome (prefix glyph + base style) and fold default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,7 +185,7 @@ impl Block {
         let hidden = lines.len().saturating_sub(USER_CAP);
         for (i, l) in lines.iter().take(USER_CAP).enumerate() {
             let prefix = if i == 0 { theme::prompt_glyph() } else { "  " };
-            let used = UnicodeWidthStr::width(prefix) + UnicodeWidthStr::width(*l);
+            let used = display_width(prefix) + display_width(l);
             let pad = width.saturating_sub(used);
             let mut spans = vec![
                 Span::styled(
@@ -334,7 +334,7 @@ impl Block {
 
 /// One full-width padded line on `bg` — the "band" primitive.
 fn band_line(text: &str, style: Style, width: usize) -> Line<'static> {
-    let pad = width.saturating_sub(UnicodeWidthStr::width(text));
+    let pad = width.saturating_sub(display_width(text));
     Line::from(vec![
         Span::styled(text.to_string(), style),
         Span::styled(" ".repeat(pad), style),

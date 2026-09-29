@@ -16,7 +16,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode, BeginSynchronizedUpdate, EndSynchronizedUpdate,
+    EnterAlternateScreen, LeaveAlternateScreen,
 };
 use crossterm::ExecutableCommand;
 use futures_util::StreamExt;
@@ -270,7 +271,13 @@ async fn run_inner(
     let mut app = App::new(model, cwd.clone());
 
     loop {
-        term.draw(|f| draw(f, &mut app))?;
+        // synchronized-output bracket: terminals that grok CSI ?2026 render
+        // the whole frame atomically (no torn paint mid-scroll); the rest
+        // treat the markers as harmless no-ops.
+        let _ = io::stdout().execute(BeginSynchronizedUpdate);
+        let drawn = term.draw(|f| draw(f, &mut app));
+        let _ = io::stdout().execute(EndSynchronizedUpdate);
+        drawn?;
 
         match rx_msg.recv().await {
             None => break,
@@ -309,11 +316,7 @@ async fn run_inner(
             },
             Some(Msg::Note(note)) => app.push_note(&note),
             Some(Msg::Branch(b)) => app.git_branch = b,
-            Some(Msg::Paste(p)) => {
-                for c in p.chars() {
-                    app.insert_char(c);
-                }
-            }
+            Some(Msg::Paste(p)) => app.insert_str(&p),
             Some(Msg::Key(k)) => {
                 if handle_key(&mut app, k, &tx_input, &tx_cancel) {
                     break;

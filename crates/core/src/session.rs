@@ -272,8 +272,10 @@ mod tests {
         let c = msgs[0].content.as_deref().unwrap();
         assert!(c.contains("$ echo hi") && c.contains("[exit 0]"));
 
-        // file-backed — same fold through the disk replay path
-        let dir = std::env::temp_dir().join(format!("sunmao-test-{}", std::process::id()));
+        // file-backed — same fold through the disk replay path. Unique dir
+        // name: tests share a pid and run in parallel, a generic name here
+        // once deleted a sibling test's fixture mid-assert.
+        let dir = std::env::temp_dir().join(format!("sunmao-test-ls-{}", std::process::id()));
         let mut log = SessionLog::open(&dir, "ls-fold").await.unwrap();
         log.append(&ev).await.unwrap();
         drop(log);

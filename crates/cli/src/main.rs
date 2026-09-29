@@ -11,17 +11,30 @@ use sunmao_core::tool::builtin_registry;
 use sunmao_core::{Context, SessionLog};
 use sunmao_llm::OaiClient;
 
+mod tui;
+
 #[derive(Parser)]
 #[command(name = "sunmao", about = "agent harness kernel — 榫卯")]
 struct Cli {
+    /// Launch the ratatui TUI instead of the REPL.
+    #[arg(long)]
+    tui: bool,
     /// OpenAI-compatible base URL.
-    #[arg(long, env = "SUNMAO_BASE_URL", default_value = "http://127.0.0.1:7863/v1")]
+    #[arg(
+        long,
+        env = "SUNMAO_BASE_URL",
+        default_value = "http://127.0.0.1:7863/v1"
+    )]
     base_url: String,
     /// API key.
     #[arg(long, env = "SUNMAO_API_KEY", default_value = "your-api-key-here")]
     api_key: String,
     /// Model id.
-    #[arg(long, env = "SUNMAO_MODEL", default_value = "global:deepseek-v4.1-flash")]
+    #[arg(
+        long,
+        env = "SUNMAO_MODEL",
+        default_value = "global:deepseek-v4.1-flash"
+    )]
     model: String,
     /// Session log directory.
     #[arg(long, default_value = ".sunmao/sessions")]
@@ -51,7 +64,7 @@ impl Observer for StdoutObserver {
             }
             LiveEvent::Content(c) => {
                 if *in_r {
-                    eprint!("\x1b[0m\n");
+                    eprintln!("\x1b[0m");
                     *in_r = false;
                 }
                 print!("{c}");
@@ -59,7 +72,7 @@ impl Observer for StdoutObserver {
             }
             LiveEvent::ToolStart { name } => {
                 if *in_r {
-                    eprint!("\x1b[0m\n");
+                    eprintln!("\x1b[0m");
                     *in_r = false;
                 }
                 println!("\n\x1b[36m[tool → {name}]\x1b[0m");
@@ -70,7 +83,7 @@ impl Observer for StdoutObserver {
             }
             LiveEvent::TurnEnd { outcome } => {
                 if *in_r {
-                    eprint!("\x1b[0m\n");
+                    eprintln!("\x1b[0m");
                     *in_r = false;
                 }
                 match outcome {
@@ -94,8 +107,7 @@ fn session_id() -> String {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "warn".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
         )
         .init();
     let cli = Cli::parse();
@@ -126,6 +138,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let agent = AgentLoop::new(ctx);
+
+    if cli.tui {
+        return tui::run(agent, &cli.model).await;
+    }
+
     let observer = StdoutObserver {
         in_reasoning: std::sync::Mutex::new(false),
     };

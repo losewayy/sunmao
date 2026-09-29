@@ -722,6 +722,9 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
         }
         KeyCode::Up => {
             if app.hist_idx.is_none() && !app.history.is_empty() {
+                // stash the in-progress draft so Down past the newest entry
+                // brings back what the user was typing (readline convention)
+                app.hist_draft = Some(app.input.clone());
                 app.hist_idx = Some(app.history.len() - 1);
                 app.input = app.history[app.hist_idx.unwrap()].clone();
             } else if let Some(i) = app.hist_idx {
@@ -739,7 +742,7 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
                     app.input = app.history[i + 1].clone();
                 } else {
                     app.hist_idx = None;
-                    app.input.clear();
+                    app.input = app.hist_draft.take().unwrap_or_default();
                 }
                 app.cursor = app.input.chars().count();
             }
@@ -753,4 +756,51 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
         _ => {}
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    /// Readline convention: Up browses history, Down past the newest entry
+    /// restores the half-typed draft — losing it is a data-loss bug, not a
+    /// cosmetic quirk.
+    #[test]
+    fn history_browse_restores_in_progress_draft() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+        app.history = vec!["first".into(), "second".into()];
+
+        // user was typing something, then pressed Up
+        app.input = "half-typed draft".into();
+        app.cursor = app.input.chars().count();
+        input_key(&mut app, key(KeyCode::Up), &tx);
+        assert_eq!(app.input, "second");
+        input_key(&mut app, key(KeyCode::Up), &tx);
+        assert_eq!(app.input, "first");
+        // Down past the newest entry brings the draft back
+        input_key(&mut app, key(KeyCode::Down), &tx);
+        assert_eq!(app.input, "second");
+        input_key(&mut app, key(KeyCode::Down), &tx);
+        assert_eq!(app.input, "half-typed draft");
+        assert!(app.hist_idx.is_none());
+    }
+
+    /// An empty draft still exits history cleanly on Down.
+    #[test]
+    fn history_down_past_end_with_empty_draft() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+        app.history = vec!["only".into()];
+        input_key(&mut app, key(KeyCode::Up), &tx);
+        assert_eq!(app.input, "only");
+        input_key(&mut app, key(KeyCode::Down), &tx);
+        assert_eq!(app.input, "");
+        assert!(app.hist_idx.is_none());
+    }
 }

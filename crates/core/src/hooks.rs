@@ -77,14 +77,37 @@ pub struct HookEngine {
 }
 
 impl HookEngine {
-    /// Load hooks from `<cwd>/.sunmao/hooks.json`; absent file = no hooks.
+    /// Load hook groups from (later sources override/append):
+    /// `<cwd>/.sunmao/hooks.json`, `<cwd>/.claude/settings.json`,
+    /// `<cwd>/.claude/settings.local.json`, `~/.claude/settings.json`.
+    /// All share the same `{"hooks": {Event: [{matcher, hooks:[{type,command}]}]}}`
+    /// dialect — native contract, ecosystem configs work unmodified.
     pub fn load(cwd: &Path, session_id: &str) -> Self {
-        let path = cwd.join(".sunmao").join("hooks.json");
-        let groups = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str::<HooksFile>(&s).ok())
-            .map(|f| f.hooks)
-            .unwrap_or_default();
+        let mut groups: HashMap<String, Vec<MatcherGroup>> = HashMap::new();
+        let mut paths = vec![
+            cwd.join(".sunmao").join("hooks.json"),
+            cwd.join(".claude").join("settings.json"),
+            cwd.join(".claude").join("settings.local.json"),
+        ];
+        if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+            paths.push(Path::new(&home).join(".claude").join("settings.json"));
+        }
+        for path in paths {
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(file) = serde_json::from_str::<HooksFile>(&text) else {
+                tracing::warn!("bad hooks file {}", path.display());
+                continue;
+            };
+            for (event, mut gs) in file.hooks {
+                groups.entry(event).or_default().append(&mut gs);
+            }
+        }
+        if !groups.is_empty() {
+            let total: usize = groups.values().map(|g| g.len()).sum();
+            tracing::info!("hooks loaded: {total} matcher groups");
+        }
         Self {
             groups,
             session_id: session_id.to_string(),

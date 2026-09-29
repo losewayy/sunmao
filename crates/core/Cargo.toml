@@ -2,6 +2,7 @@
 name = "sunmao-core"
 description = "sunmao kernel: event-sourced sessions, tool registry, agent loop, seams"
 edition.workspace = true
+version.workspace = true
 license.workspace = true
 repository.workspace = true
 

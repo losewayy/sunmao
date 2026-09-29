@@ -14,7 +14,10 @@ use std::io;
 use std::sync::Arc;
 
 use anyhow::Result;
-use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEvent,
+    KeyEventKind, KeyModifiers,
+};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, BeginSynchronizedUpdate, EndSynchronizedUpdate,
     EnterAlternateScreen, LeaveAlternateScreen,
@@ -98,9 +101,13 @@ pub async fn run(
 ) -> Result<()> {
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
+    // bracketed paste ON — without it terminals send paste as key events
+    // and Msg::Paste never fires (the bulk-insert path is dead code).
+    let _ = io::stdout().execute(EnableBracketedPaste);
     let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
     let mut term = Terminal::new(backend)?;
     let res = run_inner(&mut term, agent, model, cwd, rx_approval).await;
+    let _ = io::stdout().execute(DisableBracketedPaste);
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
     res

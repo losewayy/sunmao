@@ -258,7 +258,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if cli.tui {
-        return tui::run(agent, &cli.model, rx_approval).await;
+        return tui::run(agent, &cli.model, cwd.clone(), rx_approval).await;
     }
 
     let observer = StdoutObserver {

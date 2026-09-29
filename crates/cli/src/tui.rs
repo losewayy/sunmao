@@ -24,6 +24,9 @@ enum Msg {
     Live(LiveEvent),
     Key(KeyEvent),
     Paste(String),
+    /// Status/feedback line from the driver (unknown command, compacted, …) —
+    /// terminal event of a submission, so it also clears `busy`.
+    Note(String),
     /// approval request from a tool (risky command) — carries the reply channel
     ApprovalReq(ApprovalReq),
 }
@@ -159,13 +162,14 @@ fn char_to_byte(s: &str, char_idx: usize) -> usize {
 pub async fn run(
     agent: AgentLoop,
     model: &str,
+    cwd: std::path::PathBuf,
     rx_approval: mpsc::UnboundedReceiver<ApprovalReq>,
 ) -> Result<()> {
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
     let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
     let mut term = Terminal::new(backend)?;
-    let res = run_inner(&mut term, agent, model, rx_approval).await;
+    let res = run_inner(&mut term, agent, model, cwd, rx_approval).await;
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
     res
@@ -175,6 +179,7 @@ async fn run_inner(
     term: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     agent: AgentLoop,
     model: &str,
+    cwd: std::path::PathBuf,
     mut rx_approval: mpsc::UnboundedReceiver<ApprovalReq>,
 ) -> Result<()> {
     let agent = Arc::new(agent);
@@ -182,13 +187,43 @@ async fn run_inner(
     let (tx_input, mut rx_input) = mpsc::unbounded_channel::<String>();
     let (tx_cancel, mut rx_cancel) = mpsc::unbounded_channel::<()>();
 
-    // driver task: consume submitted inputs, stream LiveEvents back
+    // driver task: consume submitted inputs, stream LiveEvents back.
+    // `/name` lines dispatch like the REPL: /compact is an agent primitive,
+    // other names resolve to command .md files under the convention dirs.
     {
         let tx_msg = tx_msg.clone();
         tokio::spawn(async move {
             while let Some(input) = rx_input.recv().await {
+                let prompt = if let Some(cmd_line) = input.trim().strip_prefix('/') {
+                    let name = cmd_line.split_whitespace().next().unwrap_or("");
+                    let rest = cmd_line[name.len()..].trim();
+                    if name == "compact" {
+                        let obs = ChanObserver(tx_msg.clone());
+                        let note = match agent.compact(&obs).await {
+                            Ok(()) => "[compacted]".to_string(),
+                            Err(e) => format!("[compact failed] {e:#}"),
+                        };
+                        let _ = tx_msg.send(Msg::Note(note));
+                        continue;
+                    }
+                    match crate::slash_command(&cwd, name) {
+                        Some(body) => {
+                            if rest.is_empty() {
+                                body
+                            } else {
+                                format!("{body}\n\n{rest}")
+                            }
+                        }
+                        None => {
+                            let _ = tx_msg.send(Msg::Note(format!("[unknown command: /{name}]")));
+                            continue;
+                        }
+                    }
+                } else {
+                    input
+                };
                 let obs = ChanObserver(tx_msg.clone());
-                let mut turn = Box::pin(agent.run_turn(&input, &obs));
+                let mut turn = Box::pin(agent.run_turn(&prompt, &obs));
                 loop {
                     tokio::select! {
                         res = &mut turn => {
@@ -319,6 +354,13 @@ async fn run_inner(
                     }
                 }
             },
+            Some(Msg::Note(note)) => {
+                app.busy = false;
+                app.push_line(Line::from(Span::styled(
+                    note,
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
             Some(Msg::Paste(p)) => {
                 for c in p.chars() {
                     app.insert_char(c);

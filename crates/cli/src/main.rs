@@ -224,23 +224,11 @@ async fn main() -> anyhow::Result<()> {
         )
         .await;
 
-    let default_system = concat!(
-        "You are sunmao, a coding agent. Use tools to act on the filesystem. ",
-        "Prefer dedicated tools (Read/Write/Edit) over Bash for file work. ",
-        "Be concise."
-    );
-    let sys_extra = project_context(&cwd);
-    let default_system = if sys_extra.is_empty() {
-        default_system.to_string()
-    } else {
-        format!(
-            "{default_system}
-
-# Project context
-{sys_extra}"
-        )
-    };
-    let default_system = cli.system.unwrap_or(default_system);
+    // The system prompt is assembled, not constant: built-in section files →
+    // ~/.sunmao/prompt{,.d} → .sunmao/prompt{,.d} → project context →
+    // --system as the complete override. All frontends share this path.
+    let default_system =
+        sunmao_core::prompt::PromptAssembler::new(&cwd).assemble(cli.system.as_deref());
 
     if !resumed {
         let mut log = ctx.sessions.lock().await;
@@ -333,71 +321,6 @@ async fn main() -> anyhow::Result<()> {
         )
         .await;
     Ok(())
-}
-
-/// Collect project-level context: AGENTS.md / CLAUDE.md bodies plus a skills
-/// index from `.sunmao/skills/*/SKILL.md` (name + description frontmatter —
-/// bodies are Read on demand).
-fn project_context(cwd: &std::path::Path) -> String {
-    let mut out = String::new();
-    for name in ["AGENTS.md", "CLAUDE.md"] {
-        let p = cwd.join(name);
-        if let Ok(text) = std::fs::read_to_string(&p) {
-            let text: String = text.chars().take(8_000).collect();
-            out.push_str(&format!("## {name}\n{text}\n\n"));
-        }
-    }
-    let mut skills_dirs = vec![
-        cwd.join(".sunmao").join("skills"),
-        cwd.join(".sunmao").join("plugin").join("skills"),
-    ];
-    // plugin bundles: .sunmao/plugins/<name>/skills/, .claude/plugins/<name>/skills/
-    for base in [
-        cwd.join(".sunmao").join("plugins"),
-        cwd.join(".claude").join("plugins"),
-    ] {
-        if let Ok(plugins) = std::fs::read_dir(&base) {
-            for p in plugins.flatten() {
-                skills_dirs.push(p.path().join("skills"));
-            }
-        }
-    }
-    // ecosystem scan — skills authored for other harnesses load unmodified
-    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
-        let h = std::path::Path::new(&home);
-        skills_dirs.push(h.join(".claude").join("skills"));
-        skills_dirs.push(h.join(".agents").join("skills"));
-    }
-    let mut lines = Vec::new();
-    for skills_dir in skills_dirs {
-        let Ok(entries) = std::fs::read_dir(&skills_dir) else {
-            continue;
-        };
-        for e in entries.flatten() {
-            let skill = e.path().join("SKILL.md");
-            if let Ok(text) = std::fs::read_to_string(&skill) {
-                let mut name = e.file_name().to_string_lossy().to_string();
-                let mut desc = String::new();
-                for line in text.lines().take(20) {
-                    if let Some(v) = line.strip_prefix("name:") {
-                        name = v.trim().to_string();
-                    }
-                    if let Some(v) = line.strip_prefix("description:") {
-                        desc = v.trim().to_string();
-                    }
-                }
-                lines.push(format!("- {} — {} ({})", name, desc, skill.display()));
-            }
-        }
-    }
-    if !lines.is_empty() {
-        out.push_str("## Available skills (Read the SKILL.md path to load)\n");
-        for l in &lines {
-            out.push_str(l);
-            out.push('\n');
-        }
-    }
-    out
 }
 
 /// Interactive approver for the REPL/-p: prints the risky command, y/n on stdin.

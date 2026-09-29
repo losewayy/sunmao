@@ -1,0 +1,30 @@
+# shell command risk patterns — the approval gate's watch list.
+# Format: one `pattern | reason` per line. Substring match, case-insensitive.
+# deny lives in permissions.json; this file is only "worth asking about".
+rm -rf | recursive force delete
+rm -r  | recursive delete
+git push | publishes history
+git reset --hard | discards work
+git clean | deletes untracked files
+git checkout -- | discards changes
+git restore . | discards changes
+del /s | recursive delete
+del /f /s | forced recursive delete
+rmdir /s | recursive delete
+Remove-Item -Recurse | recursive delete
+| sh | piped-to-shell remote exec
+| bash | piped-to-shell remote exec
+| pwsh | piped-to-shell remote exec
+| iex | piped-to-shell remote exec
+Invoke-Expression | dynamic eval
+curl | network egress — inspect before allowing
+wget  | network egress
+shutdown | system power
+reg delete | registry mutation
+reg add | registry mutation
+format  | disk format
+mkfs | disk format
+dd if= | raw disk write
+chmod 777 | world-writable perms
+> /dev/ | raw device write
+taskkill /f | force process kill

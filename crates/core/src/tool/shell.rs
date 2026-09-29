@@ -74,84 +74,144 @@ impl ToolImpl for BashTool {
         // (agent.rs::gate_call) — the hook's permissionDecision can only
         // interpose there; the tool itself just executes.
 
-        // deno_task_shell's internals are !Send (Rc<Cell> exit-code cells) —
-        // every !Send value must be constructed *inside* the blocking closure.
-        let cwd = ctx.cwd.clone();
-        let env_vars: std::collections::HashMap<std::ffi::OsString, std::ffi::OsString> =
-            std::env::vars_os().collect();
-        let timeout_secs = a.timeout_secs.unwrap_or(120);
-
-        let outcome =
-            tokio::task::spawn_blocking(move || -> Result<(i32, String, String), String> {
-                let state = deno_task_shell::ShellState::new(
-                    env_vars,
-                    cwd,
-                    Default::default(),
-                    Default::default(),
-                );
-                let (out_reader, out_writer) = deno_task_shell::pipe();
-                let (err_reader, err_writer) = deno_task_shell::pipe();
-                // empty stdin: tools must never block on the REPL's stdin
-                let (stdin_reader, stdin_writer) = std::io::pipe().map_err(|e| e.to_string())?;
-                drop(stdin_writer);
-                let exec = deno_task_shell::execute_with_pipes(
-                    list,
-                    state,
-                    deno_task_shell::ShellPipeReader::from_raw(stdin_reader),
-                    out_writer,
-                    err_writer,
-                );
-                let rt = tokio::runtime::Handle::current();
-                let code = rt
-                    .block_on(tokio::time::timeout(
-                        std::time::Duration::from_secs(timeout_secs),
-                        exec,
-                    ))
-                    .map_err(|_| format!("command timed out after {timeout_secs}s"))?;
-                let mut out_buf = Vec::new();
-                let mut err_buf = Vec::new();
-                out_reader.pipe_to(&mut out_buf).ok();
-                err_reader.pipe_to(&mut err_buf).ok();
-                Ok((
-                    code,
-                    String::from_utf8_lossy(&out_buf).into_owned(),
-                    String::from_utf8_lossy(&err_buf).into_owned(),
-                ))
-            })
-            .await;
-
-        let (code, stdout, stderr) = match outcome {
-            Ok(Ok(v)) => v,
-            Ok(Err(msg)) => {
+        let run = match run_parsed(list, ctx.cwd.clone(), a.timeout_secs.unwrap_or(120)).await {
+            Ok(r) => r,
+            Err(msg) => {
                 return Ok(ToolResult {
                     output: msg,
                     ok: false,
                 })
             }
-            Err(e) => bail!("shell task panicked: {e}"),
         };
 
         // context-efficient output discipline: cap at ~8KB per side
-        const CAP: usize = 8 * 1024;
-        let trunc = |s: &str| {
-            if s.len() > CAP {
-                format!("{}…[{} bytes truncated]", &s[..CAP], s.len() - CAP)
-            } else {
-                s.to_string()
-            }
-        };
-        let mut out = pre() + &trunc(stdout.trim_end());
-        if !stderr.trim().is_empty() {
-            out.push_str(&format!("\n[stderr]\n{}", trunc(stderr.trim())));
+        let mut out = pre() + &trunc(run.stdout.trim_end());
+        if !run.stderr.trim().is_empty() {
+            out.push_str(&format!("\n[stderr]\n{}", trunc(run.stderr.trim())));
         }
-        if code != 0 {
-            out.push_str(&format!("\n[exit code {code}]"));
+        if run.exit_code != 0 {
+            out.push_str(&format!("\n[exit code {}]", run.exit_code));
         }
         Ok(ToolResult {
             output: out,
-            ok: code == 0,
+            ok: run.exit_code == 0,
         })
     }
+}
+
+/// One foreground shell run — the shared execution path behind the `Bash`
+/// tool and the TUI's `!` local mode. Returns legible text the same way the
+/// tool does: preflight advisory + truncated stdout/stderr + exit marker.
+pub struct ShellRun {
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+    /// spawnfate advisories ("" when clean) — surfaced, never blocking.
+    pub preflight: String,
+}
+
+/// Parse + preflight + execute `command` in `cwd`. `Err(String)` is a
+/// legible failure (parse error, timeout, spawn panic), not an anyhow —
+/// callers render it as output, same contract as `ToolResult{ok:false}`.
+pub async fn run_foreground(
+    command: &str,
+    cwd: std::path::PathBuf,
+    timeout_secs: u64,
+) -> Result<ShellRun, String> {
+    let list = deno_task_shell::parser::parse(command)
+        .map_err(|e| format!("cannot parse command: {e}"))?;
+    let preflight = crate::preflight::advisories(&list, &cwd).join("\n");
+    let mut run = run_parsed(list, cwd, timeout_secs).await?;
+    run.preflight = preflight;
+    Ok(run)
+}
+
+/// Execute an already-parsed command list. `deno_task_shell`'s internals are
+/// `!Send` (`Rc<Cell>` exit-code cells) — every !Send value is constructed
+/// *inside* the blocking closure, never moved in.
+async fn run_parsed(
+    list: deno_task_shell::parser::SequentialList,
+    cwd: std::path::PathBuf,
+    timeout_secs: u64,
+) -> Result<ShellRun, String> {
+    let env_vars: std::collections::HashMap<std::ffi::OsString, std::ffi::OsString> =
+        std::env::vars_os().collect();
+
+    let outcome = tokio::task::spawn_blocking(move || -> Result<(i32, String, String), String> {
+        let state =
+            deno_task_shell::ShellState::new(env_vars, cwd, Default::default(), Default::default());
+        let (out_reader, out_writer) = deno_task_shell::pipe();
+        let (err_reader, err_writer) = deno_task_shell::pipe();
+        // empty stdin: tools must never block on the REPL's stdin
+        let (stdin_reader, stdin_writer) = std::io::pipe().map_err(|e| e.to_string())?;
+        drop(stdin_writer);
+        let exec = deno_task_shell::execute_with_pipes(
+            list,
+            state,
+            deno_task_shell::ShellPipeReader::from_raw(stdin_reader),
+            out_writer,
+            err_writer,
+        );
+        let rt = tokio::runtime::Handle::current();
+        let code = rt
+            .block_on(tokio::time::timeout(
+                std::time::Duration::from_secs(timeout_secs),
+                exec,
+            ))
+            .map_err(|_| format!("command timed out after {timeout_secs}s"))?;
+        let mut out_buf = Vec::new();
+        let mut err_buf = Vec::new();
+        out_reader.pipe_to(&mut out_buf).ok();
+        err_reader.pipe_to(&mut err_buf).ok();
+        Ok((
+            code,
+            String::from_utf8_lossy(&out_buf).into_owned(),
+            String::from_utf8_lossy(&err_buf).into_owned(),
+        ))
+    })
+    .await;
+
+    match outcome {
+        Ok(Ok((code, stdout, stderr))) => Ok(ShellRun {
+            exit_code: code,
+            stdout,
+            stderr,
+            preflight: String::new(),
+        }),
+        Ok(Err(msg)) => Err(msg),
+        Err(e) => Err(format!("shell task panicked: {e}")),
+    }
+}
+
+/// Cap one side's output at ~8KB — the same discipline the tool result uses.
+fn trunc(s: &str) -> String {
+    const CAP: usize = 8 * 1024;
+    if s.len() > CAP {
+        format!("{}…[{} bytes truncated]", &s[..CAP], s.len() - CAP)
+    } else {
+        s.to_string()
+    }
+}
+
+/// Render a `ShellRun` as one display string (transcript + session log share
+/// this shape so replay shows what the user saw).
+pub fn render_run(r: &ShellRun) -> String {
+    let mut out = if r.preflight.is_empty() {
+        trunc(r.stdout.trim_end())
+    } else {
+        format!(
+            "[preflight — advisory only]\n{}\n\n{}",
+            r.preflight,
+            trunc(r.stdout.trim_end())
+        )
+    };
+    if !r.stderr.trim().is_empty() {
+        out.push_str(&format!("\n[stderr]\n{}", trunc(r.stderr.trim())));
+    }
+    if r.exit_code != 0 {
+        out.push_str(&format!("\n[exit code {}]", r.exit_code));
+    }
+    out
 }
 
 // ---------- background jobs (fastctx-style: filesystem is the state) ----------

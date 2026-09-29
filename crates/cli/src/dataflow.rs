@@ -33,6 +33,9 @@ pub async fn report(session_path: &Path) -> anyhow::Result<Value> {
             | SessionEvent::ToolCall { .. }
             | SessionEvent::Artifact { .. }
             | SessionEvent::Hook { .. } => {}
+            SessionEvent::LocalShell { command, .. } => {
+                shell_commands.push(command);
+            }
             SessionEvent::Usage { usage } => {
                 total_prompt += usage.prompt_tokens;
                 total_completion += usage.completion_tokens;

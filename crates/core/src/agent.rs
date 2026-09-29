@@ -183,6 +183,20 @@ impl AgentLoop {
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// Record a `!` local-shell run as a durable session fact. The event
+    /// folds into the message stream as a tagged user message, so the next
+    /// turn sees the evidence the user just produced.
+    pub async fn record_local_shell(&self, command: &str, exit_code: i32, output: &str) {
+        let mut log = self.ctx.sessions.lock().await;
+        let _ = log
+            .append(&SessionEvent::LocalShell {
+                command: command.to_string(),
+                exit_code,
+                output: output.to_string(),
+            })
+            .await;
+    }
+
     pub fn with_compact_threshold(mut self, n: usize) -> Self {
         self.compact_threshold = n;
         self

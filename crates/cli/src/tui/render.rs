@@ -9,6 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::app::{self, App, ApprovalCard, Focus, SlashMenu};
 use super::theme::{self, THEME};
+use super::wrap;
 
 pub fn draw(f: &mut ratatui::Frame, app: &mut App) {
     let menu_rows = app
@@ -46,6 +47,8 @@ pub fn draw(f: &mut ratatui::Frame, app: &mut App) {
 fn draw_transcript(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let in_scroll = app.focus == Focus::Scrollback;
     let width = area.width as usize;
+    // Pre-wrap into visual rows so scroll_back counts what the user actually
+    // sees — Paragraph::wrap would fold at draw time and desync the math.
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut sel_start = 0usize;
     for (i, b) in app.blocks.iter().enumerate() {
@@ -53,13 +56,15 @@ fn draw_transcript(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         if selected {
             sel_start = lines.len();
         }
-        lines.extend(b.render(selected, width));
+        for l in b.render(selected, width) {
+            lines.extend(wrap::wrap_line(&l, width));
+        }
     }
 
     // keep the selected block inside the viewport when browsing
     let total = lines.len();
     if in_scroll && total > 0 {
-        let view_h = area.height.saturating_sub(1) as usize;
+        let view_h = area.height as usize;
         let top = total.saturating_sub(app.scroll_back as usize + view_h);
         if sel_start < top {
             app.scroll_back = (total.saturating_sub(sel_start + view_h)) as u16;
@@ -67,12 +72,12 @@ fn draw_transcript(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
             app.scroll_back = (total.saturating_sub(sel_start + 1)) as u16;
         }
     }
-    let cap = total.saturating_sub(1) as u16;
+    let view_h = area.height as usize;
+    let cap = total.saturating_sub(view_h) as u16;
     app.scroll_back = app.scroll_back.min(cap);
 
     let transcript = Paragraph::new(lines)
         .style(Style::default().fg(THEME.text))
-        .wrap(Wrap { trim: false })
         .scroll((app.scroll_back, 0));
     f.render_widget(transcript, area);
 }

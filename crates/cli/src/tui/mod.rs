@@ -8,6 +8,7 @@ mod md;
 mod render;
 pub mod slash;
 mod theme;
+mod wrap;
 
 use std::io;
 use std::sync::Arc;

@@ -56,6 +56,9 @@ struct Cli {
     /// Resume an existing session log (id like `s-123` or a .jsonl path).
     #[arg(long)]
     resume: Option<String>,
+    /// One-shot mode: run a single prompt and exit (scriptable).
+    #[arg(long, short = 'p')]
+    print: Option<String>,
 }
 
 struct StdoutObserver {
@@ -192,6 +195,18 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let agent = AgentLoop::new(ctx);
+
+    if let Some(prompt) = &cli.print {
+        let obs = StdoutObserver {
+            in_reasoning: std::sync::Mutex::new(false),
+        };
+        let outcome = agent.run_turn(prompt, &obs).await?;
+        std::process::exit(if matches!(outcome, TurnOutcome::Completed) {
+            0
+        } else {
+            1
+        });
+    }
 
     if cli.tui {
         return tui::run(agent, &cli.model).await;

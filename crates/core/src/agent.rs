@@ -229,8 +229,8 @@ impl AgentLoop {
             if tool_calls.is_empty() {
                 outcome = match finish_reason.as_deref() {
                     Some("length") => TurnOutcome::LengthLimited,
+                    Some("stop") | Some("end_turn") | None => TurnOutcome::Completed,
                     Some(other) => TurnOutcome::Other(other.to_string()),
-                    None => TurnOutcome::Completed,
                 };
                 break;
             }

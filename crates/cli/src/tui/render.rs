@@ -318,7 +318,12 @@ fn draw_status(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     let (state, scol) = if app.busy {
         let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(0);
-        (format!("● working {secs}s"), THEME.running)
+        let q = if app.queued_turns > 0 {
+            format!(" +{} queued", app.queued_turns)
+        } else {
+            String::new()
+        };
+        (format!("● working {secs}s{q}"), THEME.running)
     } else {
         ("○ idle".to_string(), THEME.ok)
     };

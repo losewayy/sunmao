@@ -413,6 +413,7 @@ async fn run_inner(
                 LiveEvent::Usage(u) => app.last_usage = Some(u),
                 LiveEvent::TurnEnd { outcome } => {
                     app.close_turn();
+                    app.queued_turns = app.queued_turns.saturating_sub(1);
                     if outcome != TurnOutcome::Completed {
                         app.push_note(&format!("[turn: {outcome:?}]"));
                     }
@@ -670,6 +671,16 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
                 let _ = tx_input.send(Submit::Resume(arg));
             }
             Submit::Turn(t) => {
+                if app.busy {
+                    // the driver drains submissions FIFO — tell the user
+                    // their input landed in the queue instead of looking
+                    // swallowed.
+                    app.queued_turns += 1;
+                    app.toast(format!(
+                        "queued #{} — runs after this turn",
+                        app.queued_turns
+                    ));
+                }
                 app.busy = true;
                 let _ = tx_input.send(Submit::Turn(t));
             }

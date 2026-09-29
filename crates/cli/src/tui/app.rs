@@ -90,9 +90,12 @@ pub struct App {
     /// `!` bash mode: the composer holds a shell command; submit wraps it
     /// for the Bash tool instead of sending it as a prompt.
     pub bash_mode: bool,
-    /// turns submitted while a turn was running — footer shows the queue
-    /// depth so a submitted-but-not-yet-started prompt isn't invisible.
-    pub queued_turns: u16,
+    /// turns/bash submitted while a turn was running — the queue holds the
+    /// actual submissions (footer previews the head), not just a count, so
+    /// `↑` on an empty composer can recall the tail item for editing.
+    /// Recall sends Submit::Flush so the driver drops its matching copy —
+    /// the turn never runs twice.
+    pub queue: std::collections::VecDeque<Submit>,
     /// per-block wrapped-render cache, parallel to `blocks` — keyed on each
     /// block's `gen` + draw width so streaming only re-renders its own block.
     pub render_cache: Vec<Option<RenderEntry>>,
@@ -125,7 +128,7 @@ commands — /compact · /multiline · /clear · /resume [id] · /help · /quit 
 type RenderEntry = (u64, usize, bool, Vec<ratatui::text::Line<'static>>);
 
 /// How a submitted line should be dispatched — the driver task interprets.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Submit {
     /// normal prompt or a resolved command body — goes to run_turn
     Turn(String),
@@ -139,6 +142,9 @@ pub enum Submit {
     Note(String),
     /// /quit or /exit
     Quit,
+    /// drop everything still waiting in the submission channel — the app
+    /// sends this after recalling queued items for editing.
+    Flush,
 }
 
 impl App {
@@ -167,7 +173,7 @@ impl App {
             git_branch: None,
             last_usage: None,
             bash_mode: false,
-            queued_turns: 0,
+            queue: std::collections::VecDeque::new(),
             render_cache: Vec::new(),
             viewer: None,
             busy_since: None,
@@ -305,6 +311,27 @@ impl App {
             self.approval = Some(next);
             self.focus = Focus::Approval;
         }
+    }
+
+    /// `↑` on an empty composer while items wait: pull the tail back into
+    /// the editor for revision — the driver drops its copy via Flush, so
+    /// the recalled item doesn't run twice. Returns the restored text.
+    pub fn recall_queued(&mut self) -> Option<String> {
+        if !self.input.is_empty() || self.hist_idx.is_some() {
+            return None;
+        }
+        let sub = self.queue.pop_back()?;
+        let text = match sub {
+            Submit::Turn(t) => t,
+            Submit::Bash(c) => {
+                self.bash_mode = true;
+                c
+            }
+            _ => return None,
+        };
+        self.input = text.clone();
+        self.cursor = text.chars().count();
+        Some(text)
     }
 
     // ── composer ─────────────────────────────────────────────────────────

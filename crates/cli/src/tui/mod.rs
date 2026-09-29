@@ -176,6 +176,12 @@ async fn run_inner(
                         let _ = tx_msg.send(Msg::Note(note));
                         continue;
                     }
+                    Submit::Flush => {
+                        // the app recalled queued items for editing — drop
+                        // everything still pending so nothing runs twice.
+                        while rx_input.try_recv().is_ok() {}
+                        continue;
+                    }
                     Submit::Resume(arg) => {
                         match arg {
                             None => {
@@ -433,7 +439,8 @@ async fn run_inner(
                 LiveEvent::Usage(u) => app.last_usage = Some(u),
                 LiveEvent::TurnEnd { outcome } => {
                     app.close_turn();
-                    app.queued_turns = app.queued_turns.saturating_sub(1);
+                    // one queued submission moved from waiting → running
+                    app.queue.pop_front();
                     if outcome != TurnOutcome::Completed {
                         app.push_note(&format!("[turn: {outcome:?}]"));
                     }
@@ -754,6 +761,14 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
             app.refresh_slash_menu();
         }
         KeyCode::Up => {
+            // recall a queued submission for editing before history browse —
+            // Flush drops the driver's copies so nothing runs twice.
+            if let Some(text) = app.recall_queued() {
+                let _ = tx_input.send(Submit::Flush);
+                let preview: String = text.chars().take(24).collect();
+                app.toast(format!("recalled for editing: {preview}"));
+                return false;
+            }
             if app.hist_idx.is_none() && !app.history.is_empty() {
                 // stash the in-progress draft so Down past the newest entry
                 // brings back what the user was typing (readline convention)
@@ -809,6 +824,10 @@ fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
             let _ = tx_input.send(Submit::Compact);
         }
         Submit::Bash(cmd) => {
+            if app.busy {
+                app.queue.push_back(Submit::Bash(cmd.clone()));
+                app.toast(format!("queued — `{cmd}` runs after this turn"));
+            }
             let _ = tx_input.send(Submit::Bash(cmd));
         }
         Submit::Resume(arg) => {
@@ -816,18 +835,19 @@ fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
         }
         Submit::Turn(t) => {
             if app.busy {
-                // the driver drains submissions FIFO — tell the user
-                // their input landed in the queue instead of looking
-                // swallowed.
-                app.queued_turns += 1;
+                // the driver drains submissions FIFO — the queue holds the
+                // real text so ↑ can recall it and the footer can show it.
+                app.queue.push_back(Submit::Turn(t.clone()));
                 app.toast(format!(
-                    "queued #{} — runs after this turn",
-                    app.queued_turns
+                    "queued #{} — runs after this turn · ↑ recalls",
+                    app.queue.len()
                 ));
             }
             app.busy = true;
             let _ = tx_input.send(Submit::Turn(t));
         }
+        // Flush is app→driver only — submit() never produces it
+        Submit::Flush => {}
     }
     false
 }
@@ -887,13 +907,41 @@ mod tests {
         app.busy = true;
         app.input = "second prompt".into();
         input_key(&mut app, key(KeyCode::Enter), &tx);
-        assert_eq!(app.queued_turns, 1);
+        assert_eq!(app.queue.len(), 1);
         assert!(matches!(rx.try_recv(), Ok(Submit::Turn(_))));
-        // a free submit leaves the counter alone
+        // a free submit leaves the queue alone
         app.busy = false;
         app.input = "third".into();
         input_key(&mut app, key(KeyCode::Enter), &tx);
-        assert_eq!(app.queued_turns, 1);
+        assert_eq!(app.queue.len(), 1);
+    }
+
+    /// ↑ on an empty composer while items wait pulls the tail back for
+    /// editing — and Flush is sent so the driver's copy can't run twice.
+    #[test]
+    fn up_recalls_queued_tail_for_editing() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<Submit>();
+        let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+        app.busy = true;
+        app.input = "first queued".into();
+        input_key(&mut app, key(KeyCode::Enter), &tx);
+        app.input = "second queued".into();
+        input_key(&mut app, key(KeyCode::Enter), &tx);
+        assert_eq!(app.queue.len(), 2);
+        assert!(rx.try_recv().is_ok());
+        assert!(rx.try_recv().is_ok());
+
+        input_key(&mut app, key(KeyCode::Up), &tx);
+        assert_eq!(app.input, "second queued");
+        assert_eq!(app.queue.len(), 1);
+        assert!(matches!(rx.try_recv(), Ok(Submit::Flush)));
+        // again — the last waiting item comes back too
+        app.input.clear();
+        app.cursor = 0;
+        input_key(&mut app, key(KeyCode::Up), &tx);
+        assert_eq!(app.input, "first queued");
+        assert!(app.queue.is_empty());
+        assert!(matches!(rx.try_recv(), Ok(Submit::Flush)));
     }
 
     /// With the slash menu open, Enter *runs* the highlighted command — the

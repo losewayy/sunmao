@@ -340,10 +340,18 @@ fn draw_status(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     let (state, scol) = if app.busy {
         let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(0);
-        let q = if app.queued_turns > 0 {
-            format!(" +{} queued", app.queued_turns)
-        } else {
+        let q = if app.queue.is_empty() {
             String::new()
+        } else {
+            // the queue is real text — show what lands next, not just a count
+            let head: String = match app.queue.front() {
+                Some(crate::tui::app::Submit::Turn(t)) => t.chars().take(20).collect(),
+                Some(crate::tui::app::Submit::Bash(c)) => {
+                    format!("!{}", c.chars().take(18).collect::<String>())
+                }
+                _ => String::new(),
+            };
+            format!(" +{} queued ▶ {}", app.queue.len(), head.trim())
         };
         (format!("● working {secs}s{q}"), THEME.running)
     } else {

@@ -68,7 +68,9 @@ task.rs    Task — nested AgentLoop, depth-capped at 2, own session log,
 ├── permissions.json├── commands/*.md     (same three dirs read unmodified)
 ├── plugin.json     ├── agents/*.md
 ├── commands/       ├── skills/*/SKILL.md
-├── skills/         └── plugins/*/        (plugin bundles: hooks+mcp+skills+commands+agents)
+├── skills/         └── plugins/*/        (plugin dirs: commands/skills/agents scanned;
+│                                             manifest fields merge only from the two
+│                                             top-level plugin.json files)
 ├── agents/
 └── plugin/         (the "this project is a plugin" dir)
     └── hooks|commands|skills|agents/

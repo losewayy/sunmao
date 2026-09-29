@@ -156,3 +156,59 @@ impl SessionLog {
         Ok(out)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sunmao_llm::types::Message;
+
+    #[tokio::test]
+    async fn fold_replays_messages_and_tool_results() {
+        let mut log = SessionLog::ephemeral();
+        log.append(&SessionEvent::Message {
+            message: Message::user("hi"),
+        })
+        .await
+        .unwrap();
+        log.append(&SessionEvent::ToolResult {
+            call_id: "c1".into(),
+            name: "Read".into(),
+            ok: true,
+            output: "x".into(),
+        })
+        .await
+        .unwrap();
+        let msgs = log.messages().await.unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[1].tool_call_id.as_deref(), Some("c1"));
+    }
+
+    #[tokio::test]
+    async fn compacted_boundary_clears_prior_transcript() {
+        let mut log = SessionLog::ephemeral();
+        log.append(&SessionEvent::Message {
+            message: Message::user("old1"),
+        })
+        .await
+        .unwrap();
+        log.append(&SessionEvent::Message {
+            message: Message::user("old2"),
+        })
+        .await
+        .unwrap();
+        log.append(&SessionEvent::Compacted {
+            summary: "summary text".into(),
+        })
+        .await
+        .unwrap();
+        log.append(&SessionEvent::Message {
+            message: Message::user("new"),
+        })
+        .await
+        .unwrap();
+        let msgs = log.messages().await.unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert!(msgs[0].content.as_deref().unwrap().contains("summary text"));
+        assert_eq!(msgs[1].content.as_deref(), Some("new"));
+    }
+}

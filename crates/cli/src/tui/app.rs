@@ -75,6 +75,8 @@ pub struct App {
     pub last_esc: Option<Instant>,
     /// stash of a draft cleared by double-Esc (Ctrl+S restores)
     pub draft_stash: Option<String>,
+    /// first idle Ctrl-C arms this; a second within 800ms actually quits
+    pub quit_armed: Option<Instant>,
     /// git branch of `cwd`, probed at startup (None = not a repo / no git)
     pub git_branch: Option<String>,
     /// last observed provider usage — the footer renders prompt tokens as
@@ -106,7 +108,7 @@ pub struct Viewer {
 /// already narrates the active focus's keys.
 const HELP_TEXT: &str = "keys — Tab browse blocks · Enter expand · e fold · y copy · \
 g/G ends · ! bash · / commands · Esc×2 stash draft · Ctrl+S restore · \
-Ctrl+A/E/U/W line edit · Ctrl-C cancel/quit
+Ctrl+A/E/U/W line edit · Ctrl-C cancel, ×2 quits
 commands — /compact · /multiline · /clear · /resume [id] · /help · /quit · \
 + every *.md in .sunmao/commands, .claude/commands, plugins/*/commands";
 
@@ -148,6 +150,7 @@ impl App {
             toast: None,
             last_esc: None,
             draft_stash: None,
+            quit_armed: None,
             git_branch: None,
             last_usage: None,
             bash_mode: false,
@@ -157,7 +160,7 @@ impl App {
         };
         let mut banner = Block::new(BlockKind::Note);
         banner.text = format!(
-            "sunmao TUI — {model} · session {session_id}\nEnter send · Esc/Ctrl-C quit · Tab browse blocks · / commands"
+            "sunmao TUI — {model} · session {session_id}\nEnter send · Ctrl-C×2 quits · Tab browse blocks · / commands"
         );
         app.blocks.push(banner);
         app

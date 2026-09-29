@@ -291,6 +291,23 @@ async fn main() -> anyhow::Result<()> {
         if line.is_empty() {
             break;
         }
+        // `!cmd` — local shell, same engine as the TUI's bash mode. Output
+        // prints here and folds into the session as SessionEvent::LocalShell.
+        if let Some(cmd) = line.strip_prefix('!') {
+            let cmd = cmd.trim();
+            if cmd.is_empty() {
+                continue;
+            }
+            match sunmao_core::tool::run_foreground(cmd, cwd.clone(), 120).await {
+                Ok(run) => {
+                    let out = sunmao_core::tool::render_run(&run);
+                    println!("{out}");
+                    agent.record_local_shell(cmd, run.exit_code, &out).await;
+                }
+                Err(msg) => println!("{msg}"),
+            }
+            continue;
+        }
         if let Some(cmd_line) = line.strip_prefix('/') {
             let name = cmd_line.split_whitespace().next().unwrap_or("");
             let rest = cmd_line[name.len()..].trim();

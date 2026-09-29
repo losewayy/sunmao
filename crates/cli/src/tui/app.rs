@@ -39,6 +39,8 @@ pub struct SlashMenu {
     /// name list filtered by the fragment after `/`
     pub matches: Vec<String>,
     pub selected: usize,
+    /// the fragment after `/` that produced `matches` (drives the Search row)
+    pub fragment: String,
 }
 
 pub struct App {
@@ -240,6 +242,7 @@ impl App {
                     self.slash_menu = Some(SlashMenu {
                         matches,
                         selected: sel,
+                        fragment: frag.to_string(),
                     });
                 }
             }

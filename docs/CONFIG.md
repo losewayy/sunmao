@@ -16,7 +16,8 @@ per-key where merging applies (hooks/permissions/mcp).
 | `prompt.d/<name>.md` | markdown | prompt section; a name matching a built-in section (`identity`, `tool-guidance`, `shell-dialect`, `subagent-default`) **replaces** that section — the cold-plug mechanism |
 | `commands/*.md` | markdown | `/name` injects file body as prompt |
 | `skills/*/SKILL.md` | frontmatter `name`/`description` + body | indexed; body read on demand |
-| `agents/*.md` | frontmatter `name`/`description` + body | `Task` tool `subagent_type` picks; body = sub-agent system prompt |
+| `agents/*.md` | frontmatter `name`/`description`/`model` + body | `Task` tool `subagent_type` picks; body = sub-agent system prompt; `model` routes the spawn (see below) |
+| `models.json` | `{"providers": {"p": {"base_url","api_key_env","dialect"}}, "routes": {"r": "sel" \| ["sel",...]}}` | model routing — `model:` selectors resolve `provider/model`, bare `model` (session provider), or `@route` chains; unresolvable → inherit parent |
 | `plugin/` | same tree as a plugin root | "this project is a plugin" convention |
 | `plugins/<name>/` | plugin dir | contributes `commands/`, `skills/`, `agents/` **and** merges its `plugin.json` (`hooks` + `mcpServers`, `${CLAUDE_PLUGIN_ROOT}` → the plugin dir) |
 | `sessions/*.jsonl` | runtime state (gitignored) | session logs — `--resume`/`--fork`/`--dataflow` read these |
@@ -70,8 +71,8 @@ first line. `Task` resolves `subagent_type` against `agents/*.md`, else the
 ```jsonc
 {"type":"started","model":"…","cwd":"…"}
 {"type":"message","message":{role,content?,tool_calls?,tool_call_id?}}
-{"type":"tool_call","call":{id,function{name,arguments}}}
-{"type":"tool_result","call_id","name","ok","output"}
+{"type":"tool_call","call":{id,function{name,arguments}},"depth":0}
+{"type":"tool_result","call_id","name","ok","output","depth":0}
 {"type":"compacted","summary"}        // clears transcript on fold
 {"type":"artifact","name","path","bytes"}
 {"type":"usage","usage":{prompt_tokens,completion_tokens,total_tokens}}
@@ -80,3 +81,24 @@ first line. `Task` resolves `subagent_type` against `agents/*.md`, else the
 
 `--dataflow <file>` folds these into a JSON report (files read/written,
 shell commands, tool calls/failures, compactions, token totals).
+
+## Model routing (`models.json`)
+
+Sub-agents resolve a `model:` selector against named providers. Example —
+a cheap/fast model for scout-style agents, session model otherwise:
+
+```jsonc
+{
+  "providers": {
+    "big": { "base_url": "https://api.example.com/v1", "api_key_env": "BIG_KEY", "dialect": "anthropic" }
+  },
+  "routes": { "smol": ["big/claude-haiku", "qwen-flash"] }
+}
+```
+
+- `big/claude-haiku` — explicit provider + model
+- `qwen-flash` — bare id on the session's provider (env/flags)
+- `@smol` — route name; a list is an ordered fallback chain
+- `agents/*.md` `model:` pins any of these; absent or unresolvable → the
+  sub-agent inherits the parent's adapter. Keys come from `api_key_env`
+  (an env var name), never the file itself.

@@ -10,6 +10,7 @@ pub mod audit;
 pub mod context;
 pub mod hooks;
 pub mod mcp;
+pub mod models;
 pub mod permissions;
 pub mod preflight;
 pub mod prompt;

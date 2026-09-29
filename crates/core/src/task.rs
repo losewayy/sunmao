@@ -98,8 +98,18 @@ impl ToolImpl for TaskTool {
             .unwrap_or_else(|_| SessionLog::ephemeral());
         // agents/*.md named def wins; else the `subagent-default` prompt
         // section — assembled by the same PromptAssembler as everything else.
-        let sys_prompt = crate::prompt::PromptAssembler::new(&ctx.cwd)
-            .assemble_subagent(a.subagent_type.as_deref());
+        let def = a.subagent_type.as_deref().and_then(|t| {
+            crate::agents::load_all(&ctx.cwd)
+                .into_iter()
+                .find(|d| d.name == t)
+        });
+        let sys_prompt = def
+            .as_ref()
+            .map(|d| d.system_prompt.clone())
+            .unwrap_or_else(|| {
+                crate::prompt::PromptAssembler::new(&ctx.cwd)
+                    .assemble_subagent(a.subagent_type.as_deref())
+            });
         {
             let _ = log
                 .append(&SessionEvent::Message {
@@ -108,9 +118,17 @@ impl ToolImpl for TaskTool {
                 .await;
         }
 
+        // model routing: the def's `model:` selector resolves through the
+        // session's resolver; unresolvable/absent means inherit the parent.
+        let llm = def
+            .as_ref()
+            .and_then(|d| d.model.as_deref())
+            .and_then(|sel| ctx.models.as_ref().and_then(|m| m.adapter_for(sel)))
+            .unwrap_or_else(|| ctx.llm.clone());
+
         // fresh registry + context, one depth deeper
         let sub_ctx = Context {
-            llm: ctx.llm.clone(),
+            llm,
             sessions: tokio::sync::Mutex::new(log),
             tools: builtin_registry(),
             audit: crate::audit::AuditLog::new(),
@@ -123,6 +141,7 @@ impl ToolImpl for TaskTool {
             read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),
             session_grants: ctx.session_grants.clone(),
             live_sink: std::sync::OnceLock::new(),
+            models: ctx.models.clone(),
         };
 
         let sub_ctx = Arc::new(sub_ctx);

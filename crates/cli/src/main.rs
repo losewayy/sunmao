@@ -240,6 +240,20 @@ async fn main() -> anyhow::Result<()> {
     } else if interactive {
         ctx_raw.approval = Arc::new(StdinApprover { interactive: true });
     }
+    // Model routing seam: `.sunmao/models.json` (+ `.claude` compat) names
+    // providers and routes; agent `model:` selectors resolve through it.
+    // The session's own provider registers as "default" so bare model ids
+    // keep working.
+    ctx_raw.models = Some(Arc::new(sunmao_core::models::ModelResolver::load(
+        &cwd,
+        sunmao_core::models::ProviderDef {
+            base_url: cli.base_url.clone(),
+            api_key_env: None,
+            api_key: Some(cli.api_key.clone()),
+            dialect: cli.provider.clone(),
+        },
+        "default",
+    )));
     let ctx = Arc::new(ctx_raw);
     ctx.hooks
         .fire(

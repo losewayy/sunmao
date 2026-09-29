@@ -83,6 +83,9 @@ pub struct App {
     /// `!` bash mode: the composer holds a shell command; submit wraps it
     /// for the Bash tool instead of sending it as a prompt.
     pub bash_mode: bool,
+    /// turns submitted while a turn was running — footer shows the queue
+    /// depth so a submitted-but-not-yet-started prompt isn't invisible.
+    pub queued_turns: u16,
     /// Full-screen viewer: (title, body) of the block being read. Lives in
     /// app state so render stays pure.
     pub viewer: Option<Viewer>,
@@ -148,6 +151,7 @@ impl App {
             git_branch: None,
             last_usage: None,
             bash_mode: false,
+            queued_turns: 0,
             viewer: None,
             busy_since: None,
         };
@@ -561,6 +565,11 @@ impl App {
             self.input = d;
             self.cursor = self.input.chars().count();
         }
+    }
+
+    /// Set a transient status-bar toast (copy confirm, queue notice).
+    pub fn toast(&mut self, text: impl Into<String>) {
+        self.toast = Some((text.into(), Instant::now()));
     }
 
     /// Age-out the toast after 3 s.

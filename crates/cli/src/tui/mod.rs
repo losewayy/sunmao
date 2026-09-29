@@ -459,7 +459,9 @@ fn handle_key(
     tx_input: &mpsc::UnboundedSender<Submit>,
     tx_cancel: &mpsc::UnboundedSender<()>,
 ) -> bool {
-    // Ctrl-C is global: cancel a busy turn, deny a live card, else quit.
+    // Ctrl-C is global: deny a live card, cancel a busy turn, and only quit
+    // on a second press when idle — a single stray Ctrl-C must not kill the
+    // session (same two-press convention as the draft-clear Esc).
     if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) {
         if app.focus == Focus::Approval {
             resolve_card(app, sunmao_core::approval::Approval::Deny);
@@ -470,7 +472,23 @@ fn handle_key(
             let _ = tx_cancel.send(());
             return false;
         }
-        return true;
+        if !app.input.is_empty() {
+            // a live draft wins over quit intent — stash it like Esc×2
+            app.draft_stash = Some(std::mem::take(&mut app.input));
+            app.cursor = 0;
+            app.toast("draft stashed — Ctrl+S restores · Ctrl-C again quits");
+            app.quit_armed = Some(std::time::Instant::now());
+            return false;
+        }
+        if app
+            .quit_armed
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(800))
+        {
+            return true;
+        }
+        app.quit_armed = Some(std::time::Instant::now());
+        app.toast("Ctrl-C again to quit");
+        return false;
     }
     // Ctrl-S restores a stashed draft (double-Esc clear undo).
     if k.code == KeyCode::Char('s') && k.modifiers.contains(KeyModifiers::CONTROL) {
@@ -763,7 +781,10 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
         KeyCode::Char('!') if app.input.is_empty() && !app.bash_mode => {
             app.bash_mode = true;
         }
-        KeyCode::Char(c) => app.insert_char(c),
+        KeyCode::Char(c) => {
+            app.quit_armed = None; // typing disarms the pending quit
+            app.insert_char(c);
+        }
         _ => {}
     }
     false

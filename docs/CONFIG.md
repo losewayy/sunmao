@@ -16,7 +16,7 @@ per-key where merging applies (hooks/permissions/mcp).
 | `prompt.d/<name>.md` | markdown | prompt section; a name matching a built-in section (`identity`, `tool-guidance`, `shell-dialect`, `subagent-default`) **replaces** that section — the cold-plug mechanism |
 | `commands/*.md` | markdown | `/name` injects file body as prompt |
 | `skills/*/SKILL.md` | frontmatter `name`/`description` + body | indexed; body read on demand |
-| `agents/*.md` | frontmatter `name`/`description`/`model` + body | `Task` tool `subagent_type` picks; body = sub-agent system prompt; `model` routes the spawn (see below) |
+| `agents/*.md` | frontmatter `name`/`description`/`model`/`tools`/`spawns` + body | `Task` tool `subagent_type` picks; body = sub-agent system prompt; `model` routes the spawn (see below); `tools` (CSV/list) trims the child's tool registry; `spawns` (CSV/list, `*`=all) whitelists what it may itself spawn — a restricted parent's omitted `subagent_type` defaults to the first entry, self-recursion is refused |
 | `models.json` | `{"providers": {"p": {"base_url","api_key_env","dialect"}}, "routes": {"r": "sel" \| ["sel",...]}}` | model routing — `model:` selectors resolve `provider/model`, bare `model` (session provider), or `@route` chains; unresolvable → inherit parent |
 | `plugin/` | same tree as a plugin root | "this project is a plugin" convention |
 | `plugins/<name>/` | plugin dir | contributes `commands/`, `skills/`, `agents/` **and** merges its `plugin.json` (`hooks` + `mcpServers`, `${CLAUDE_PLUGIN_ROOT}` → the plugin dir) |
@@ -77,6 +77,7 @@ first line. `Task` resolves `subagent_type` against `agents/*.md`, else the
 {"type":"artifact","name","path","bytes"}
 {"type":"usage","usage":{prompt_tokens,completion_tokens,total_tokens}}
 {"type":"hook","event":"PreToolUse.updatedInput","detail":"…"}  // audit-only, skipped by the message fold
+{"type":"task_done","id":"sub-…-l2","ok":true,"output":"…"}  // background Task finished — folds into the message stream as a <task-result> user message; full transcript at sessions/<id>.jsonl
 ```
 
 `--dataflow <file>` folds these into a JSON report (files read/written,
@@ -102,3 +103,5 @@ a cheap/fast model for scout-style agents, session model otherwise:
 - `agents/*.md` `model:` pins any of these; absent or unresolvable → the
   sub-agent inherits the parent's adapter. Keys come from `api_key_env`
   (an env var name), never the file itself.
+- `/model [selector]` in the TUI switches the *session's* active adapter
+  mid-run (next request onward); bare `/model` lists routes + providers.

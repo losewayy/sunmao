@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use serde_json::Value;
@@ -28,7 +29,9 @@ pub trait ToolImpl: Send + Sync {
 }
 
 pub struct ToolRegistry {
-    tools: BTreeMap<String, Box<dyn ToolImpl>>,
+    /// Arc storage: agent `tools:` whitelists rebuild filtered registries
+    /// by cloning handles — no impl needs to be cloneable.
+    tools: BTreeMap<String, Arc<dyn ToolImpl>>,
 }
 
 impl ToolRegistry {
@@ -39,15 +42,33 @@ impl ToolRegistry {
     }
 
     pub fn register(&mut self, tool: impl ToolImpl + 'static) {
-        self.tools.insert(tool.name().to_string(), Box::new(tool));
+        self.tools.insert(tool.name().to_string(), Arc::new(tool));
     }
 
     pub fn register_boxed(&mut self, tool: Box<dyn ToolImpl>) {
-        self.tools.insert(tool.name().to_string(), tool);
+        self.tools.insert(tool.name().to_string(), tool.into());
     }
 
     pub fn declarations(&self) -> Vec<Tool> {
         self.tools.values().map(|t| t.decl()).collect()
+    }
+
+    /// A registry with only `names` — agent `tools:` whitelists trim a
+    /// child's surface to exactly what the def allows.
+    pub fn filtered(&self, names: &[String]) -> ToolRegistry {
+        let mut r = ToolRegistry::new();
+        for n in names {
+            if let Some(t) = self.tools.get(n) {
+                r.tools.insert(n.clone(), t.clone());
+            }
+        }
+        r
+    }
+
+    /// Drop one tool — the depth cap strips `Task` from leaf children so
+    /// the model never sees a spawner it can't legally use.
+    pub fn remove(&mut self, name: &str) {
+        self.tools.remove(name);
     }
 
     pub async fn call(

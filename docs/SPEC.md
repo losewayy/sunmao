@@ -148,7 +148,7 @@ hook engine（核心）
 
 ### 4.9 声明式格式加载器
 
-- `SKILL.md`（Agent Skills）、`.claude/commands/*` 风格斜杠命令、`agents/*.md` subagent 定义、`AGENTS.md`、`plugin.json`（含 skills+mcp+hooks 打包）
+- `SKILL.md`（Agent Skills）、`.claude/commands/*` 风格斜杠命令、`agents/*.md` subagent 定义（frontmatter `model:` 走 `models.json` 路由——角色化模型分配）、`AGENTS.md`、`plugin.json`（含 skills+mcp+hooks 打包）
 - 自家 `.devin/skills/` 六件套是**第一天的真实测试集**
 
 ### 4.10 `html` — 一等公民的产物格式（"HTML is the new Markdown"）

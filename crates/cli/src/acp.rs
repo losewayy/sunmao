@@ -68,6 +68,44 @@ impl Observer for AcpObserver {
     }
 }
 
+/// Approval over ACP: risky tool calls become `session/request_permission`
+/// prompts in the client (Zed etc.) — the approval seam's third frontend.
+struct AcpApprover {
+    cx: V2ConnectionTo<Client>,
+    session_id: v2::SessionId,
+}
+
+#[async_trait::async_trait]
+impl sunmao_core::approval::Approver for AcpApprover {
+    async fn approve(&self, tool: &str, detail: &str, why: &str) -> bool {
+        let req = v2::RequestPermissionRequest::new(
+            self.session_id.clone(),
+            format!("{tool}: {why}"),
+            vec![
+                v2::PermissionOption::new(
+                    v2::PermissionOptionId::new("allow"),
+                    "Allow once",
+                    v2::PermissionOptionKind::AllowOnce,
+                ),
+                v2::PermissionOption::new(
+                    v2::PermissionOptionId::new("deny"),
+                    "Deny",
+                    v2::PermissionOptionKind::RejectOnce,
+                ),
+            ],
+        )
+        .description(detail.to_string());
+        match self.cx.send_request(req).block_task().await {
+            Ok(resp) => matches!(
+                resp.outcome,
+                v2::RequestPermissionOutcome::Selected(ref s)
+                    if s.option_id.to_string() == "allow"
+            ),
+            Err(_) => false,
+        }
+    }
+}
+
 impl SunmaoAgent {
     fn new_llm(&self) -> Arc<dyn sunmao_llm::ProviderAdapter> {
         match self.provider.as_str() {
@@ -144,7 +182,13 @@ pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> 
                     for t in sunmao_core::mcp::connect_all(&cwd).await {
                         registry.register_boxed(t);
                     }
-                    let ctx = Arc::new(Context::new(llm, log, registry, cwd.clone()));
+                    let session_id = v2::SessionId::new(id.clone());
+                    let mut ctx_raw = Context::new(llm, log, registry, cwd.clone());
+                    ctx_raw.approval = Arc::new(AcpApprover {
+                        cx: cx.clone(),
+                        session_id: session_id.clone(),
+                    });
+                    let ctx = Arc::new(ctx_raw);
                     {
                         let mut l = ctx.sessions.lock().await;
                         let _ = l
@@ -162,7 +206,6 @@ pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> 
                             })
                             .await;
                     }
-                    let session_id = v2::SessionId::new(id.clone());
                     agent.sessions.lock().unwrap().insert(
                         id,
                         Arc::new(Mutex::new(SessionState {
@@ -209,7 +252,7 @@ pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> 
                 let agent = agent.clone();
                 async move |req: v2::ResumeSessionRequest,
                             responder: Responder<v2::ResumeSessionResponse>,
-                            _cx: V2ConnectionTo<Client>| {
+                            cx: V2ConnectionTo<Client>| {
                     let id = req.session_id.to_string();
                     // already live in this process?
                     if agent.sessions.lock().unwrap().contains_key(&id) {
@@ -241,7 +284,12 @@ pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> 
                     for t in sunmao_core::mcp::connect_all(&cwd).await {
                         registry.register_boxed(t);
                     }
-                    let ctx = Arc::new(Context::new(llm, log, registry, cwd));
+                    let mut ctx_raw = Context::new(llm, log, registry, cwd);
+                    ctx_raw.approval = Arc::new(AcpApprover {
+                        cx: cx.clone(),
+                        session_id: req.session_id.clone(),
+                    });
+                    let ctx = Arc::new(ctx_raw);
                     agent.sessions.lock().unwrap().insert(
                         id,
                         Arc::new(Mutex::new(SessionState {

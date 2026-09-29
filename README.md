@@ -59,8 +59,9 @@ architecture: components joined by seams, every seam a contract.
   `~/.agents/skills`; slash commands from `commands/*.md`; sub-agent defs
   from `agents/*.md`; plugin bundles via `plugin.json`
 - **Frontends** — REPL (`sunmao`), one-shot (`sunmao -p`), TUI
-  (`sunmao --tui`, ratatui, CJK width-correct input + y/n approval prompts +
-  Ctrl-C cooperative cancel), ACP
+  (`sunmao --tui`, ratatui: block transcript with fold/copy/select,
+  card-style approval with parkable Esc, `/` slash popup, markdown-rendered
+  output, multiline composer, CJK-correct cursor), ACP
 
 ## Usage
 

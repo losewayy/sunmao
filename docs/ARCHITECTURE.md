@@ -102,8 +102,11 @@ implements that fold — `Compacted` clears and re-seeds; `ToolResult` becomes
 ```text
 sunmao              stdin/stdout REPL — /compact, /skills, /<command>
 sunmao -p "..."     one-shot; exit code encodes outcome
-sunmao --tui        ratatui: char-indexed CJK input, unicode-width cursor,
-                    approval prompts, PgUp/PgDn scroll, Ctrl-C = cancel
+sunmao --tui        ratatui: block transcript (fold/copy OSC52/select via
+                    Tab+j/k/e), parkable approval card, `/` slash popup,
+                    markdown-rendered assistant text, multiline composer,
+                    CJK width-correct cursor; Esc is layered (park/clear/
+                    hint), Ctrl-C cancels or quits
 sunmao --acp        ACP v2 stdio server: initialize, session/{new,list,
                     resume,prompt,close}, cancel, session/request_permission
 ```

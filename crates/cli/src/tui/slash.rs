@@ -6,7 +6,7 @@ use std::path::Path;
 
 /// Builtin commands handled locally (not file-backed). Shown in the menu
 /// alongside file commands.
-const BUILTINS: &[&str] = &["compact", "multiline", "quit"];
+const BUILTINS: &[&str] = &["clear", "compact", "help", "multiline", "quit"];
 
 /// Names the `/` menu should offer: builtins + every `<name>.md` found in
 /// the convention dirs under `cwd`.

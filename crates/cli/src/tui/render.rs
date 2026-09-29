@@ -317,9 +317,10 @@ fn draw_status(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     };
 
     let (state, scol) = if app.busy {
-        ("● working", THEME.running)
+        let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(0);
+        (format!("● working {secs}s"), THEME.running)
     } else {
-        ("○ idle", THEME.ok)
+        ("○ idle".to_string(), THEME.ok)
     };
     let line1 = Line::from(vec![
         Span::styled(format!(" {state} "), Style::default().fg(scol)),

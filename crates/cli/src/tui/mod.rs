@@ -46,6 +46,9 @@ enum Msg {
     Branch(Option<String>),
     /// mouse wheel — scrolls the transcript directly
     Wheel(i16),
+    /// 1 Hz heartbeat — redraws so the busy timer ticks while the model
+    /// streams nothing (long thinking gaps would otherwise freeze it).
+    Tick,
 }
 
 /// A risky tool call suspended on user verdict.
@@ -288,6 +291,21 @@ async fn run_inner(
         });
     }
 
+    // 1 Hz tick — repaints the busy timer and ages out toasts even when no
+    // other event arrives.
+    {
+        let tx_msg = tx_msg.clone();
+        tokio::spawn(async move {
+            let mut iv = tokio::time::interval(std::time::Duration::from_secs(1));
+            loop {
+                iv.tick().await;
+                if tx_msg.send(Msg::Tick).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
     let mut app = App::new(model, cwd.clone());
     if !replay.is_empty() {
         app.replay(&replay);
@@ -351,6 +369,7 @@ async fn run_inner(
                     app.scroll_back = app.scroll_back.saturating_sub(-d as u16);
                 }
             }
+            Some(Msg::Tick) => {} // just redraw
             Some(Msg::Paste(p)) => app.insert_str(&p),
             Some(Msg::Key(k)) => {
                 if handle_key(&mut app, k, &tx_input, &tx_cancel) {

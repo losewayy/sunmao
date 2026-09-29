@@ -83,6 +83,8 @@ pub struct App {
     /// Full-screen viewer: (title, body) of the block being read. Lives in
     /// app state so render stays pure.
     pub viewer: Option<Viewer>,
+    /// when the current turn started working — footer shows elapsed time
+    pub busy_since: Option<Instant>,
 }
 
 /// Content of the full-screen viewer — title line + the block's full text
@@ -93,6 +95,14 @@ pub struct Viewer {
     /// visual lines scrolled from the top
     pub scroll: u16,
 }
+
+/// `/help` body — the keymap cheat-sheet. Short on purpose: the footer
+/// already narrates the active focus's keys.
+const HELP_TEXT: &str = "keys — Tab browse blocks · Enter expand · e fold · y copy · \
+g/G ends · ! bash · / commands · Esc×2 stash draft · Ctrl+S restore · \
+Ctrl+A/E/U/W line edit · Ctrl-C cancel/quit
+commands — /compact · /multiline · /clear · /help · /quit · \
++ every *.md in .sunmao/commands, .claude/commands, plugins/*/commands";
 
 /// How a submitted line should be dispatched — the driver task interprets.
 #[derive(Debug)]
@@ -133,6 +143,7 @@ impl App {
             last_usage: None,
             bash_mode: false,
             viewer: None,
+            busy_since: None,
         };
         let mut banner = Block::new(BlockKind::Note);
         banner.text = format!(
@@ -147,6 +158,9 @@ impl App {
     /// Append streamed text to the last open block of `kind`, else open one.
     pub fn stream(&mut self, kind: BlockKind, text: &str) {
         self.busy = true;
+        if self.busy_since.is_none() {
+            self.busy_since = Some(Instant::now());
+        }
         let last_ok = self.blocks.last_mut().filter(|b| b.kind == kind && b.open);
         match last_ok {
             Some(b) => b.text.push_str(text),
@@ -205,10 +219,12 @@ impl App {
             }
         }
         self.busy = false;
+        self.busy_since = None;
     }
 
     pub fn push_note(&mut self, note: &str) {
         self.busy = false;
+        self.busy_since = None;
         let mut b = Block::new(BlockKind::Note);
         b.text = note.to_string();
         self.blocks.push(b);
@@ -346,6 +362,13 @@ impl App {
                             "[multiline {}]",
                             if self.multiline { "on" } else { "off" }
                         ))
+                    }
+                    "help" | "h" | "?" => Submit::Note(HELP_TEXT.to_string()),
+                    "clear" => {
+                        self.blocks.clear();
+                        self.selected = 0;
+                        self.scroll_back = 0;
+                        Submit::Note("[transcript cleared — session log untouched]".into())
                     }
                     // file commands resolve in the driver (needs cwd)
                     _ => Submit::Turn(format!("/{cmd_line}")),

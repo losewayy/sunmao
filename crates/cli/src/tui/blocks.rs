@@ -4,6 +4,7 @@
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use std::time::Instant;
 
 use super::md;
 use super::theme::{self, THEME};
@@ -41,6 +42,10 @@ pub struct ToolBlock {
     pub done: Option<bool>,
     /// consecutive calls of the same name folded into this block
     pub group_count: usize,
+    /// when this call started — the header shows wall time once done
+    pub started: Instant,
+    /// total seconds across grouped runs (None while running)
+    pub elapsed: Option<f64>,
 }
 
 #[derive(Debug)]
@@ -80,6 +85,8 @@ impl Block {
             output: String::new(),
             done: None,
             group_count: 1,
+            started: Instant::now(),
+            elapsed: None,
         });
         b
     }
@@ -101,6 +108,8 @@ impl Block {
             t.done = None;
             t.summary = summary.to_string();
             t.group_count += 1;
+            t.started = Instant::now();
+            t.elapsed = None;
         }
     }
 
@@ -109,6 +118,7 @@ impl Block {
     pub fn finish_tool(&mut self, ok: bool, output: &str) {
         if let Some(t) = &mut self.tool {
             t.done = Some(ok);
+            t.elapsed = Some(t.started.elapsed().as_secs_f64());
             if output.is_empty() {
                 return;
             }
@@ -290,6 +300,11 @@ impl Block {
         }
         if t.done.is_none() {
             spans.push(Span::styled("  …", Style::default().fg(THEME.running)));
+        } else if let Some(s) = t.elapsed.filter(|s| *s >= 0.05) {
+            spans.push(Span::styled(
+                format!("  {:.1}s", s),
+                Style::default().fg(THEME.faint),
+            ));
         }
         let mut out = vec![Line::from(spans)];
 

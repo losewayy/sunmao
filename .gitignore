@@ -3,3 +3,7 @@
 *.log
 .env
 .sunmao/
+
+# maintainer-private docs — never commit, never push
+docs/WHY.md
+docs/HANDOFF.md

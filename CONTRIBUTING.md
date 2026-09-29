@@ -34,7 +34,8 @@ Then commit `area: imperative`, push. CI runs the same three on
 - `docs/CONFIG.md` = every file sunmao reads
 - `docs/PROTOCOLS.md` = the wire dialects
 - `docs/TESTING.md` = how to prove a feature works
-- `docs/HANDOFF.md` = state delta + open threads for the next maintainer
+- `docs/HANDOFF.md` = maintainer-private state delta (gitignored; not in
+  the public repo)
 - `CHANGELOG.md` = what landed, per version
 
 If code and docs disagree, fix whichever is wrong — never both claim

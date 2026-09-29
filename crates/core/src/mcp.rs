@@ -70,7 +70,7 @@ impl ToolImpl for McpTool {
     ) -> anyhow::Result<ToolResult> {
         let mut params = CallToolRequestParams::new(self.tool_name.clone());
         if let Some(obj) = args.as_object() {
-            params = params.with_arguments(obj.clone().into());
+            params = params.with_arguments(obj.clone());
         }
         let res = self
             .client

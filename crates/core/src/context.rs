@@ -74,6 +74,11 @@ pub struct Context {
     /// through it. `None` = single-model session (the `llm` field is the
     /// only adapter); sub-agent spawns then always inherit.
     pub models: Option<Arc<crate::models::ModelResolver>>,
+    /// Name of the agent def this context belongs to — `None` for the
+    /// interactive agent. Task spawns set it so the child's own Task calls
+    /// can be gated by that def's `spawns:` whitelist (and self-recursion
+    /// blocked).
+    pub agent_name: Option<String>,
 }
 
 impl Context {
@@ -104,6 +109,7 @@ impl Context {
             )),
             live_sink: std::sync::OnceLock::new(),
             models: None,
+            agent_name: None,
         }
     }
 

@@ -1,16 +1,25 @@
 //! Named sub-agent definitions — `.sunmao/agents/*.md`, `.claude/agents/*.md`.
-//! Frontmatter `name`/`description`/`model`, body becomes the sub-agent's
-//! system prompt. `model` is a `models.json` selector (`provider/model`,
-//! bare model id, or `@route`) — absent means inherit the parent's model.
+//! Frontmatter `name`/`description`/`model`/`tools`/`spawns`, body becomes
+//! the sub-agent's system prompt. `model` is a `models.json` selector
+//! (`provider/model`, bare model id, or `@route`) — absent means inherit
+//! the parent's model. `tools` (CSV or `[a,b]`) trims the child's tool
+//! registry — absent means the full builtin set. `spawns` (CSV or `[a,b]`,
+//! `*` = unrestricted) whitelists which agent names this one may itself
+//! spawn; absent means unrestricted, `[]` means the child can't Task at all.
 
 use std::path::Path;
 
+#[derive(Debug)]
 pub struct AgentDef {
     pub name: String,
     pub description: String,
     pub system_prompt: String,
     /// Optional model selector resolved through `ModelResolver`.
     pub model: Option<String>,
+    /// Tool-name whitelist — `None` = full builtin registry.
+    pub tools: Option<Vec<String>>,
+    /// Spawnable agent names — `None` = unrestricted, `Some([])` = none.
+    pub spawns: Option<Vec<String>>,
 }
 
 /// Load all agent definitions under the convention dirs.
@@ -50,6 +59,8 @@ fn parse(text: &str, path: &Path) -> Option<AgentDef> {
     let mut name = path.file_stem()?.to_string_lossy().to_string();
     let mut desc = String::new();
     let mut model = None;
+    let mut tools = None;
+    let mut spawns = None;
     let mut body = text;
 
     // YAML-lite frontmatter: --- name: x description: y model: @route ---
@@ -68,6 +79,15 @@ fn parse(text: &str, path: &Path) -> Option<AgentDef> {
                         model = Some(v.to_string());
                     }
                 }
+                if let Some(v) = line.strip_prefix("tools:") {
+                    tools = Some(parse_list(v));
+                }
+                if let Some(v) = line.strip_prefix("spawns:") {
+                    let v = v.trim();
+                    // `*` (and the missing field) means unrestricted; an
+                    // empty value means "can't spawn at all".
+                    spawns = if v == "*" { None } else { Some(parse_list(v)) };
+                }
             }
             body = &rest[end + 4..];
         }
@@ -77,5 +97,24 @@ fn parse(text: &str, path: &Path) -> Option<AgentDef> {
         description: desc,
         system_prompt: body.trim().to_string(),
         model,
+        tools,
+        spawns,
     })
+}
+
+/// `a, b` or `[a, b]` — both shapes appear in the wild.
+fn parse_list(v: &str) -> Vec<String> {
+    v.trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+        .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Look up one definition by exact name — the spawn path needs the def
+/// more than once (prompt, model, tools, spawns), so callers hold it.
+pub fn find(cwd: &Path, name: &str) -> Option<AgentDef> {
+    load_all(cwd).into_iter().find(|d| d.name == name)
 }

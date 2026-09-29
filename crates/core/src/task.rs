@@ -175,11 +175,19 @@ impl ToolImpl for TaskTool {
             _ => bail!("Task takes `prompt` (flat) or `tasks[]` (batch), not both"),
         };
 
+        // spawn policy: resolve each requested type against the defs *and*
+        // the parent agent's `spawns:` whitelist (ctx.agent_name names the
+        // def that owns this context; the interactive agent is unrestricted).
+        let defs: Vec<Option<crate::agents::AgentDef>> = items
+            .iter()
+            .map(|it| resolve_spawn_def(ctx, it.subagent_type.as_deref()))
+            .collect::<Result<_, _>>()?;
+
         // detached lane: ids now, results pushed into the session log later
         if a.run_in_background.unwrap_or(false) {
             let mut ids = Vec::with_capacity(items.len());
-            for it in &items {
-                ids.push(spawn_detached(ctx, &it.prompt, it.subagent_type.as_deref()).await);
+            for (it, def) in items.iter().zip(&defs) {
+                ids.push(spawn_detached(ctx, &it.prompt, def.as_ref()).await);
             }
             return Ok(ToolResult {
                 output: format!(
@@ -195,7 +203,8 @@ impl ToolImpl for TaskTool {
         // fan out — each spawn gets its own lane + session file
         let futs: Vec<_> = items
             .iter()
-            .map(|it| spawn_one(ctx, &it.prompt, it.subagent_type.as_deref()))
+            .zip(&defs)
+            .map(|(it, def)| spawn_one(ctx, &it.prompt, def.as_ref()))
             .collect();
         let results = futures_util::future::join_all(futs).await;
 
@@ -218,10 +227,76 @@ impl ToolImpl for TaskTool {
     }
 }
 
+/// Spawn policy: which def a `subagent_type` request resolves to, gated by
+/// the parent agent's `spawns:` whitelist. `ctx.agent_name` is `None` for
+/// the interactive agent — unrestricted. A restricted parent defaults an
+/// omitted type to the first whitelist entry (omp semantics). Self-recursion
+/// is blocked outright; unknown names fail with the known list instead of
+/// silently spawning the generic agent.
+fn resolve_spawn_def(
+    ctx: &Context,
+    requested: Option<&str>,
+) -> anyhow::Result<Option<crate::agents::AgentDef>> {
+    let all = crate::agents::load_all(&ctx.cwd);
+    let known: Vec<String> = all.iter().map(|d| d.name.clone()).collect();
+    // extract what the parent def contributes (whitelist + name), then drop
+    // the borrow — `all` moves into the lookup below.
+    let (parent_name, allowed): (Option<String>, Option<Vec<String>>) = ctx
+        .agent_name
+        .as_deref()
+        .and_then(|n| all.iter().find(|d| d.name == n))
+        .map(|p| (Some(p.name.clone()), p.spawns.clone()))
+        .unwrap_or((None, None));
+
+    let requested = match (requested, allowed.as_deref()) {
+        (None, Some([])) => {
+            bail!("{} may not spawn sub-agents", parent_name.unwrap())
+        }
+        (None, Some(list)) => Some(list[0].as_str()),
+        (r, _) => r,
+    };
+    let Some(name) = requested else {
+        return Ok(None); // generic sub-agent, unrestricted parent
+    };
+    if let Some(list) = allowed.as_deref() {
+        if !list.iter().any(|n| n == name) {
+            bail!(
+                "{} may not spawn `{name}` (allowed: {})",
+                parent_name.unwrap(),
+                if list.is_empty() {
+                    "none".into()
+                } else {
+                    list.join(", ")
+                }
+            );
+        }
+    }
+    if parent_name.as_deref() == Some(name) {
+        bail!("{name} may not spawn itself (self-recursion)");
+    }
+    match all.into_iter().find(|d| d.name == name) {
+        Some(d) => Ok(Some(d)),
+        None => {
+            bail!(
+                "unknown subagent_type `{name}`{}",
+                if known.is_empty() {
+                    " — no agent defs under .sunmao/agents".to_string()
+                } else {
+                    format!(" — known: {}", known.join(", "))
+                }
+            )
+        }
+    }
+}
+
 /// Run one sub-agent to completion: own context, own session file, own
 /// lane; relays its tool lifecycle to the parent's live sink.
-async fn spawn_one(ctx: &Context, prompt: &str, subagent_type: Option<&str>) -> ToolResult {
-    let (_sub_id, sub_ctx) = spawn_parts(ctx, subagent_type).await;
+async fn spawn_one(
+    ctx: &Context,
+    prompt: &str,
+    def: Option<&crate::agents::AgentDef>,
+) -> ToolResult {
+    let (_sub_id, sub_ctx) = spawn_parts(ctx, def).await;
     run_spawn(
         Arc::new(sub_ctx),
         prompt.to_string(),
@@ -235,8 +310,12 @@ async fn spawn_one(ctx: &Context, prompt: &str, subagent_type: Option<&str>) -> 
 /// `TaskDone` event straight into the *parent's* session log — push-style
 /// delivery, no polling. The result lands in the session that launched it,
 /// even across a /resume.
-async fn spawn_detached(ctx: &Context, prompt: &str, subagent_type: Option<&str>) -> String {
-    let (sub_id, sub_ctx) = spawn_parts(ctx, subagent_type).await;
+async fn spawn_detached(
+    ctx: &Context,
+    prompt: &str,
+    def: Option<&crate::agents::AgentDef>,
+) -> String {
+    let (sub_id, sub_ctx) = spawn_parts(ctx, def).await;
     let parent_log = ctx.sessions.clone();
     let sink = ctx.live_sink.get().cloned();
     let notify_sink = sink.clone();
@@ -269,8 +348,9 @@ async fn spawn_detached(ctx: &Context, prompt: &str, subagent_type: Option<&str>
 
 /// Build the child's context: lane claimed *first* so it doubles as the
 /// session-file dedup suffix — two spawns in the same millisecond used to
-/// collide on `sub-<ms>` and share one log file.
-async fn spawn_parts(ctx: &Context, subagent_type: Option<&str>) -> (String, Context) {
+/// collide on `sub-<ms>` and share one log file. `def` is pre-resolved by
+/// `resolve_spawn_def` (spawn policy already applied).
+async fn spawn_parts(ctx: &Context, def: Option<&crate::agents::AgentDef>) -> (String, Context) {
     let lane = ctx
         .lane_counter
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -288,16 +368,12 @@ async fn spawn_parts(ctx: &Context, subagent_type: Option<&str>) -> (String, Con
         .unwrap_or_else(|_| SessionLog::ephemeral());
     // agents/*.md named def wins; else the `subagent-default` prompt
     // section — assembled by the same PromptAssembler as everything else.
-    let def = subagent_type.and_then(|t| {
-        crate::agents::load_all(&ctx.cwd)
-            .into_iter()
-            .find(|d| d.name == t)
-    });
     let sys_prompt = def
         .as_ref()
         .map(|d| d.system_prompt.clone())
         .unwrap_or_else(|| {
-            crate::prompt::PromptAssembler::new(&ctx.cwd).assemble_subagent(subagent_type)
+            crate::prompt::PromptAssembler::new(&ctx.cwd)
+                .assemble_subagent(def.map(|d| d.name.as_str()))
         });
     {
         let _ = log
@@ -316,12 +392,34 @@ async fn spawn_parts(ctx: &Context, subagent_type: Option<&str>) -> (String, Con
         .and_then(|sel| ctx.models.as_ref().and_then(|m| m.adapter_for(sel)))
         .unwrap_or_else(|| ctx.active_llm());
 
+    // tool surface: the def's `tools:` whitelist trims the registry; a
+    // declared `spawns:` whitelist needs Task present to mean anything
+    // (auto-added), and the depth cap strips Task from leaf children so the
+    // model never sees a spawner it can't legally use.
+    let mut tools = match def.and_then(|d| d.tools.as_ref()) {
+        Some(allow) => {
+            let mut names = (*allow).clone();
+            if def
+                .and_then(|d| d.spawns.as_ref())
+                .is_some_and(|s| !s.is_empty())
+                && !names.iter().any(|n| n == "Task")
+            {
+                names.push("Task".into());
+            }
+            builtin_registry().filtered(&names)
+        }
+        None => builtin_registry(),
+    };
+    if ctx.depth + 1 >= MAX_DEPTH {
+        tools.remove("Task");
+    }
+
     // fresh context, one depth deeper, on its own lane
     let sub_ctx = Context {
         llm,
         llm_override: std::sync::RwLock::new(None),
         sessions: Arc::new(tokio::sync::Mutex::new(log)),
-        tools: builtin_registry(),
+        tools,
         audit: crate::audit::AuditLog::new(),
         permissions: crate::permissions::Permissions::load(&ctx.cwd),
         approval: ctx.approval.clone(),
@@ -335,6 +433,7 @@ async fn spawn_parts(ctx: &Context, subagent_type: Option<&str>) -> (String, Con
         session_grants: ctx.session_grants.clone(),
         live_sink: std::sync::OnceLock::new(),
         models: ctx.models.clone(),
+        agent_name: def.map(|d| d.name.clone()),
     };
     (sub_id, sub_ctx)
 }
@@ -476,6 +575,99 @@ mod tests {
         let (a, _) = spawn_parts(&ctx, None).await;
         let (b, _) = spawn_parts(&ctx, None).await;
         assert_ne!(a, b, "concurrent spawns must not share a session id");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `spawns:` whitelist gates a named agent's own Task calls: a type
+    /// outside the list fails, an omitted type defaults to the first listed
+    /// agent, and self-recursion is refused.
+    #[tokio::test]
+    async fn spawns_whitelist_gates_children() {
+        let dir = std::env::temp_dir().join(format!("sunmao-spawns-{}", std::process::id()));
+        let agents = dir.join(".sunmao/agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::write(
+            agents.join("orchestrator.md"),
+            "---\nname: orchestrator\ndescription: o\nspawns: scout\n---\norch",
+        )
+        .unwrap();
+        std::fs::write(
+            agents.join("scout.md"),
+            "---\nname: scout\ndescription: s\n---\nscout body",
+        )
+        .unwrap();
+        std::fs::write(
+            agents.join("grader.md"),
+            "---\nname: grader\ndescription: g\n---\ngrader body",
+        )
+        .unwrap();
+
+        let mut ctx = Context::new(
+            Arc::new(MockProvider),
+            SessionLog::ephemeral(),
+            builtin_registry(),
+            dir.clone(),
+        );
+        ctx.agent_name = Some("orchestrator".into());
+
+        // not whitelisted → refused
+        let err = resolve_spawn_def(&ctx, Some("grader")).unwrap_err();
+        assert!(err.to_string().contains("may not spawn `grader`"));
+        // self-recursion → refused
+        assert!(resolve_spawn_def(&ctx, Some("orchestrator")).is_err());
+        // omitted → defaults to the first whitelist entry
+        let def = resolve_spawn_def(&ctx, None).unwrap().unwrap();
+        assert_eq!(def.name, "scout");
+        // unknown name → refused with the known list (no silent generic spawn)
+        assert!(resolve_spawn_def(&ctx, Some("ghost")).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `tools:` trims the child's registry to the whitelist; a declared
+    /// `spawns:` list auto-adds Task, and the depth cap strips it at the leaf.
+    #[tokio::test]
+    async fn tools_whitelist_and_depth_cap_trim_registry() {
+        let dir = std::env::temp_dir().join(format!("sunmao-tools-{}", std::process::id()));
+        let agents = dir.join(".sunmao/agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::write(
+            agents.join("reader.md"),
+            "---\nname: reader\ndescription: r\ntools: Read, Grep\n---\nread only",
+        )
+        .unwrap();
+        std::fs::write(
+            agents.join("orch.md"),
+            "---\nname: orch\ndescription: o\ntools: Read\nspawns: reader\n---\nspawner",
+        )
+        .unwrap();
+
+        let ctx = Context::new(
+            Arc::new(MockProvider),
+            SessionLog::ephemeral(),
+            builtin_registry(),
+            dir.clone(),
+        );
+        let defs: Vec<_> = crate::agents::load_all(&dir);
+        let reader = defs.iter().find(|d| d.name == "reader").unwrap();
+        let (_, reader_ctx) = spawn_parts(&ctx, Some(reader)).await;
+        let names: Vec<_> = reader_ctx
+            .tools
+            .declarations()
+            .iter()
+            .map(|t| t.function.name.clone())
+            .collect();
+        assert_eq!(names, vec!["Grep", "Read"], "tools: must trim the registry");
+
+        // a declared spawns whitelist auto-adds Task even if tools omitted it
+        let orch = defs.iter().find(|d| d.name == "orch").unwrap();
+        let (_, orch_ctx) = spawn_parts(&ctx, Some(orch)).await;
+        let names: Vec<_> = orch_ctx
+            .tools
+            .declarations()
+            .iter()
+            .map(|t| t.function.name.clone())
+            .collect();
+        assert!(names.contains(&"Task".to_string()), "spawns implies Task");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

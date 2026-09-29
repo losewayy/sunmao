@@ -74,6 +74,56 @@ impl ToolCallAssembler {
         }
         Ok(out)
     }
+
+    /// Lenient finish: malformed calls are emitted with an empty-args
+    /// placeholder AND reported in the error map keyed by call id — the agent
+    /// loop turns each into a failed ToolResult so the model can self-correct
+    /// instead of aborting the turn.
+    pub fn finish_lenient(&self) -> (Vec<ToolCall>, Vec<(String, String)>) {
+        let mut out = Vec::with_capacity(self.calls.len());
+        let mut errors = Vec::new();
+        for (index, call) in &self.calls {
+            let id = if call.id.is_empty() {
+                format!("synthetic-{index}")
+            } else {
+                call.id.clone()
+            };
+            let name = if call.name.is_empty() {
+                "<unknown>".to_string()
+            } else {
+                call.name.clone()
+            };
+            match serde_json::from_str::<serde_json::Value>(if call.args.trim().is_empty() {
+                "{}"
+            } else {
+                &call.args
+            }) {
+                Ok(_) => out.push(ToolCall {
+                    id,
+                    kind: "function".into(),
+                    function: FunctionCall {
+                        name,
+                        arguments: call.args.clone(),
+                    },
+                }),
+                Err(e) => {
+                    errors.push((id.clone(), format!("{name}: invalid arguments JSON: {e}")));
+                    // still emit so protocol pairing (every tool_call gets a
+                    // tool_result) stays intact — the loop substitutes a
+                    // failure result instead of dispatching.
+                    out.push(ToolCall {
+                        id,
+                        kind: "function".into(),
+                        function: FunctionCall {
+                            name,
+                            arguments: "{}".into(),
+                        },
+                    });
+                }
+            }
+        }
+        (out, errors)
+    }
 }
 
 #[cfg(test)]

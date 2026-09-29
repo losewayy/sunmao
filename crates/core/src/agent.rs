@@ -223,7 +223,9 @@ impl AgentLoop {
                 }
             }
 
-            let tool_calls = assembler.finish()?;
+            let (tool_calls, malformed) = assembler.finish_lenient();
+            let malformed: std::collections::HashMap<String, String> =
+                malformed.into_iter().collect();
 
             {
                 let mut log = self.ctx.sessions.lock().await;
@@ -254,6 +256,26 @@ impl AgentLoop {
             }
 
             for call in tool_calls {
+                // malformed JSON args → failed result fed back, no dispatch
+                if let Some(err) = malformed.get(&call.id) {
+                    let result = crate::tool::ToolResult {
+                        output: format!("malformed tool call: {err}"),
+                        ok: false,
+                    };
+                    let mut log = self.ctx.sessions.lock().await;
+                    log.append(&SessionEvent::ToolResult {
+                        call_id: call.id.clone(),
+                        name: call.function.name.clone(),
+                        ok: result.ok,
+                        output: result.output.clone(),
+                    })
+                    .await?;
+                    log.append(&SessionEvent::Message {
+                        message: Message::tool_result(call.id.clone(), result.output),
+                    })
+                    .await?;
+                    continue;
+                }
                 let args_value: serde_json::Value = serde_json::from_str(&call.function.arguments)
                     .unwrap_or(serde_json::Value::Null);
 
@@ -452,6 +474,62 @@ mod tests {
         assert!(msgs
             .iter()
             .any(|m| matches!(m.role, sunmao_llm::types::Role::Tool)));
+    }
+
+    #[tokio::test]
+    async fn malformed_tool_args_become_failed_result() {
+        // provider emits a Glob call with broken JSON args, then a text reply —
+        // turn must complete and the bad call must surface as a ToolResult fail,
+        // not an abort.
+        let provider = Arc::new(MockProvider {
+            responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                vec![
+                    StreamDelta::ToolCalls(vec![
+                        ToolCallFragment {
+                            index: 0,
+                            id: Some("bad1".into()),
+                            name: Some("Glob".into()),
+                            arguments: None,
+                        },
+                        ToolCallFragment {
+                            index: 0,
+                            arguments: Some("{not json".into()),
+                            ..Default::default()
+                        },
+                    ]),
+                    StreamDelta::Finish {
+                        reason: Some("tool_calls".into()),
+                        usage: None,
+                    },
+                ],
+                vec![
+                    StreamDelta::Content("sorry, retrying".into()),
+                    StreamDelta::Finish {
+                        reason: Some("stop".into()),
+                        usage: None,
+                    },
+                ],
+            ])),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let ctx = Arc::new(Context::new(
+            provider.clone(),
+            SessionLog::ephemeral(),
+            builtin_registry(),
+            std::env::temp_dir(),
+        ));
+        let agent = AgentLoop::new(ctx.clone());
+        let outcome = agent.run_turn("list", &NullObserver).await.unwrap();
+        assert!(matches!(outcome, TurnOutcome::Completed));
+        // two provider calls: the model got the failure fed back
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::Relaxed), 2);
+        let msgs = ctx.sessions.lock().await.messages().await.unwrap();
+        // tool message present containing the malformed-call error
+        let tool_msg = msgs
+            .iter()
+            .find(|m| matches!(m.role, sunmao_llm::types::Role::Tool))
+            .expect("tool result message");
+        assert!(tool_msg.content.as_deref().unwrap().contains("malformed"));
     }
 
     #[tokio::test]

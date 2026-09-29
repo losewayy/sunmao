@@ -45,6 +45,9 @@ pub enum LiveEvent {
         event: String,
         detail: String,
     },
+    /// Token accounting for one completed LLM request — mirrors the durable
+    /// `SessionEvent::Usage` so footers can show context pressure live.
+    Usage(sunmao_llm::types::Usage),
     TurnEnd {
         outcome: TurnOutcome,
     },
@@ -456,6 +459,8 @@ impl AgentLoop {
                         if let Some(u) = &usage {
                             let mut log = self.ctx.sessions.lock().await;
                             let _ = log.append(&SessionEvent::Usage { usage: u.clone() }).await;
+                            drop(log);
+                            observer.on_event(&LiveEvent::Usage(u.clone()));
                         }
                         finish_reason = reason.or(finish_reason);
                     }

@@ -34,7 +34,7 @@ pub fn draw(f: &mut ratatui::Frame, app: &mut App) {
             Constraint::Length(menu_rows),
             Constraint::Length(card_rows),
             Constraint::Length(input_rows),
-            Constraint::Length(1),
+            Constraint::Length(2),
         ])
         .split(f.area());
 
@@ -244,22 +244,34 @@ fn draw_status(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| app.cwd.display().to_string());
     let mode = if app.multiline { "ml" } else { "1line" };
-    let ctx = format!("{} · {short_cwd} · {mode}", app.model);
+    let branch = match &app.git_branch {
+        Some(b) => format!("({b})"),
+        None => String::new(),
+    };
+    let ctx = match app.last_usage.as_ref().filter(|u| u.prompt_tokens > 0) {
+        Some(u) => format!(
+            "{} · {short_cwd} {branch} · {mode} · ctx {}",
+            app.model,
+            human_tokens(u.prompt_tokens)
+        ),
+        None => format!("{} · {short_cwd} {branch} · {mode}", app.model),
+    };
 
-    let line = if let Some(t) = app.toast_text() {
-        Line::from(vec![
-            Span::styled(format!(" {ctx} "), Style::default().fg(THEME.faint)),
-            Span::styled(
-                format!(" {t} "),
-                Style::default().fg(THEME.hi).add_modifier(Modifier::BOLD),
-            ),
-        ])
+    let (state, scol) = if app.busy {
+        ("● working", THEME.running)
     } else {
-        let (state, scol) = if app.busy {
-            ("● working", THEME.running)
-        } else {
-            ("○ idle", THEME.ok)
-        };
+        ("○ idle", THEME.ok)
+    };
+    let line1 = Line::from(vec![
+        Span::styled(format!(" {state} "), Style::default().fg(scol)),
+        Span::styled(ctx, Style::default().fg(THEME.muted)),
+    ]);
+    let line2 = if let Some(t) = app.toast_text() {
+        Line::from(Span::styled(
+            format!(" {t} "),
+            Style::default().fg(THEME.hi).add_modifier(Modifier::BOLD),
+        ))
+    } else {
         let hints = match app.focus {
             Focus::Approval => "↑↓/Tab · 1-2 · Esc park".to_string(),
             Focus::Scrollback => format!(
@@ -276,14 +288,22 @@ fn draw_status(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
                 }
             }
         };
-        Line::from(vec![
-            Span::styled(format!(" {state} "), Style::default().fg(scol)),
-            Span::styled(format!("{ctx} "), Style::default().fg(THEME.muted)),
-            Span::styled(format!(" {hints} "), Style::default().fg(THEME.faint)),
-        ])
+        Line::from(Span::styled(
+            format!(" {hints} "),
+            Style::default().fg(THEME.faint),
+        ))
     };
     f.render_widget(
-        Paragraph::new(line).style(Style::default().bg(theme::base::BG)),
+        Paragraph::new(vec![line1, line2]).style(Style::default().bg(theme::base::BG)),
         area,
     );
+}
+
+/// 12_345 → "12.3k"; below 1k print raw so tiny prompts stay exact.
+fn human_tokens(n: u64) -> String {
+    if n >= 1_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
 }

@@ -14,6 +14,7 @@ use sunmao_llm::OaiClient;
 
 mod acp;
 mod dataflow;
+mod doctor;
 mod tui;
 
 #[derive(Parser)]
@@ -54,6 +55,9 @@ struct Cli {
     /// Print a data-flow report for a session log file and exit.
     #[arg(long)]
     dataflow: Option<PathBuf>,
+    /// Environment self-check.
+    #[arg(long)]
+    doctor: bool,
     /// Run as an Agent Client Protocol server on stdio (Zed etc.).
     #[arg(long)]
     acp: bool,
@@ -140,6 +144,9 @@ async fn main() -> anyhow::Result<()> {
         return list_sessions(&cli.session_dir);
     }
 
+    if cli.doctor {
+        return doctor::run(&cli).await;
+    }
     if cli.acp {
         return acp::run(&cli.base_url, &cli.api_key, &cli.model, &cli.provider)
             .await

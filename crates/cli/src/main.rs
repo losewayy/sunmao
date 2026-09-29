@@ -285,6 +285,19 @@ async fn main() -> anyhow::Result<()> {
         in_reasoning: std::sync::Mutex::new(false),
     };
 
+    // Resumed sessions announce themselves — a silent resume reads as a
+    // fresh session and the fold-in context is invisible to the user.
+    if resumed {
+        let n_msgs = ctx
+            .sessions
+            .lock()
+            .await
+            .messages()
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
+        println!("[resumed — {n_msgs} messages folded in]");
+    }
     println!("sunmao — agent kernel v0.1 (ctrl-c / empty line to exit)");
     let stdin = std::io::stdin();
     loop {

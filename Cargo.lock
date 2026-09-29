@@ -3040,6 +3040,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing-subscriber",
+ "unicode-segmentation",
  "unicode-width",
 ]
 

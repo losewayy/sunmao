@@ -225,6 +225,15 @@ impl App {
         self.refresh_slash_menu();
     }
 
+    /// Bulk insert (bracketed paste): one splice + one menu refresh instead
+    /// of per-char O(n²).
+    pub fn insert_str(&mut self, s: &str) {
+        let byte_idx = char_to_byte(&self.input, self.cursor);
+        self.input.insert_str(byte_idx, s);
+        self.cursor += s.chars().count();
+        self.refresh_slash_menu();
+    }
+
     pub fn insert_newline(&mut self) {
         self.insert_char('\n');
         self.slash_menu = None;

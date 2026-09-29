@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::audit::AuditLog;
+use crate::hooks::HookEngine;
 use crate::session::SessionLog;
 use crate::tool::ToolRegistry;
 use sunmao_llm::ProviderAdapter;
@@ -21,6 +22,9 @@ pub struct Context {
     pub tools: ToolRegistry,
     /// Audit ledger — permission checks and notable facts.
     pub audit: AuditLog,
+    /// Hook dispatcher — lifecycle events fire through dialect-compatible
+    /// external commands.
+    pub hooks: HookEngine,
     /// Working directory tools resolve paths against.
     pub cwd: PathBuf,
     /// Files read this session — the Read-before-Write gate's ledger.
@@ -39,6 +43,7 @@ impl Context {
             sessions: tokio::sync::Mutex::new(sessions),
             tools,
             audit: AuditLog::new(),
+            hooks: HookEngine::load(&cwd, "session"),
             cwd,
             read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),
         }

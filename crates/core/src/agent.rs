@@ -17,6 +17,7 @@ use sunmao_llm::types::Message;
 use sunmao_llm::{ChatRequest, StreamDelta};
 
 use crate::context::Context;
+use crate::hooks::HookEvent;
 use crate::session::SessionEvent;
 
 /// Live events the frontend can observe (stdout printer, later TUI/ACP).
@@ -129,12 +130,27 @@ impl AgentLoop {
         input: &str,
         observer: &dyn Observer,
     ) -> anyhow::Result<TurnOutcome> {
+        // UserPromptSubmit hooks may inject context or veto the prompt.
+        let prompt_outcome = self
+            .ctx
+            .hooks
+            .fire(HookEvent::UserPromptSubmit, &self.ctx.cwd, None, None, None)
+            .await;
+        if let Some(reason) = prompt_outcome.block_reason {
+            return Ok(TurnOutcome::Other(format!("blocked by hook: {reason}")));
+        }
         {
             let mut log = self.ctx.sessions.lock().await;
             log.append(&SessionEvent::Message {
                 message: Message::user(input),
             })
             .await?;
+            for extra in prompt_outcome.extra_context {
+                log.append(&SessionEvent::Message {
+                    message: Message::user(format!("[hook context] {extra}")),
+                })
+                .await?;
+            }
         }
 
         let mut outcome = TurnOutcome::Completed;
@@ -211,18 +227,54 @@ impl AgentLoop {
             }
 
             for call in tool_calls {
+                let args_value: serde_json::Value = serde_json::from_str(&call.function.arguments)
+                    .unwrap_or(serde_json::Value::Null);
+
+                // PreToolUse: a hook may veto the call outright.
+                let pre = self
+                    .ctx
+                    .hooks
+                    .fire(
+                        HookEvent::PreToolUse,
+                        &self.ctx.cwd,
+                        Some(&call.function.name),
+                        Some(&args_value),
+                        None,
+                    )
+                    .await;
                 observer.on_event(&LiveEvent::ToolStart {
                     name: call.function.name.clone(),
                 });
-                let result = self
-                    .ctx
-                    .tools
-                    .call(&call.function.name, &call.function.arguments, &self.ctx)
-                    .await;
+
+                let result = if let Some(reason) = pre.block_reason {
+                    crate::tool::ToolResult {
+                        output: format!("blocked by hook: {reason}"),
+                        ok: false,
+                    }
+                } else {
+                    self.ctx
+                        .tools
+                        .call(&call.function.name, &call.function.arguments, &self.ctx)
+                        .await
+                };
                 observer.on_event(&LiveEvent::ToolDone {
                     name: call.function.name.clone(),
                     ok: result.ok,
                 });
+
+                // PostToolUse: hooks may inject context for the next turn.
+                let post = self
+                    .ctx
+                    .hooks
+                    .fire(
+                        HookEvent::PostToolUse,
+                        &self.ctx.cwd,
+                        Some(&call.function.name),
+                        Some(&args_value),
+                        Some(&result.output),
+                    )
+                    .await;
+
                 let mut log = self.ctx.sessions.lock().await;
                 log.append(&SessionEvent::ToolResult {
                     call_id: call.id.clone(),
@@ -231,6 +283,12 @@ impl AgentLoop {
                     output: result.output.clone(),
                 })
                 .await?;
+                for extra in post.extra_context {
+                    log.append(&SessionEvent::Message {
+                        message: Message::user(format!("[hook context] {extra}")),
+                    })
+                    .await?;
+                }
             }
         }
         observer.on_event(&LiveEvent::TurnEnd {

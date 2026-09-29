@@ -362,3 +362,16 @@ fn merge_plugin_groups(groups: &mut HashMap<String, Vec<MatcherGroup>>, text: &s
         }
     }
 }
+
+#[cfg(test)]
+mod matcher_tests {
+    use super::matches;
+
+    #[test]
+    fn matcher_semantics() {
+        assert!(matches("", "Bash"));
+        assert!(matches("*", "Write"));
+        assert!(matches("Bash", "Bash"));
+        assert!(!matches("Bash", "Read"));
+    }
+}

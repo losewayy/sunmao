@@ -121,3 +121,33 @@ impl Permissions {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn perms() -> Permissions {
+        Permissions::from_rules(Perms {
+            allow: vec!["Bash(cargo *)".into(), "Read".into()],
+            ask: vec!["Bash(git push*)".into()],
+            deny: vec!["Bash(rm -rf *)".into(), "Write(./src/**)".into()],
+        })
+    }
+
+    #[test]
+    fn deny_beats_ask_beats_allow() {
+        let p = perms();
+        assert_eq!(p.check("Bash", "rm -rf /"), Verdict::Deny);
+        assert_eq!(p.check("Bash", "git push origin main"), Verdict::Ask);
+        assert_eq!(p.check("Bash", "cargo test"), Verdict::PreApproved);
+        // no rule matched → default flow
+        assert_eq!(p.check("Bash", "echo hi"), Verdict::Default);
+        // tool with no rules at all
+        assert_eq!(p.check("Glob", "**/*"), Verdict::Default);
+        // bare tool name matches everything
+        assert_eq!(p.check("Read", "any/path"), Verdict::PreApproved);
+        // path-scoped deny
+        assert_eq!(p.check("Write", "./src/main.rs"), Verdict::Deny);
+        assert_eq!(p.check("Write", "./other/x.rs"), Verdict::Default);
+    }
+}

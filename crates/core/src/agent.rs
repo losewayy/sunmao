@@ -226,6 +226,14 @@ impl AgentLoop {
                 break;
             }
 
+            {
+                let mut log = self.ctx.sessions.lock().await;
+                for call in &tool_calls {
+                    log.append(&SessionEvent::ToolCall { call: call.clone() })
+                        .await?;
+                }
+            }
+
             for call in tool_calls {
                 let args_value: serde_json::Value = serde_json::from_str(&call.function.arguments)
                     .unwrap_or(serde_json::Value::Null);

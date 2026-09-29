@@ -101,7 +101,7 @@ pub struct Viewer {
 const HELP_TEXT: &str = "keys — Tab browse blocks · Enter expand · e fold · y copy · \
 g/G ends · ! bash · / commands · Esc×2 stash draft · Ctrl+S restore · \
 Ctrl+A/E/U/W line edit · Ctrl-C cancel/quit
-commands — /compact · /multiline · /clear · /help · /quit · \
+commands — /compact · /multiline · /clear · /resume [id] · /help · /quit · \
 + every *.md in .sunmao/commands, .claude/commands, plugins/*/commands";
 
 /// How a submitted line should be dispatched — the driver task interprets.
@@ -111,6 +111,8 @@ pub enum Submit {
     Turn(String),
     /// `!` local shell — run directly, never a model turn
     Bash(String),
+    /// /resume [id|path] — swap the session log; bare = list recent
+    Resume(Option<String>),
     /// /compact
     Compact,
     /// command name didn't resolve — show a note, no turn
@@ -369,6 +371,11 @@ impl App {
                         self.selected = 0;
                         self.scroll_back = 0;
                         Submit::Note("[transcript cleared — session log untouched]".into())
+                    }
+                    // /resume needs the session dir + agent — driver-side
+                    "resume" | "sessions" => {
+                        let arg = cmd_line.split_whitespace().nth(1).map(|s| s.to_string());
+                        Submit::Resume(arg)
                     }
                     // file commands resolve in the driver (needs cwd)
                     _ => Submit::Turn(format!("/{cmd_line}")),

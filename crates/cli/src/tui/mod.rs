@@ -51,6 +51,8 @@ enum Msg {
     Tick,
     /// /resume swapped the session — replay these events into the transcript
     Replay(Vec<sunmao_core::SessionEvent>),
+    /// /model swap landed — carries the resolved model label for the footer
+    Model(String),
 }
 
 /// A risky tool call suspended on user verdict.
@@ -180,6 +182,31 @@ async fn run_inner(
                         // the app recalled queued items for editing — drop
                         // everything still pending so nothing runs twice.
                         while rx_input.try_recv().is_ok() {}
+                        continue;
+                    }
+                    Submit::Model(sel) => {
+                        match sel {
+                            None => {
+                                let choices = agent.model_choices();
+                                let _ = tx_msg.send(Msg::Note(if choices.is_empty() {
+                                    "[no models.json — session model only]".into()
+                                } else {
+                                    format!("available models:\n{}", choices.join("\n"))
+                                }));
+                            }
+                            Some(sel) => match agent.swap_model(&sel) {
+                                Some(label) => {
+                                    agent.record_model_change(&sel, &label).await;
+                                    let _ = tx_msg.send(Msg::Model(label.clone()));
+                                    let _ = tx_msg.send(Msg::Note(format!("[model → {label}]")));
+                                }
+                                None => {
+                                    let _ = tx_msg.send(Msg::Note(format!(
+                                        "[unknown selector: {sel} — try /model for the list]"
+                                    )));
+                                }
+                            },
+                        }
                         continue;
                     }
                     Submit::Resume(arg) => {
@@ -448,6 +475,7 @@ async fn run_inner(
             },
             Some(Msg::Note(note)) => app.push_note(&note),
             Some(Msg::Branch(b)) => app.git_branch = b,
+            Some(Msg::Model(label)) => app.model = label,
             Some(Msg::Wheel(d)) => {
                 // wheel: scrolls transcript; in the viewer it scrolls that.
                 if app.focus == Focus::Viewer {
@@ -848,6 +876,9 @@ fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
         }
         // Flush is app→driver only — submit() never produces it
         Submit::Flush => {}
+        Submit::Model(sel) => {
+            let _ = tx_input.send(Submit::Model(sel));
+        }
     }
     false
 }

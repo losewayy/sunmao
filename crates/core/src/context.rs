@@ -16,8 +16,13 @@ use crate::tool::ToolRegistry;
 use sunmao_llm::ProviderAdapter;
 
 pub struct Context {
-    /// Provider adapter (chat-completions dialect for v0.1).
+    /// Provider adapter (chat-completions dialect for v0.1). The session's
+    /// baseline — `llm_override` wins when a mid-session switch landed.
     pub llm: Arc<dyn ProviderAdapter>,
+    /// Mid-session model switch — `/model` and future role consumers install
+    /// a resolved adapter here; the loop reads through `active_llm()` so the
+    /// swap takes effect on the next request, never mid-stream.
+    pub llm_override: std::sync::RwLock<Option<Arc<dyn ProviderAdapter>>>,
     /// Active session's event log.
     pub sessions: tokio::sync::Mutex<SessionLog>,
     /// Tool registry (native + managed + shell).
@@ -77,6 +82,7 @@ impl Context {
         let permissions = crate::permissions::Permissions::load(&cwd);
         Self {
             llm,
+            llm_override: std::sync::RwLock::new(None),
             sessions: tokio::sync::Mutex::new(sessions),
             tools,
             audit: AuditLog::new(),
@@ -112,6 +118,15 @@ impl Context {
         path.canonicalize()
             .map(|c| set.contains(&c))
             .unwrap_or(false)
+    }
+
+    /// The adapter the next request uses — override wins over the baseline.
+    pub fn active_llm(&self) -> Arc<dyn ProviderAdapter> {
+        self.llm_override
+            .read()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| self.llm.clone())
     }
 
     /// A prior `Approval::Session` covers this exact call?

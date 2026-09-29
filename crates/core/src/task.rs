@@ -236,7 +236,7 @@ async fn spawn_one(ctx: &Context, prompt: &str, subagent_type: Option<&str>) -> 
         .as_ref()
         .and_then(|d| d.model.as_deref())
         .and_then(|sel| ctx.models.as_ref().and_then(|m| m.adapter_for(sel)))
-        .unwrap_or_else(|| ctx.llm.clone());
+        .unwrap_or_else(|| ctx.active_llm());
 
     // fresh context, one depth deeper, on its own lane
     let lane = ctx
@@ -245,6 +245,7 @@ async fn spawn_one(ctx: &Context, prompt: &str, subagent_type: Option<&str>) -> 
         + 1;
     let sub_ctx = Context {
         llm,
+        llm_override: std::sync::RwLock::new(None),
         sessions: tokio::sync::Mutex::new(log),
         tools: builtin_registry(),
         audit: crate::audit::AuditLog::new(),

@@ -120,7 +120,7 @@ pub struct Viewer {
 const HELP_TEXT: &str = "keys — Tab browse blocks · Enter expand · e fold · y copy · \
 g/G ends · ! bash · / commands · Esc×2 stash draft · Ctrl+S restore · \
 Ctrl+A/E/U/W line edit · Ctrl-C cancel, ×2 quits
-commands — /compact · /multiline · /clear · /resume [id] · /help · /quit · \
+commands — /compact · /model · /multiline · /clear · /resume [id] · /help · /quit · \
 + every *.md in .sunmao/commands, .claude/commands, plugins/*/commands";
 
 /// One cached transcript entry: the block's `gen` and the width/selection
@@ -145,6 +145,8 @@ pub enum Submit {
     /// drop everything still waiting in the submission channel — the app
     /// sends this after recalling queued items for editing.
     Flush,
+    /// /model [selector] — None lists choices, Some swaps the active adapter
+    Model(Option<String>),
 }
 
 impl App {
@@ -327,7 +329,12 @@ impl App {
                 self.bash_mode = true;
                 c
             }
-            _ => return None,
+            sub => {
+                // not editable (Model/Resume/Compact) — put it back, nothing
+                // the user could type would improve it
+                self.queue.push_back(sub);
+                return None;
+            }
         };
         self.input = text.clone();
         self.cursor = text.chars().count();
@@ -462,6 +469,12 @@ impl App {
                     "resume" | "sessions" => {
                         let arg = cmd_line.split_whitespace().nth(1).map(|s| s.to_string());
                         Submit::Resume(arg)
+                    }
+                    // /model resolves through the session's ModelResolver —
+                    // only the driver holds the agent.
+                    "model" => {
+                        let arg = cmd_line.split_whitespace().nth(1).map(|s| s.to_string());
+                        Submit::Model(arg)
                     }
                     // file commands resolve in the driver (needs cwd)
                     _ => Submit::Turn(format!("/{cmd_line}")),
@@ -763,6 +776,16 @@ mod tests {
             "replay must not mark finished tools interrupted"
         );
         assert!(!app.busy);
+    }
+
+    /// `/model` is driver-routed: bare lists choices, an argument swaps.
+    #[test]
+    fn model_command_routes_to_driver() {
+        let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+        app.input = "/model".into();
+        assert!(matches!(app.submit(), Submit::Model(None)));
+        app.input = "/model default/qwen-flash".into();
+        assert!(matches!(app.submit(), Submit::Model(Some(ref s)) if s == "default/qwen-flash"));
     }
 
     /// A tool call with no matching result in the log replays as

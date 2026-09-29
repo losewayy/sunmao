@@ -192,6 +192,44 @@ impl AgentLoop {
         let _ = self.ctx.live_sink.set(sink);
     }
 
+    /// Mid-session model switch: resolve `selector` through the session's
+    /// ModelResolver and install it as the active adapter. Returns a display
+    /// label (resolved model id when known, else the selector) on success;
+    /// `None` when it resolves nowhere (caller keeps the old model and can
+    /// say so). Takes effect next request — a streaming turn finishes on
+    /// the old adapter.
+    pub fn swap_model(&self, selector: &str) -> Option<String> {
+        let models = self.ctx.models.as_ref()?;
+        let adapter = models.adapter_for(selector)?;
+        *self.ctx.llm_override.write().unwrap() = Some(adapter);
+        let label = models
+            .resolve(selector)
+            .map(|t| t.model)
+            .unwrap_or_else(|| selector.to_string());
+        Some(label)
+    }
+
+    /// Record a model switch as a durable session fact — replays show the
+    /// swap alongside the turns it split.
+    pub async fn record_model_change(&self, selector: &str, label: &str) {
+        let mut log = self.ctx.sessions.lock().await;
+        let _ = log
+            .append(&SessionEvent::Hook {
+                event: "model.change".into(),
+                detail: format!("{selector} → {label}"),
+            })
+            .await;
+    }
+
+    /// List what `/model` can switch to — route names + provider names.
+    pub fn model_choices(&self) -> Vec<String> {
+        self.ctx
+            .models
+            .as_ref()
+            .map(|m| m.describe())
+            .unwrap_or_default()
+    }
+
     /// Signal cooperative cancellation for the in-flight turn.
     pub fn cancel(&self) {
         self.ctx
@@ -378,7 +416,7 @@ impl AgentLoop {
             max_tokens: Some(2048),
             temperature: None,
         };
-        let mut stream = self.ctx.llm.stream(req).await?;
+        let mut stream = self.ctx.active_llm().stream(req).await?;
         let mut summary = String::new();
         while let Some(d) = stream.next().await {
             if let StreamDelta::Content(c) = d? {
@@ -524,7 +562,7 @@ impl AgentLoop {
                 temperature: None,
             };
 
-            let mut stream = self.ctx.llm.stream(req).await?;
+            let mut stream = self.ctx.active_llm().stream(req).await?;
 
             let mut content = String::new();
             let mut reasoning = String::new();
@@ -1438,6 +1476,67 @@ mod tests {
         // went to the routed adapter.
         assert_eq!(parent.calls.load(std::sync::atomic::Ordering::Relaxed), 2);
         assert!(routed.calls.load(std::sync::atomic::Ordering::Relaxed) >= 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn swap_model_installs_override_adapter() {
+        // `/model sel` must move the next request onto the resolved adapter
+        // and record the switch as a durable session fact. Unknown selectors
+        // resolve to None — the baseline model stays.
+        let dir = std::env::temp_dir().join(format!("sunmao-swap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let base = Arc::new(MockProvider {
+            responses: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let alt = Arc::new(MockProvider {
+            responses: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut ctx_raw = Context::new(
+            base.clone(),
+            SessionLog::ephemeral(),
+            builtin_registry(),
+            dir.clone(),
+        );
+        ctx_raw.models = Some(Arc::new(
+            crate::models::ModelResolver::load(
+                &dir,
+                crate::models::ProviderDef {
+                    base_url: "http://unused".into(),
+                    api_key_env: None,
+                    api_key: None,
+                    dialect: "openai".into(),
+                },
+                "default",
+            )
+            .with_adapter("alt/x", alt.clone()),
+        ));
+        let ctx = Arc::new(ctx_raw);
+        let agent = AgentLoop::new(ctx.clone());
+
+        assert!(
+            agent.swap_model("ghost/x").is_none(),
+            "unknown must not swap"
+        );
+        let label = agent.swap_model("alt/x").unwrap();
+        // the override bypasses file resolution, so the label falls back to
+        // the selector itself — the swap is still real.
+        agent.record_model_change("alt/x", &label).await;
+        agent.run_turn("hi", &NullObserver).await.unwrap();
+
+        assert_eq!(alt.calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(base.calls.load(std::sync::atomic::Ordering::Relaxed), 0);
+        let events = ctx.sessions.lock().await.events().await.unwrap_or_default();
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                SessionEvent::Hook { event, detail }
+                    if event == "model.change" && detail.contains("alt/x")
+            )),
+            "model swap must be a durable session fact"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -64,16 +64,17 @@ impl Observer for AcpObserver {
                 name,
                 summary,
                 depth,
+                lane,
             } => {
                 let label = if *depth > 0 {
                     format!("↳{name}")
                 } else {
                     name.clone()
                 };
-                // ID keys on depth so a sub-agent's Read doesn't collide with
-                // the parent's Read in the client's tool-call list.
+                // ID keys on depth+lane so a sub-agent's Read doesn't collide
+                // with the parent's Read — or a parallel sibling's.
                 self.send(v2::SessionUpdate::ToolCallUpdate(
-                    v2::ToolCallUpdate::new(v2::ToolCallId::new(format!("{depth}:{name}")))
+                    v2::ToolCallUpdate::new(v2::ToolCallId::new(format!("{depth}:{lane}:{name}")))
                         .name(label.clone())
                         .title(format!("{label} {summary}"))
                         .status(v2::ToolCallStatus::InProgress),
@@ -84,9 +85,10 @@ impl Observer for AcpObserver {
                 ok,
                 output,
                 depth,
+                lane,
             } => {
                 self.send(v2::SessionUpdate::ToolCallUpdate(
-                    v2::ToolCallUpdate::new(v2::ToolCallId::new(format!("{depth}:{name}")))
+                    v2::ToolCallUpdate::new(v2::ToolCallId::new(format!("{depth}:{lane}:{name}")))
                         .status(if *ok {
                             v2::ToolCallStatus::Completed
                         } else {

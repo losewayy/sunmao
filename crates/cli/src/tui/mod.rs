@@ -239,6 +239,7 @@ async fn run_inner(
                             name: "!".into(),
                             summary: format!("$ {cmd}"),
                             depth: 0,
+                            lane: 0,
                         }));
                         let cwd = driver_cwd.clone();
                         let (ok, output, code) =
@@ -255,6 +256,7 @@ async fn run_inner(
                             ok,
                             output,
                             depth: 0,
+                            lane: 0,
                         }));
                         continue;
                     }
@@ -416,13 +418,15 @@ async fn run_inner(
                     name,
                     summary,
                     depth,
-                } => app.tool_start(&name, &summary, depth),
+                    lane,
+                } => app.tool_start(&name, &summary, depth, lane),
                 LiveEvent::ToolDone {
                     name,
                     ok,
                     output,
                     depth,
-                } => app.tool_done(&name, ok, &output, depth),
+                    lane,
+                } => app.tool_done(&name, ok, &output, depth, lane),
                 LiveEvent::Hook { event, detail } => {
                     app.push_audit(&format!("{event} — {detail}"));
                 }

@@ -102,6 +102,7 @@ impl Observer for StdoutObserver {
                 name,
                 summary,
                 depth,
+                ..
             } => {
                 if *in_r {
                     eprintln!("\x1b[0m");

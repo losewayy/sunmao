@@ -308,7 +308,21 @@ fn project_context(cwd: &std::path::Path) -> String {
             out.push_str(&format!("## {name}\n{text}\n\n"));
         }
     }
-    let mut skills_dirs = vec![cwd.join(".sunmao").join("skills")];
+    let mut skills_dirs = vec![
+        cwd.join(".sunmao").join("skills"),
+        cwd.join(".sunmao").join("plugin").join("skills"),
+    ];
+    // plugin bundles: .sunmao/plugins/<name>/skills/, .claude/plugins/<name>/skills/
+    for base in [
+        cwd.join(".sunmao").join("plugins"),
+        cwd.join(".claude").join("plugins"),
+    ] {
+        if let Ok(plugins) = std::fs::read_dir(&base) {
+            for p in plugins.flatten() {
+                skills_dirs.push(p.path().join("skills"));
+            }
+        }
+    }
     // ecosystem scan — skills authored for other harnesses load unmodified
     if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
         let h = std::path::Path::new(&home);
@@ -417,7 +431,19 @@ fn slash_command(cwd: &std::path::Path, name: &str) -> Option<String> {
     {
         return None;
     }
-    for dir in [cwd.join(".sunmao/commands"), cwd.join(".claude/commands")] {
+    let mut dirs = vec![
+        cwd.join(".sunmao/commands"),
+        cwd.join(".claude/commands"),
+        cwd.join(".sunmao/plugin/commands"),
+    ];
+    for base in [cwd.join(".sunmao/plugins"), cwd.join(".claude/plugins")] {
+        if let Ok(plugins) = std::fs::read_dir(&base) {
+            for p in plugins.flatten() {
+                dirs.push(p.path().join("commands"));
+            }
+        }
+    }
+    for dir in dirs {
         let p = dir.join(format!("{name}.md"));
         if let Ok(t) = std::fs::read_to_string(&p) {
             return Some(t);

@@ -4,6 +4,7 @@
 //! an interface appears only once a second real implementation demands it.
 
 pub mod agent;
+pub mod agents;
 pub mod approval;
 pub mod audit;
 pub mod context;

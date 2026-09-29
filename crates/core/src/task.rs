@@ -49,7 +49,8 @@ impl ToolImpl for TaskTool {
             json!({
                 "type": "object",
                 "properties": {
-                    "prompt": {"type": "string", "description": "Complete instructions for the subtask"}
+                    "prompt": {"type": "string", "description": "Complete instructions for the subtask"},
+                    "subagent_type": {"type": "string", "description": "Named agent def from .sunmao/agents/*.md or .claude/agents/*.md"}
                 },
                 "required": ["prompt"]
             }),
@@ -60,6 +61,7 @@ impl ToolImpl for TaskTool {
         #[derive(Deserialize)]
         struct Args {
             prompt: String,
+            subagent_type: Option<String>,
         }
         let a: Args = serde_json::from_value(args)?;
 
@@ -78,13 +80,23 @@ impl ToolImpl for TaskTool {
         let mut log = SessionLog::open(&dir, &sub_id)
             .await
             .unwrap_or_else(|_| SessionLog::ephemeral());
+        let sys_prompt = a
+            .subagent_type
+            .as_deref()
+            .and_then(|t| {
+                crate::agents::load_all(&ctx.cwd)
+                    .into_iter()
+                    .find(|d| d.name == t)
+                    .map(|d| d.system_prompt)
+            })
+            .unwrap_or_else(|| {
+                "You are a sunmao sub-agent. Complete the delegated task and reply                  concisely with the result."
+                    .into()
+            });
         {
             let _ = log
                 .append(&SessionEvent::Message {
-                    message: sunmao_llm::types::Message::system(
-                        "You are a sunmao sub-agent. Complete the delegated task and reply \
-                         concisely with the result.",
-                    ),
+                    message: sunmao_llm::types::Message::system(sys_prompt),
                 })
                 .await;
         }

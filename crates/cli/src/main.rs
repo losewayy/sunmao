@@ -251,9 +251,9 @@ async fn main() -> anyhow::Result<()> {
         if line.is_empty() {
             break;
         }
-        if line.starts_with('/') {
-            let name = line[1..].split_whitespace().next().unwrap_or("");
-            let rest = line[1 + name.len()..].trim();
+        if let Some(cmd_line) = line.strip_prefix('/') {
+            let name = cmd_line.split_whitespace().next().unwrap_or("");
+            let rest = cmd_line[name.len()..].trim();
             if line == "/compact" {
                 match agent.compact(&observer).await {
                     Ok(()) => println!("[compacted]"),

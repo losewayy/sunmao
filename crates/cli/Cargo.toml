@@ -14,9 +14,11 @@ path = "src/main.rs"
 agent-client-protocol = { version = "2.2.0", features = ["unstable_protocol_v2"] }
 anyhow.workspace = true
 async-trait.workspace = true
+base64 = "0.22"
 clap.workspace = true
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures-util.workspace = true
+pulldown-cmark = { version = "0.13", default-features = false }
 ratatui = "0.30.2"
 serde_json.workspace = true
 sunmao-core = { path = "../core", version = "0.2.0" }

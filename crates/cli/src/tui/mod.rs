@@ -1,0 +1,465 @@
+//! ratatui TUI — block-based transcript (fold/copy/select), card-style
+//! approval with parkable focus, slash-command popup, markdown rendering.
+//! CJK-native: input is char-indexed, cursor math uses display width.
+
+mod app;
+mod blocks;
+mod md;
+mod render;
+pub mod slash;
+
+use std::io;
+use std::sync::Arc;
+
+use anyhow::Result;
+use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
+use crossterm::ExecutableCommand;
+use futures_util::StreamExt;
+use ratatui::Terminal;
+use sunmao_core::agent::{AgentLoop, LiveEvent, Observer, TurnOutcome};
+use tokio::sync::mpsc;
+
+use app::{App, ApprovalCard, Focus, Submit};
+use blocks::BlockKind;
+use render::draw;
+
+enum Msg {
+    Live(LiveEvent),
+    Key(KeyEvent),
+    Paste(String),
+    /// Status/feedback line from the driver — clears `busy`.
+    Note(String),
+    /// Driver says quit (e.g. /quit reached the task).
+    Quit,
+    /// approval request from a tool (risky command) — carries the reply channel
+    ApprovalReq(ApprovalReq),
+}
+
+/// A risky tool call suspended on user verdict.
+pub struct ApprovalReq {
+    pub tool: String,
+    pub detail: String,
+    pub why: String,
+    pub reply: tokio::sync::oneshot::Sender<bool>,
+}
+
+/// Approval seam for the TUI — risky calls suspend on a oneshot until the
+/// card resolves.
+pub struct TuiApprover {
+    pub tx: mpsc::UnboundedSender<ApprovalReq>,
+}
+
+#[async_trait::async_trait]
+impl sunmao_core::approval::Approver for TuiApprover {
+    async fn approve(&self, tool: &str, detail: &str, why: &str) -> bool {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if self
+            .tx
+            .send(ApprovalReq {
+                tool: tool.to_string(),
+                detail: detail.to_string(),
+                why: why.to_string(),
+                reply: tx,
+            })
+            .is_err()
+        {
+            return false;
+        }
+        rx.await.unwrap_or(false)
+    }
+}
+
+struct ChanObserver(mpsc::UnboundedSender<Msg>);
+
+impl Observer for ChanObserver {
+    fn on_event(&self, ev: &LiveEvent) {
+        let _ = self.0.send(Msg::Live(ev.clone()));
+    }
+}
+
+pub async fn run(
+    agent: AgentLoop,
+    model: &str,
+    cwd: std::path::PathBuf,
+    rx_approval: mpsc::UnboundedReceiver<ApprovalReq>,
+) -> Result<()> {
+    enable_raw_mode()?;
+    io::stdout().execute(EnterAlternateScreen)?;
+    let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
+    let mut term = Terminal::new(backend)?;
+    let res = run_inner(&mut term, agent, model, cwd, rx_approval).await;
+    disable_raw_mode()?;
+    io::stdout().execute(LeaveAlternateScreen)?;
+    res
+}
+
+async fn run_inner(
+    term: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+    agent: AgentLoop,
+    model: &str,
+    cwd: std::path::PathBuf,
+    mut rx_approval: mpsc::UnboundedReceiver<ApprovalReq>,
+) -> Result<()> {
+    let agent = Arc::new(agent);
+    let (tx_msg, mut rx_msg) = mpsc::unbounded_channel::<Msg>();
+    let (tx_input, mut rx_input) = mpsc::unbounded_channel::<Submit>();
+    let (tx_cancel, mut rx_cancel) = mpsc::unbounded_channel::<()>();
+
+    // driver task: consume submissions, stream LiveEvents back.
+    // `/name` file commands resolve here (needs cwd); builtins are already
+    // resolved into Submit variants by the app.
+    {
+        let tx_msg = tx_msg.clone();
+        let driver_cwd = cwd.clone();
+        tokio::spawn(async move {
+            while let Some(sub) = rx_input.recv().await {
+                match sub {
+                    Submit::Quit => {
+                        let _ = tx_msg.send(Msg::Quit);
+                        return;
+                    }
+                    Submit::Note(n) => {
+                        if !n.is_empty() {
+                            let _ = tx_msg.send(Msg::Note(n));
+                        }
+                        continue;
+                    }
+                    Submit::Compact => {
+                        let obs = ChanObserver(tx_msg.clone());
+                        let note = match agent.compact(&obs).await {
+                            Ok(()) => "[compacted]".to_string(),
+                            Err(e) => format!("[compact failed] {e:#}"),
+                        };
+                        let _ = tx_msg.send(Msg::Note(note));
+                        continue;
+                    }
+                    Submit::Turn(input) => {
+                        let prompt = if let Some(cmd_line) = input.trim().strip_prefix('/') {
+                            let name = cmd_line.split_whitespace().next().unwrap_or("");
+                            let rest = cmd_line[name.len()..].trim();
+                            match slash::command_body(&driver_cwd, name) {
+                                Some(body) => {
+                                    if rest.is_empty() {
+                                        body
+                                    } else {
+                                        format!("{body}\n\n{rest}")
+                                    }
+                                }
+                                None => {
+                                    let _ = tx_msg
+                                        .send(Msg::Note(format!("[unknown command: /{name}]")));
+                                    continue;
+                                }
+                            }
+                        } else {
+                            input
+                        };
+                        let obs = ChanObserver(tx_msg.clone());
+                        let mut turn = Box::pin(agent.run_turn(&prompt, &obs));
+                        loop {
+                            tokio::select! {
+                                res = &mut turn => {
+                                    let _ = res;
+                                    break;
+                                }
+                                _ = rx_cancel.recv() => {
+                                    agent.cancel(); // cooperative: loop sees it next iteration
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // forward approval requests into the same channel
+    {
+        let tx_msg = tx_msg.clone();
+        tokio::spawn(async move {
+            while let Some(req) = rx_approval.recv().await {
+                let _ = tx_msg.send(Msg::ApprovalReq(req));
+            }
+        });
+    }
+
+    // forward crossterm events into the same channel
+    {
+        let tx_msg = tx_msg.clone();
+        tokio::spawn(async move {
+            let mut stream = EventStream::new();
+            while let Some(Ok(ev)) = stream.next().await {
+                let m = match ev {
+                    // Windows consoles emit Press, Repeat AND Release — only
+                    // Press/Repeat produce input, else every char doubles.
+                    Event::Key(k) if k.kind != KeyEventKind::Release => Msg::Key(k),
+                    Event::Paste(p) => Msg::Paste(p),
+                    _ => continue,
+                };
+                if tx_msg.send(m).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    let mut app = App::new(model, cwd.clone());
+
+    loop {
+        term.draw(|f| draw(f, &mut app))?;
+
+        match rx_msg.recv().await {
+            None => break,
+            Some(Msg::Quit) => break,
+            Some(Msg::ApprovalReq(ApprovalReq {
+                tool,
+                detail,
+                why,
+                reply,
+            })) => {
+                app.approval = Some(ApprovalCard {
+                    tool,
+                    detail,
+                    why,
+                    reply,
+                    selected: 0,
+                    parked: false,
+                });
+                app.focus = Focus::Approval;
+            }
+            Some(Msg::Live(ev)) => match ev {
+                LiveEvent::Content(c) => app.stream(BlockKind::Assistant, &c),
+                LiveEvent::Reasoning(r) => app.stream(BlockKind::Thinking, &r),
+                LiveEvent::ToolStart { name } => app.push_tool(&name, None),
+                LiveEvent::ToolDone { name, ok } => app.push_tool(&name, Some(ok)),
+                LiveEvent::TurnEnd { outcome } => {
+                    app.close_turn();
+                    if outcome != TurnOutcome::Completed {
+                        app.push_note(&format!("[turn: {outcome:?}]"));
+                    }
+                }
+            },
+            Some(Msg::Note(note)) => app.push_note(&note),
+            Some(Msg::Paste(p)) => {
+                for c in p.chars() {
+                    app.insert_char(c);
+                }
+            }
+            Some(Msg::Key(k)) => {
+                if handle_key(&mut app, k, &tx_input, &tx_cancel) {
+                    break;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Route a keypress through the focus machine. Returns true to quit.
+fn handle_key(
+    app: &mut App,
+    k: KeyEvent,
+    tx_input: &mpsc::UnboundedSender<Submit>,
+    tx_cancel: &mpsc::UnboundedSender<()>,
+) -> bool {
+    // Ctrl-C is global: cancel a busy turn, deny a live card, else quit.
+    if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) {
+        if app.focus == Focus::Approval {
+            resolve_card(app, false);
+            return false;
+        }
+        if app.busy {
+            app.push_note("[cancelled]");
+            let _ = tx_cancel.send(());
+            return false;
+        }
+        return true;
+    }
+    // Ctrl-S restores a stashed draft (double-Esc clear undo).
+    if k.code == KeyCode::Char('s') && k.modifiers.contains(KeyModifiers::CONTROL) {
+        app.restore_draft();
+        return false;
+    }
+
+    match app.focus {
+        Focus::Approval => card_key(app, k),
+        Focus::Scrollback => scroll_key(app, k),
+        Focus::Input => input_key(app, k, tx_input),
+    }
+}
+
+fn resolve_card(app: &mut App, allow: bool) {
+    if let Some(card) = app.approval.take() {
+        let _ = card.reply.send(allow);
+        let mark = if allow { "[approved]" } else { "[denied]" };
+        app.push_note(&format!("{mark} {}: {}", card.tool, card.detail));
+    }
+    app.focus = Focus::Input;
+}
+
+fn card_key(app: &mut App, k: KeyEvent) -> bool {
+    match k.code {
+        KeyCode::Esc => app.on_esc(), // parks the card
+        KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
+            if let Some(c) = &mut app.approval {
+                c.selected = c.selected.saturating_sub(1)
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Tab => {
+            if let Some(c) = &mut app.approval {
+                c.selected = (c.selected + 1) % 2
+            }
+        }
+        KeyCode::Char('1') | KeyCode::Char('y') | KeyCode::Char('Y') => resolve_card(app, true),
+        KeyCode::Char('2') | KeyCode::Char('n') | KeyCode::Char('N') => resolve_card(app, false),
+        KeyCode::Enter => {
+            let allow = app
+                .approval
+                .as_ref()
+                .map(|c| c.selected == 0)
+                .unwrap_or(false);
+            resolve_card(app, allow);
+        }
+        _ => {}
+    }
+    false
+}
+
+fn scroll_key(app: &mut App, k: KeyEvent) -> bool {
+    match k.code {
+        KeyCode::Esc | KeyCode::Tab => app.focus = Focus::Input,
+        KeyCode::Up | KeyCode::Char('k') => app.select_delta(-1),
+        KeyCode::Down | KeyCode::Char('j') => app.select_delta(1),
+        KeyCode::Char('e') => app.toggle_fold(),
+        KeyCode::Char('y') => {
+            if let Some(text) = app.selected_copy() {
+                let ok = app::osc52_copy(&text);
+                app.toast = Some((
+                    if ok { "copied" } else { "copy failed" }.to_string(),
+                    std::time::Instant::now(),
+                ));
+            }
+        }
+        KeyCode::Char('g') => app.selected = 0,
+        KeyCode::Char('G') => app.selected = app.blocks.len().saturating_sub(1),
+        KeyCode::PageUp => app.scroll_back = app.scroll_back.saturating_add(10),
+        KeyCode::PageDown => app.scroll_back = app.scroll_back.saturating_sub(10),
+        _ => {}
+    }
+    false
+}
+
+fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
+    // slash popup holds the nav keys first
+    if app.slash_menu.is_some() {
+        match k.code {
+            KeyCode::Esc => {
+                app.slash_menu = None;
+                return false;
+            }
+            KeyCode::Up => {
+                if let Some(m) = &mut app.slash_menu {
+                    m.selected = m.selected.saturating_sub(1)
+                }
+                return false;
+            }
+            KeyCode::Down => {
+                if let Some(m) = &mut app.slash_menu {
+                    m.selected = (m.selected + 1).min(m.matches.len().saturating_sub(1))
+                }
+                return false;
+            }
+            KeyCode::Tab => {
+                if let Some(m) = &app.slash_menu {
+                    let name = m.matches[m.selected].clone();
+                    app.input = format!("/{name} ");
+                    app.cursor = app.input.chars().count();
+                    app.slash_menu = None;
+                }
+                return false;
+            }
+            _ => {}
+        }
+    }
+
+    match k.code {
+        KeyCode::Esc => app.on_esc(),
+        KeyCode::Tab => {
+            app.focus = if app.approval.as_ref().map(|c| c.parked).unwrap_or(false) {
+                if let Some(c) = &mut app.approval {
+                    c.parked = false;
+                }
+                Focus::Approval
+            } else {
+                app.ensure_selection();
+                Focus::Scrollback
+            };
+        }
+        KeyCode::Enter
+            if app.multiline
+                && !k
+                    .modifiers
+                    .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT) =>
+        {
+            app.insert_newline();
+        }
+        KeyCode::Enter => match app.submit() {
+            Submit::Quit => return true,
+            Submit::Note(n) => {
+                if !n.is_empty() {
+                    app.push_note(&n);
+                }
+            }
+            Submit::Compact => {
+                app.busy = true;
+                let _ = tx_input.send(Submit::Compact);
+            }
+            Submit::Turn(t) => {
+                app.busy = true;
+                let _ = tx_input.send(Submit::Turn(t));
+            }
+        },
+        KeyCode::Backspace => app.backspace(),
+        KeyCode::Delete if app.cursor < app.input.chars().count() => {
+            let byte_idx = app::char_to_byte(&app.input, app.cursor);
+            app.input.remove(byte_idx);
+            app.refresh_slash_menu();
+        }
+        KeyCode::Left => app.cursor = app.cursor.saturating_sub(1),
+        KeyCode::Right => app.cursor = (app.cursor + 1).min(app.input.chars().count()),
+        KeyCode::Home => app.cursor = 0,
+        KeyCode::End => app.cursor = app.input.chars().count(),
+        KeyCode::Up => {
+            if app.hist_idx.is_none() && !app.history.is_empty() {
+                app.hist_idx = Some(app.history.len() - 1);
+                app.input = app.history[app.hist_idx.unwrap()].clone();
+            } else if let Some(i) = app.hist_idx {
+                if i > 0 {
+                    app.hist_idx = Some(i - 1);
+                    app.input = app.history[i - 1].clone();
+                }
+            }
+            app.cursor = app.input.chars().count();
+        }
+        KeyCode::Down => {
+            if let Some(i) = app.hist_idx {
+                if i + 1 < app.history.len() {
+                    app.hist_idx = Some(i + 1);
+                    app.input = app.history[i + 1].clone();
+                } else {
+                    app.hist_idx = None;
+                    app.input.clear();
+                }
+                app.cursor = app.input.chars().count();
+            }
+        }
+        KeyCode::PageUp => app.scroll_back = app.scroll_back.saturating_add(10),
+        KeyCode::PageDown => app.scroll_back = app.scroll_back.saturating_sub(10),
+        KeyCode::Char(c) => app.insert_char(c),
+        _ => {}
+    }
+    false
+}

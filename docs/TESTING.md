@@ -50,7 +50,7 @@ Verified live as of v0.2:
 | `--resume` | code word memorized in session A recalled in session B |
 | `--fork` | copied log resumed independently, original untouched |
 | ACP | raw JSON-RPC smoke: initialize→session/new→prompt→streamed chunks |
-| TUI | CJK input renders; approval prompt suspends on y/n |
+| TUI | CJK input renders; block browse (Tab/j/k/e/y), approval card (1-2/Esc park), `/` popup, markdown render — manual smoke in `sunmao --tui` |
 | Task | `subagent_type` loaded `.claude/agents/*.md`, independent count returned |
 | `--dataflow` | JSON report incl. token totals from `Usage` events |
 | `--doctor` | provider probe + rg + session dir + config inventory + prompt assembly preview |

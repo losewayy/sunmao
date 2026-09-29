@@ -24,6 +24,25 @@ TUI.
 - `assets/` convention: kernel-owned prose/policy ships as files via
   `include_str!`, never string literals in `.rs` (CODE-ARCHITECTURE rule 6)
 
+**cli/TUI (latest)**
+- transcript is **block-structured**: user/assistant/thinking/tool/note are
+  distinct blocks — `Tab` enters block browse, `j/k` select, `e` folds
+  (thinking starts folded), `y` copies via OSC 52, `g/G` jump ends
+- approval is a **card** with parkable focus: `↑↓/Tab` choose, `1-2/Enter`
+  pick, `y/n` quick-answer, `Esc` parks the card so you can scroll the
+  transcript (status bar offers `Tab` back), `Ctrl-C` denies
+- `/` opens a **slash menu** above the composer: builtins + convention-dir
+  `.md` commands fuzzy-filtered, `↑↓` walk, `Tab` completes
+- assistant blocks render **markdown** (headings/emphasis/`code`/fenced
+  blocks/lists/quotes) via pulldown-cmark — raw text stays copyable
+- composer: `/multiline` toggles Enter=newline vs send (Alt/Shift+Enter
+  sends when multiline is on); double-`Esc` stashes the draft (`Ctrl+S`
+  restores); Esc never cancels a turn — `Ctrl-C` cancels, quits when idle
+- `Esc` no longer exits the TUI outright (was a footgun mid-typing)
+- Windows double-typing fixed: `KeyEventKind::Release` filtered at the
+  event source — crossterm reports Press+Release on Windows
+- `tui/` split into `mod/app/blocks/md/render/slash` (god-file rule)
+
 **llm**
 - OAI dialect: hand-rolled SSE, tool_calls fragment reassembly, reasoning
   channel, transient retry (connect/429/5xx, 300/600ms backoff)

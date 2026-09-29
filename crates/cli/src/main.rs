@@ -288,7 +288,7 @@ async fn main() -> anyhow::Result<()> {
                 }
                 continue;
             }
-            match slash_command(&cwd, name) {
+            match tui::slash::command_body(&cwd, name) {
                 Some(body) => {
                     let prompt = if rest.is_empty() {
                         body
@@ -382,34 +382,4 @@ fn list_sessions(dir: &std::path::Path) -> anyhow::Result<()> {
         println!("[no sessions in {}]", dir.display());
     }
     Ok(())
-}
-
-/// Slash commands are Markdown files: `/review` → `.sunmao/commands/review.md`
-/// or `.claude/commands/review.md` (same convention, both dirs scanned).
-fn slash_command(cwd: &std::path::Path, name: &str) -> Option<String> {
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return None;
-    }
-    let mut dirs = vec![
-        cwd.join(".sunmao/commands"),
-        cwd.join(".claude/commands"),
-        cwd.join(".sunmao/plugin/commands"),
-    ];
-    for base in [cwd.join(".sunmao/plugins"), cwd.join(".claude/plugins")] {
-        if let Ok(plugins) = std::fs::read_dir(&base) {
-            for p in plugins.flatten() {
-                dirs.push(p.path().join("commands"));
-            }
-        }
-    }
-    for dir in dirs {
-        let p = dir.join(format!("{name}.md"));
-        if let Ok(t) = std::fs::read_to_string(&p) {
-            return Some(t);
-        }
-    }
-    None
 }

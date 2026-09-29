@@ -24,7 +24,12 @@ use crate::tool::{ToolImpl, ToolResult};
 
 #[derive(Debug, Deserialize)]
 struct ServerSpec {
-    command: String,
+    /// stdio transport: spawn this command.
+    #[serde(default)]
+    command: Option<String>,
+    /// streamable-HTTP transport: connect to this URL instead.
+    #[serde(default)]
+    url: Option<String>,
     #[serde(default)]
     args: Vec<String>,
     #[serde(default)]
@@ -125,14 +130,23 @@ pub async fn connect_all(cwd: &Path) -> Vec<Box<dyn ToolImpl>> {
 }
 
 async fn connect_one(name: &str, spec: &ServerSpec) -> anyhow::Result<Vec<Box<dyn ToolImpl>>> {
-    let mut cmd = tokio::process::Command::new(&spec.command);
-    cmd.args(&spec.args)
-        .envs(&spec.env)
-        // MCP servers read stdin, write stdout; silence stderr to keep
-        // servers that log startup noise from polluting the protocol
-        .stderr(std::process::Stdio::null());
-    let transport = TokioChildProcess::new(cmd)?;
-    let client: ClientHandle = Arc::new(().serve(transport).await?);
+    let client: ClientHandle = if let Some(url) = &spec.url {
+        // remote server over streamable-HTTP (MCP 2025-03-26 transport)
+        let transport = rmcp::transport::StreamableHttpClientTransport::from_uri(url.clone());
+        Arc::new(().serve(transport).await?)
+    } else {
+        let Some(command) = &spec.command else {
+            anyhow::bail!("server {name}: needs `command` (stdio) or `url` (http)");
+        };
+        let mut cmd = tokio::process::Command::new(command);
+        cmd.args(&spec.args)
+            .envs(&spec.env)
+            // MCP servers read stdin, write stdout; silence stderr to keep
+            // servers that log startup noise from polluting the protocol
+            .stderr(std::process::Stdio::null());
+        let transport = TokioChildProcess::new(cmd)?;
+        Arc::new(().serve(transport).await?)
+    };
 
     let listed = client.peer().list_all_tools().await?;
     tracing::info!("mcp server {name}: {} tools", listed.len());

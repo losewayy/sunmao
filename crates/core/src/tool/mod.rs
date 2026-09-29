@@ -118,9 +118,9 @@ pub use webmod::WebFetchTool;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use crate::context::Context;
     use crate::session::SessionLog;
+    use serde_json::json;
     use std::sync::Arc;
     use sunmao_llm::ProviderAdapter;
 

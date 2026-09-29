@@ -12,8 +12,8 @@ async-trait.workspace = true
 deno_task_shell.workspace = true
 futures-util.workspace = true
 glob = "0.3"
-reqwest = { workspace = true, features = ["rustls-tls"] }
-rmcp = { version = "3.5.0", features = ["client", "transport-io", "transport-child-process"] }
+reqwest = { workspace = true, features = ["rustls"] }
+rmcp = { version = "3.5.0", features = ["client", "transport-io", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 serde.workspace = true
 serde_json.workspace = true
 sunmao-llm = { path = "../llm" }

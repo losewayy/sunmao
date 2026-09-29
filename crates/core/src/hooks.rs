@@ -108,6 +108,16 @@ impl HookEngine {
                 groups.entry(event).or_default().append(&mut gs);
             }
         }
+        // plugin manifests — a plugin dir bundles hooks/mcp/skills/commands;
+        // we merge its hooks section here (mcp/skills handled by their loaders)
+        for manifest in [
+            cwd.join(".sunmao").join("plugin.json"),
+            cwd.join(".claude-plugin").join("plugin.json"),
+        ] {
+            if let Ok(text) = std::fs::read_to_string(&manifest) {
+                merge_plugin_groups(&mut groups, &text);
+            }
+        }
         if !groups.is_empty() {
             let total: usize = groups.values().map(|g| g.len()).sum();
             tracing::info!("hooks loaded: {total} matcher groups");
@@ -333,5 +343,22 @@ mod live_tests {
                 .unwrap();
         assert_eq!(payload["hook_event_name"], "PreToolUse");
         assert_eq!(payload["tool_name"], "Bash");
+    }
+}
+
+/// Merge a plugin manifest's `hooks` section into the engine. A plugin is a
+/// directory containing `plugin.json` — the bundle format both Claude and
+/// sunmao speak; paths inside are relative to the plugin dir.
+fn merge_plugin_groups(groups: &mut HashMap<String, Vec<MatcherGroup>>, text: &str) {
+    let Ok(file) = serde_json::from_str::<serde_json::Value>(text) else {
+        return;
+    };
+    if let Some(hooks) = file
+        .get("hooks")
+        .and_then(|h| serde_json::from_value::<HashMap<String, Vec<MatcherGroup>>>(h.clone()).ok())
+    {
+        for (event, mut gs) in hooks {
+            groups.entry(event).or_default().append(&mut gs);
+        }
     }
 }

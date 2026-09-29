@@ -23,12 +23,6 @@ use sunmao_llm::types::Tool;
 use crate::tool::{ToolImpl, ToolResult};
 
 #[derive(Debug, Deserialize)]
-struct McpConfig {
-    #[serde(rename = "mcpServers", default)]
-    servers: HashMap<String, ServerSpec>,
-}
-
-#[derive(Debug, Deserialize)]
 struct ServerSpec {
     command: String,
     #[serde(default)]
@@ -98,20 +92,30 @@ impl ToolImpl for McpTool {
 /// Connect to every configured server, collect tools. Failures degrade to a
 /// warning — one bad server must not brick the session.
 pub async fn connect_all(cwd: &Path) -> Vec<Box<dyn ToolImpl>> {
-    let path = cwd.join(".sunmao").join("mcp.json");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return Vec::new();
-    };
-    let config: McpConfig = match serde_json::from_str(&text) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!("bad .sunmao/mcp.json: {e}");
-            return Vec::new();
+    // merge mcpServers from .sunmao/mcp.json + plugin manifests —
+    // the plugin.json bundle format contributes MCP servers the same way
+    let mut servers: std::collections::HashMap<String, ServerSpec> = Default::default();
+    for p in [
+        cwd.join(".sunmao").join("mcp.json"),
+        cwd.join(".sunmao").join("plugin.json"),
+        cwd.join(".claude-plugin").join("plugin.json"),
+    ] {
+        let Ok(text) = std::fs::read_to_string(&p) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+            tracing::warn!("bad {}", p.display());
+            continue;
+        };
+        if let Some(m) = v.get("mcpServers").and_then(|m| {
+            serde_json::from_value::<std::collections::HashMap<String, ServerSpec>>(m.clone()).ok()
+        }) {
+            servers.extend(m);
         }
-    };
+    }
 
     let mut tools: Vec<Box<dyn ToolImpl>> = Vec::new();
-    for (name, spec) in config.servers {
+    for (name, spec) in servers {
         match connect_one(&name, &spec).await {
             Ok(t) => tools.extend(t),
             Err(e) => tracing::warn!("mcp server {name} failed: {e:#}"),

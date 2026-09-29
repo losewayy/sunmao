@@ -12,6 +12,7 @@ pub mod mcp;
 pub mod session;
 pub mod task;
 pub mod tool;
+pub mod web;
 
 pub use agent::{AgentLoop, TurnOutcome};
 pub use context::Context;

@@ -193,6 +193,25 @@ impl ModelResolver {
         }
         self.resolve(selector).and_then(|t| self.adapter(&t))
     }
+
+    /// What `/model` offers: `@route` aliases plus each provider as a
+    /// `provider/` prefix to pair with a model id.
+    pub fn describe(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .file
+            .routes
+            .iter()
+            .map(|(name, r)| format!("@{name} → {}", r.selectors().join(", ")))
+            .collect();
+        out.extend(
+            self.file
+                .providers
+                .keys()
+                .map(|p| format!("{p}/<model-id>")),
+        );
+        out.sort();
+        out
+    }
 }
 
 #[cfg(test)]

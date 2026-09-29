@@ -60,10 +60,30 @@ impl Observer for AcpObserver {
             LiveEvent::Reasoning(r) => self.send(v2::SessionUpdate::AgentThoughtChunk(
                 v2::ContentChunk::new(r.clone().into(), self.next_id("thought")),
             )),
-            LiveEvent::ToolStart { name, .. } => self.send(v2::SessionUpdate::ToolCallUpdate(
-                v2::ToolCallUpdate::new(v2::ToolCallId::new(name.clone())),
-            )),
-            LiveEvent::ToolDone { .. } | LiveEvent::TurnEnd { .. } => {}
+            LiveEvent::ToolStart { name, summary } => {
+                self.send(v2::SessionUpdate::ToolCallUpdate(
+                    v2::ToolCallUpdate::new(v2::ToolCallId::new(name.clone()))
+                        .name(name.clone())
+                        .title(format!("{name} {summary}"))
+                        .status(v2::ToolCallStatus::InProgress),
+                ));
+            }
+            LiveEvent::ToolDone { name, ok, output } => {
+                self.send(v2::SessionUpdate::ToolCallUpdate(
+                    v2::ToolCallUpdate::new(v2::ToolCallId::new(name.clone()))
+                        .status(if *ok {
+                            v2::ToolCallStatus::Completed
+                        } else {
+                            v2::ToolCallStatus::Failed
+                        })
+                        .content(vec![v2::ToolCallContent::Content(Box::new(
+                            v2::Content::new(v2::ContentBlock::Text(v2::TextContent::new(
+                                output.clone(),
+                            ))),
+                        ))]),
+                ));
+            }
+            LiveEvent::TurnEnd { .. } => {}
         }
     }
 }

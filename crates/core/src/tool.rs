@@ -97,6 +97,7 @@ pub fn builtin_registry() -> ToolRegistry {
     r.register(BashTool);
     r.register(GlobTool);
     r.register(GrepTool);
+    r.register(JobOutputTool);
     r
 }
 
@@ -367,7 +368,8 @@ impl ToolImpl for BashTool {
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "Bash command line"},
-                    "timeout_secs": {"type": "integer", "description": "Kill after N seconds (default 120)"}
+                    "timeout_secs": {"type": "integer", "description": "Kill after N seconds (default 120)"},
+                    "background": {"type": "boolean", "description": "Run detached; returns a job id readable via JobOutput"}
                 },
                 "required": ["command"]
             }),
@@ -379,8 +381,14 @@ impl ToolImpl for BashTool {
         struct Args {
             command: String,
             timeout_secs: Option<u64>,
+            #[serde(default)]
+            background: bool,
         }
         let a: Args = serde_json::from_value(args)?;
+
+        if a.background {
+            return spawn_background(&a.command, ctx).await;
+        }
 
         // deno_task_shell's internals are !Send (Rc<Cell> exit-code cells) —
         // every !Send value must be constructed *inside* the blocking closure.
@@ -599,6 +607,127 @@ impl ToolImpl for GrepTool {
         Ok(ToolResult {
             output: res,
             ok: out.status.code().unwrap_or(2) <= 1,
+        })
+    }
+}
+
+// ---------- background jobs (fastctx-style: filesystem is the state) ----------
+
+/// A background job is `.sunmao/jobs/{id}/` containing output.log and,
+/// once finished, exit.json. No in-memory registry — the log dir is truth.
+fn jobs_dir(ctx: &crate::context::Context) -> std::path::PathBuf {
+    ctx.cwd.join(".sunmao").join("jobs")
+}
+
+async fn spawn_background(
+    command: &str,
+    ctx: &crate::context::Context,
+) -> anyhow::Result<ToolResult> {
+    let id = format!(
+        "j-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+    let dir = jobs_dir(ctx).join(&id);
+    std::fs::create_dir_all(&dir)?;
+    let log_path = dir.join("output.log");
+    let exit_path = dir.join("exit.json");
+
+    let command = command.to_string();
+    let cwd = ctx.cwd.clone();
+    let env_vars: std::collections::HashMap<std::ffi::OsString, std::ffi::OsString> =
+        std::env::vars_os().collect();
+
+    // Detach: drop the JoinHandle — the blocking thread outlives the call.
+    let log_path_for_msg = log_path.clone();
+    tokio::task::spawn_blocking(move || {
+        let run = || -> anyhow::Result<i32> {
+            let list = deno_task_shell::parser::parse(&command)?;
+            let state = deno_task_shell::ShellState::new(
+                env_vars,
+                cwd,
+                Default::default(),
+                Default::default(),
+            );
+            let out_file = std::fs::File::create(&log_path)?;
+            let err_file = out_file.try_clone()?;
+            let (in_r, in_w) = std::io::pipe()?;
+            drop(in_w);
+            let exec = deno_task_shell::execute_with_pipes(
+                list,
+                state,
+                deno_task_shell::ShellPipeReader::from_raw(in_r),
+                deno_task_shell::ShellPipeWriter::from_std(out_file),
+                deno_task_shell::ShellPipeWriter::from_std(err_file),
+            );
+            Ok(tokio::runtime::Handle::current().block_on(exec))
+        };
+        let code = run().unwrap_or(-1);
+        let _ = std::fs::write(&exit_path, format!("{{\"exit_code\":{code}}}"));
+    });
+
+    Ok(ToolResult {
+        output: format!("job {id} started; log: {}", log_path_for_msg.display()),
+        ok: true,
+    })
+}
+
+pub struct JobOutputTool;
+
+#[async_trait::async_trait]
+impl ToolImpl for JobOutputTool {
+    fn name(&self) -> &'static str {
+        "JobOutput"
+    }
+
+    fn decl(&self) -> Tool {
+        Tool::function(
+            "JobOutput",
+            "Read incremental output of a background Bash job. Pass `offset` from a              previous call to get only new bytes (default 0). Returns status + chunk.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "job id, e.g. j-1234"},
+                    "offset": {"type": "integer", "description": "byte offset to resume from"}
+                },
+                "required": ["id"]
+            }),
+        )
+    }
+
+    async fn call(&self, args: Value, ctx: &crate::context::Context) -> anyhow::Result<ToolResult> {
+        #[derive(Deserialize)]
+        struct Args {
+            id: String,
+            offset: Option<u64>,
+        }
+        let a: Args = serde_json::from_value(args)?;
+        if !a.id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            bail!("bad job id");
+        }
+        let dir = jobs_dir(ctx).join(&a.id);
+        let offset = a.offset.unwrap_or(0);
+        let data = tokio::fs::read(dir.join("output.log"))
+            .await
+            .with_context(|| format!("no such job: {}", a.id))?;
+        const CAP: usize = 8 * 1024;
+        let start = (offset as usize).min(data.len());
+        let end = (start + CAP).min(data.len());
+        let chunk = String::from_utf8_lossy(&data[start..end]);
+        let status = match std::fs::read_to_string(dir.join("exit.json")) {
+            Ok(s) => s,
+            Err(_) => "running".into(),
+        };
+        Ok(ToolResult {
+            output: format!(
+                "[{id} {status}] bytes {start}..{end}/{total}
+{chunk}",
+                id = a.id,
+                total = data.len()
+            ),
+            ok: true,
         })
     }
 }

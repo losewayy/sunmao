@@ -53,6 +53,9 @@ struct Cli {
     /// Run as an Agent Client Protocol server on stdio (Zed etc.).
     #[arg(long)]
     acp: bool,
+    /// Resume an existing session log (id like `s-123` or a .jsonl path).
+    #[arg(long)]
+    resume: Option<String>,
 }
 
 struct StdoutObserver {
@@ -135,19 +138,47 @@ async fn main() -> anyhow::Result<()> {
     let cwd = cli.cwd.canonicalize().context("bad --cwd")?;
 
     let llm = Arc::new(OaiClient::new(&cli.base_url, &cli.api_key, &cli.model));
-    let sessions = SessionLog::open(&cli.session_dir, &session_id()).await?;
+    let (sessions, resumed) = match &cli.resume {
+        Some(r) => {
+            let p = PathBuf::from(r);
+            let path = if p.exists() {
+                p
+            } else {
+                cli.session_dir.join(format!("{r}.jsonl"))
+            };
+            let log = SessionLog::open_path(&path).await?;
+            (log, true)
+        }
+        None => (
+            SessionLog::open(&cli.session_dir, &session_id()).await?,
+            false,
+        ),
+    };
     let mut registry = builtin_registry();
     for tool in sunmao_core::mcp::connect_all(&cwd).await {
         registry.register_boxed(tool);
     }
-    let ctx = Arc::new(Context::new(llm, sessions, registry, cwd));
+    let ctx = Arc::new(Context::new(llm, sessions, registry, cwd.clone()));
 
     let default_system = concat!(
         "You are sunmao, a coding agent. Use tools to act on the filesystem. ",
         "Prefer dedicated tools (Read/Write/Edit) over Bash for file work. ",
         "Be concise."
     );
-    {
+    let sys_extra = project_context(&cwd);
+    let default_system = if sys_extra.is_empty() {
+        default_system.to_string()
+    } else {
+        format!(
+            "{default_system}
+
+# Project context
+{sys_extra}"
+        )
+    };
+    let default_system = cli.system.unwrap_or(default_system);
+
+    if !resumed {
         let mut log = ctx.sessions.lock().await;
         log.append(&sunmao_core::SessionEvent::Started {
             model: cli.model.clone(),
@@ -155,9 +186,7 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
         log.append(&sunmao_core::SessionEvent::Message {
-            message: sunmao_llm::types::Message::system(
-                cli.system.unwrap_or_else(|| default_system.to_string()),
-            ),
+            message: sunmao_llm::types::Message::system(default_system),
         })
         .await?;
     }
@@ -197,4 +226,44 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Collect project-level context: AGENTS.md / CLAUDE.md bodies plus a skills
+/// index from `.sunmao/skills/*/SKILL.md` (name + description frontmatter —
+/// bodies are Read on demand).
+fn project_context(cwd: &std::path::Path) -> String {
+    let mut out = String::new();
+    for name in ["AGENTS.md", "CLAUDE.md"] {
+        let p = cwd.join(name);
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            let text: String = text.chars().take(8_000).collect();
+            out.push_str(&format!("## {name}\n{text}\n\n"));
+        }
+    }
+    let skills_dir = cwd.join(".sunmao").join("skills");
+    if let Ok(entries) = std::fs::read_dir(&skills_dir) {
+        let mut lines = Vec::new();
+        for e in entries.flatten() {
+            let skill = e.path().join("SKILL.md");
+            if let Ok(text) = std::fs::read_to_string(&skill) {
+                let mut name = e.file_name().to_string_lossy().to_string();
+                let mut desc = String::new();
+                for line in text.lines().take(20) {
+                    if let Some(v) = line.strip_prefix("name:") {
+                        name = v.trim().to_string();
+                    }
+                    if let Some(v) = line.strip_prefix("description:") {
+                        desc = v.trim().to_string();
+                    }
+                }
+                lines.push(format!("- {} — {} ({})", name, desc, skill.display()));
+            }
+        }
+        if !lines.is_empty() {
+            out.push_str("## Available skills (Read the SKILL.md path to load)\n");
+            out.push_str(&lines.join("\n"));
+            out.push('\n');
+        }
+    }
+    out
 }

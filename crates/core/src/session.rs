@@ -66,6 +66,22 @@ impl SessionLog {
         })
     }
 
+    /// Open an existing log file directly (for --resume).
+    pub async fn open_path(path: &std::path::Path) -> anyhow::Result<Self> {
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .await?;
+        Ok(Self {
+            path: path.to_path_buf(),
+            file: Some(file),
+        })
+    }
+
     /// In-memory log (tests / ephemeral sessions).
     pub fn ephemeral() -> Self {
         Self {

@@ -493,18 +493,22 @@ impl App {
                     }
                     _ => {}
                 },
-                E::ToolCall { call } => {
+                E::ToolCall { call, depth } => {
                     let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
                         .unwrap_or(serde_json::Value::Null);
                     self.tool_start(
                         &call.function.name,
                         &sunmao_core::agent::call_summary(&call.function.name, &args),
-                        0,
+                        *depth,
                     );
                 }
                 E::ToolResult {
-                    name, ok, output, ..
-                } => self.tool_done(name, *ok, output, 0),
+                    name,
+                    ok,
+                    output,
+                    depth,
+                    ..
+                } => self.tool_done(name, *ok, output, *depth),
                 E::Hook { event, detail } => {
                     self.push_audit(&format!("{event} — {detail}"));
                 }
@@ -656,12 +660,14 @@ mod tests {
             },
             E::ToolCall {
                 call: call("c1", "Read", r#"{"path":"a.rs"}"#),
+                depth: 0,
             },
             E::ToolResult {
                 call_id: "c1".into(),
                 name: "Read".into(),
                 ok: true,
                 output: "file body".into(),
+                depth: 0,
             },
             E::Hook {
                 event: "approval.session".into(),
@@ -703,6 +709,7 @@ mod tests {
         let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
         app.replay(&[E::ToolCall {
             call: call("c9", "Bash", r#"{"command":"rm -rf x"}"#),
+            depth: 0,
         }]);
         let t = app.blocks[1].tool.as_ref().unwrap();
         assert_eq!(t.done, Some(false));

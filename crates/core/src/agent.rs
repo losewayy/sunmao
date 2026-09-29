@@ -584,13 +584,17 @@ impl AgentLoop {
                         ok: false,
                     };
                     let mut log = self.ctx.sessions.lock().await;
-                    log.append(&SessionEvent::ToolCall { call: call.clone() })
-                        .await?;
+                    log.append(&SessionEvent::ToolCall {
+                        call: call.clone(),
+                        depth: self.ctx.depth,
+                    })
+                    .await?;
                     log.append(&SessionEvent::ToolResult {
                         call_id: call.id.clone(),
                         name: call.function.name.clone(),
                         ok: result.ok,
                         output: result.output.clone(),
+                        depth: self.ctx.depth,
                     })
                     .await?;
                     log.append(&SessionEvent::Message {
@@ -649,7 +653,11 @@ impl AgentLoop {
                     let mut log = self.ctx.sessions.lock().await;
                     let mut call = call.clone();
                     call.function.arguments = args_value.to_string();
-                    log.append(&SessionEvent::ToolCall { call }).await?;
+                    log.append(&SessionEvent::ToolCall {
+                        call,
+                        depth: self.ctx.depth,
+                    })
+                    .await?;
                 }
 
                 observer.on_event(&LiveEvent::ToolStart {
@@ -719,6 +727,7 @@ impl AgentLoop {
                     name: call.function.name.clone(),
                     ok: result.ok,
                     output: result.output.clone(),
+                    depth: self.ctx.depth,
                 })
                 .await?;
                 for extra in post.extra_context {

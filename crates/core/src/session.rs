@@ -19,14 +19,21 @@ pub enum SessionEvent {
     Started { model: String, cwd: String },
     /// A full message committed to the transcript.
     Message { message: Message },
-    /// A tool call dispatched by the assistant.
-    ToolCall { call: ToolCall },
+    /// A tool call dispatched by the assistant. `depth` tags sub-agent work
+    /// (0 = main loop) so a replayed transcript can re-mark it with ↳.
+    ToolCall {
+        call: ToolCall,
+        #[serde(default)]
+        depth: u8,
+    },
     /// A tool call resolved (ok/fail recorded for replay fidelity).
     ToolResult {
         call_id: String,
         name: String,
         ok: bool,
         output: String,
+        #[serde(default)]
+        depth: u8,
     },
     /// Compaction boundary: earlier events are summarized away.
     Compacted { summary: String },
@@ -233,6 +240,7 @@ mod tests {
             name: "Read".into(),
             ok: true,
             output: "x".into(),
+            depth: 0,
         })
         .await
         .unwrap();
@@ -300,6 +308,52 @@ mod tests {
         let msgs = log.messages().await.unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].role, sunmao_llm::types::Role::User);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Sub-agent depth survives the disk round-trip AND logs written before
+    /// the field existed still parse (serde default → depth 0). Frontends
+    /// replay depth>0 as ↳ blocks — losing it silently flattens transcripts.
+    #[tokio::test]
+    async fn tool_event_depth_roundtrips_and_defaults() {
+        let dir = std::env::temp_dir().join(format!("sunmao-test-depth-{}", std::process::id()));
+        let call = ToolCall {
+            id: "c1".into(),
+            kind: "function".into(),
+            function: sunmao_llm::types::FunctionCall {
+                name: "Glob".into(),
+                arguments: "{}".into(),
+            },
+        };
+        let mut log = SessionLog::open(&dir, "d").await.unwrap();
+        log.append(&SessionEvent::ToolCall { call, depth: 1 })
+            .await
+            .unwrap();
+        // a pre-depth log line: same shape, no `depth` key
+        let legacy =
+            r#"{"type":"tool_result","call_id":"c1","name":"Glob","ok":true,"output":"x"}"#;
+        {
+            use tokio::io::AsyncWriteExt;
+            let mut f = tokio::fs::OpenOptions::new()
+                .append(true)
+                .open(log.path())
+                .await
+                .unwrap();
+            f.write_all(legacy.as_bytes()).await.unwrap();
+            f.write_all(b"\n").await.unwrap();
+        }
+        drop(log);
+
+        let log = SessionLog::open(&dir, "d").await.unwrap();
+        let events = log.events().await.unwrap();
+        assert!(matches!(
+            &events[0],
+            SessionEvent::ToolCall { depth: 1, .. }
+        ));
+        assert!(matches!(
+            &events[1],
+            SessionEvent::ToolResult { depth: 0, .. }
+        ));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

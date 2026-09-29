@@ -13,8 +13,10 @@ crates/core/   Context seam assembly, AgentLoop, session log (event-sourced
                JSONL), tool registry + 10 native tools, hooks dispatcher,
                permissions, approval gate, MCP client, sub-agent Task
 crates/cli/    `sunmao` binary — REPL / -p / TUI / ACP / --dataflow / doctor
+docs/          SPEC.md (design contract — read first),
                ARCHITECTURE.md (current state),
                CODE-ARCHITECTURE.md (shape rules), CONFIG.md, PROTOCOLS.md,
+               TESTING.md
 examples/      starter hooks/mcp/permissions/agents/commands files
 ```
 

@@ -43,6 +43,15 @@ pub enum SessionEvent {
     /// audit evidence that stays OUT of the model-facing message fold:
     /// rewrites must be transparent to the model, visible to the auditor.
     Hook { event: String, detail: String },
+    /// A `!` local-shell command the user ran in the TUI — durable fact AND
+    /// folded into the message stream (as a tagged user message) so the next
+    /// turn sees the evidence the user just produced. User-initiated, so it
+    /// never passes the approval gate.
+    LocalShell {
+        command: String,
+        exit_code: i32,
+        output: String,
+    },
 }
 
 /// Where a session's event log lives — `<cwd>/.sunmao/sessions/<id>.jsonl`.
@@ -144,6 +153,11 @@ impl SessionLog {
 {summary}"
                         )));
                     }
+                    SessionEvent::LocalShell {
+                        command,
+                        exit_code,
+                        output,
+                    } => out.push(local_shell_message(command, *exit_code, output)),
                     _ => {}
                 }
             }
@@ -163,11 +177,25 @@ impl SessionLog {
                     out.clear();
                     out.push(Message::system(format!("[context compacted]\n{summary}")));
                 }
+                SessionEvent::LocalShell {
+                    command,
+                    exit_code,
+                    output,
+                } => out.push(local_shell_message(&command, exit_code, &output)),
                 _ => {}
             }
         }
         Ok(out)
     }
+}
+
+/// `!` local-shell facts fold in as a tagged user message — the model sees
+/// exactly what ran and what came back, framed so it can't be mistaken for
+/// its own tool calls.
+fn local_shell_message(command: &str, exit_code: i32, output: &str) -> Message {
+    Message::user(format!(
+        "<local-shell>\n$ {command}\n{output}\n[exit {exit_code}]\n</local-shell>"
+    ))
 }
 
 #[cfg(test)]
@@ -223,5 +251,36 @@ mod tests {
         assert_eq!(msgs.len(), 2);
         assert!(msgs[0].content.as_deref().unwrap().contains("summary text"));
         assert_eq!(msgs[1].content.as_deref(), Some("new"));
+    }
+
+    /// LocalShell folds into the message stream on BOTH paths — ephemeral
+    /// (in-mem) and file-backed (replayed from disk). The invariant list in
+    /// AGENTS.md holds them to identical fold semantics, so one test asserts
+    /// both.
+    #[tokio::test]
+    async fn local_shell_folds_into_messages_both_paths() {
+        let ev = SessionEvent::LocalShell {
+            command: "echo hi".into(),
+            exit_code: 0,
+            output: "hi".into(),
+        };
+        // ephemeral
+        let mut log = SessionLog::ephemeral();
+        log.append(&ev).await.unwrap();
+        let msgs = log.messages().await.unwrap();
+        assert_eq!(msgs.len(), 1);
+        let c = msgs[0].content.as_deref().unwrap();
+        assert!(c.contains("$ echo hi") && c.contains("[exit 0]"));
+
+        // file-backed — same fold through the disk replay path
+        let dir = std::env::temp_dir().join(format!("sunmao-test-{}", std::process::id()));
+        let mut log = SessionLog::open(&dir, "ls-fold").await.unwrap();
+        log.append(&ev).await.unwrap();
+        drop(log);
+        let log = SessionLog::open(&dir, "ls-fold").await.unwrap();
+        let msgs = log.messages().await.unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, sunmao_llm::types::Role::User);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

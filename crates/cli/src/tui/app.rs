@@ -75,6 +75,9 @@ pub struct App {
     /// last observed provider usage — the footer renders prompt tokens as
     /// "context filled" so the user sees context pressure before it bites.
     pub last_usage: Option<sunmao_llm::types::Usage>,
+    /// `!` bash mode: the composer holds a shell command; submit wraps it
+    /// for the Bash tool instead of sending it as a prompt.
+    pub bash_mode: bool,
 }
 
 /// How a submitted line should be dispatched — the driver task interprets.
@@ -82,6 +85,8 @@ pub struct App {
 pub enum Submit {
     /// normal prompt or a resolved command body — goes to run_turn
     Turn(String),
+    /// `!` local shell — run directly, never a model turn
+    Bash(String),
     /// /compact
     Compact,
     /// command name didn't resolve — show a note, no turn
@@ -112,6 +117,7 @@ impl App {
             draft_stash: None,
             git_branch: None,
             last_usage: None,
+            bash_mode: false,
         };
         let mut banner = Block::new(BlockKind::Note);
         banner.text = format!(
@@ -234,7 +240,11 @@ impl App {
     }
 
     /// The composer is a slash fragment: starts with `/`, no whitespace yet.
+    /// Bash mode owns the buffer, so no slash menu there.
     fn slash_fragment(&self) -> Option<&str> {
+        if self.bash_mode {
+            return None;
+        }
         self.input
             .strip_prefix('/')
             .filter(|s| !s.chars().any(char::is_whitespace))
@@ -272,11 +282,32 @@ impl App {
         self.cursor = 0;
         self.hist_idx = None;
         self.slash_menu = None;
+        if self.bash_mode {
+            self.bash_mode = false;
+            let cmd = text.trim();
+            if cmd.is_empty() {
+                return Submit::Note(String::new());
+            }
+            self.history.push(format!("!{cmd}"));
+            // no user-band echo — the local-shell block header already
+            // shows `$ cmd`; two copies would be noise.
+            return Submit::Bash(cmd.to_string());
+        }
         if text.trim().is_empty() {
             return Submit::Note(String::new());
         }
         self.history.push(text.clone());
         self.echo_user(&text);
+
+        // literal `!cmd` works without entering bash mode — same route as a
+        // recalled `!`-history entry or a pasted line.
+        if let Some(cmd) = text.trim().strip_prefix('!') {
+            return if cmd.trim().is_empty() {
+                Submit::Note(String::new())
+            } else {
+                Submit::Bash(cmd.trim().to_string())
+            };
+        }
 
         let trimmed = text.trim();
         match trimmed.strip_prefix('/') {

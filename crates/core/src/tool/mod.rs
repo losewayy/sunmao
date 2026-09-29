@@ -112,7 +112,7 @@ mod webmod;
 pub use artifact::HtmlArtifactTool;
 pub use fs::{EditTool, ReadTool, WriteTool};
 pub use search::{GlobTool, GrepTool};
-pub use shell::{BashTool, JobOutputTool};
+pub use shell::{render_run, run_foreground, BashTool, JobOutputTool, ShellRun};
 pub use webmod::WebFetchTool;
 
 #[cfg(test)]

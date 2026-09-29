@@ -194,14 +194,22 @@ fn draw_card(f: &mut ratatui::Frame, c: &ApprovalCard, area: Rect) {
 }
 
 fn draw_input(f: &mut ratatui::Frame, app: &App, area: Rect) {
-    let prompt = theme::prompt_glyph();
+    // bash mode gets its own prompt + accent so the mode is never invisible
+    let (prompt, pstyle) = if app.bash_mode {
+        (
+            "! ",
+            Style::default().fg(THEME.ok).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        (
+            theme::prompt_glyph(),
+            Style::default().fg(THEME.user).add_modifier(Modifier::BOLD),
+        )
+    };
     let mut lines: Vec<Line> = Vec::new();
     for (i, l) in app.input.split('\n').enumerate() {
         let prefix = if i == 0 {
-            Span::styled(
-                prompt.to_string(),
-                Style::default().fg(THEME.user).add_modifier(Modifier::BOLD),
-            )
+            Span::styled(prompt.to_string(), pstyle)
         } else {
             Span::styled("  ".to_string(), Style::default().fg(THEME.faint))
         };
@@ -211,10 +219,7 @@ fn draw_input(f: &mut ratatui::Frame, app: &App, area: Rect) {
         ]));
     }
     if lines.is_empty() {
-        lines.push(Line::from(Span::styled(
-            prompt.to_string(),
-            Style::default().fg(THEME.user),
-        )));
+        lines.push(Line::from(Span::styled(prompt.to_string(), pstyle)));
     }
     let input = Paragraph::new(lines)
         .block(
@@ -283,8 +288,10 @@ fn draw_status(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
                 let parked = app.approval.as_ref().map(|c| c.parked).unwrap_or(false);
                 if parked {
                     "card parked — Tab returns".to_string()
+                } else if app.bash_mode {
+                    "local shell — output joins context · Esc/⌫ exits mode".to_string()
                 } else {
-                    "Tab blocks · / commands · Esc×2 clear · Ctrl-C quit".to_string()
+                    "Tab blocks · / commands · ! bash · Esc×2 clear · Ctrl-C quit".to_string()
                 }
             }
         };

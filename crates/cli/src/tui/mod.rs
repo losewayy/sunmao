@@ -145,6 +145,32 @@ async fn run_inner(
                         let _ = tx_msg.send(Msg::Note(note));
                         continue;
                     }
+                    Submit::Bash(cmd) => {
+                        // `!` local shell — the user runs it, so no approval
+                        // gate and no LLM involvement. Same deno_task_shell
+                        // engine the Bash tool uses; the durable fact folds
+                        // into the next turn's context via LocalShell.
+                        let _ = tx_msg.send(Msg::Live(LiveEvent::ToolStart {
+                            name: "!".into(),
+                            summary: format!("$ {cmd}"),
+                        }));
+                        let cwd = driver_cwd.clone();
+                        let (ok, output, code) =
+                            match sunmao_core::tool::run_foreground(&cmd, cwd, 120).await {
+                                Ok(run) => {
+                                    let ok = run.exit_code == 0;
+                                    (ok, sunmao_core::tool::render_run(&run), run.exit_code)
+                                }
+                                Err(msg) => (false, msg, -1),
+                            };
+                        agent.record_local_shell(&cmd, code, &output).await;
+                        let _ = tx_msg.send(Msg::Live(LiveEvent::ToolDone {
+                            name: "!".into(),
+                            ok,
+                            output,
+                        }));
+                        continue;
+                    }
                     Submit::Turn(input) => {
                         let prompt = if let Some(cmd_line) = input.trim().strip_prefix('/') {
                             let name = cmd_line.split_whitespace().next().unwrap_or("");
@@ -438,7 +464,15 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
     }
 
     match k.code {
-        KeyCode::Esc => app.on_esc(),
+        KeyCode::Esc => {
+            if app.bash_mode && app.input.is_empty() {
+                // bash-mode Esc leaves the mode first; with text present it
+                // falls through to the draft-clear gesture instead.
+                app.bash_mode = false;
+            } else {
+                app.on_esc()
+            }
+        }
         KeyCode::Tab => {
             app.focus = if app.approval.as_ref().map(|c| c.parked).unwrap_or(false) {
                 if let Some(c) = &mut app.approval {
@@ -451,7 +485,8 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
             };
         }
         KeyCode::Enter
-            if app.multiline
+            if !app.bash_mode
+                && app.multiline
                 && !k
                     .modifiers
                     .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT) =>
@@ -469,12 +504,22 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
                 app.busy = true;
                 let _ = tx_input.send(Submit::Compact);
             }
+            Submit::Bash(cmd) => {
+                let _ = tx_input.send(Submit::Bash(cmd));
+            }
             Submit::Turn(t) => {
                 app.busy = true;
                 let _ = tx_input.send(Submit::Turn(t));
             }
         },
-        KeyCode::Backspace => app.backspace(),
+        KeyCode::Backspace => {
+            if app.bash_mode && app.input.is_empty() {
+                // kimi-style: empty bash buffer eats the mode itself
+                app.bash_mode = false;
+            } else {
+                app.backspace()
+            }
+        }
         KeyCode::Delete if app.cursor < app.input.chars().count() => {
             let byte_idx = app::char_to_byte(&app.input, app.cursor);
             app.input.remove(byte_idx);
@@ -510,6 +555,9 @@ fn input_key(app: &mut App, k: KeyEvent, tx_input: &mpsc::UnboundedSender<Submit
         }
         KeyCode::PageUp => app.scroll_back = app.scroll_back.saturating_add(10),
         KeyCode::PageDown => app.scroll_back = app.scroll_back.saturating_sub(10),
+        KeyCode::Char('!') if app.input.is_empty() && !app.bash_mode => {
+            app.bash_mode = true;
+        }
         KeyCode::Char(c) => app.insert_char(c),
         _ => {}
     }

@@ -212,10 +212,11 @@
       end-to-end, then maps the subsystem seams that make it swappable.
     </p>
     <div class="meta">
-      <span class="pill">source · <b>docs/SPEC.md</b>, <b>crates/core/src/agent.rs</b></span>
-      <span class="pill">kernel · <b>~2.2k LOC</b> in crates/core</span>
+      <span class="pill">source · <b>docs/ARCHITECTURE.md</b>, <b>crates/core/src/agent.rs</b></span>
+      <span class="pill">kernel · <b>~3.6k LOC</b> in crates/core · <b>~8.2k</b> workspace</span>
       <span class="pill">status · <b>v0.2 in-tree</b></span>
       <span class="pill">loop ceiling · <b>64 iterations / turn</b></span>
+      <span class="pill">compaction · <b>bytes/4 &gt; 180_000</b></span>
     </div>
   </header>
 
@@ -241,12 +242,17 @@
     <div class="stage k-hook">
       <div class="rail"><div class="dot">02</div></div>
       <div class="card">
-        <h3>UserPromptSubmit hooks <span class="fn">ctx.hooks.fire(UserPromptSubmit)</span></h3>
-        <p>External commands run before the prompt is committed. A hook may <b>veto</b>
-        (<code>block_reason</code> → turn aborts with <code>TurnOutcome::Other</code>) or <b>inject</b>
-        (<code>extra_context</code> → appended as <code>[hook context]</code> user messages).</p>
-        <span class="ev w"><i></i>block_reason</span>
-        <span class="ev b"><i></i>extra_context</span>
+        <h3>UserPromptSubmit hooks <span class="fn">ctx.hooks.fire(UserPromptSubmit, prompt)</span></h3>
+        <p>External commands run before the prompt is committed, speaking the Claude stdin/stdout dialect:
+        a JSON payload (<code>session_id</code>, <code>transcript_path</code>, <code>cwd</code>,
+        <code>hook_event_name</code>, <code>prompt</code>) on <b>stdin</b>, a JSON decision on <b>stdout</b>.
+        A hook may <b>veto</b> (<code>continue:false</code> + <code>stopReason</code>, or exit code <b>2</b>
+        with stderr as the reason → <code>TurnOutcome::Other("blocked by hook: …")</code>) or <b>inject</b>
+        (<code>systemMessage</code> / <code>hookSpecificOutput.additionalContext</code> → appended as
+        <code>[hook context]</code> user messages).</p>
+        <span class="ev w"><i></i>continue:false + stopReason</span>
+        <span class="ev w"><i></i>exit 2 → stderr is the reason</span>
+        <span class="ev b"><i></i>additionalContext / systemMessage</span>
       </div>
     </div>
 
@@ -268,10 +274,13 @@
         <div class="rail"><div class="dot">04</div></div>
         <div class="card">
           <h3>Budget &amp; compaction <span class="fn">est_tokens() &gt; 180_000</span></h3>
-          <p>Bytes/4 estimate over the folded transcript. Crossing the ceiling triggers
-          <code>compact()</code>: the model summarizes, and a <code>Compacted</code> boundary event is
-          appended — the fold then resets to a fresh <code>system</code> message.</p>
+          <p>Bytes/4 estimate over the folded transcript. Crossing the ceiling fires
+          <code>PreCompact</code> (a hook may veto), the model summarizes, a <code>Compacted</code>
+          boundary event is appended — the fold then resets to a fresh <code>system</code> message —
+          and <code>PostCompact</code> fires.</p>
+          <span class="ev w"><i></i>PreCompact → veto possible</span>
           <span class="ev w"><i></i>SessionEvent::Compacted</span>
+          <span class="ev w"><i></i>PostCompact</span>
         </div>
       </div>
 
@@ -300,10 +309,12 @@
       <div class="stage k-llm">
         <div class="rail"><div class="dot">07</div></div>
         <div class="card">
-          <h3>Reassemble tool calls <span class="fn">ToolCallAssembler.finish()</span></h3>
+          <h3>Reassemble tool calls <span class="fn">ToolCallAssembler.finish_lenient()</span></h3>
           <p>OpenAI-compatible endpoints ship <code>tool_calls</code> as index-keyed fragments across
-          many chunks. The assembler stitches them back into complete calls — including tolerating
-          dirty payloads (null fragments, unknown finish reasons).</p>
+          many chunks. The assembler stitches them back into complete calls — <code>finish_lenient()</code>
+          returns the calls <em>plus</em> an error map for dirty payloads, so a broken call becomes a
+          failed <code>ToolResult</code> the model can self-correct from instead of aborting the turn.</p>
+          <span class="ev"><i></i>malformed args → synthetic ok:false result</span>
         </div>
       </div>
 
@@ -312,8 +323,11 @@
         <div class="card">
           <h3>Commit the assistant message <span class="fn">sessions.append(Message)</span></h3>
           <p>Content (if any) plus the assembled <code>tool_calls</code> land as one
-          <code>assistant/message</code>. From here the turn either ends or descends into tools.</p>
+          <code>assistant/message</code>; the <code>Usage</code> event from the stream's
+          <code>Finish</code> delta is journaled alongside it. From here the turn either ends or
+          descends into tools.</p>
           <span class="ev g"><i></i>SessionEvent::Message</span>
+          <span class="ev g"><i></i>SessionEvent::Usage</span>
         </div>
       </div>
 
@@ -327,23 +341,37 @@
         </div>
       </div>
 
-      <div class="stage k-log">
+      <div class="stage k-hook">
         <div class="rail"><div class="dot">10</div></div>
         <div class="card">
-          <h3>Record the dispatch <span class="fn">sessions.append(ToolCall)</span></h3>
-          <p>Every call is journaled <em>before</em> execution — so a crash mid-tool still leaves a
-          truthful record of intent.</p>
-          <span class="ev g"><i></i>SessionEvent::ToolCall ×N</span>
+          <h3>PreToolUse gate <span class="fn">ctx.hooks.fire(PreToolUse, tool_name, tool_use_id, tool_input)</span></h3>
+          <p>Matcher-filtered hooks (empty/&#42; = all, regex search, else literal substring) see the
+          tool name, the call id and the raw arguments on stdin. The stdout contract has four levers:
+          <code>hookSpecificOutput.permissionDecision</code> (<code>allow</code> skips the approval
+          prompt, <code>ask</code> forces it, <code>deny</code> is a hard block with
+          <code>permissionDecisionReason</code>), <code>hookSpecificOutput.updatedInput</code> which
+          <b>replaces the tool arguments before dispatch</b> (rtk's transparent command rewrite),
+          <code>hookSpecificOutput.additionalContext</code> / <code>systemMessage</code> for context,
+          and the legacy <code>decision:"block"</code> spelling.</p>
+          <span class="ev w"><i></i>deny → ToolResult{ok:false}</span>
+          <span class="ev b"><i></i>updatedInput → args rewritten</span>
+          <span class="ev"><i></i>SessionEvent::Hook{"PreToolUse.updatedInput"}</span>
         </div>
       </div>
 
-      <div class="stage k-hook">
+      <div class="stage k-tool">
         <div class="rail"><div class="dot">11</div></div>
         <div class="card">
-          <h3>PreToolUse gate <span class="fn">ctx.hooks.fire(PreToolUse, name, input)</span></h3>
-          <p>Matcher-filtered hooks see the tool name and parsed arguments. A <code>block_reason</code>
-          short-circuits execution: the call returns a synthetic failed result the model can read.</p>
-          <span class="ev w"><i></i>veto → synthetic ToolResult{ok:false}</span>
+          <h3>Record the dispatch, then gate it <span class="fn">sessions.append(ToolCall) → gate_call()</span></h3>
+          <p>Every call is journaled <em>after</em> the rewrite and <em>before</em> execution — the log
+          records what actually ran, so the rewrite stays invisible to the model and visible to the
+          auditor. Then <code>gate_call()</code> resolves in strict order: declarative rules first
+          (<code>deny</code> is a hard refusal nothing overrides, then <code>ask</code>, then
+          <code>allow</code> pre-approves), then the hook's <code>permissionDecision</code>, then the
+          <code>assets/risky-patterns.txt</code> classifier as the default prompt.</p>
+          <span class="ev g"><i></i>SessionEvent::ToolCall ×N</span>
+          <span class="ev"><i></i>deny &gt; ask &gt; allow &gt; default</span>
+          <span class="ev w"><i></i>RISKY_PATTERNS → ctx.approval.approve()</span>
         </div>
       </div>
 
@@ -351,21 +379,25 @@
         <div class="rail"><div class="dot">12</div></div>
         <div class="card">
           <h3>Execute the tool <span class="fn">ctx.tools.call(name, args, ctx)</span></h3>
-          <p>Arguments are parsed to JSON, then dispatched by name. <code>Bash</code> routes through the
-          risk classifier and the approval gate before anything spawns; failures are returned as
-          <em>legible output</em>, not panics — models recover better from readable errors.</p>
+          <p>Arguments are parsed to JSON, then dispatched by name from one registry (native +
+          managed subprocess + shell + MCP-wrapped + <code>Task</code>). <code>Bash</code> runs through
+          the embedded <code>deno_task_shell</code>; failures come back as <em>legible output</em>,
+          not panics — models recover better from readable errors.</p>
           <span class="ev"><i></i>unknown tool / bad args → ok:false</span>
-          <span class="ev w"><i></i>RISKY_PATTERNS → ctx.approval.approve()</span>
+          <span class="ev"><i></i>LiveEvent::ToolStart{name, summary}</span>
         </div>
       </div>
 
       <div class="stage k-hook">
         <div class="rail"><div class="dot">13</div></div>
         <div class="card">
-          <h3>PostToolUse hooks <span class="fn">ctx.hooks.fire(PostToolUse, …, result)</span></h3>
-          <p>Hooks observe the result and may push <code>extra_context</code> back into the transcript
-          as user messages — the injection path that lets a hook steer the <em>next</em> iteration.</p>
-          <span class="ev b"><i></i>extra_context → [hook context]</span>
+          <h3>PostToolUse hooks <span class="fn">ctx.hooks.fire(PostToolUse, …, tool_response)</span></h3>
+          <p>Hooks observe the serialized result on stdin and may push
+          <code>additionalContext</code> / <code>systemMessage</code> back into the transcript as
+          <code>[hook context]</code> user messages — the injection path that lets a hook steer the
+          <em>next</em> iteration. Execution already happened, so only the context-injection
+          levers matter here — a PostToolUse <code>deny</code> cannot un-run the call.</p>
+          <span class="ev b"><i></i>additionalContext → [hook context]</span>
         </div>
       </div>
 
@@ -415,43 +447,43 @@
             <td class="name">sessions<span>唯一事实源</span></td>
             <td>Append-only <code>SessionEvent</code> log — one JSONL per session. Live message list is a fold; transcript, replay, fork and audit dataflow are derived for free.</td>
             <td><span class="tag conc">concrete</span><br><span class="tag">Mutex&lt;SessionLog&gt;</span></td>
-            <td class="paths">core/src/session.rs · 129 LOC<br>Events: Started, Message, ToolCall, ToolResult, Compacted, Artifact — <b>in-tree</b></td>
+            <td class="paths">core/src/session.rs · 227 LOC<br>Events: Started, Message, ToolCall, ToolResult, Compacted, Artifact, Usage, Hook — <b>in-tree</b></td>
           </tr>
           <tr>
             <td class="name">llm<span>provider 适配缝</span></td>
-            <td>OpenAI Chat-Completions dialect first: hand-written SSE frame parsing, delta accumulation, fragmented <code>tool_calls</code> reassembly, lenient parsing of dirty third-party payloads.</td>
+            <td>Two live dialects: OpenAI Chat-Completions and Anthropic Messages. Hand-written SSE frame parsing, delta accumulation, fragmented <code>tool_calls</code> reassembly (Anthropic's <code>partial_json</code> included), lenient parsing of dirty third-party payloads, retry only on establishment failures.</td>
             <td><span class="tag trait">trait object</span><br><span class="tag">dyn ProviderAdapter</span></td>
-            <td class="paths">llm/src/{oai,sse,assemble,types}.rs<br>A second dialect (Anthropic) is another plugin — <b>in-tree</b></td>
+            <td class="paths">llm/src/{oai,anthropic,sse,assemble,types}.rs<br>~1.0k LOC · <code>--provider anthropic</code> — <b>in-tree</b></td>
           </tr>
           <tr>
             <td class="name">tools<span>受控执行管线</span></td>
-            <td>Scoped registry + dispatch. Names are aligned to the mainstream vocabulary (<code>Bash Read Write Edit Glob Grep JobOutput HtmlArtifact Task</code>) so hook matchers hit for free. Errors become legible output.</td>
+            <td>Scoped registry + dispatch. Names are aligned to the mainstream vocabulary (<code>Bash Read Write Edit Glob Grep JobOutput HtmlArtifact WebFetch Task</code>) so hook matchers hit for free. Errors become legible output.</td>
             <td><span class="tag conc">concrete</span><br><span class="tag">trait ToolImpl</span></td>
-            <td class="paths">core/src/tool.rs · 886 LOC<br>Three classes: native / managed subprocess / shell escape hatch — <b>in-tree</b></td>
+            <td class="paths">core/src/tool/{mod,fs,shell,search,artifact,webmod}.rs · 1.1k LOC<br>Three classes: native / managed subprocess / shell escape hatch — <b>in-tree</b></td>
           </tr>
           <tr>
             <td class="name">hooks<span>兼容宣称的全部根据</span></td>
-            <td>Lifecycle event bus (SessionStart, UserPromptSubmit, Pre/PostToolUse, Stop, SessionEnd, SubagentStart/Stop) with a matcher registry. Hooks are <em>external processes</em> speaking the Claude JSON-stdio contract.</td>
+            <td>Lifecycle event bus over the 10 <code>HookEvent</code> variants (SessionStart, UserPromptSubmit, Pre/PostToolUse, Pre/PostCompact, Stop, SessionEnd, SubagentStart/Stop) with a matcher registry. Hooks are <em>external processes</em>: JSON payload on stdin, JSON decision on stdout, exit-2 veto.</td>
             <td><span class="tag proc">process boundary</span><br><span class="tag conc">concrete</span></td>
-            <td class="paths">core/src/hooks.rs · 337 LOC<br>Loads <code>.sunmao/hooks.json</code> + <code>.claude/settings*.json</code> unmodified — <b>in-tree</b></td>
+            <td class="paths">core/src/hooks.rs · 622 LOC<br>Loads <code>.sunmao/hooks.json</code> + <code>.claude/settings*.json</code> + plugin bundles unmodified; verified against real rtk / context-mode hook sets — <b>in-tree</b></td>
           </tr>
           <tr>
             <td class="name">audit<span>地基层</span></td>
-            <td>Two halves: the passive ledger (<code>AuditLog</code>) recording permission-relevant facts, and the active gate (<code>Approver</code>) that pauses risky <code>Bash</code> patterns for a verdict.</td>
+            <td>Two halves: the passive ledger (<code>AuditLog</code>) recording permission-relevant facts, and the active gate (<code>Approver</code>) that pauses risky <code>Bash</code> patterns for a verdict. Declarative rules resolve first — <code>deny &gt; ask &gt; allow &gt; default</code>.</td>
             <td><span class="tag trait">trait object</span><br><span class="tag">dyn Approver</span></td>
-            <td class="paths">core/src/{audit,approval}.rs · 108 LOC<br>24 RISKY_PATTERNS; <code>AllowAll</code> is the non-interactive default — <b>minimal v0.1</b></td>
+            <td class="paths">core/src/{audit,approval,permissions}.rs · 249 LOC<br>30 RISKY_PATTERNS; <code>AllowAll</code> is the non-interactive default, the REPL/ACP install a prompter — <b>in-tree</b></td>
           </tr>
           <tr>
             <td class="name">mcp<span>消费生态</span></td>
-            <td>stdio MCP client built on <code>rmcp</code>. Server tools are wrapped as native <code>ToolImpl</code>s under the <code>mcp__{server}__{tool}</code> namespace — attributable in the audit trail, matchable by <code>mcp__*</code>.</td>
+            <td>MCP client built on <code>rmcp</code>, both transports: spawn stdio servers (child stderr pinned to <code>Stdio::null()</code>) or connect over Streamable HTTP. Server tools are wrapped as native <code>ToolImpl</code>s under the <code>mcp__{server}__{tool}</code> namespace — attributable in the audit trail, matchable by <code>mcp__*</code>.</td>
             <td><span class="tag proc">process boundary</span><br><span class="tag">adapter → registry</span></td>
-            <td class="paths">core/src/mcp.rs · 154 LOC<br>Config: <code>.sunmao/mcp.json</code>, Claude mcpServers shape — <b>in-tree</b></td>
+            <td class="paths">core/src/mcp.rs · 212 LOC<br>Config: <code>.sunmao/mcp.json</code>, Claude mcpServers shape — <b>in-tree</b></td>
           </tr>
           <tr>
             <td class="name">acp<span>生态出口</span></td>
-            <td>ACP server over JSON-RPC/stdio: <code>session/new</code>, <code>session/prompt</code>, <code>session/update</code> notifications, reverse <code>session/request_permission</code>. The TUI is just another client of the same session API.</td>
+            <td>ACP v2 server over JSON-RPC/stdio via <code>agent-client-protocol</code>: <code>initialize</code>, <code>session/new</code>, <code>session/prompt</code>, <code>session/update</code> notifications, reverse <code>session/request_permission</code>. Stdout is JSON-RPC only — all logs go to <code>tracing</code>/stderr. The TUI is just another client of the same session API.</td>
             <td><span class="tag proc">protocol boundary</span><br><span class="tag">frontend bridge</span></td>
-            <td class="paths">cli/src/acp.rs (+ tui.rs, dataflow.rs)<br>Lets Zed &amp; any ACP client drive the kernel — <b>in-tree</b></td>
+            <td class="paths">cli/src/acp.rs · 431 LOC (+ tui/, dataflow.rs)<br>Lets Zed &amp; any ACP client drive the kernel — <b>in-tree</b></td>
           </tr>
         </tbody>
       </table>
@@ -472,16 +504,18 @@
         <p>The kernel context is a struct of services. Exactly two are trait objects today:
         <code>llm: Arc&lt;dyn ProviderAdapter&gt;</code> and <code>approval: Arc&lt;dyn Approver&gt;</code>
         — each has (or imminently has) a second implementation. The rest
-        (<code>sessions</code>, <code>tools</code>, <code>audit</code>, <code>hooks</code>) are concrete
-        types, promoted to traits only when a real second impl appears.</p>
-        <div class="verdict">file: core/src/context.rs · 81 LOC · swap by constructing a new Context</div>
+        (<code>sessions</code>, <code>tools</code>, <code>audit</code>, <code>hooks</code>,
+        <code>permissions</code>) are concrete types, promoted to traits only when a real second
+        impl appears.</p>
+        <div class="verdict">file: core/src/context.rs · 85 LOC · swap by constructing a new Context</div>
       </div>
 
       <div class="seam s-proc">
         <h4>Process boundaries — the extension surface</h4>
         <p>Crashes are isolated, languages don't matter, and every interaction is interceptable:
-        <b>hooks</b> (Claude contract, JSON on stdin), <b>MCP servers</b> (stdio), and the
-        <b>ACP bridge</b> outward. The extension never links into the kernel; it talks to it.</p>
+        <b>hooks</b> (Claude contract — JSON on stdin, JSON decision on stdout, exit 2 to veto),
+        <b>MCP servers</b> (stdio or Streamable HTTP), and the <b>ACP bridge</b> outward. The
+        extension never links into the kernel; it talks to it.</p>
         <div class="verdict">failure model: a dead extension degrades a capability, never the agent</div>
       </div>
 
@@ -499,7 +533,8 @@
         <b>native</b> (in-process Rust, structured <code>tool_input</code>, zero shell) →
         <b>managed</b> (spawned binary, no shell, controlled env) →
         <b>shell</b> (<code>Bash</code>: an opaque command string, the primary audit target).
-        Everything that can be native, is.</p>
+        <code>WebFetch</code> is the fourth rung — network egress with its own cap. Everything that
+        can be native, is.</p>
         <div class="verdict">the shell escape hatch is a deliberate exception, not the foundation</div>
       </div>
 
@@ -509,16 +544,18 @@
         <code>Context</code>; a minimal loop, a code-mode loop, or a strict-audit loop are all
         <em>presets</em> — plugin stacking (<code>base → +tui → +acp → +strict-audit</code>),
         not <code>--flag</code> branching.</p>
-        <div class="verdict">file: core/src/agent.rs · 332 LOC · "swap the loop, swap the product"</div>
+        <div class="verdict">file: core/src/agent.rs · 949 LOC · "swap the loop, swap the product"</div>
       </div>
 
       <div class="seam s-data">
         <h4>Interception seam — the pre/exec/post spine</h4>
-        <p>One tool call is a three-slot pipeline: <code>pre</code> (hooks + approval) →
+        <p>One tool call is a three-slot pipeline: <code>pre</code> (hooks + approval gate) →
         <code>exec</code> (registry dispatch) → <code>post</code> (hooks + context injection).
+        The pre slot is where the dialect earns its keep: <code>updatedInput</code> rewrites the
+        arguments before they are logged, <code>permissionDecision</code> hands the gate a verdict.
         Both ends are public to <code>ctx.audit</code> and <code>ctx.hooks</code>, so policy and
         telemetry attach without the tool layer knowing they exist.</p>
-        <div class="verdict">file: core/src/agent.rs steps 11–13 · the wiring is in the loop, not the tools</div>
+        <div class="verdict">file: core/src/agent.rs steps 10–13 · the wiring is in the loop, not the tools</div>
       </div>
     </div>
 
@@ -534,7 +571,7 @@
 
   <footer>
     <span>sunmao — joinery by seams; the repo is the contract.</span>
-    <span>derived from docs/SPEC.md + crates/core/src/agent.rs</span>
+    <span>derived from docs/ARCHITECTURE.md + crates/core/src/{agent,hooks}.rs</span>
   </footer>
 </div>
 </body>

@@ -75,6 +75,7 @@ first line. `Task` resolves `subagent_type` against `agents/*.md`, else the
 {"type":"compacted","summary"}        // clears transcript on fold
 {"type":"artifact","name","path","bytes"}
 {"type":"usage","usage":{prompt_tokens,completion_tokens,total_tokens}}
+{"type":"hook","event":"PreToolUse.updatedInput","detail":"…"}  // audit-only, skipped by the message fold
 ```
 
 `--dataflow <file>` folds these into a JSON report (files read/written,

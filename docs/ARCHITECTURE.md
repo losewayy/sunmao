@@ -90,12 +90,15 @@ the project layer). Prompt sections order: built-in assets → user → project
 
 ```rust
 SessionEvent::Started | Message | ToolCall | ToolResult
-                  | Compacted | Artifact | Usage
+                  | Compacted | Artifact | Usage | Hook
 ```
 
 Append-only JSONL; the visible transcript is a pure fold over them. `messages()`
 implements that fold — `Compacted` clears and re-seeds; `ToolResult` becomes
-`Role::Tool` messages; `Usage` is accounting, not content.
+`Role::Tool` messages; `Usage` is accounting, not content; `Hook` records
+auditor-visible facts (input rewrites, vetoes, injected context) and stays
+out of the model-facing fold — rewrites are transparent to the model,
+durable for the auditor.
 
 The *transient* vocabulary going the other way is `LiveEvent` (`Content`,
 `Reasoning`, `ToolStart{name, summary}`, `ToolDone{name, ok, output}`,

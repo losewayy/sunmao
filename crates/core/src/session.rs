@@ -20,11 +20,14 @@ pub enum SessionEvent {
     /// A full message committed to the transcript.
     Message { message: Message },
     /// A tool call dispatched by the assistant. `depth` tags sub-agent work
-    /// (0 = main loop) so a replayed transcript can re-mark it with ↳.
+    /// (0 = main loop) so a replayed transcript can re-mark it with ↳;
+    /// `lane` separates parallel siblings (each Task spawn claims one).
     ToolCall {
         call: ToolCall,
         #[serde(default)]
         depth: u8,
+        #[serde(default)]
+        lane: u8,
     },
     /// A tool call resolved (ok/fail recorded for replay fidelity).
     ToolResult {
@@ -34,6 +37,8 @@ pub enum SessionEvent {
         output: String,
         #[serde(default)]
         depth: u8,
+        #[serde(default)]
+        lane: u8,
     },
     /// Compaction boundary: earlier events are summarized away.
     Compacted { summary: String },
@@ -241,6 +246,7 @@ mod tests {
             ok: true,
             output: "x".into(),
             depth: 0,
+            lane: 0,
         })
         .await
         .unwrap();
@@ -326,10 +332,14 @@ mod tests {
             },
         };
         let mut log = SessionLog::open(&dir, "d").await.unwrap();
-        log.append(&SessionEvent::ToolCall { call, depth: 1 })
-            .await
-            .unwrap();
-        // a pre-depth log line: same shape, no `depth` key
+        log.append(&SessionEvent::ToolCall {
+            call,
+            depth: 1,
+            lane: 2,
+        })
+        .await
+        .unwrap();
+        // a pre-depth log line: same shape, no `depth`/`lane` keys
         let legacy =
             r#"{"type":"tool_result","call_id":"c1","name":"Glob","ok":true,"output":"x"}"#;
         {
@@ -348,11 +358,19 @@ mod tests {
         let events = log.events().await.unwrap();
         assert!(matches!(
             &events[0],
-            SessionEvent::ToolCall { depth: 1, .. }
+            SessionEvent::ToolCall {
+                depth: 1,
+                lane: 2,
+                ..
+            }
         ));
         assert!(matches!(
             &events[1],
-            SessionEvent::ToolResult { depth: 0, .. }
+            SessionEvent::ToolResult {
+                depth: 0,
+                lane: 0,
+                ..
+            }
         ));
         let _ = std::fs::remove_dir_all(&dir);
     }

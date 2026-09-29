@@ -28,11 +28,13 @@ pub enum LiveEvent {
     /// Tool call began. `summary` is a one-line digest of the interesting
     /// argument (path/command/pattern/…) for frontends to render. `depth`
     /// is the agent's nesting level — 0 for the interactive agent, 1+ for
-    /// `Task` sub-agents relayed through `ctx.live_sink`.
+    /// `Task` sub-agents relayed through `ctx.live_sink`; `lane` tells
+    /// parallel siblings apart (each spawn claims its own).
     ToolStart {
         name: String,
         summary: String,
         depth: u8,
+        lane: u8,
     },
     /// Tool call finished. `output` carries the raw result so rich frontends
     /// can preview it; simple frontends ignore it.
@@ -41,6 +43,7 @@ pub enum LiveEvent {
         ok: bool,
         output: String,
         depth: u8,
+        lane: u8,
     },
     /// A hook changed the turn — input rewrite, veto, injected context, or a
     /// session-scoped approval grant. Mirrors `SessionEvent::Hook` so the
@@ -410,6 +413,7 @@ impl AgentLoop {
             ok: true,
             output: summary.clone(),
             depth: self.ctx.depth,
+            lane: self.ctx.lane,
         });
         Ok(summary)
     }
@@ -498,6 +502,7 @@ impl AgentLoop {
                     name: "compact".into(),
                     summary: String::new(),
                     depth: self.ctx.depth,
+                    lane: self.ctx.lane,
                 });
                 if let Err(e) = self.compact(observer, "auto").await {
                     observer.on_event(&LiveEvent::ToolDone {
@@ -505,6 +510,7 @@ impl AgentLoop {
                         ok: false,
                         output: String::new(),
                         depth: self.ctx.depth,
+                        lane: self.ctx.lane,
                     });
                 }
             }
@@ -587,6 +593,7 @@ impl AgentLoop {
                     log.append(&SessionEvent::ToolCall {
                         call: call.clone(),
                         depth: self.ctx.depth,
+                        lane: self.ctx.lane,
                     })
                     .await?;
                     log.append(&SessionEvent::ToolResult {
@@ -595,6 +602,7 @@ impl AgentLoop {
                         ok: result.ok,
                         output: result.output.clone(),
                         depth: self.ctx.depth,
+                        lane: self.ctx.lane,
                     })
                     .await?;
                     log.append(&SessionEvent::Message {
@@ -656,6 +664,7 @@ impl AgentLoop {
                     log.append(&SessionEvent::ToolCall {
                         call,
                         depth: self.ctx.depth,
+                        lane: self.ctx.lane,
                     })
                     .await?;
                 }
@@ -664,6 +673,7 @@ impl AgentLoop {
                     name: call.function.name.clone(),
                     summary: call_summary(&call.function.name, &args_value),
                     depth: self.ctx.depth,
+                    lane: self.ctx.lane,
                 });
 
                 let result = if let Some(reason) = pre.block_reason {
@@ -702,6 +712,7 @@ impl AgentLoop {
                     ok: result.ok,
                     output: truncate_output(&result.output),
                     depth: self.ctx.depth,
+                    lane: self.ctx.lane,
                 });
 
                 // PostToolUse: hooks may inject context for the next turn.
@@ -728,6 +739,7 @@ impl AgentLoop {
                     ok: result.ok,
                     output: result.output.clone(),
                     depth: self.ctx.depth,
+                    lane: self.ctx.lane,
                 })
                 .await?;
                 for extra in post.extra_context {
@@ -1426,6 +1438,111 @@ mod tests {
         // went to the routed adapter.
         assert_eq!(parent.calls.load(std::sync::atomic::Ordering::Relaxed), 2);
         assert!(routed.calls.load(std::sync::atomic::Ordering::Relaxed) >= 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn batch_tasks_fan_out_on_distinct_lanes() {
+        // `tasks[]` runs children concurrently — each claims its own lane so
+        // the frontend can tell parallel siblings apart. The turn must also
+        // complete with the merged per-task output.
+        struct LaneRec(std::sync::Mutex<Vec<u8>>);
+        impl Observer for LaneRec {
+            fn on_event(&self, ev: &LiveEvent) {
+                if let LiveEvent::ToolStart { lane, .. } = ev {
+                    self.0.lock().unwrap().push(*lane);
+                }
+            }
+        }
+
+        let task_args =
+            r#"{"context":"both answers","tasks":[{"prompt":"say A"},{"prompt":"say B"}]}"#;
+        let glob_call = |id: &str| {
+            vec![
+                StreamDelta::ToolCalls(vec![
+                    ToolCallFragment {
+                        index: 0,
+                        id: Some(id.into()),
+                        name: Some("Glob".into()),
+                        arguments: None,
+                    },
+                    ToolCallFragment {
+                        index: 0,
+                        arguments: Some("{\"pattern\":\"*.rs\"}".into()),
+                        ..Default::default()
+                    },
+                ]),
+                StreamDelta::Finish {
+                    reason: Some("tool_calls".into()),
+                    usage: None,
+                },
+            ]
+        };
+        let provider = Arc::new(MockProvider {
+            responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                vec![
+                    StreamDelta::ToolCalls(vec![
+                        ToolCallFragment {
+                            index: 0,
+                            id: Some("t".into()),
+                            name: Some("Task".into()),
+                            arguments: None,
+                        },
+                        ToolCallFragment {
+                            index: 0,
+                            arguments: Some(task_args.into()),
+                            ..Default::default()
+                        },
+                    ]),
+                    StreamDelta::Finish {
+                        reason: Some("tool_calls".into()),
+                        usage: None,
+                    },
+                ],
+                // whichever child dequeues first gets a Glob call; its
+                // continuation (and everything else) falls back to "done"
+                glob_call("g1"),
+                glob_call("g2"),
+            ])),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let dir = std::env::temp_dir().join(format!("sunmao-batch-{}", std::process::id()));
+        let ctx = Arc::new(Context::new(
+            provider.clone(),
+            SessionLog::ephemeral(),
+            builtin_registry(),
+            dir.clone(),
+        ));
+        let sink = Arc::new(LaneRec(std::sync::Mutex::new(Vec::new())));
+        let agent = AgentLoop::new(ctx.clone());
+        agent.set_live_sink(sink.clone() as Arc<dyn Observer>);
+        let outcome = agent.run_turn("go", &NullObserver).await.unwrap();
+        assert!(matches!(outcome, TurnOutcome::Completed));
+        // parent: Task call + continuation; both children ran on this shared
+        // provider → ≥ 4 total streams.
+        assert!(provider.calls.load(std::sync::atomic::Ordering::Relaxed) >= 4);
+        // the merged result carries both item verdicts
+        let msgs = ctx.sessions.lock().await.messages().await.unwrap();
+        let tool_msg = msgs
+            .iter()
+            .find(|m| matches!(m.role, sunmao_llm::types::Role::Tool))
+            .expect("Task result must fold in");
+        assert!(tool_msg
+            .content
+            .as_deref()
+            .unwrap_or("")
+            .contains("## task 1 ✓"));
+        assert!(tool_msg
+            .content
+            .as_deref()
+            .unwrap_or("")
+            .contains("## task 2 ✓"));
+        // two children → two distinct non-zero lanes
+        let mut lanes = sink.0.lock().unwrap().clone();
+        lanes.sort_unstable();
+        lanes.dedup();
+        assert_eq!(lanes.len(), 2, "parallel children need distinct lanes");
+        assert!(lanes.iter().all(|l| *l > 0));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

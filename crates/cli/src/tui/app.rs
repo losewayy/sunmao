@@ -204,31 +204,33 @@ impl App {
     }
 
     /// A tool call started. Verb-grouping: when the previous block is the
-    /// same tool at the same depth finished, re-arm it (one `Read ×3` row
-    /// instead of three). `depth > 0` marks sub-agent calls (Task relay).
-    pub fn tool_start(&mut self, name: &str, summary: &str, depth: u8) {
+    /// same tool at the same depth+lane finished, re-arm it (one `Read ×3`
+    /// row instead of three). `depth > 0` marks sub-agent calls; `lane`
+    /// keeps parallel batch children distinct (same depth, same tool name
+    /// would otherwise alias).
+    pub fn tool_start(&mut self, name: &str, summary: &str, depth: u8, lane: u8) {
         if let Some(prev) = self.blocks.last_mut() {
             if prev.kind == BlockKind::Tool
-                && prev
-                    .tool
-                    .as_ref()
-                    .is_some_and(|t| t.name == name && t.depth == depth && t.done.is_some())
+                && prev.tool.as_ref().is_some_and(|t| {
+                    t.name == name && t.depth == depth && t.lane == lane && t.done.is_some()
+                })
             {
                 prev.rearm_tool(summary);
                 return;
             }
         }
-        self.blocks.push(Block::new_tool(name, summary, depth));
+        self.blocks
+            .push(Block::new_tool(name, summary, depth, lane));
         self.follow_tail();
     }
 
     /// A tool call finished — backfills the matching running block.
-    pub fn tool_done(&mut self, name: &str, ok: bool, output: &str, depth: u8) {
+    pub fn tool_done(&mut self, name: &str, ok: bool, output: &str, depth: u8, lane: u8) {
         if let Some(b) = self
             .blocks
             .iter_mut()
             .rev()
-            .find(|b| b.is_running_tool(name, depth))
+            .find(|b| b.is_running_tool(name, depth, lane))
         {
             b.finish_tool(ok, output);
         } else {
@@ -523,13 +525,14 @@ impl App {
                     }
                     _ => {}
                 },
-                E::ToolCall { call, depth } => {
+                E::ToolCall { call, depth, lane } => {
                     let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
                         .unwrap_or(serde_json::Value::Null);
                     self.tool_start(
                         &call.function.name,
                         &sunmao_core::agent::call_summary(&call.function.name, &args),
                         *depth,
+                        *lane,
                     );
                 }
                 E::ToolResult {
@@ -537,8 +540,9 @@ impl App {
                     ok,
                     output,
                     depth,
+                    lane,
                     ..
-                } => self.tool_done(name, *ok, output, *depth),
+                } => self.tool_done(name, *ok, output, *depth, *lane),
                 E::Hook { event, detail } => {
                     self.push_audit(&format!("{event} — {detail}"));
                 }
@@ -547,8 +551,8 @@ impl App {
                     exit_code,
                     output,
                 } => {
-                    self.tool_start("!", &format!("$ {command}"), 0);
-                    self.tool_done("!", *exit_code == 0, output, 0);
+                    self.tool_start("!", &format!("$ {command}"), 0, 0);
+                    self.tool_done("!", *exit_code == 0, output, 0, 0);
                 }
                 E::Compacted { summary } => {
                     self.blocks.clear();
@@ -691,6 +695,7 @@ mod tests {
             E::ToolCall {
                 call: call("c1", "Read", r#"{"path":"a.rs"}"#),
                 depth: 0,
+                lane: 0,
             },
             E::ToolResult {
                 call_id: "c1".into(),
@@ -698,6 +703,7 @@ mod tests {
                 ok: true,
                 output: "file body".into(),
                 depth: 0,
+                lane: 0,
             },
             E::Hook {
                 event: "approval.session".into(),
@@ -740,6 +746,7 @@ mod tests {
         app.replay(&[E::ToolCall {
             call: call("c9", "Bash", r#"{"command":"rm -rf x"}"#),
             depth: 0,
+            lane: 0,
         }]);
         let t = app.blocks[1].tool.as_ref().unwrap();
         assert_eq!(t.done, Some(false));

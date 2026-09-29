@@ -35,6 +35,14 @@ pub struct Context {
     pub approval: Arc<dyn Approver>,
     /// Subagent nesting depth — Task tool refuses past MAX_DEPTH.
     pub depth: u8,
+    /// Which concurrent lane this context occupies — 0 is the interactive
+    /// agent; each Task spawn claims a fresh lane so parallel sub-agents'
+    /// tool events stay attributable (a plain `depth` tag collides when two
+    /// children run the same tool at once).
+    pub lane: u8,
+    /// Shared lane allocator — sub-contexts clone the same counter so lanes
+    /// are unique across the whole spawn tree, not just siblings.
+    pub lane_counter: std::sync::Arc<std::sync::atomic::AtomicU8>,
     /// Cooperative cancellation — `session/cancel` sets it; the loop checks
     /// between iterations and before each tool call.
     pub cancelled: std::sync::atomic::AtomicBool,
@@ -77,6 +85,8 @@ impl Context {
             permissions,
             approval: Arc::new(AllowAll),
             depth: 0,
+            lane: 0,
+            lane_counter: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
             cancelled: std::sync::atomic::AtomicBool::new(false),
             read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),
             session_grants: std::sync::Arc::new(std::sync::Mutex::new(

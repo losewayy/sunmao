@@ -134,6 +134,23 @@ impl SessionLog {
         Ok(())
     }
 
+    /// The full event vector — for transcript replay (TUI resume renders
+    /// blocks from these) and any consumer that wants facts, not the fold.
+    pub async fn events(&self) -> anyhow::Result<Vec<SessionEvent>> {
+        if self.file.is_none() {
+            return Ok(self.mem.clone());
+        }
+        let file = tokio::fs::File::open(&self.path).await?;
+        let mut lines = tokio::io::BufReader::new(file).lines();
+        let mut out = Vec::new();
+        while let Some(line) = lines.next_line().await? {
+            if let Ok(ev) = serde_json::from_str::<SessionEvent>(&line) {
+                out.push(ev);
+            }
+        }
+        Ok(out)
+    }
+
     /// Fold the whole log into the message list the provider sees.
     /// Durable facts → protocol messages, in order.
     pub async fn messages(&self) -> anyhow::Result<Vec<Message>> {

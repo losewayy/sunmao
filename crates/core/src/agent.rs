@@ -68,7 +68,10 @@ pub trait Observer: Send + Sync {
 /// One-line argument digest for `LiveEvent::ToolStart.summary`: the single
 /// most interesting value per tool (the command for Bash, the path for file
 /// tools, …), falling back to compact `k=v` pairs for unknown tools.
-fn call_summary(name: &str, args: &serde_json::Value) -> String {
+/// One-line digest of a tool call's interesting argument — the transcript
+/// header string. Public so frontends replaying a session log render the
+/// same headers a live turn would have produced.
+pub fn call_summary(name: &str, args: &serde_json::Value) -> String {
     let obj = match args.as_object() {
         Some(o) => o,
         None => return String::new(),

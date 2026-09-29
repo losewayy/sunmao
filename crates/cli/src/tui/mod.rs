@@ -356,6 +356,7 @@ fn handle_key(
     match app.focus {
         Focus::Approval => card_key(app, k),
         Focus::Scrollback => scroll_key(app, k),
+        Focus::Viewer => viewer_key(app, k),
         Focus::Input => input_key(app, k, tx_input),
     }
 }
@@ -412,6 +413,7 @@ fn card_key(app: &mut App, k: KeyEvent) -> bool {
 fn scroll_key(app: &mut App, k: KeyEvent) -> bool {
     match k.code {
         KeyCode::Esc | KeyCode::Tab => app.focus = Focus::Input,
+        KeyCode::Enter => app.open_viewer(),
         KeyCode::Up | KeyCode::Char('k') => app.select_delta(-1),
         KeyCode::Down | KeyCode::Char('j') => app.select_delta(1),
         KeyCode::Char('e') => app.toggle_fold(),
@@ -428,6 +430,36 @@ fn scroll_key(app: &mut App, k: KeyEvent) -> bool {
         KeyCode::Char('G') => app.selected = app.blocks.len().saturating_sub(1),
         KeyCode::PageUp => app.scroll_back = app.scroll_back.saturating_add(10),
         KeyCode::PageDown => app.scroll_back = app.scroll_back.saturating_sub(10),
+        _ => {}
+    }
+    false
+}
+
+/// Full-screen viewer: j/k + PageUp/Down scroll the body, Esc/q returns to
+/// the scrollback selection it came from.
+fn viewer_key(app: &mut App, k: KeyEvent) -> bool {
+    let Some(v) = &mut app.viewer else {
+        app.focus = Focus::Scrollback;
+        return false;
+    };
+    match k.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Tab => {
+            app.viewer = None;
+            app.focus = Focus::Scrollback;
+        }
+        KeyCode::Up | KeyCode::Char('k') => v.scroll = v.scroll.saturating_sub(1),
+        KeyCode::Down | KeyCode::Char('j') => v.scroll = v.scroll.saturating_add(1),
+        KeyCode::PageUp => v.scroll = v.scroll.saturating_sub(10),
+        KeyCode::PageDown => v.scroll = v.scroll.saturating_add(10),
+        KeyCode::Home | KeyCode::Char('g') => v.scroll = 0,
+        KeyCode::Char('y') => {
+            let text = v.body.clone();
+            let ok = app::osc52_copy(&text);
+            app.toast = Some((
+                if ok { "copied" } else { "copy failed" }.to_string(),
+                std::time::Instant::now(),
+            ));
+        }
         _ => {}
     }
     false

@@ -814,4 +814,22 @@ mod tests {
         assert_eq!(app.input, "");
         assert!(app.hist_idx.is_none());
     }
+
+    /// A submit while busy must surface as a queued turn — the driver
+    /// drains FIFO, so the app's only job is counting + telling the user.
+    #[test]
+    fn submit_while_busy_counts_queued() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<Submit>();
+        let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+        app.busy = true;
+        app.input = "second prompt".into();
+        input_key(&mut app, key(KeyCode::Enter), &tx);
+        assert_eq!(app.queued_turns, 1);
+        assert!(matches!(rx.try_recv(), Ok(Submit::Turn(_))));
+        // a free submit leaves the counter alone
+        app.busy = false;
+        app.input = "third".into();
+        input_key(&mut app, key(KeyCode::Enter), &tx);
+        assert_eq!(app.queued_turns, 1);
+    }
 }

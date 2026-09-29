@@ -20,6 +20,9 @@ pub enum BlockKind {
     Thinking,
     /// One tool invocation: header + arg digest + output preview panel
     Tool,
+    /// Audit fact — hook rewrite/veto/injection, session grant. The
+    /// audit-native spine made visible (⚙ line, warn-colored).
+    Audit,
     /// Frontend status line ([compacted], [unknown command], …)
     Note,
 }
@@ -131,6 +134,9 @@ impl Block {
                 BlockKind::Assistant => self.render_assistant(),
                 BlockKind::Thinking => self.render_plain("◌ ", Style::default().fg(THEME.thinking)),
                 BlockKind::Tool => self.render_tool(width),
+                BlockKind::Audit => {
+                    self.render_plain(theme::audit_glyph(), Style::default().fg(THEME.warn))
+                }
                 BlockKind::Note => self.render_plain("· ", Style::default().fg(THEME.faint)),
             }
         };

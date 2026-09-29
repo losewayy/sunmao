@@ -100,3 +100,12 @@ pub fn prompt_glyph() -> &'static str {
         "❯ "
     }
 }
+
+/// Audit-fact marker — bare ConHost falls back to a plain asterisk.
+pub fn audit_glyph() -> &'static str {
+    if legacy_glyphs() {
+        "* "
+    } else {
+        "⚙ "
+    }
+}

@@ -187,6 +187,15 @@ impl App {
         self.follow_tail();
     }
 
+    /// An audit fact (hook rewrite/veto/injection, session grant) — always
+    /// visible, never folded into a tool block. Keeps `busy` untouched.
+    pub fn push_audit(&mut self, detail: &str) {
+        let mut b = Block::new(BlockKind::Audit);
+        b.text = detail.to_string();
+        self.blocks.push(b);
+        self.follow_tail();
+    }
+
     /// Echo the user's submitted prompt as its own block.
     fn echo_user(&mut self, text: &str) {
         let mut b = Block::new(BlockKind::User);

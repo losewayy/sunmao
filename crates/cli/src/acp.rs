@@ -84,6 +84,14 @@ impl Observer for AcpObserver {
                 ));
             }
             LiveEvent::TurnEnd { .. } => {}
+            // audit facts: visible in local frontends; ACP clients get them
+            // as agent message text so the rewrite/veto is never silent
+            LiveEvent::Hook { event, detail } => {
+                self.send(v2::SessionUpdate::AgentMessageChunk(v2::ContentChunk::new(
+                    format!("[⚙ {event}: {detail}]\n").into(),
+                    self.next_id("msg"),
+                )));
+            }
         }
     }
 }

@@ -27,7 +27,9 @@ pub async fn report(session_path: &Path) -> anyhow::Result<Value> {
         match ev {
             SessionEvent::Message { .. } => messages += 1,
             SessionEvent::Compacted { .. } => compactions += 1,
-            SessionEvent::Started { .. } | SessionEvent::ToolCall { .. } => {}
+            SessionEvent::Started { .. }
+            | SessionEvent::ToolCall { .. }
+            | SessionEvent::Artifact { .. } => {}
             SessionEvent::ToolResult {
                 name, ok, output, ..
             } => {

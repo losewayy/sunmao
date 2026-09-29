@@ -40,6 +40,9 @@ pub struct ToolBlock {
     pub output: String,
     /// None = running; Some(ok) = finished with that verdict
     pub done: Option<bool>,
+    /// agent nesting depth — 0 is the interactive agent, 1+ is a `Task`
+    /// sub-agent relayed through the live sink; rendered as `↳` prefix.
+    pub depth: u8,
     /// consecutive calls of the same name folded into this block
     pub group_count: usize,
     /// when this call started — the header shows wall time once done
@@ -82,13 +85,14 @@ impl Block {
         }
     }
 
-    pub fn new_tool(name: &str, summary: &str) -> Self {
+    pub fn new_tool(name: &str, summary: &str, depth: u8) -> Self {
         let mut b = Self::new(BlockKind::Tool);
         b.tool = Some(ToolBlock {
             name: name.to_string(),
             summary: summary.to_string(),
             output: String::new(),
             done: None,
+            depth,
             group_count: 1,
             started: Instant::now(),
             elapsed: None,
@@ -96,13 +100,15 @@ impl Block {
         b
     }
 
-    /// Is this a tool block for `name` still awaiting its ToolDone?
-    pub fn is_running_tool(&self, name: &str) -> bool {
+    /// Is this a tool block for `name` at `depth` still awaiting its
+    /// ToolDone? Depth is part of the match — a parent's call and a
+    /// sub-agent's same-named call are different blocks.
+    pub fn is_running_tool(&self, name: &str, depth: u8) -> bool {
         self.kind == BlockKind::Tool
             && self
                 .tool
                 .as_ref()
-                .is_some_and(|t| t.name == name && t.done.is_none())
+                .is_some_and(|t| t.name == name && t.depth == depth && t.done.is_none())
     }
 
     /// Verb-grouping: a finished tool block for `name` gets re-armed by the
@@ -288,6 +294,11 @@ impl Block {
         };
         let mut spans = vec![
             Span::styled(format!(" {glyph} "), gstyle),
+            if t.depth > 0 {
+                Span::styled("↳ ", Style::default().fg(THEME.muted))
+            } else {
+                Span::raw("")
+            },
             Span::styled(
                 t.name.clone(),
                 Style::default().fg(THEME.tool).add_modifier(Modifier::BOLD),

@@ -46,6 +46,13 @@ pub struct Context {
     /// the identical call, nothing broader. `Arc` so `Task` sub-agents share
     /// the session's grants (they share the same interactive session).
     pub session_grants: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// Live-event sink for nested work — `Task` sub-agents relay their tool
+    /// lifecycle here (marked with `depth`) so the frontend can show a
+    /// sub-agent working instead of a silently-spinning `Task` block.
+    /// `OnceLock` because the context is `Arc`-shared by the time a frontend
+    /// exists; first install wins, `None` = discard (the historical
+    /// behaviour for `-p` and tests).
+    pub live_sink: std::sync::OnceLock<Arc<dyn crate::agent::Observer>>,
 }
 
 impl Context {
@@ -71,6 +78,7 @@ impl Context {
             session_grants: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),
+            live_sink: std::sync::OnceLock::new(),
         }
     }
 

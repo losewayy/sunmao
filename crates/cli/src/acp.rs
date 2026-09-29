@@ -60,17 +60,33 @@ impl Observer for AcpObserver {
             LiveEvent::Reasoning(r) => self.send(v2::SessionUpdate::AgentThoughtChunk(
                 v2::ContentChunk::new(r.clone().into(), self.next_id("thought")),
             )),
-            LiveEvent::ToolStart { name, summary } => {
+            LiveEvent::ToolStart {
+                name,
+                summary,
+                depth,
+            } => {
+                let label = if *depth > 0 {
+                    format!("↳{name}")
+                } else {
+                    name.clone()
+                };
+                // ID keys on depth so a sub-agent's Read doesn't collide with
+                // the parent's Read in the client's tool-call list.
                 self.send(v2::SessionUpdate::ToolCallUpdate(
-                    v2::ToolCallUpdate::new(v2::ToolCallId::new(name.clone()))
-                        .name(name.clone())
-                        .title(format!("{name} {summary}"))
+                    v2::ToolCallUpdate::new(v2::ToolCallId::new(format!("{depth}:{name}")))
+                        .name(label.clone())
+                        .title(format!("{label} {summary}"))
                         .status(v2::ToolCallStatus::InProgress),
                 ));
             }
-            LiveEvent::ToolDone { name, ok, output } => {
+            LiveEvent::ToolDone {
+                name,
+                ok,
+                output,
+                depth,
+            } => {
                 self.send(v2::SessionUpdate::ToolCallUpdate(
-                    v2::ToolCallUpdate::new(v2::ToolCallId::new(name.clone()))
+                    v2::ToolCallUpdate::new(v2::ToolCallId::new(format!("{depth}:{name}")))
                         .status(if *ok {
                             v2::ToolCallStatus::Completed
                         } else {

@@ -98,20 +98,28 @@ impl Observer for StdoutObserver {
                 print!("{c}");
                 std::io::stdout().flush().ok();
             }
-            LiveEvent::ToolStart { name, summary } => {
+            LiveEvent::ToolStart {
+                name,
+                summary,
+                depth,
+            } => {
                 if *in_r {
                     eprintln!("\x1b[0m");
                     *in_r = false;
                 }
+                let nest = if *depth > 0 { "↳" } else { "" };
                 if summary.is_empty() {
-                    println!("\n\x1b[36m[tool → {name}]\x1b[0m");
+                    println!("\n\x1b[36m[tool → {nest}{name}]\x1b[0m");
                 } else {
-                    println!("\n\x1b[36m[tool → {name} · {summary}]\x1b[0m");
+                    println!("\n\x1b[36m[tool → {nest}{name} · {summary}]\x1b[0m");
                 }
             }
-            LiveEvent::ToolDone { name, ok, .. } => {
+            LiveEvent::ToolDone {
+                name, ok, depth, ..
+            } => {
                 let mark = if *ok { "✓" } else { "✗" };
-                println!("\x1b[36m[tool {name} {mark}]\x1b[0m");
+                let nest = if *depth > 0 { "↳" } else { "" };
+                println!("\x1b[36m[tool {nest}{name} {mark}]\x1b[0m");
             }
             LiveEvent::Hook { event, detail } => {
                 if *in_r {
@@ -281,9 +289,11 @@ async fn main() -> anyhow::Result<()> {
         return tui::run(agent, &cli.model, cwd.clone(), rx_approval, replay_events).await;
     }
 
-    let observer = StdoutObserver {
+    let observer = Arc::new(StdoutObserver {
         in_reasoning: std::sync::Mutex::new(false),
-    };
+    });
+    // sub-agent tool lifecycle relays through the same output channel
+    agent.set_live_sink(observer.clone() as Arc<dyn Observer>);
 
     // Resumed sessions announce themselves — a silent resume reads as a
     // fresh session and the fold-in context is invisible to the user.
@@ -332,7 +342,7 @@ async fn main() -> anyhow::Result<()> {
             let name = cmd_line.split_whitespace().next().unwrap_or("");
             let rest = cmd_line[name.len()..].trim();
             if line == "/compact" {
-                match agent.compact(&observer, "manual").await {
+                match agent.compact(&*observer, "manual").await {
                     Ok(s) if s.is_empty() => println!("[compacted: nothing to fold]"),
                     Ok(s) => println!("[compacted]\n{s}"),
                     Err(e) => eprintln!("[compact failed] {e:#}"),
@@ -350,7 +360,7 @@ async fn main() -> anyhow::Result<()> {
 {rest}"
                         )
                     };
-                    if let Err(e) = agent.run_turn(&prompt, &observer).await {
+                    if let Err(e) = agent.run_turn(&prompt, &*observer).await {
                         eprintln!("[error] {e:#}");
                     }
                 }
@@ -358,7 +368,7 @@ async fn main() -> anyhow::Result<()> {
             }
             continue;
         }
-        if let Err(e) = agent.run_turn(line, &observer).await {
+        if let Err(e) = agent.run_turn(line, &*observer).await {
             eprintln!("[error] {e:#}");
         }
     }

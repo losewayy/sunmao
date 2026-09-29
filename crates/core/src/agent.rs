@@ -26,10 +26,13 @@ pub enum LiveEvent {
     Content(String),
     Reasoning(String),
     /// Tool call began. `summary` is a one-line digest of the interesting
-    /// argument (path/command/pattern/…) for frontends to render.
+    /// argument (path/command/pattern/…) for frontends to render. `depth`
+    /// is the agent's nesting level — 0 for the interactive agent, 1+ for
+    /// `Task` sub-agents relayed through `ctx.live_sink`.
     ToolStart {
         name: String,
         summary: String,
+        depth: u8,
     },
     /// Tool call finished. `output` carries the raw result so rich frontends
     /// can preview it; simple frontends ignore it.
@@ -37,6 +40,7 @@ pub enum LiveEvent {
         name: String,
         ok: bool,
         output: String,
+        depth: u8,
     },
     /// A hook changed the turn — input rewrite, veto, injected context, or a
     /// session-scoped approval grant. Mirrors `SessionEvent::Hook` so the
@@ -177,6 +181,12 @@ impl AgentLoop {
     pub fn with_max_iterations(mut self, n: usize) -> Self {
         self.max_iterations = n;
         self
+    }
+
+    /// Install the live-event sink `Task` sub-agents relay their tool
+    /// lifecycle through. First install wins — frontends call once at setup.
+    pub fn set_live_sink(&self, sink: Arc<dyn Observer>) {
+        let _ = self.ctx.live_sink.set(sink);
     }
 
     /// Signal cooperative cancellation for the in-flight turn.
@@ -399,6 +409,7 @@ impl AgentLoop {
             name: "compact".into(),
             ok: true,
             output: summary.clone(),
+            depth: self.ctx.depth,
         });
         Ok(summary)
     }
@@ -486,12 +497,14 @@ impl AgentLoop {
                 observer.on_event(&LiveEvent::ToolStart {
                     name: "compact".into(),
                     summary: String::new(),
+                    depth: self.ctx.depth,
                 });
                 if let Err(e) = self.compact(observer, "auto").await {
                     observer.on_event(&LiveEvent::ToolDone {
                         name: format!("compact failed: {e:#}"),
                         ok: false,
                         output: String::new(),
+                        depth: self.ctx.depth,
                     });
                 }
             }
@@ -642,6 +655,7 @@ impl AgentLoop {
                 observer.on_event(&LiveEvent::ToolStart {
                     name: call.function.name.clone(),
                     summary: call_summary(&call.function.name, &args_value),
+                    depth: self.ctx.depth,
                 });
 
                 let result = if let Some(reason) = pre.block_reason {
@@ -679,6 +693,7 @@ impl AgentLoop {
                     name: call.function.name.clone(),
                     ok: result.ok,
                     output: truncate_output(&result.output),
+                    depth: self.ctx.depth,
                 });
 
                 // PostToolUse: hooks may inject context for the next turn.
@@ -1197,6 +1212,129 @@ mod tests {
         // the second identical call never reached the approver
         assert_eq!(approver.0.load(std::sync::atomic::Ordering::Relaxed), 1);
         assert!(ctx.session_granted("Glob", "**/*.rs"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn subagent_tool_events_reach_live_sink_at_depth() {
+        // The turn observer sees the parent's `Task` call itself; the
+        // sub-agent's *inner* tool lifecycle must reach the frontend through
+        // `live_sink` tagged depth=1 — and its TurnEnd must NOT leak
+        // (forwarding it would unwind the outer turn's busy state).
+        struct DepthRec(std::sync::Mutex<Vec<String>>);
+        impl Observer for DepthRec {
+            fn on_event(&self, ev: &LiveEvent) {
+                match ev {
+                    LiveEvent::ToolStart { name, depth, .. } => self
+                        .0
+                        .lock()
+                        .unwrap()
+                        .push(format!("start:{name}:d{depth}")),
+                    LiveEvent::ToolDone {
+                        name, ok, depth, ..
+                    } => self
+                        .0
+                        .lock()
+                        .unwrap()
+                        .push(format!("done:{name}:{ok}:d{depth}")),
+                    LiveEvent::TurnEnd { outcome } => {
+                        self.0.lock().unwrap().push(format!("turnend:{outcome:?}"))
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let glob_call = || {
+            vec![
+                StreamDelta::ToolCalls(vec![
+                    ToolCallFragment {
+                        index: 0,
+                        id: Some("g".into()),
+                        name: Some("Glob".into()),
+                        arguments: None,
+                    },
+                    ToolCallFragment {
+                        index: 0,
+                        arguments: Some("{\"pattern\":\"**/*.rs\"}".into()),
+                        ..Default::default()
+                    },
+                ]),
+                StreamDelta::Finish {
+                    reason: Some("tool_calls".into()),
+                    usage: None,
+                },
+            ]
+        };
+        let provider = Arc::new(MockProvider {
+            responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                // parent turn: calls Task
+                vec![
+                    StreamDelta::ToolCalls(vec![
+                        ToolCallFragment {
+                            index: 0,
+                            id: Some("t".into()),
+                            name: Some("Task".into()),
+                            arguments: None,
+                        },
+                        ToolCallFragment {
+                            index: 0,
+                            arguments: Some("{\"prompt\":\"find files\"}".into()),
+                            ..Default::default()
+                        },
+                    ]),
+                    StreamDelta::Finish {
+                        reason: Some("tool_calls".into()),
+                        usage: None,
+                    },
+                ],
+                // sub-agent turn: calls Glob (shared provider — same queue)
+                glob_call(),
+                // sub-agent post-tool: text reply
+                vec![
+                    StreamDelta::Content("sub found them".into()),
+                    StreamDelta::Finish {
+                        reason: Some("stop".into()),
+                        usage: None,
+                    },
+                ],
+                // parent post-tool: text reply
+                vec![
+                    StreamDelta::Content("all done".into()),
+                    StreamDelta::Finish {
+                        reason: Some("stop".into()),
+                        usage: None,
+                    },
+                ],
+            ])),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let dir = std::env::temp_dir().join(format!("sunmao-depth-{}", std::process::id()));
+        let ctx = Arc::new(Context::new(
+            provider,
+            SessionLog::ephemeral(),
+            builtin_registry(),
+            dir.clone(),
+        ));
+        let sink = Arc::new(DepthRec(std::sync::Mutex::new(Vec::new())));
+        let agent = AgentLoop::new(ctx.clone());
+        agent.set_live_sink(sink.clone() as Arc<dyn Observer>);
+        let outcome = agent.run_turn("go", &NullObserver).await.unwrap();
+        assert!(matches!(outcome, TurnOutcome::Completed));
+
+        let events = sink.0.lock().unwrap();
+        assert!(
+            events.iter().any(|e| e == "start:Glob:d1"),
+            "inner tool start must surface at depth=1 — got {events:?}"
+        );
+        assert!(
+            events.iter().any(|e| e == "done:Glob:true:d1"),
+            "inner tool done must surface at depth=1 — got {events:?}"
+        );
+        assert!(
+            !events.iter().any(|e| e.starts_with("turnend:")),
+            "sub-agent TurnEnd must never reach the sink — got {events:?}"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

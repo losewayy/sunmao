@@ -17,7 +17,10 @@ impl ToolImpl for BashTool {
         Tool::function(
             "Bash",
             "Run a bash command (cross-platform; works identically on Windows). \
-             Use for builds, tests, git, and anything without a dedicated tool.",
+             Use for builds, tests, git, and anything without a dedicated tool. \
+             Commands are preflighted before they run: a '[preflight]' block in \
+             the result predicts spawn failures and mangled argv — fix the \
+             command when it tells you one is doomed.",
             json!({
                 "type": "object",
                 "properties": {
@@ -40,8 +43,31 @@ impl ToolImpl for BashTool {
         }
         let a: Args = serde_json::from_value(args)?;
 
+        // Parse once up front — a malformed command is reported before any
+        // permission prompt, and the same AST feeds both preflight and exec.
+        let list = match deno_task_shell::parser::parse(&a.command) {
+            Ok(l) => l,
+            Err(e) => {
+                return Ok(ToolResult {
+                    output: format!("cannot parse command: {e}"),
+                    ok: false,
+                })
+            }
+        };
+        // shell/preflight: spawnfate models the which-resolve + CreateProcess
+        // path deno_task_shell actually takes; advisories ride in the result
+        // so the model can self-correct. Advisory only — never blocks.
+        let notes = crate::preflight::advisories(&list, &ctx.cwd);
+        let pre = || {
+            if notes.is_empty() {
+                String::new()
+            } else {
+                format!("[preflight — advisory only]\n{}\n\n", notes.join("\n"))
+            }
+        };
+
         if a.background {
-            return spawn_background(&a.command, ctx).await;
+            return spawn_background(&a.command, ctx, pre()).await;
         }
 
         // declarative permission rules first (deny is hard refusal)
@@ -81,7 +107,6 @@ impl ToolImpl for BashTool {
 
         // deno_task_shell's internals are !Send (Rc<Cell> exit-code cells) —
         // every !Send value must be constructed *inside* the blocking closure.
-        let command = a.command.clone();
         let cwd = ctx.cwd.clone();
         let env_vars: std::collections::HashMap<std::ffi::OsString, std::ffi::OsString> =
             std::env::vars_os().collect();
@@ -89,8 +114,6 @@ impl ToolImpl for BashTool {
 
         let outcome =
             tokio::task::spawn_blocking(move || -> Result<(i32, String, String), String> {
-                let list = deno_task_shell::parser::parse(&command)
-                    .map_err(|e| format!("cannot parse command: {e}"))?;
                 let state = deno_task_shell::ShellState::new(
                     env_vars,
                     cwd,
@@ -148,7 +171,7 @@ impl ToolImpl for BashTool {
                 s.to_string()
             }
         };
-        let mut out = trunc(stdout.trim_end());
+        let mut out = pre() + &trunc(stdout.trim_end());
         if !stderr.trim().is_empty() {
             out.push_str(&format!("\n[stderr]\n{}", trunc(stderr.trim())));
         }
@@ -173,6 +196,7 @@ fn jobs_dir(ctx: &crate::context::Context) -> std::path::PathBuf {
 async fn spawn_background(
     command: &str,
     ctx: &crate::context::Context,
+    preamble: String,
 ) -> anyhow::Result<ToolResult> {
     let id = format!(
         "j-{}",
@@ -220,7 +244,10 @@ async fn spawn_background(
     });
 
     Ok(ToolResult {
-        output: format!("job {id} started; log: {}", log_path_for_msg.display()),
+        output: format!(
+            "{preamble}job {id} started; log: {}",
+            log_path_for_msg.display()
+        ),
         ok: true,
     })
 }

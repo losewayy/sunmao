@@ -138,10 +138,9 @@ impl AgentLoop {
         input: &str,
         observer: &dyn Observer,
     ) -> anyhow::Result<TurnOutcome> {
-        self.ctx
-            .cancelled
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-
+        // NOTE: cancelled flag is cleared at turn END, not start — a cancel
+        // issued before the turn must still take effect; a mid-turn cancel
+        // is consumed here and the next turn starts clean.
         // UserPromptSubmit hooks may inject context or veto the prompt.
         let prompt_outcome = self
             .ctx
@@ -319,6 +318,9 @@ impl AgentLoop {
                 }
             }
         }
+        self.ctx
+            .cancelled
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         let _ = self
             .ctx
             .hooks
@@ -328,5 +330,163 @@ impl AgentLoop {
             outcome: outcome.clone(),
         });
         Ok(outcome)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::SessionLog;
+    use crate::tool::builtin_registry;
+    use futures_util::stream;
+    use sunmao_llm::types::{Message, Usage};
+    use sunmao_llm::{ChatRequest, DeltaStream, ProviderAdapter, StreamDelta, ToolCallFragment};
+
+    /// Scripted provider: each queued response is a Vec of deltas replayed in
+    /// order. The seam being a trait is what makes the whole loop testable.
+    struct MockProvider {
+        responses: std::sync::Mutex<std::collections::VecDeque<Vec<StreamDelta>>>,
+        /// how many times stream() was invoked
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl ProviderAdapter for MockProvider {
+        async fn stream(&self, _req: ChatRequest<'_>) -> anyhow::Result<DeltaStream> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let deltas = self
+                .responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| {
+                    vec![
+                        StreamDelta::Content("done".into()),
+                        StreamDelta::Finish {
+                            reason: Some("stop".into()),
+                            usage: Some(Usage::default()),
+                        },
+                    ]
+                });
+            Ok(Box::pin(stream::iter(deltas.into_iter().map(Ok))))
+        }
+    }
+
+    struct NullObserver;
+    impl Observer for NullObserver {
+        fn on_event(&self, _ev: &LiveEvent) {}
+    }
+
+    #[tokio::test]
+    async fn turn_completes_on_plain_text() {
+        let provider = Arc::new(MockProvider {
+            responses: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let ctx = Arc::new(Context::new(
+            provider.clone(),
+            SessionLog::ephemeral(),
+            builtin_registry(),
+            std::env::temp_dir(),
+        ));
+        let agent = AgentLoop::new(ctx.clone());
+        let outcome = agent.run_turn("hi", &NullObserver).await.unwrap();
+        assert!(matches!(outcome, TurnOutcome::Completed));
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        // log holds user + assistant messages
+        let msgs = ctx.sessions.lock().await.messages().await.unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[1].role, sunmao_llm::types::Role::Assistant);
+    }
+
+    #[tokio::test]
+    async fn tool_call_roundtrip_feeds_back() {
+        // first stream: a Glob tool call (real filesystem tool), then finish
+        // second stream: plain text → turn completes
+        let provider = Arc::new(MockProvider {
+            responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                vec![
+                    StreamDelta::ToolCalls(vec![
+                        ToolCallFragment {
+                            index: 0,
+                            id: Some("call_1".into()),
+                            name: Some("Glob".into()),
+                            arguments: None,
+                        },
+                        ToolCallFragment {
+                            index: 0,
+                            arguments: Some("{\"pattern\":\"**/*.rs\"}".into()),
+                            ..Default::default()
+                        },
+                    ]),
+                    StreamDelta::Finish {
+                        reason: Some("tool_calls".into()),
+                        usage: None,
+                    },
+                ],
+                vec![
+                    StreamDelta::Content("I found the files".into()),
+                    StreamDelta::Finish {
+                        reason: Some("stop".into()),
+                        usage: None,
+                    },
+                ],
+            ])),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let ctx = Arc::new(Context::new(
+            provider.clone(),
+            SessionLog::ephemeral(),
+            builtin_registry(),
+            std::env::temp_dir(),
+        ));
+        let agent = AgentLoop::new(ctx.clone());
+        let outcome = agent.run_turn("list files", &NullObserver).await.unwrap();
+        assert!(matches!(outcome, TurnOutcome::Completed));
+        // two provider calls: original turn + post-tool continuation
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::Relaxed), 2);
+        // events: user msg, assistant msg (w/ tool_calls), tool_call fact,
+        // tool_result, assistant text
+        let msgs = ctx.sessions.lock().await.messages().await.unwrap();
+        assert!(msgs
+            .iter()
+            .any(|m| matches!(m.role, sunmao_llm::types::Role::Tool)));
+    }
+
+    #[tokio::test]
+    async fn cancel_flag_breaks_loop() {
+        // provider would return tool_calls forever; cancel must interrupt
+        let mut responses = std::collections::VecDeque::new();
+        for _ in 0..10 {
+            responses.push_back(vec![
+                StreamDelta::ToolCalls(vec![ToolCallFragment {
+                    index: 0,
+                    id: Some("c".into()),
+                    name: Some("Glob".into()),
+                    arguments: Some("{\"pattern\":\"*\"}".into()),
+                }]),
+                StreamDelta::Finish {
+                    reason: Some("tool_calls".into()),
+                    usage: None,
+                },
+            ]);
+        }
+        let provider = Arc::new(MockProvider {
+            responses: std::sync::Mutex::new(responses),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let ctx = Arc::new(Context::new(
+            provider.clone(),
+            SessionLog::ephemeral(),
+            builtin_registry(),
+            std::env::temp_dir(),
+        ));
+        ctx.cancelled
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let agent = AgentLoop::new(ctx);
+        let outcome = agent.run_turn("go", &NullObserver).await.unwrap();
+        assert!(matches!(outcome, TurnOutcome::Other(ref s) if s == "cancelled"));
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::Relaxed), 0);
     }
 }

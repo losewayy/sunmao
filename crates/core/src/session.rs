@@ -43,6 +43,9 @@ pub enum SessionEvent {
 pub struct SessionLog {
     path: PathBuf,
     file: Option<tokio::fs::File>,
+    /// in-memory buffer for ephemeral logs — the file-backed path replays
+    /// from disk, this one replays from memory; same fold either way.
+    mem: Vec<SessionEvent>,
 }
 
 impl SessionLog {
@@ -63,6 +66,7 @@ impl SessionLog {
         Ok(Self {
             path,
             file: Some(file),
+            mem: Vec::new(),
         })
     }
 
@@ -79,6 +83,7 @@ impl SessionLog {
         Ok(Self {
             path: path.to_path_buf(),
             file: Some(file),
+            mem: Vec::new(),
         })
     }
 
@@ -87,10 +92,15 @@ impl SessionLog {
         Self {
             path: PathBuf::new(),
             file: None,
+            mem: Vec::new(),
         }
     }
 
     pub async fn append(&mut self, event: &SessionEvent) -> anyhow::Result<()> {
+        if self.file.is_none() {
+            self.mem.push(event.clone());
+            return Ok(());
+        }
         if let Some(file) = &mut self.file {
             let mut line = serde_json::to_vec(event)?;
             line.push(b'\n');
@@ -104,7 +114,24 @@ impl SessionLog {
     /// Durable facts → protocol messages, in order.
     pub async fn messages(&self) -> anyhow::Result<Vec<Message>> {
         let mut out = Vec::new();
-        if !self.path.exists() {
+        if self.file.is_none() {
+            // ephemeral: fold the in-memory buffer through the same reduce
+            for ev in &self.mem {
+                match ev {
+                    SessionEvent::Message { message } => out.push(message.clone()),
+                    SessionEvent::ToolResult {
+                        call_id, output, ..
+                    } => out.push(Message::tool_result(call_id.clone(), output.clone())),
+                    SessionEvent::Compacted { summary } => {
+                        out.clear();
+                        out.push(Message::system(format!(
+                            "[context compacted]
+{summary}"
+                        )));
+                    }
+                    _ => {}
+                }
+            }
             return Ok(out);
         }
         let file = tokio::fs::File::open(&self.path).await?;

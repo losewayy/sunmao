@@ -242,6 +242,9 @@ async fn run_inner(
                 LiveEvent::Reasoning(r) => app.stream(BlockKind::Thinking, &r),
                 LiveEvent::ToolStart { name, summary } => app.tool_start(&name, &summary),
                 LiveEvent::ToolDone { name, ok, output } => app.tool_done(&name, ok, &output),
+                LiveEvent::Hook { event, detail } => {
+                    app.push_audit(&format!("{event} — {detail}"));
+                }
                 LiveEvent::TurnEnd { outcome } => {
                     app.close_turn();
                     if outcome != TurnOutcome::Completed {

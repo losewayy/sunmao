@@ -38,6 +38,13 @@ pub enum LiveEvent {
         ok: bool,
         output: String,
     },
+    /// A hook changed the turn — input rewrite, veto, injected context, or a
+    /// session-scoped approval grant. Mirrors `SessionEvent::Hook` so the
+    /// audit spine is *visible* live, not just durable.
+    Hook {
+        event: String,
+        detail: String,
+    },
     TurnEnd {
         outcome: TurnOutcome,
     },
@@ -203,6 +210,7 @@ impl AgentLoop {
         tool: &str,
         specifier: &str,
         hook: Option<crate::hooks::HookPermission>,
+        observer: &dyn Observer,
     ) -> Result<(), String> {
         use crate::hooks::HookPermission as H;
         use crate::permissions::Verdict;
@@ -220,34 +228,51 @@ impl AgentLoop {
             return Ok(());
         }
         if self.ctx.permissions.check(tool, specifier) == Verdict::Ask {
-            return self.ask(tool, specifier, "matched ask rule").await;
+            return self
+                .ask(tool, specifier, "matched ask rule", observer)
+                .await;
         }
         if let Some(H::Ask) = hook {
-            return self.ask(tool, specifier, "hook requested approval").await;
+            return self
+                .ask(tool, specifier, "hook requested approval", observer)
+                .await;
         }
         if let Some(H::Allow) = hook {
             return Ok(());
         }
         // default: the risky-pattern classifier (Bash-shaped patterns today)
         if let Some(why) = crate::approval::classify(specifier) {
-            return self.ask(tool, specifier, why).await;
+            return self.ask(tool, specifier, why, observer).await;
         }
         Ok(())
     }
 
     /// One approval prompt → verdict. `Session` is recorded in
     /// `session_grants` and audited as a durable `Hook` fact.
-    async fn ask(&self, tool: &str, specifier: &str, why: &str) -> Result<(), String> {
+    async fn ask(
+        &self,
+        tool: &str,
+        specifier: &str,
+        why: &str,
+        observer: &dyn Observer,
+    ) -> Result<(), String> {
         match self.ctx.approval.approve(tool, specifier, why).await {
             crate::approval::Approval::Session => {
                 self.ctx.grant_session(tool, specifier);
-                let mut log = self.ctx.sessions.lock().await;
-                let _ = log
-                    .append(&crate::SessionEvent::Hook {
-                        event: "approval.session".into(),
-                        detail: format!("{tool}: {specifier}"),
-                    })
-                    .await;
+                let detail = format!("{tool}: {specifier}");
+                {
+                    let mut log = self.ctx.sessions.lock().await;
+                    let _ = log
+                        .append(&crate::SessionEvent::Hook {
+                            event: "approval.session".into(),
+                            detail: detail.clone(),
+                        })
+                        .await;
+                }
+                observer.on_event(&LiveEvent::Hook {
+                    event: "approval.session".into(),
+                    detail,
+                });
                 Ok(())
             }
             crate::approval::Approval::Once => Ok(()),
@@ -348,6 +373,10 @@ impl AgentLoop {
             )
             .await;
         if let Some(reason) = prompt_outcome.block_reason {
+            observer.on_event(&LiveEvent::Hook {
+                event: "UserPromptSubmit veto".into(),
+                detail: reason.clone(),
+            });
             return Ok(TurnOutcome::Other(format!("blocked by hook: {reason}")));
         }
         {
@@ -357,6 +386,10 @@ impl AgentLoop {
             })
             .await?;
             for extra in prompt_outcome.extra_context {
+                observer.on_event(&LiveEvent::Hook {
+                    event: "hook injected context".into(),
+                    detail: extra.clone(),
+                });
                 log.append(&SessionEvent::Message {
                     message: Message::user(format!("[hook context] {extra}")),
                 })
@@ -499,20 +532,26 @@ impl AgentLoop {
                     .await;
 
                 // Apply the rewrite before logging ToolCall: the log records
-                // what actually ran; the rewrite itself is a durable Hook fact.
+                // what actually ran; the rewrite itself is a durable Hook fact
+                // — and a live one: audit must be visible, not just durable.
                 if let Some(updated) = pre.updated_input {
+                    let detail = format!(
+                        "{}: {} → {}",
+                        call.function.name, call.function.arguments, updated
+                    );
                     {
                         let mut log = self.ctx.sessions.lock().await;
                         let _ = log
                             .append(&SessionEvent::Hook {
                                 event: "PreToolUse.updatedInput".into(),
-                                detail: format!(
-                                    "{}: {} → {}",
-                                    call.function.name, call.function.arguments, updated
-                                ),
+                                detail: detail.clone(),
                             })
                             .await;
                     }
+                    observer.on_event(&LiveEvent::Hook {
+                        event: "hook rewrite".into(),
+                        detail,
+                    });
                     args_value = updated;
                 }
 
@@ -539,7 +578,12 @@ impl AgentLoop {
                     // risky-pattern classifier as the default prompt.
                     let specifier = specifier_for(&call.function.name, &args_value);
                     match self
-                        .gate_call(&call.function.name, &specifier, pre.permission_decision)
+                        .gate_call(
+                            &call.function.name,
+                            &specifier,
+                            pre.permission_decision,
+                            observer,
+                        )
                         .await
                     {
                         Ok(()) => {

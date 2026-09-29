@@ -113,6 +113,13 @@ impl Observer for StdoutObserver {
                 let mark = if *ok { "✓" } else { "✗" };
                 println!("\x1b[36m[tool {name} {mark}]\x1b[0m");
             }
+            LiveEvent::Hook { event, detail } => {
+                if *in_r {
+                    eprintln!("\x1b[0m");
+                    *in_r = false;
+                }
+                println!("\x1b[33m[⚙ {event} — {detail}]\x1b[0m");
+            }
             LiveEvent::TurnEnd { outcome } => {
                 if *in_r {
                     eprintln!("\x1b[0m");

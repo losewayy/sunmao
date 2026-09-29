@@ -84,10 +84,35 @@ impl OaiClient {
     }
 }
 
+/// Retryable provider failures: transport errors (connect/TLS/timeout) and
+/// 429/5xx status. Errors once deltas have flowed are fatal — we can't replay.
+fn retryable(e: &anyhow::Error) -> bool {
+    let msg = e.to_string();
+    msg.contains("provider request failed")
+        || msg.starts_with("provider 429")
+        || (msg.starts_with("provider 5") && msg.len() > "provider 5xx".len())
+}
+
 #[async_trait::async_trait]
 impl ProviderAdapter for OaiClient {
     async fn stream(&self, req: ChatRequest<'_>) -> anyhow::Result<DeltaStream> {
-        self.stream_inner(&req).await
+        let mut last_err = None;
+        for attempt in 0..3 {
+            match self.stream_inner(&req).await {
+                Ok(s) => return Ok(s),
+                Err(e) if retryable(&e) && attempt < 2 => {
+                    tracing::warn!(
+                        "provider request failed (attempt {}): {e:#}; retrying",
+                        attempt + 1
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(300 * (1 << attempt)))
+                        .await;
+                    last_err = Some(e);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last_err.unwrap())
     }
 }
 

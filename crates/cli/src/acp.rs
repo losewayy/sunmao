@@ -306,6 +306,22 @@ pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> 
         .on_receive_request(
             {
                 let agent = agent.clone();
+                async move |req: v2::CloseSessionRequest,
+                            responder: Responder<v2::CloseSessionResponse>,
+                            _cx: V2ConnectionTo<Client>| {
+                    agent
+                        .sessions
+                        .lock()
+                        .unwrap()
+                        .remove(&req.session_id.to_string());
+                    responder.respond(v2::CloseSessionResponse::new())
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = agent.clone();
                 async move |req: v2::PromptRequest,
                             responder: Responder<v2::PromptResponse>,
                             cx: V2ConnectionTo<Client>| {

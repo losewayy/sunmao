@@ -63,6 +63,9 @@ struct Cli {
     /// Resume an existing session log (id like `s-123` or a .jsonl path).
     #[arg(long)]
     resume: Option<String>,
+    /// Fork a session: copy its log to a new id and resume the copy.
+    #[arg(long)]
+    fork: Option<String>,
     /// One-shot mode: run a single prompt and exit (scriptable).
     #[arg(long, short = 'p')]
     print: Option<String>,
@@ -159,7 +162,23 @@ async fn main() -> anyhow::Result<()> {
         )),
         _ => Arc::new(OaiClient::new(&cli.base_url, &cli.api_key, &cli.model)),
     };
-    let (sessions, resumed) = match &cli.resume {
+    // --fork: copy the source log to a fresh id, then resume the copy
+    let mut resume_target = cli.resume.clone();
+    if let Some(src) = &cli.fork {
+        let p = PathBuf::from(src);
+        let src_path = if p.exists() {
+            p
+        } else {
+            cli.session_dir.join(format!("{src}.jsonl"))
+        };
+        let new_id = session_id();
+        let dst = cli.session_dir.join(format!("{new_id}.jsonl"));
+        std::fs::copy(&src_path, &dst)
+            .map_err(|e| anyhow::anyhow!("fork {}: {e}", src_path.display()))?;
+        eprintln!("forked {src} -> {new_id}");
+        resume_target = Some(dst.to_string_lossy().to_string());
+    }
+    let (sessions, resumed) = match &resume_target {
         Some(r) => {
             let p = PathBuf::from(r);
             let path = if p.exists() {

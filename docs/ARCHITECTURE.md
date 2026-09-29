@@ -97,6 +97,11 @@ Append-only JSONL; the visible transcript is a pure fold over them. `messages()`
 implements that fold — `Compacted` clears and re-seeds; `ToolResult` becomes
 `Role::Tool` messages; `Usage` is accounting, not content.
 
+The *transient* vocabulary going the other way is `LiveEvent` (`Content`,
+`Reasoning`, `ToolStart{name, summary}`, `ToolDone{name, ok, output}`,
+`TurnEnd`) — what `Observer` sinks see live. It never persists; frontends
+that want full tool output read the session log.
+
 ## Frontends
 
 ```text

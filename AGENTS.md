@@ -15,7 +15,7 @@ crates/core/   Context seam assembly, AgentLoop, session log (event-sourced
 crates/cli/    `sunmao` binary — REPL / -p / TUI / ACP / --dataflow / doctor
 docs/          SPEC.md (design contract), ARCHITECTURE.md (current state),
                CODE-ARCHITECTURE.md (shape rules), CONFIG.md, PROTOCOLS.md,
-               TESTING.md
+               TESTING.md, HANDOFF.md (state delta for the next agent)
 examples/      starter hooks/mcp/permissions/agents/commands files
 ```
 
@@ -23,7 +23,7 @@ examples/      starter hooks/mcp/permissions/agents/commands files
 
 ```bash
 cargo build                          # dev build
-cargo test --workspace               # 20+ unit tests incl. 4 full loop tests
+cargo test --workspace               # 40 unit tests incl. 4 full loop tests
 cargo fmt --all                      # before every commit
 cargo clippy --workspace --all-targets -- -D warnings   # CI's strict gate —
                                        # must be zero warnings before push
@@ -108,7 +108,7 @@ live in [`docs/CODE-ARCHITECTURE.md`](docs/CODE-ARCHITECTURE.md). Follow them.
 | Anthropic dialect | `crates/llm/src/anthropic.rs` |
 | fragment reassembly | `crates/llm/src/assemble.rs` |
 | REPL/flags | `crates/cli/src/main.rs` |
-| TUI (CJK-native) | `crates/cli/src/tui.rs` |
+| TUI (CJK-native) | `crates/cli/src/tui/` — `mod` event loop + focus, `app` state, `blocks` transcript, `render` draw, `md` markdown, `theme` palette, `slash` commands |
 | ACP server | `crates/cli/src/acp.rs` |
 | dataflow report | `crates/cli/src/dataflow.rs` |
 | env self-check | `crates/cli/src/doctor.rs` |

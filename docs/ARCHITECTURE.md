@@ -44,7 +44,14 @@ stdin/TUI/ACP
 | `ToolRegistry` | concrete map | built-ins + boxed MCP tools + `Task` share one dispatch table |
 | `SessionLog` | concrete | file vs ephemeral are the same fold — replay is the test |
 | `Hooks` | concrete dispatcher | one code path, any number of `command` handlers |
+| `PromptAssembler` | concrete | one layering order — REPL/TUI/ACP/Task can't drift |
 | process boundary | MCP child / ACP peer / hook proc / rg | everything that can fail alone is its own process |
+
+The **cold-plug principle** (CODE-ARCHITECTURE rule 6): replaceable units
+swap at the file/config layer, effective at process start — never hot.
+Prompt sections are named files (`assets/prompt/*.md` ← `~/.sunmao/` ←
+`.sunmao/`); same-named files replace earlier sections. The risk table is
+a text asset too (`assets/risky-patterns.txt`).
 
 ## Native tool surface (10)
 
@@ -67,14 +74,17 @@ task.rs    Task — nested AgentLoop, depth-capped at 2, own session log,
 ├── mcp.json        ├── settings.local    └── skills/
 ├── permissions.json├── commands/*.md     (same three dirs read unmodified)
 ├── plugin.json     ├── agents/*.md
-├── commands/       ├── skills/*/SKILL.md
-├── skills/         └── plugins/*/        (plugin dirs: commands/skills/agents scanned;
-│                                             manifest fields merge only from the two
-│                                             top-level plugin.json files)
-├── agents/
+├── prompt.md       ├── skills/*/SKILL.md
+├── prompt.d/*.md   └── plugins/*/        (plugin dirs: commands/skills/agents scanned;
+├── skills/                               manifest fields merge only from the two
+├── agents/                               top-level plugin.json files)
 └── plugin/         (the "this project is a plugin" dir)
     └── hooks|commands|skills|agents/
 ```
+
+`prompt.md` + `prompt.d/*.md` also load from `~/.sunmao/` (user layer, before
+the project layer). Prompt sections order: built-in assets → user → project
+→ project context; a file named like a built-in section replaces it.
 
 ## Events — the audit-native spine
 

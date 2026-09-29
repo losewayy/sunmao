@@ -9,6 +9,21 @@ permissions, approvals across three frontends, MCP client (stdio + HTTP),
 ACP v2 server, event-sourced sessions with resume/fork/dataflow, CJK-native
 TUI.
 
+**core (latest)**
+- `shell/preflight`: Bash commands are predicted by the `spawnfate` engine
+  (`Producer::WinSpawn` — the which-resolve + CreateProcess path
+  deno_task_shell actually takes) before they run; advisories ride in the
+  tool result so the model can self-correct. Advisory only, never blocks
+- `PromptAssembler`: the system prompt is assembled from named section
+  files — built-in `assets/prompt/*.md` ← `~/.sunmao/prompt{,.d}` ←
+  `.sunmao/prompt{,.d}` → project context → `--system` (complete override).
+  Same-named files replace built-in sections (cold-plug). Fixes a real
+  divergence: ACP previously carried its own hardcoded prompt without
+  project context — all frontends plus `Task` now share one path
+- risk table moved to `assets/risky-patterns.txt` — policy is a data file
+- `assets/` convention: kernel-owned prose/policy ships as files via
+  `include_str!`, never string literals in `.rs` (CODE-ARCHITECTURE rule 6)
+
 **llm**
 - OAI dialect: hand-rolled SSE, tool_calls fragment reassembly, reasoning
   channel, transient retry (connect/429/5xx, 300/600ms backoff)

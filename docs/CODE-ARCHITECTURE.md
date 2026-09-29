@@ -74,7 +74,14 @@ crates/core    the kernel. Owns state, dispatch, policy. May not know
 crates/cli     every frontend + flag plumbing. Thin by design — heavy logic
                belongs in core.
                ├── main.rs       flags, dispatch, REPL, Observer/Approver impls
-               ├── tui.rs        ratatui TUI (CJK-native)
+               ├── tui/          ratatui TUI (CJK-native)
+               │   ├── mod.rs    event loop, driver task, focus machine
+               │   ├── app.rs    App state — blocks, composer, approval, menu
+               │   ├── blocks.rs transcript blocks (band/panel/fold/copy)
+               │   ├── render.rs draw — transcript/menu/card/input/status
+               │   ├── md.rs     pulldown-cmark → styled lines
+               │   ├── theme.rs  semantic palette + legacy-glyph fallbacks
+               │   └── slash.rs  command discovery/resolution
                ├── acp.rs        ACP v2 server
                ├── dataflow.rs   session-log → audit report
                └── doctor.rs     env self-check

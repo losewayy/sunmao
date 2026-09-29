@@ -339,7 +339,7 @@ mod tests {
     use crate::session::SessionLog;
     use crate::tool::builtin_registry;
     use futures_util::stream;
-    use sunmao_llm::types::{Message, Usage};
+    use sunmao_llm::types::Usage;
     use sunmao_llm::{ChatRequest, DeltaStream, ProviderAdapter, StreamDelta, ToolCallFragment};
 
     /// Scripted provider: each queued response is a Vec of deltas replayed in

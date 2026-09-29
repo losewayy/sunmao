@@ -167,7 +167,8 @@ async fn run_inner(
                     Submit::Compact => {
                         let obs = ChanObserver(tx_msg.clone());
                         let note = match agent.compact(&obs, "manual").await {
-                            Ok(()) => "[compacted]".to_string(),
+                            Ok(s) if s.is_empty() => "[compacted: nothing to fold]".to_string(),
+                            Ok(s) => format!("[compacted]\n{s}"),
                             Err(e) => format!("[compact failed] {e:#}"),
                         };
                         let _ = tx_msg.send(Msg::Note(note));

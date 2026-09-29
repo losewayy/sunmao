@@ -13,8 +13,9 @@ crates/core/   Context seam assembly, AgentLoop, session log (event-sourced
                JSONL), tool registry + 10 native tools, hooks dispatcher,
                permissions, approval gate, MCP client, sub-agent Task
 crates/cli/    `sunmao` binary — REPL / -p / TUI / ACP / --dataflow / doctor
-docs/          SPEC.md (design contract), ARCHITECTURE.md, CONFIG.md,
-               PROTOCOLS.md, TESTING.md
+docs/          SPEC.md (design contract), ARCHITECTURE.md (current state),
+               CODE-ARCHITECTURE.md (shape rules), CONFIG.md, PROTOCOLS.md,
+               TESTING.md
 examples/      starter hooks/mcp/permissions/agents/commands files
 ```
 
@@ -57,29 +58,10 @@ CI on every push to main = fmt check + clippy -D warnings + workspace test on
 - **Tool surface is a dialect too** — `declarations()` shapes go to the
   model verbatim; a bad JSON schema = the tool doesn't exist to the LLM.
 
-## Code discipline (SPEC §9 — the load-bearing rules)
+## Code shape
 
-The short version for day-to-day work:
-
-- **A seam earns its existence** — no trait/protocol until a second real
-  implementation wants it. `ProviderAdapter` exists because Anthropic shipped;
-  `SessionLog` is still concrete because nothing else needed the seam.
-- **One owner per fact** — session facts live in the log, tools live in the
-  registry; don't keep a second copy "for speed".
-- **Deletion is the cheapest maintenance** — dead paths get deleted, not
-  commented out.
-- **Dependency budget** — before adding a crate ask "could we write this in
-  ~200 lines?" Protocol pieces are our training ground; infra (tokio, ratatui,
-  rmcp, deno_task_shell, tree-sitter) is borrowed.
-- **File-size honesty** — a file past ~600 lines is asking to be split (we did
-  it to `tool.rs` → `tool/`). `cli/main.rs` is the current hot spot: it mixes
-  flag parsing, REPL, ecosystem loaders, and the two Observer/Approver impls —
-  if you're in there anyway, split loaders into `cli/loaders.rs` and frontends
-  into `cli/frontends.rs`.
-- **Docs say what exists** — `docs/ARCHITECTURE.md` is current-state truth,
-  `docs/SPEC.md` is intent. When they disagree, fix whichever is wrong.
-
-Full rationale: `docs/SPEC.md` §9–10.
+Structure rules (layering, file-size limits, no-history-rewrite, less-is-more)
+live in [`docs/CODE-ARCHITECTURE.md`](docs/CODE-ARCHITECTURE.md). Follow them.
 
 ## Commit conventions
 

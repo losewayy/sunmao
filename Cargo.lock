@@ -2304,6 +2304,7 @@ dependencies = [
  "crossterm",
  "futures-util",
  "ratatui",
+ "serde_json",
  "sunmao-core",
  "sunmao-llm",
  "tokio",

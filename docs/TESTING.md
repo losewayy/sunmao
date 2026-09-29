@@ -23,6 +23,8 @@ Current coverage:
 | `core::permissions` | deny>ask>allow>default matrix, glob specifiers |
 | `core::approval` | risk classifier catches destructive patterns |
 | `core::session` | event fold: messages, tool results, compaction boundary |
+| `core::prompt` | section layering: built-ins order, `--system` complete, `prompt.d` replace-by-name, AGENTS.md merge, subagent default/override |
+| `core::preflight` | AST extraction (pipelines, booleans, dynamic-skip), fatal-note advisory (spawnfate) |
 
 The `MockProvider` in `agent::tests` is the pattern to reuse: `ProviderAdapter`
 is a trait, so scripted `Vec<StreamDelta>` queues drive the whole agent loop
@@ -51,7 +53,9 @@ Verified live as of v0.2:
 | TUI | CJK input renders; approval prompt suspends on y/n |
 | Task | `subagent_type` loaded `.claude/agents/*.md`, independent count returned |
 | `--dataflow` | JSON report incl. token totals from `Usage` events |
-| `--doctor` | provider probe + rg + session dir + config inventory |
+| `--doctor` | provider probe + rg + session dir + config inventory + prompt assembly preview |
+| `shell/preflight` | `-p` ran `totallynotreal-xyz`: advisory predicted FileNotFound (936 candidates), shell answered 127 — model reported both honestly |
+| PromptAssembler | `-p` echoed the assembled first line verbatim; `--doctor --system X` shows the complete override |
 
 ## Adding a feature — the checklist
 

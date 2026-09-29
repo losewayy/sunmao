@@ -20,6 +20,21 @@ Companion to `AGENTS.md` (operational invariants) — this file owns *shape*,
    not know sessions exist; `core` must not know TUI exists.
 5. **Seams earn existence.** A trait gets introduced only when a second real
    implementation needs it. Concrete types until then.
+6. **Cold-plug, not hot-plug.** Adopted from dsh: everything that *can* be a
+   replaceable unit *should* be one — but swaps happen at the **file/config
+   layer, effective at process start**, never hot-reloaded mid-session.
+   Product semantics (prompt text, policy tables) are **data files, never
+   string literals in `.rs`**: kernel-owned text lives under
+   `crates/*/assets/` and ships via `include_str!`; user- and project-level
+   files replace or extend it by name (`prompt.d/identity.md` replaces the
+   `identity` section). The same-named-file replacement rule IS the
+   cold-plug mechanism. When you add prose the user might want to change,
+   ask "why is this a string in code?" — a hardcoded prompt or policy table
+   is a seam violation even though it compiles.
+   Counter-examples that must stay in code: API surfaces (`Tool::decl`
+   schemas/descriptions ARE the wire dialect), private-API mirrors
+   (`DENO_BUILTINS` shadows upstream's crate-private list — a comment says
+   so), and spec data tied to verifier code.
 
 ## Layer map
 
@@ -43,6 +58,10 @@ crates/core    the kernel. Owns state, dispatch, policy. May not know
                ├── mcp.rs        MCP client (stdio + streamable-HTTP)
                ├── agents.rs     named sub-agent definitions loader
                ├── task.rs       Task tool — nested AgentLoop, depth cap
+               ├── preflight.rs  shell/preflight — spawnfate advisory pass
+               ├── prompt.rs     PromptAssembler — sectioned prompt layering
+               ├── assets/       kernel-owned data files (prompt/*.md,
+               │               risky-patterns.txt) — include_str!, not literals
                ├── web.rs        fetch → readable text
                └── tool/         the native tool surface
                    ├── mod.rs    ToolResult, ToolImpl, ToolRegistry, builtin_registry

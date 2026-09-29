@@ -57,6 +57,10 @@ CI on every push to main = fmt check + clippy -D warnings + workspace test on
   next turn starts clean.
 - **Tool surface is a dialect too** — `declarations()` shapes go to the
   model verbatim; a bad JSON schema = the tool doesn't exist to the LLM.
+- **Product semantics are files, not literals** — prompt sections live in
+  `assets/prompt/*.md`, policy tables in `assets/*.txt` (cold-plug rule 6 in
+  CODE-ARCHITECTURE.md). Never embed new prose/policy in `.rs` string
+  literals.
 
 ## Code shape
 
@@ -92,6 +96,9 @@ live in [`docs/CODE-ARCHITECTURE.md`](docs/CODE-ARCHITECTURE.md). Follow them.
 | session event fold | `crates/core/src/session.rs` |
 | permission rules | `crates/core/src/permissions.rs` |
 | approval seam | `crates/core/src/approval.rs` |
+| prompt assembly | `crates/core/src/prompt.rs` + `assets/prompt/` |
+| shell preflight | `crates/core/src/preflight.rs` (spawnfate) |
+| risk pattern table | `crates/core/assets/risky-patterns.txt` |
 | Claude-contract hooks | `crates/core/src/hooks.rs` |
 | MCP client (stdio + HTTP) | `crates/core/src/mcp.rs` |
 | tools | `crates/core/src/tool/{mod,fs,shell,search,artifact,webmod}.rs` |

@@ -35,6 +35,15 @@ architecture: components joined by seams, every seam a contract.
 - **Safety at three layers** — Read-before-Write gate (no blind overwrites),
   declarative `permissions` rules (`deny`/`ask`/`allow` globs), and an
   interactive approval gate for risky commands (prompts in REPL and TUI)
+- **`shell/preflight`** — every Bash command is predicted by the
+  [`spawnfate`](https://github.com/losewayy/spawnfate) engine before it
+  runs (which-resolve + CreateProcess simulation); doomed or mangled
+  commands come back with an advisory the model can act on
+- **Cold-plug prompt assembly** — the system prompt is named section files,
+  not code: `identity` / `tool-guidance` / `shell-dialect` ←
+  `~/.sunmao/prompt{,.d}` ← `.sunmao/prompt{,.d}` → project context →
+  `--system`. Drop a file named `identity.md` into `prompt.d/` to replace a
+  section — no rebuild, no flag soup
 - **Hooks** — lifecycle dispatcher speaking the dominant hook contract
   (JSON stdin/stdout, matchers, exit-2 veto). Loads `.sunmao/hooks.json`,
   `.claude/settings.json`, `.claude/settings.local.json`,
@@ -81,6 +90,8 @@ sunmao --acp                        # ACP server (stdio)
 ├── mcp.json             # {"mcpServers": {name: {command, args, env}}}
 ├── permissions.json     # {"permissions": {allow/ask/deny: ["Tool(glob)"]}}
 ├── plugin.json          # bundle manifest (contributes hooks + mcpServers)
+├── prompt.md            # extra system-prompt section
+├── prompt.d/*.md        # section files — same name as a built-in section replaces it
 ├── commands/*.md        # slash commands
 ├── skills/*/SKILL.md    # loadable skill bodies
 ├── agents/*.md          # named sub-agent definitions (Task.subagent_type)

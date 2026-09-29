@@ -222,9 +222,10 @@ async fn main() -> anyhow::Result<()> {
         .fire(
             sunmao_core::hooks::HookEvent::SessionStart,
             &ctx.cwd,
-            None,
-            None,
-            None,
+            &sunmao_core::hooks::HookInput {
+                source: Some(if resumed { "resume" } else { "startup" }),
+                ..Default::default()
+            },
         )
         .await;
 
@@ -286,7 +287,7 @@ async fn main() -> anyhow::Result<()> {
             let name = cmd_line.split_whitespace().next().unwrap_or("");
             let rest = cmd_line[name.len()..].trim();
             if line == "/compact" {
-                match agent.compact(&observer).await {
+                match agent.compact(&observer, "manual").await {
                     Ok(()) => println!("[compacted]"),
                     Err(e) => eprintln!("[compact failed] {e:#}"),
                 }
@@ -319,9 +320,7 @@ async fn main() -> anyhow::Result<()> {
         .fire(
             sunmao_core::hooks::HookEvent::SessionEnd,
             &ctx.cwd,
-            None,
-            None,
-            None,
+            &sunmao_core::hooks::HookInput::default(),
         )
         .await;
     Ok(())

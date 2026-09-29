@@ -39,6 +39,19 @@ pub enum SessionEvent {
     },
     /// Token usage for one LLM request — the accounting side of audit.
     Usage { usage: sunmao_llm::types::Usage },
+    /// A hook-induced fact (input rewrite, veto, injected context) — durable
+    /// audit evidence that stays OUT of the model-facing message fold:
+    /// rewrites must be transparent to the model, visible to the auditor.
+    Hook { event: String, detail: String },
+}
+
+/// Where a session's event log lives — `<cwd>/.sunmao/sessions/<id>.jsonl`.
+/// Shared by `SessionLog::open` callers and the hooks engine, which reports
+/// it as `transcript_path` in the hook payload dialect.
+pub fn session_log_path(cwd: &Path, session_id: &str) -> PathBuf {
+    cwd.join(".sunmao")
+        .join("sessions")
+        .join(format!("{session_id}.jsonl"))
 }
 
 /// Append-only writer + replay reader for one session directory.

@@ -113,9 +113,10 @@ impl ToolImpl for TaskTool {
             .fire(
                 crate::hooks::HookEvent::SubagentStart,
                 &sub_ctx.cwd,
-                None,
-                Some(&json!({"prompt": a.prompt})),
-                None,
+                &crate::hooks::HookInput {
+                    tool_input: Some(&json!({"prompt": a.prompt})),
+                    ..Default::default()
+                },
             )
             .await;
         let agent = AgentLoop::new(sub_ctx.clone()).with_max_iterations(24);
@@ -128,9 +129,7 @@ impl ToolImpl for TaskTool {
             .fire(
                 crate::hooks::HookEvent::SubagentStop,
                 &sub_ctx.cwd,
-                None,
-                None,
-                None,
+                &crate::hooks::HookInput::default(),
             )
             .await;
         let text = obs.text.lock().unwrap().clone();

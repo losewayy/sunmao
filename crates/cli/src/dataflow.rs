@@ -31,7 +31,8 @@ pub async fn report(session_path: &Path) -> anyhow::Result<Value> {
             SessionEvent::Compacted { .. } => compactions += 1,
             SessionEvent::Started { .. }
             | SessionEvent::ToolCall { .. }
-            | SessionEvent::Artifact { .. } => {}
+            | SessionEvent::Artifact { .. }
+            | SessionEvent::Hook { .. } => {}
             SessionEvent::Usage { usage } => {
                 total_prompt += usage.prompt_tokens;
                 total_completion += usage.completion_tokens;

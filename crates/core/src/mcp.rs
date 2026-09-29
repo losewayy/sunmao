@@ -8,7 +8,7 @@
 //! view unambiguous and the audit trail attributable.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -36,6 +36,21 @@ struct ServerSpec {
     env: HashMap<String, String>,
 }
 
+impl ServerSpec {
+    /// Expand `${CLAUDE_PLUGIN_ROOT}` in command/args/env — plugin manifests
+    /// use it to address files inside their own bundle.
+    fn expand_plugin_root(&mut self, root: &str) {
+        if let Some(c) = &mut self.command {
+            *c = c.replace("${CLAUDE_PLUGIN_ROOT}", root);
+        }
+        for a in &mut self.args {
+            *a = a.replace("${CLAUDE_PLUGIN_ROOT}", root);
+        }
+        for v in self.env.values_mut() {
+            *v = v.replace("${CLAUDE_PLUGIN_ROOT}", root);
+        }
+    }
+}
 type ClientHandle = Arc<RunningService<RoleClient, ()>>;
 
 /// One MCP server tool wrapped as a native [`ToolImpl`].
@@ -97,14 +112,35 @@ impl ToolImpl for McpTool {
 /// Connect to every configured server, collect tools. Failures degrade to a
 /// warning — one bad server must not brick the session.
 pub async fn connect_all(cwd: &Path) -> Vec<Box<dyn ToolImpl>> {
-    // merge mcpServers from .sunmao/mcp.json + plugin manifests —
-    // the plugin.json bundle format contributes MCP servers the same way
+    // merge mcpServers from .sunmao/mcp.json + plugin manifests — the
+    // plugin.json bundle format contributes MCP servers the same way.
+    // `${CLAUDE_PLUGIN_ROOT}` inside a manifest's command/args/env expands
+    // to the plugin's own directory.
     let mut servers: std::collections::HashMap<String, ServerSpec> = Default::default();
+    let mut manifests: Vec<(PathBuf, PathBuf)> = Vec::new(); // (manifest, plugin_root)
     for p in [
-        cwd.join(".sunmao").join("mcp.json"),
         cwd.join(".sunmao").join("plugin.json"),
         cwd.join(".claude-plugin").join("plugin.json"),
     ] {
+        if let Some(root) = p.parent().map(|d| d.to_path_buf()) {
+            manifests.push((p, root));
+        }
+    }
+    for base in [
+        cwd.join(".sunmao").join("plugins"),
+        cwd.join(".claude").join("plugins"),
+    ] {
+        if let Ok(entries) = std::fs::read_dir(&base) {
+            for entry in entries.flatten() {
+                let root = entry.path();
+                let manifest = root.join("plugin.json");
+                if root.is_dir() && manifest.exists() {
+                    manifests.push((manifest, root));
+                }
+            }
+        }
+    }
+    for (p, root) in manifests {
         let Ok(text) = std::fs::read_to_string(&p) else {
             continue;
         };
@@ -112,9 +148,13 @@ pub async fn connect_all(cwd: &Path) -> Vec<Box<dyn ToolImpl>> {
             tracing::warn!("bad {}", p.display());
             continue;
         };
-        if let Some(m) = v.get("mcpServers").and_then(|m| {
+        if let Some(mut m) = v.get("mcpServers").and_then(|m| {
             serde_json::from_value::<std::collections::HashMap<String, ServerSpec>>(m.clone()).ok()
         }) {
+            let root = root.display().to_string().replace("\\\\?\\", "");
+            for spec in m.values_mut() {
+                spec.expand_plugin_root(&root);
+            }
             servers.extend(m);
         }
     }

@@ -3052,6 +3052,7 @@ dependencies = [
  "deno_task_shell",
  "futures-util",
  "glob",
+ "regex",
  "reqwest",
  "rmcp",
  "serde",

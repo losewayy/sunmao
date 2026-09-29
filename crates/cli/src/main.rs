@@ -98,14 +98,18 @@ impl Observer for StdoutObserver {
                 print!("{c}");
                 std::io::stdout().flush().ok();
             }
-            LiveEvent::ToolStart { name } => {
+            LiveEvent::ToolStart { name, summary } => {
                 if *in_r {
                     eprintln!("\x1b[0m");
                     *in_r = false;
                 }
-                println!("\n\x1b[36m[tool → {name}]\x1b[0m");
+                if summary.is_empty() {
+                    println!("\n\x1b[36m[tool → {name}]\x1b[0m");
+                } else {
+                    println!("\n\x1b[36m[tool → {name} · {summary}]\x1b[0m");
+                }
             }
-            LiveEvent::ToolDone { name, ok } => {
+            LiveEvent::ToolDone { name, ok, .. } => {
                 let mark = if *ok { "✓" } else { "✗" };
                 println!("\x1b[36m[tool {name} {mark}]\x1b[0m");
             }

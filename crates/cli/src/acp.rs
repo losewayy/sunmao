@@ -60,7 +60,7 @@ impl Observer for AcpObserver {
             LiveEvent::Reasoning(r) => self.send(v2::SessionUpdate::AgentThoughtChunk(
                 v2::ContentChunk::new(r.clone().into(), self.next_id("thought")),
             )),
-            LiveEvent::ToolStart { name } => self.send(v2::SessionUpdate::ToolCallUpdate(
+            LiveEvent::ToolStart { name, .. } => self.send(v2::SessionUpdate::ToolCallUpdate(
                 v2::ToolCallUpdate::new(v2::ToolCallId::new(name.clone())),
             )),
             LiveEvent::ToolDone { .. } | LiveEvent::TurnEnd { .. } => {}

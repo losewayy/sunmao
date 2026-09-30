@@ -33,6 +33,10 @@ pub struct SlashMenu {
     /// the fragment that produced `matches` (drives the Search row)
     pub fragment: String,
     pub kind: MenuKind,
+    /// Sessions kind only: which builtin opened the picker — `resume`,
+    /// `fork`, or `sessions` (alias of resume). Decides what Enter
+    /// submits; the session row is the arg, not the command.
+    pub cmd: Option<String>,
 }
 
 /// Session ids under `<cwd>/.sunmao/sessions`, newest first (mtime),
@@ -73,7 +77,7 @@ impl App {
         if let Some(frag) = rest.strip_prefix("model ") {
             return Some((MenuKind::Args, frag));
         }
-        for name in ["resume ", "sessions "] {
+        for name in ["resume ", "sessions ", "fork "] {
             if let Some(frag) = rest.strip_prefix(name) {
                 return Some((MenuKind::Sessions, frag));
             }
@@ -231,6 +235,7 @@ impl App {
                     selected: sel,
                     fragment: frag,
                     kind: MenuKind::Path,
+                    cmd: None,
                 });
             }
             return;
@@ -238,6 +243,14 @@ impl App {
         match self.slash_fragment() {
             Some((MenuKind::Sessions, frag)) => {
                 let frag = frag.to_string();
+                // which builtin opened the picker — sessions aliases resume
+                let cmd = self
+                    .input
+                    .strip_prefix('/')
+                    .and_then(|r| r.split_whitespace().next())
+                    .map(|c| if c == "sessions" { "resume" } else { c })
+                    .unwrap_or("resume")
+                    .to_string();
                 if self
                     .slash_menu
                     .as_ref()
@@ -264,6 +277,7 @@ impl App {
                         selected: sel,
                         fragment: frag,
                         kind: MenuKind::Sessions,
+                        cmd: Some(cmd),
                     });
                 }
             }
@@ -289,6 +303,7 @@ impl App {
                         selected: sel,
                         fragment: frag.to_string(),
                         kind,
+                        cmd: None,
                     });
                 }
             }

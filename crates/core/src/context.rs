@@ -36,12 +36,10 @@ pub struct Context {
     pub hooks: HookEngine,
     /// Working directory tools resolve paths against.
     pub cwd: PathBuf,
-    /// The session's id — the log's file stem ("session" for ephemeral
-    /// logs). Hook payloads (`session_id`, `transcript_path`) and extension
-    /// handshakes read it; a context-mode-style hook that Reads the
-    /// transcript gets a file that exists, not a literal placeholder.
-    /// Captured at Context build — /resume swaps the log, not this field.
-    pub session_id: String,
+    /// The live session's id — file stem of the active log. RwLock so
+    /// `swap_session` (TUI `/resume`, `/fork`) can repoint it under a
+    /// shared `Arc<Context>`; hooks/ext payloads read it per fire.
+    pub session_id: std::sync::RwLock<String>,
     /// Declarative permission rules (.sunmao/permissions.json + .claude settings).
     pub permissions: crate::permissions::Permissions,
     /// Approval gate — risky tool calls pause here for a verdict.
@@ -192,7 +190,7 @@ impl Context {
             tools,
             hooks: HookEngine::load(&cwd, &session_id, &[]),
             cwd,
-            session_id,
+            session_id: std::sync::RwLock::new(session_id),
             permissions,
             risk_table,
             approval: Arc::new(AllowAll),
@@ -238,13 +236,8 @@ impl Context {
     /// Failures degrade per child — an unspawnable extension warns and the
     /// rest still come up.
     pub async fn connect_extensions(&mut self) {
-        crate::ext::connect_all(
-            &self.ext,
-            &self.cwd,
-            &self.session_id,
-            &self.extra_plugin_roots,
-        )
-        .await;
+        let session_id = self.session_id.read().unwrap().clone();
+        crate::ext::connect_all(&self.ext, &self.cwd, &session_id, &self.extra_plugin_roots).await;
         for tool in self.ext.tools() {
             self.tools.register_arc(tool);
         }
@@ -262,7 +255,11 @@ impl Context {
         self.extra_plugin_roots = roots;
         self.permissions =
             crate::permissions::Permissions::load(&self.cwd, &self.extra_plugin_roots);
-        self.hooks = HookEngine::load(&self.cwd, &self.session_id, &self.extra_plugin_roots);
+        self.hooks = HookEngine::load(
+            &self.cwd,
+            self.session_id.read().unwrap().as_str(),
+            &self.extra_plugin_roots,
+        );
         // preset risky-patterns.txt files merge into the resolved table —
         // tightening the gate is additive; wholesale replacement stays a
         // project-file privilege.

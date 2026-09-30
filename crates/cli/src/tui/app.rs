@@ -151,6 +151,8 @@ pub enum Submit {
     Bash(String),
     /// /resume [id|path] — swap the session log; bare = list recent
     Resume(Option<String>),
+    /// /fork <id|path> — copy the log to a fresh id, resume the copy
+    Fork(Option<String>),
     /// /compact
     Compact,
     /// command name didn't resolve — show a note, no turn
@@ -390,6 +392,11 @@ impl App {
                     "resume" | "sessions" => {
                         let arg = cmd_line.split_whitespace().nth(1).map(|s| s.to_string());
                         Submit::Resume(arg)
+                    }
+                    // /fork copies the log to a fresh id, resumes the copy
+                    "fork" => {
+                        let arg = cmd_line.split_whitespace().nth(1).map(|s| s.to_string());
+                        Submit::Fork(arg)
                     }
                     // /model resolves through the session's ModelResolver —
                     // only the driver holds the agent.

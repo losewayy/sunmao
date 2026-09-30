@@ -178,10 +178,13 @@ struct HookCommand {
 
 pub struct HookEngine {
     groups: HashMap<String, Vec<MatcherGroup>>,
-    session_id: String,
+    /// Session id feeding every payload — RwLock because `/resume`
+    /// swaps the live log under a shared `Arc<Context>`; hooks must name
+    /// the *current* session, not the one the engine loaded against.
+    session_id: std::sync::RwLock<String>,
     /// Session log path — payload field `transcript_path` (the dialect
     /// requires it to be a real file; ours is the JSONL event log).
-    transcript_path: PathBuf,
+    transcript_path: std::sync::RwLock<PathBuf>,
     /// Extension children attached after `load` — they fire *after*
     /// command hooks in the same event and fold into the same outcome.
     ext: Option<std::sync::Arc<crate::ext::ExtRegistry>>,
@@ -284,10 +287,18 @@ impl HookEngine {
         }
         Self {
             groups,
-            session_id: session_id.to_string(),
-            transcript_path,
+            session_id: std::sync::RwLock::new(session_id.to_string()),
+            transcript_path: std::sync::RwLock::new(transcript_path),
             ext: None,
         }
+    }
+
+    /// Point the payload's `session_id`/`transcript_path` at a new log —
+    /// `/resume` swaps the session under a shared context, and hooks
+    /// must name the live session from the next fire on.
+    pub fn retarget(&self, session_id: &str, transcript_path: PathBuf) {
+        *self.session_id.write().unwrap() = session_id.to_string();
+        *self.transcript_path.write().unwrap() = transcript_path;
     }
 
     /// Attach the session's extension registry — `ext/event` requests then
@@ -301,8 +312,8 @@ impl HookEngine {
     /// from stdin, extensions get it as `ext/event`'s `payload` param.
     fn payload(&self, event: HookEvent, cwd: &Path, input: &HookInput<'_>) -> Value {
         json!({
-            "session_id": self.session_id,
-            "transcript_path": self.transcript_path.display().to_string().replace("\\\\?\\", ""),
+            "session_id": self.session_id.read().unwrap().clone(),
+            "transcript_path": self.transcript_path.read().unwrap().display().to_string().replace("\\\\?\\", ""),
             "cwd": cwd.display().to_string().replace("\\\\?\\", ""),
             "hook_event_name": event.as_str(),
             "prompt": input.prompt,
@@ -342,9 +353,11 @@ impl HookEngine {
                     let hook_payload = match hook.dialect {
                         cursor::Dialect::Cursor => cursor::cursor_payload(
                             &hook.event_name,
-                            &self.session_id,
+                            &self.session_id.read().unwrap().clone(),
                             &self
                                 .transcript_path
+                                .read()
+                                .unwrap()
                                 .display()
                                 .to_string()
                                 .replace("\\\\?\\", ""),

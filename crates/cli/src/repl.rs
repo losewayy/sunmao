@@ -204,6 +204,38 @@ pub async fn run(
                     }
                     continue;
                 }
+                "fork" => {
+                    if rest.is_empty() {
+                        println!("[usage: /fork <id>]");
+                        continue;
+                    }
+                    let p = std::path::PathBuf::from(rest);
+                    let src_path = if p.exists() {
+                        p
+                    } else {
+                        cwd.join(".sunmao/sessions").join(format!("{rest}.jsonl"))
+                    };
+                    let ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis();
+                    let new_id = format!("s-{ms}-fork");
+                    let dst = cwd.join(".sunmao/sessions").join(format!("{new_id}.jsonl"));
+                    match std::fs::copy(&src_path, &dst) {
+                        Ok(_) => match sunmao_core::SessionLog::open_path(&dst).await {
+                            Ok(log) => {
+                                let events = agent.swap_session(log).await;
+                                println!(
+                                    "[forked {rest} → {new_id} — {} events folded in]",
+                                    events.len()
+                                );
+                            }
+                            Err(e) => eprintln!("[fork failed] {e:#}"),
+                        },
+                        Err(e) => eprintln!("[fork {rest} failed] {e}"),
+                    }
+                    continue;
+                }
                 _ => {}
             }
             match crate::tui::slash::command_body(cwd, preset_roots, name) {

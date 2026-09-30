@@ -23,6 +23,8 @@ mod repl;
 mod serve;
 mod tui;
 
+pub use serve::{Client, HostHandle, HostResponse, SANDBOX_PAGE};
+
 #[derive(Parser)]
 #[command(name = "sunmao", version, about = "agent harness kernel — 榫卯")]
 pub struct Cli {
@@ -471,16 +473,30 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 }
 
 /// The multi-session GUI host — `sunmao serve` and the Tauri shell both
-/// funnel here. `listener` is pre-bound by the caller so the desktop app
-/// can learn the port *before* it opens the webview; pass a port-0 bind
+/// funnel here. `listener` is pre-bound by the caller; pass a port-0 bind
 /// for an ephemeral port. Runs until the process exits.
 pub async fn serve_main(cli: &Cli, listener: std::net::TcpListener) -> anyhow::Result<()> {
+    let spec = host_spec(cli).await?;
+    serve::run(spec, listener).await
+}
+
+/// The host half of `serve_main` — everything except the TCP listeners.
+/// The Tauri shell calls this and serves the same surface over its
+/// `sunmao`/`sunmao-sandbox` schemes + an IPC Channel instead of HTTP/WS
+/// (GUI.md §8); the returned handle is the transport-free front door.
+pub async fn serve_host(cli: &Cli) -> anyhow::Result<HostHandle> {
+    let spec = host_spec(cli).await?;
+    serve::spawn_host(spec, 0).await
+}
+
+/// `Cli` → `HostSpec`: the Context assembly both host paths share —
+/// provider, MCP servers, presets, model routes, `--loop` override.
+/// Every session tab gets its own Context/AgentLoop (built by the
+/// factory) — no shared Context swapping mid-tab. The MCP connections are
+/// process-wide; each Context registers fresh tool handles sharing them.
+async fn host_spec(cli: &Cli) -> anyhow::Result<serve::HostSpec> {
     let cwd = cli.cwd.canonicalize().context("bad --cwd")?;
     let preset_roots = sunmao_core::presets::resolve(&cwd, &cli.preset)?;
-    // Every session tab gets its own Context/AgentLoop (built by the
-    // factory below) — no shared Context swapping mid-tab. The MCP
-    // connections are process-wide; each Context registers fresh tool
-    // handles sharing them.
     let llm = provider_adapter(cli);
     let mcp = sunmao_core::mcp::connect_all(&cwd, &preset_roots).await;
     let first_log = open_first_log(cli).await?;
@@ -530,16 +546,14 @@ pub async fn serve_main(cli: &Cli, listener: std::net::TcpListener) -> anyhow::R
             })
         }),
     };
-    serve::run(
+    Ok(serve::HostSpec {
         factory,
-        cwd.clone(),
-        serve_roots,
-        listener,
+        cwd: cwd.clone(),
+        roots: serve_roots,
         system_prompt,
         model_label,
         first_log,
-    )
-    .await
+    })
 }
 
 /// Interactive approver for the REPL/-p: prints the risky command, y/n on stdin.

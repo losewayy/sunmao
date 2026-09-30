@@ -1,42 +1,35 @@
-//! `sunmao serve` 的 artifact REST 面 — versioned read (`?rev=`)、revs、
+//! `sunmao serve` 的 artifact 面 — versioned read (`?rev=`)、revs、
 //! notes、annotate、MCP Apps sidecar (`{name}.ui.json`)。白名单 `safe_name`
 //! 与 /annotate 同源；路径全部锚定在 `.sunmao/artifacts` 下。
+//! 处理器返回 `HostResponse`（传输无关）—— axum 与 Tauri scheme 两个
+//! 适配层共用同一套逻辑。
 
-use super::*;
+use std::sync::Arc;
+
+use super::host::{Shared, safe_name};
+use super::request::HostResponse;
 
 fn artifact_dir(cwd: &std::path::Path) -> std::path::PathBuf {
     cwd.join(".sunmao").join("artifacts")
 }
 
-#[derive(serde::Deserialize)]
-pub(super) struct RevQuery {
-    rev: Option<usize>,
-}
-
 /// `GET /artifacts/{name}[?rev=k]` — the versioned read (GUI.md §3).
 /// Latest is always `{name}.html`; history lives at `{name}.v{rev-1}.html`.
-pub(super) async fn artifact_get(
-    State(s): State<Arc<Shared>>,
-    AxPath(name): AxPath<String>,
-    Query(q): Query<RevQuery>,
-) -> Response {
-    if !safe_name(&name) {
-        return (StatusCode::BAD_REQUEST, "bad artifact name").into_response();
+pub(super) async fn artifact_get(s: &Arc<Shared>, name: &str, rev: Option<String>) -> HostResponse {
+    if !safe_name(name) {
+        return HostResponse::err(400, "bad artifact name".into());
     }
     let dir = artifact_dir(&s.cwd);
-    let latest = sunmao_core::tool::artifact_rev(&dir, &name);
+    let latest = sunmao_core::tool::artifact_rev(&dir, name);
     if latest == 0 {
-        return (StatusCode::NOT_FOUND, "no such artifact").into_response();
+        return HostResponse::err(404, "no such artifact".into());
     }
-    let p = match q.rev.unwrap_or(latest) {
+    let rev = rev.and_then(|r| r.parse::<usize>().ok());
+    let p = match rev.unwrap_or(latest) {
         r if r == 0 || r == latest => dir.join(format!("{name}.html")),
         r if r < latest => dir.join(format!("{name}.v{r}.html")),
         _ => {
-            return (
-                StatusCode::NOT_FOUND,
-                format!("no rev — latest is {latest}"),
-            )
-                .into_response();
+            return HostResponse::err(404, format!("no rev — latest is {latest}"));
         }
     };
     match tokio::fs::read(&p).await {
@@ -45,13 +38,16 @@ pub(super) async fn artifact_get(
             // declaration-based CSP (GUI.md §3): artifacts are untrusted —
             // default-deny everything; a frontmatter `csp.*:` list may
             // whitelist external resource/connect/frame domains.
-            let headers = [
-                (header::CONTENT_TYPE, "text/html; charset=utf-8".into()),
-                (header::CONTENT_SECURITY_POLICY, artifact_csp(&text)),
-            ];
-            (headers, bytes).into_response()
+            HostResponse::bytes(
+                200,
+                vec![
+                    ("content-type".into(), "text/html; charset=utf-8".into()),
+                    ("content-security-policy".into(), artifact_csp(&text)),
+                ],
+                bytes,
+            )
         }
-        Err(_) => (StatusCode::NOT_FOUND, "no such revision").into_response(),
+        Err(_) => HostResponse::err(404, "no such revision".into()),
     }
 }
 
@@ -119,25 +115,18 @@ fn artifact_csp(html: &str) -> String {
 /// `GET /artifacts/{name}/revs` → `{"rev": N}` — the island's ◀ ▶ nav
 /// resolves the newest version lazily instead of trusting the event payload
 /// (a page reload can sit behind the artifact's true state).
-pub(super) async fn artifact_revs(
-    State(s): State<Arc<Shared>>,
-    AxPath(name): AxPath<String>,
-) -> Response {
-    if !safe_name(&name) {
-        return (StatusCode::BAD_REQUEST, "bad artifact name").into_response();
+pub(super) async fn artifact_revs(s: &Arc<Shared>, name: &str) -> HostResponse {
+    if !safe_name(name) {
+        return HostResponse::err(400, "bad artifact name".into());
     }
-    Json(serde_json::json!({
-        "rev": sunmao_core::tool::artifact_rev(&artifact_dir(&s.cwd), &name),
+    HostResponse::json(serde_json::json!({
+        "rev": sunmao_core::tool::artifact_rev(&artifact_dir(&s.cwd), name),
     }))
-    .into_response()
 }
 
-pub(super) async fn artifact_notes(
-    State(s): State<Arc<Shared>>,
-    AxPath(name): AxPath<String>,
-) -> Response {
-    if !safe_name(&name) {
-        return (StatusCode::BAD_REQUEST, "bad artifact name").into_response();
+pub(super) async fn artifact_notes(s: &Arc<Shared>, name: &str) -> HostResponse {
+    if !safe_name(name) {
+        return HostResponse::err(400, "bad artifact name".into());
     }
     let p = artifact_dir(&s.cwd).join(format!("{name}.state.json"));
     let v: serde_json::Value = tokio::fs::read_to_string(&p)
@@ -145,21 +134,16 @@ pub(super) async fn artifact_notes(
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_else(|| serde_json::json!({"annotations": []}));
-    Json(v).into_response()
+    HostResponse::json(v)
 }
 
-#[derive(serde::Deserialize)]
-pub(super) struct AnnotateBody {
-    note: String,
-}
-
-pub(super) async fn artifact_annotate(
-    State(s): State<Arc<Shared>>,
-    AxPath(name): AxPath<String>,
-    Json(body): Json<AnnotateBody>,
-) -> impl IntoResponse {
-    Json(serde_json::json!({
-        "result": crate::tui::slash::annotate(&s.cwd, &name, &body.note)
+pub(super) async fn artifact_annotate(s: &Arc<Shared>, name: &str, body: &[u8]) -> HostResponse {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return HostResponse::err(400, "bad annotate body".into());
+    };
+    let note = v["note"].as_str().unwrap_or("");
+    HostResponse::json(serde_json::json!({
+        "result": crate::tui::slash::annotate(&s.cwd, name, note)
     }))
 }
 
@@ -167,21 +151,21 @@ pub(super) async fn artifact_annotate(
 /// which server/tool produced this island, the call's arguments + raw
 /// result, and the resource's declared CSP. The island's sandbox proxy
 /// needs it before it can handshake.
-pub(super) async fn artifact_ui(
-    State(s): State<Arc<Shared>>,
-    AxPath(name): AxPath<String>,
-) -> Response {
-    if !safe_name(&name) {
-        return (StatusCode::BAD_REQUEST, "bad artifact name").into_response();
+pub(super) async fn artifact_ui(s: &Arc<Shared>, name: &str) -> HostResponse {
+    if !safe_name(name) {
+        return HostResponse::err(400, "bad artifact name".into());
     }
     let p = artifact_dir(&s.cwd).join(format!("{name}.ui.json"));
     match tokio::fs::read_to_string(&p).await {
-        Ok(text) => (
-            [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
-            text,
-        )
-            .into_response(),
-        Err(_) => (StatusCode::NOT_FOUND, "not an mcp-app artifact").into_response(),
+        Ok(text) => HostResponse::bytes(
+            200,
+            vec![(
+                "content-type".into(),
+                "application/json; charset=utf-8".into(),
+            )],
+            text.into_bytes(),
+        ),
+        Err(_) => HostResponse::err(404, "not an mcp-app artifact".into()),
     }
 }
 

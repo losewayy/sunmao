@@ -173,11 +173,13 @@ async fn run_case_inner(
 
     let sessions = SessionLog::open(&cli.session_dir, session).await?;
     let mut registry = builtin_registry();
-    for tool in sunmao_core::mcp::connect_all(&case_cwd, preset_roots).await {
+    let mcp = sunmao_core::mcp::connect_all(&case_cwd, preset_roots).await;
+    for tool in mcp.tools {
         registry.register_boxed(tool);
     }
     let mut ctx_raw = Context::new(llm.clone(), sessions, registry, case_cwd.clone())
         .with_extra_plugin_roots(preset_roots.to_vec());
+    ctx_raw.mcp_servers = mcp.servers;
     // --loop outranks every manifest declaration, same as the main session
     if let Some(d) = cli.driver {
         ctx_raw.loop_driver = d;

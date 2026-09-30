@@ -140,6 +140,7 @@ mod shell;
 mod todo;
 mod webmod;
 
+pub(crate) use artifact::archive_prev;
 pub use artifact::{HtmlArtifactTool, artifact_rev};
 pub use fs::{EditTool, ReadTool, WriteTool};
 pub use search::{GlobTool, GrepTool};

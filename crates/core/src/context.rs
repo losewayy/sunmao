@@ -104,6 +104,12 @@ pub struct Context {
     /// sync ctor can't spawn. `Arc` because hook dispatch reads through it
     /// while the registry owns teardown.
     pub ext: Arc<ExtRegistry>,
+    /// Connected MCP servers (MCP Apps host seam — SPEC §4.10/GUI.md §5):
+    /// the GUI island bridge proxies `tools/call`/`resources/read` through
+    /// these handles and enforces `_meta.ui.visibility`. Empty until the
+    /// CLI installs the `connect_all` result — `Context::new` can't spawn
+    /// servers synchronously.
+    pub mcp_servers: Vec<crate::mcp::McpServerHandle>,
     /// Which loop driver runs turns — SPEC §4.5's replaceable `agentLoop`.
     /// Manifest `loop` keys resolve at build (presets win); `--loop` on
     /// the CLI overrides after the fact. `Bare` turns skip hooks, the
@@ -242,6 +248,7 @@ impl Context {
             agent_name: None,
             extra_plugin_roots: Vec::new(),
             ext: Arc::new(ExtRegistry::new()),
+            mcp_servers: Vec::new(),
             loop_driver,
             live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             todos: std::sync::Mutex::new(todos),

@@ -294,7 +294,8 @@ async fn main() -> anyhow::Result<()> {
         ),
     };
     let mut registry = builtin_registry();
-    for tool in sunmao_core::mcp::connect_all(&cwd, &preset_roots).await {
+    let mcp = sunmao_core::mcp::connect_all(&cwd, &preset_roots).await;
+    for tool in mcp.tools {
         registry.register_boxed(tool);
     }
     // For --tui --resume: snapshot the durable events before the log moves
@@ -315,6 +316,7 @@ async fn main() -> anyhow::Result<()> {
     });
     let mut ctx_raw = Context::new(llm, sessions, registry, cwd.clone())
         .with_extra_plugin_roots(preset_roots.clone());
+    ctx_raw.mcp_servers = mcp.servers;
     // --loop outranks every manifest `loop:` key — explicit beats declared
     if let Some(d) = cli.driver {
         ctx_raw.loop_driver = d;

@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use sunmao_llm::types::Tool;
 
-use crate::tool::{ToolImpl, ToolResult};
+use crate::tool::{ToolImpl, ToolResult, archive_prev};
 
 #[derive(Debug, Deserialize)]
 struct ServerSpec {
@@ -103,6 +103,94 @@ pub(crate) fn plugin_manifests(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<(Path
 
 type ClientHandle = Arc<RunningService<RoleClient, ()>>;
 
+/// MCP Apps (SEP-1865) tool metadata — `_meta.ui` on a tools/list entry.
+/// `resource_uri` names the `ui://` resource the host renders as the
+/// tool's View; `visibility` decides who may call it — the model-facing
+/// registry gets only `"model"` tools, the app bridge (GUI island →
+/// `tools/call` proxy) gets `"app"`.
+#[derive(Debug, Clone, Default)]
+pub struct UiToolMeta {
+    pub resource_uri: Option<String>,
+    /// raw visibility list (`["model","app"]` default when absent)
+    pub visibility: Vec<String>,
+}
+
+impl UiToolMeta {
+    fn app_visible(&self) -> bool {
+        self.visibility.is_empty() || self.visibility.iter().any(|v| v == "app")
+    }
+}
+
+/// One tool a connected server advertised — the catalog the app bridge
+/// checks `tools/call` requests against (visibility + ui linkage).
+#[derive(Debug, Clone)]
+pub struct McpToolInfo {
+    /// wire name in our registry: `mcp__{server}__{tool}`
+    pub name: String,
+    /// the bare tool name the server knows
+    pub server_tool: String,
+    pub ui: Option<UiToolMeta>,
+    /// `_meta.ui.visibility` allows app-initiated calls (default true)
+    pub app_visible: bool,
+}
+
+/// A connected MCP server — the app bridge needs the handle to proxy
+/// `resources/read` (ui:// fetch) and `tools/call` out of the island.
+#[derive(Clone)]
+pub struct McpServerHandle {
+    pub name: String,
+    pub client: ClientHandle,
+    pub tools: Vec<McpToolInfo>,
+}
+
+/// What `connect_all` assembled: model-facing tools plus the per-server
+/// handles/catalogs the MCP Apps host bridge rides on.
+pub struct McpConnected {
+    pub tools: Vec<Box<dyn ToolImpl>>,
+    pub servers: Vec<McpServerHandle>,
+}
+
+/// Parse `_meta.ui` off a listed tool — the nested `ui.resourceUri` shape
+/// plus the deprecated flat `ui/resourceUri` (pre-GA servers still ship it).
+fn ui_meta(tool: &rmcp::model::Tool) -> Option<UiToolMeta> {
+    let meta = tool.meta.as_ref()?;
+    let ui = meta.0.get("ui").map(|v| UiToolMeta {
+        resource_uri: v
+            .get("resourceUri")
+            .and_then(|u| u.as_str())
+            .map(|s| s.to_string()),
+        visibility: v
+            .get("visibility")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    });
+    match ui {
+        Some(mut m) => {
+            if m.resource_uri.is_none() {
+                m.resource_uri = meta
+                    .0
+                    .get("ui/resourceUri")
+                    .and_then(|u| u.as_str())
+                    .map(|s| s.to_string());
+            }
+            Some(m)
+        }
+        None => meta
+            .0
+            .get("ui/resourceUri")
+            .and_then(|u| u.as_str())
+            .map(|s| UiToolMeta {
+                resource_uri: Some(s.to_string()),
+                visibility: Vec::new(),
+            }),
+    }
+}
+
 /// One MCP server tool wrapped as a native [`ToolImpl`].
 struct McpTool {
     server: String,
@@ -110,6 +198,7 @@ struct McpTool {
     description: String,
     schema: Value,
     client: ClientHandle,
+    ui: Option<UiToolMeta>,
 }
 
 #[async_trait::async_trait]
@@ -127,11 +216,7 @@ impl ToolImpl for McpTool {
         )
     }
 
-    async fn call(
-        &self,
-        args: Value,
-        _ctx: &crate::context::Context,
-    ) -> anyhow::Result<ToolResult> {
+    async fn call(&self, args: Value, ctx: &crate::context::Context) -> anyhow::Result<ToolResult> {
         let mut params = CallToolRequestParams::new(self.tool_name.clone());
         if let Some(obj) = args.as_object() {
             params = params.with_arguments(obj.clone());
@@ -152,6 +237,16 @@ impl ToolImpl for McpTool {
         if out.is_empty() {
             out = serde_json::to_string_pretty(&res.structured_content).unwrap_or_default();
         }
+        // MCP Apps (SEP-1865): the tool's `_meta.ui.resourceUri` names a
+        // `ui://` resource on the same server — fetch it, persist it as an
+        // artifact + a `{name}.ui.json` sidecar carrying the call's input
+        // and raw result (the GUI's sandboxed island bridges off it).
+        if let Some(ui) = &self.ui
+            && let Some(uri) = &ui.resource_uri
+            && let Err(e) = self.land_ui_artifact(uri, &args, &res, ctx).await
+        {
+            tracing::warn!("mcp ui resource {uri}: {e:#}");
+        }
         Ok(ToolResult {
             output: out.trim_end().to_string(),
             ok: res.is_error != Some(true),
@@ -159,11 +254,106 @@ impl ToolImpl for McpTool {
     }
 }
 
-/// Connect to every configured server, collect tools. Failures degrade to a
-/// warning — one bad server must not brick the session.
+fn artifact_slug(server: &str, tool: &str) -> String {
+    let mut s = format!("mcp-{server}-{tool}").to_ascii_lowercase();
+    s.retain(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    s
+}
+
+impl McpTool {
+    async fn land_ui_artifact(
+        &self,
+        uri: &str,
+        args: &Value,
+        res: &rmcp::model::CallToolResult,
+        ctx: &crate::context::Context,
+    ) -> anyhow::Result<()> {
+        use rmcp::model::ReadResourceRequestParams;
+        let rr = self
+            .client
+            .peer()
+            .read_resource_once(ReadResourceRequestParams::new(uri.to_string()))
+            .await?;
+        let read = match rr {
+            rmcp::model::ReadResourceResponse::Complete(r) => r,
+            _ => anyhow::bail!("unexpected resource response shape"),
+        };
+        let content = read
+            .contents
+            .into_iter()
+            .next()
+            .context("ui resource empty")?;
+        let (html, res_meta) = match content {
+            rmcp::model::ResourceContents::TextResourceContents { text, meta, .. } => (text, meta),
+            rmcp::model::ResourceContents::BlobResourceContents { blob, meta, .. } => {
+                use base64::Engine;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(&blob)
+                    .context("ui resource blob: bad base64")?;
+                (
+                    String::from_utf8(bytes).context("ui resource blob: not utf-8")?,
+                    meta,
+                )
+            }
+            _ => anyhow::bail!("unknown resource contents variant"),
+        };
+        // CSP the sandbox must enforce — declared domains ride in the
+        // sidecar, the GUI host builds the iframe headers from them.
+        let csp = res_meta
+            .as_ref()
+            .and_then(|m| m.0.get("ui"))
+            .and_then(|u| u.get("csp"))
+            .cloned();
+        let dir = ctx.cwd.join(".sunmao").join("artifacts");
+        tokio::fs::create_dir_all(&dir).await?;
+        let name = artifact_slug(&self.server, &self.tool_name);
+        let rev = archive_prev(&dir, &name).await?;
+        let path = dir.join(format!("{name}.html"));
+        let bytes = html.len();
+        tokio::fs::write(&path, &html).await?;
+        let sidecar = dir.join(format!("{name}.ui.json"));
+        tokio::fs::write(
+            &sidecar,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "server": self.server,
+                "tool": self.tool_name,
+                "uri": uri,
+                "csp": csp,
+                "arguments": args,
+                "result": res,
+            }))?,
+        )
+        .await?;
+        ctx.sessions
+            .lock()
+            .await
+            .append(&crate::session::SessionEvent::Artifact {
+                name: name.clone(),
+                path: path.display().to_string(),
+                bytes,
+                rev,
+            })
+            .await?;
+        if let Some(sink) = ctx.live_sink.get() {
+            sink.on_event(&crate::agent::LiveEvent::Artifact {
+                name,
+                path: path.display().to_string(),
+                bytes,
+                rev,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Connect to every configured server, collect tools + server handles.
+/// Failures degrade to a warning — one bad server must not brick the session.
 /// `extra_roots` are enabled preset dirs, layered after the installed
 /// plugins — a same-named preset server overrides an installed one.
-pub async fn connect_all(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<Box<dyn ToolImpl>> {
+/// `McpConnected.servers` feeds `Context.mcp_servers`: the MCP Apps island
+/// bridge proxies `tools/call`/`resources/read` through these handles, and
+/// app-only tools (visibility `["app"]`) never reach the model registry.
+pub async fn connect_all(cwd: &Path, extra_roots: &[PathBuf]) -> McpConnected {
     // merge mcpServers from .sunmao/mcp.json + plugin manifests — the
     // plugin.json bundle format contributes MCP servers the same way.
     // `${CLAUDE_PLUGIN_ROOT}` inside a manifest's command/args/env expands
@@ -196,16 +386,29 @@ pub async fn connect_all(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<Box<dyn Too
     }
 
     let mut tools: Vec<Box<dyn ToolImpl>> = Vec::new();
+    let mut handles: Vec<McpServerHandle> = Vec::new();
     for (name, spec) in servers {
         match connect_one(&name, &spec).await {
-            Ok(t) => tools.extend(t),
+            Ok((handle, t)) => {
+                handles.push(handle);
+                tools.extend(t);
+            }
             Err(e) => tracing::warn!("mcp server {name} failed: {e:#}"),
         }
     }
-    tools
+    McpConnected {
+        tools,
+        servers: handles,
+    }
 }
 
-async fn connect_one(name: &str, spec: &ServerSpec) -> anyhow::Result<Vec<Box<dyn ToolImpl>>> {
+/// Model-visible tools ride the registry; every tool (incl. app-only)
+/// lands in the handle's catalog so the island bridge can enforce
+/// `visibility` itself — the model never sees `["app"]` tools.
+async fn connect_one(
+    name: &str,
+    spec: &ServerSpec,
+) -> anyhow::Result<(McpServerHandle, Vec<Box<dyn ToolImpl>>)> {
     let client: ClientHandle = if let Some(url) = &spec.url {
         // remote server over streamable-HTTP (MCP 2025-03-26 transport)
         let transport = rmcp::transport::StreamableHttpClientTransport::from_uri(url.clone());
@@ -226,9 +429,29 @@ async fn connect_one(name: &str, spec: &ServerSpec) -> anyhow::Result<Vec<Box<dy
 
     let listed = client.peer().list_all_tools().await?;
     tracing::info!("mcp server {name}: {} tools", listed.len());
-    Ok(listed
-        .into_iter()
+    let catalog: Vec<McpToolInfo> = listed
+        .iter()
         .map(|t| {
+            let ui = ui_meta(t);
+            McpToolInfo {
+                name: format!("mcp__{name}__{}", t.name),
+                server_tool: t.name.to_string(),
+                app_visible: ui.as_ref().map(|u| u.app_visible()).unwrap_or(true),
+                ui,
+            }
+        })
+        .collect();
+    // visibility: ["app"] hides the tool from the MODEL — it still enters
+    // the catalog so the island can call it.
+    let tools: Vec<Box<dyn ToolImpl>> = listed
+        .into_iter()
+        .zip(&catalog)
+        .filter(|(t, _)| {
+            ui_meta(t)
+                .map(|u| u.visibility.is_empty() || u.visibility.iter().any(|v| v == "model"))
+                .unwrap_or(true)
+        })
+        .map(|(t, info)| {
             Box::new(McpTool {
                 server: name.to_string(),
                 tool_name: t.name.to_string(),
@@ -238,9 +461,18 @@ async fn connect_one(name: &str, spec: &ServerSpec) -> anyhow::Result<Vec<Box<dy
                     .unwrap_or_else(|| format!("mcp tool {}:{}", name, t.name)),
                 schema: serde_json::to_value(&t.input_schema).unwrap_or(json_object()),
                 client: client.clone(),
+                ui: info.ui.clone(),
             }) as Box<dyn ToolImpl>
         })
-        .collect())
+        .collect();
+    Ok((
+        McpServerHandle {
+            name: name.to_string(),
+            client,
+            tools: catalog,
+        },
+        tools,
+    ))
 }
 
 fn json_object() -> Value {
@@ -248,100 +480,4 @@ fn json_object() -> Value {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    /// Compile `tests/fixtures/mcp_server.rs` once; live tests reuse the
-    /// binary (`--die` selects the mid-session crash path). None when
-    /// rustc is absent — the test degrades to a skip.
-    fn fixture_bin() -> Option<std::path::PathBuf> {
-        static BIN: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
-        BIN.get_or_init(|| crate::compile_fixture("mcp_server.rs", "sunmao-mcp-echo"))
-            .clone()
-    }
-
-    /// A bad server entry must not brick the session — `connect_all`
-    /// warns and returns the working tools only.
-    #[tokio::test]
-    async fn connect_all_degrades_a_dead_server() {
-        let dir = crate::fresh_test_dir("mcp-bad");
-        std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
-        std::fs::write(
-            dir.join(".sunmao/mcp.json"),
-            r#"{"mcpServers":{"ghost":{"command":"sunmao-no-such-binary-zz","args":[]}}}"#,
-        )
-        .unwrap();
-        let tools = connect_all(&dir, &[]).await;
-        assert!(tools.is_empty(), "dead server contributes no tools");
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    /// Live roundtrip + crash tolerance: a real stdio server lists `ping`,
-    /// the call echoes back — then the `--die` variant exits right after
-    /// `tools/list`, and the next `tools/call` must degrade to a failed
-    /// ToolResult, never abort the loop (v0.2 acceptance: 子进程崩溃不炸
-    /// agent — this is the MCP half of that bar).
-    #[tokio::test]
-    async fn mcp_call_survives_then_fails_after_child_death() {
-        let Some(bin) = fixture_bin() else {
-            eprintln!("rustc not found — skipping live MCP test");
-            return;
-        };
-        let ctx = crate::context::Context::new(
-            std::sync::Arc::new(StubLlm),
-            crate::session::SessionLog::ephemeral(),
-            crate::tool::ToolRegistry::new(),
-            std::env::temp_dir(),
-        );
-
-        // healthy path: real initialize → tools/list → tools/call
-        let spec = ServerSpec {
-            command: Some(bin.to_string_lossy().to_string()),
-            args: vec![],
-            env: Default::default(),
-            url: None,
-        };
-        let tools = connect_one("echo", &spec).await.unwrap();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name(), "mcp__echo__ping");
-        let res = tools[0].call(json!({"msg": "hi"}), &ctx).await.unwrap();
-        assert!(res.ok);
-        assert!(res.output.contains("pong: hi"), "{}", res.output);
-
-        // crash path: server exits after tools/list — connect succeeds,
-        // the first call must error out, not hang or panic
-        let dying = ServerSpec {
-            command: Some(bin.to_string_lossy().to_string()),
-            args: vec!["--die".into()],
-            env: Default::default(),
-            url: None,
-        };
-        let tools = connect_one("die", &dying).await.unwrap();
-        assert_eq!(tools.len(), 1, "listed before death");
-        // the call must resolve to an error — never hang, never panic
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            tools[0].call(json!({"msg": "x"}), &ctx),
-        )
-        .await
-        {
-            Err(_) => panic!("call against a dead child hung"),
-            Ok(Err(e)) => {
-                assert!(format!("{e:#}").contains("fail"), "{e:#}")
-            }
-            Ok(Ok(res)) => assert!(!res.ok, "dead server must not report ok"),
-        }
-    }
-
-    struct StubLlm;
-    #[async_trait::async_trait]
-    impl sunmao_llm::ProviderAdapter for StubLlm {
-        async fn stream(
-            &self,
-            _req: sunmao_llm::ChatRequest<'_>,
-        ) -> anyhow::Result<sunmao_llm::DeltaStream> {
-            Ok(Box::pin(futures_util::stream::empty()))
-        }
-    }
-}
+mod tests;

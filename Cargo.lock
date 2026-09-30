@@ -3203,6 +3203,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "deno_task_shell",
  "futures-util",
  "glob",

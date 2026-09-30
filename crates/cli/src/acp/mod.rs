@@ -170,12 +170,14 @@ pub async fn run(
                         }
                     };
                     let mut registry = builtin_registry();
-                    for t in sunmao_core::mcp::connect_all(&cwd, &preset_roots).await {
+                    let mcp = sunmao_core::mcp::connect_all(&cwd, &preset_roots).await;
+                    for t in mcp.tools {
                         registry.register_boxed(t);
                     }
                     let session_id = v2::SessionId::new(id.clone());
                     let mut ctx_raw = Context::new(llm, log, registry, cwd.clone())
                         .with_extra_plugin_roots(preset_roots.clone());
+                    ctx_raw.mcp_servers = mcp.servers;
                     ctx_raw.connect_extensions().await;
                     ctx_raw.approval = Arc::new(AcpApprover {
                         cx: cx.clone(),
@@ -340,11 +342,13 @@ pub async fn run(
                         }
                     };
                     let mut registry = builtin_registry();
-                    for t in sunmao_core::mcp::connect_all(&cwd, &preset_roots).await {
+                    let mcp = sunmao_core::mcp::connect_all(&cwd, &preset_roots).await;
+                    for t in mcp.tools {
                         registry.register_boxed(t);
                     }
                     let mut ctx_raw =
                         Context::new(llm, log, registry, cwd).with_extra_plugin_roots(preset_roots);
+                    ctx_raw.mcp_servers = mcp.servers;
                     ctx_raw.connect_extensions().await;
                     ctx_raw.approval = Arc::new(AcpApprover {
                         cx: cx.clone(),

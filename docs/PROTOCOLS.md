@@ -75,11 +75,11 @@ stray println! bricks the whole protocol.
 
 SPEC §4.8: the contract below is backed by a first-party host —
 `crates/core/src/ext/` spawns children, handshakes, routes `ext/event`
-through `HookEngine::fire`, and tears down with the session. A generic
-JS extension-host sidecar (`node extension-host.mjs`) can still front
-this same protocol for TS/JS ecosystems later. Design rule inherited
-from hooks/MCP: **a host process is a process boundary** — spawn per
-session, die with it, never hot-plug.
+through `HookEngine::fire`, and tears down with the session. JS extension
+modules ride the same protocol via the sidecar
+(`node tools/extension-host.mjs` — "JS host sidecar" below). Design rule
+inherited from hooks/MCP: **a host process is a process boundary** —
+spawn per session, die with it, never hot-plug.
 
 ### Lifecycle
 
@@ -122,3 +122,51 @@ notifications omit it.
   family is deliberately deferred: every reverse method is a SemVer promise.
 - Tool schemas pass through verbatim to the model — a bad `input_schema`
   means the tool doesn't exist to the LLM (same rule as native `Tool::decl`).
+
+### JS host sidecar
+
+`tools/extension-host.mjs` is a zero-dependency Node script that fronts
+this exact protocol for **JS extension modules** — a plugin ships
+`.mjs`/`.js` files instead of a bespoke binary:
+
+```json
+{"command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/extension-host.mjs",
+                             "${CLAUDE_PLUGIN_ROOT}/ext"]}
+```
+
+The sidecar file is **copied into the plugin bundle** — a bundle is
+self-contained, `${CLAUDE_PLUGIN_ROOT}` only resolves inside it. In-repo
+development may instead point `args` straight at `tools/extension-host.mjs`
+plus any module dir. See `examples/js-extension/` (a real bundled copy +
+`ext/wordcount.mjs` module + install notes).
+
+Module contract — each `*.mjs` / `*.js` file in the scanned dir
+(non-recursive, sorted by name) exports a default function invoked once
+with an `api` object, plus an optional `dispose()` export run on
+`ext/shutdown`:
+
+```js
+export default function (api) {
+  api.registerTool({ name, description, input_schema, handler });
+  //   handler: async (args) => ({content} | {content, is_error: true})
+  api.on("<HookEvent>", (payload) => ({ extra_context: ["…"] }));
+  api.log("…");                       // stderr — stdout is protocol-only
+}
+```
+
+- `*.ts` files are skipped with a warning — no toolchain ships, and
+  Node's type-stripping only covers erasable syntax; ship compiled JS.
+- Modules load **before** `ext/initialize` is answered so
+  `capabilities` is truthful: `tools` = any `registerTool` across all
+  modules, `events` = union of all `api.on()` names. Early frames queue.
+- `ext/tools/list` aggregates every module's registrations;
+  `ext/tools/call` dispatches by `name` (handler throw →
+  `{content: <err>, is_error: true}`, unknown name → JSON-RPC error).
+- `ext/event` replies merge across subscribers in load order, mirroring
+  hook aggregation: `extra_context` concatenates; `block`,
+  `updatedInput`, `permissionDecision` are last-non-null-wins.
+- Degrade philosophy matches the Rust host: a module that throws on
+  import/registration warns on stderr and is skipped — one bad module
+  never takes the bridge down. Frames are handled serially, so replies
+  keep request order and `ext/shutdown` can't exit ahead of a pending
+  reply.

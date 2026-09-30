@@ -145,7 +145,7 @@ hook engine（核心）
 
 - `sunmao` JSON-RPC extension protocol（stdin/stdout 逐行 JSON-RPC 2.0，注册工具/监听事件/注入上下文）——契约见 `docs/PROTOCOLS.md` "Extension protocol" 一节（事件面=hooks 并集、工具命名空间 `ext__{plugin}__{tool}`、冷拔插=进程级生命周期、无反向通道）
 - **宿主已落地**：`crates/core/src/ext/` 是 first-party 宿主——`Context::connect_extensions` 扫同一套 plugin manifest 的 `extensions` spec、spawn 子进程、握手注册工具并把事件分发改接进 `HookEngine::fire`；子代理 spawn 自己的 extension children（不共享父进程）
-- v0.5+ 仍可落**通用 JS extension host 侧车**（`node extension-host.mjs` 对同一契约转接 TS/JS 扩展）——届时 pi-style 生态由此进入；`examples/extensions/echo-ext.mjs` 是参考扩展兼活测试夹具
+- **JS 侧车已落地**：`tools/extension-host.mjs` 对同一契约转接 JS 扩展模块（`.mjs` 默认导出 `api.registerTool`/`api.on`，事件回复按 hooks 语义跨模块合并；`.ts` warn-and-skip）——插件 bundle 内拷贝即自带宿主，pi-style 生态的 JS 入口由此进入；`examples/extensions/echo-ext.mjs` 是参考扩展兼活测试夹具，`examples/js-extension/` 是侧车打包示例
 
 ### 4.9 声明式格式加载器
 
@@ -176,7 +176,7 @@ hook engine（核心）
 | ACP（被别人驱动） | acp-server | v0.3 |
 | MCP Apps / UI resources（渲染别家 UI） | sandboxed iframe 渲染层 | v0.5+ |
 | Codex/Gemini/Cursor hook 方言 | 归一化层 | v0.4 |
-| OpenCode/pi TS 扩展 | JS extension host 侧车 | v0.5+（契约已实现——本地 `ext/` 宿主已上，JS 侧车仍在 v0.5+） |
+| OpenCode/pi TS 扩展 | JS extension host 侧车 | ✅ JS 侧车已落地（`tools/extension-host.mjs` — 契约 + 模块 api 面 + 打包示例；TS 原生文件 warn-and-skip，pi-compat adapter 仍属后续） |
 | 自身扩展协议 | `sunmao` JSON-RPC | ✅ 契约 + first-party 宿主（`crates/core/src/ext/`） |
 
 ## 6. 里程碑
@@ -187,7 +187,7 @@ hook engine（核心）
 | v0.2 | trustworthy | 审批缝 + transcript 工件 + 上下文窗口管理 + 错误恢复/中断续跑 + 审计流 | 子进程崩溃不炸 agent | ✅ 大部分落地——审批闸三前端、compaction、resume/fork、审计事件流；进程崩溃容忍只验过 hook veto |
 | v0.3 | ecosystem citizen | MCP client + hooks 引擎 + claude-dialect + 格式加载器 + ACP server | rtk/context-mode 实测 | ✅ 落地（MCP 双 transport、hooks 8 事件、agents/commands/skills/plugin.json、ACP v2）；rtk/context-mode 实测通过 |
 | v0.4 | distributed | plugin.json 安装 + 扩展协议宿主 + presets + eval + HTML 工件 | 发布 | ✅ 全部落地——plugin.json 安装（`sunmao plugin`，git URL/`owner/repo` 源）、presets（`--preset` 层叠）、eval（`sunmao eval` 断言会话事实）、HTML 工件（HtmlArtifact）、扩展协议宿主（`ext/` 提前落地）；发布待放行 |
-| v0.5+ | open frontier | JS 扩展宿主、第二 provider 方言、GUI、subagents | — | 🟡 Anthropic 方言提前落地（v0.2）、Task 子代理已上线（`spawns:`/`tools:` 白名单 + `run_in_background` 异步扇出 + `model:` 路由）、**第一方扩展宿主提前落地**（`ext/` crate 模块讲 `sunmao` JSON-RPC 方言，`ext__{plugin}__{tool}` + 事件折叠进 HookOutcome）——JS 侧车（pi 兼容面）/GUI 未动 |
+| v0.5+ | open frontier | JS 扩展宿主、第二 provider 方言、GUI、subagents | — | 🟡 Anthropic 方言提前落地（v0.2）、Task 子代理已上线（`spawns:`/`tools:` 白名单 + `run_in_background` 异步扇出 + `model:` 路由）、**扩展宿主双侧落地**（Rust `ext/` crate + `tools/extension-host.mjs` JS 侧车——`.mjs` 模块注册工具/订阅事件，回复按 hooks 语义合并）——pi-compat adapter/GUI 未动 |
 
 ## 7. 非目标（v1 明确不做）
 

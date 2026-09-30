@@ -6,6 +6,7 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "shell_win",
             "shell_drag",
+            "shell_open",
             "session_events",
             "host_call",
         ]),

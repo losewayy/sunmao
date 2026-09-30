@@ -28,6 +28,7 @@ const SHELL_SHIM: &str = r#"
 window.__sunmaoShell = {
   win(op) { return window.__TAURI_INTERNALS__.invoke('shell_win', { op }); },
   drag() { return window.__TAURI_INTERNALS__.invoke('shell_drag'); },
+  openExternal(path) { return window.__TAURI_INTERNALS__.invoke('shell_open', { path }); },
   Channel: class {
     constructor() {
       this.onmessage = () => {};
@@ -95,6 +96,17 @@ fn shell_drag(win: tauri::WebviewWindow) {
     let _ = win.start_dragging();
 }
 
+/// Open a local file with the OS default handler — artifact islands live on
+/// the internal `sunmao` scheme, which no external browser can resolve, so
+/// the page hands us the real filesystem path.
+#[tauri::command]
+fn shell_open(app: tauri::AppHandle, path: &str) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt as _;
+    app.opener()
+        .open_path(path, None::<&str>)
+        .map_err(|e| format!("open {path}: {e}"))
+}
+
 /// The event channel — ws's replacement (GUI.md §8). The page hands us a
 /// JS Channel; we attach a fresh host `Client` (hello + replay are sent
 /// by `HostHandle::client` verbatim, same as a new ws connection), then
@@ -152,9 +164,11 @@ fn scheme_response(r: sunmao::HostResponse) -> tauri::http::Response<Vec<u8>> {
 
 fn main() {
     sunmao::init_tracing();
-    // Provider/config resolve through the same env-driven Cli the CLI
-    // uses (SUNMAO_BASE_URL / API_KEY / MODEL / PROVIDER); argv is ignored.
-    let cli = sunmao::Cli::parse_from(["sunmao-gui"]);
+    // Provider/config resolve through the same Cli the CLI uses — argv is
+    // real here: `--cwd`/`--model`/`--preset`/`--loop` etc. work on the
+    // desktop shell exactly as on `sunmao serve` (task launchers and MSI
+    // shortcuts can carry a project dir).
+    let cli = sunmao::Cli::parse();
     // The host owns its own tokio runtime on a dedicated thread — Tauri's
     // main thread belongs to the Win32 event loop. No listeners anywhere:
     // the page reaches the host through the `sunmao` scheme + IPC.
@@ -188,6 +202,7 @@ fn main() {
         client: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
     };
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .manage(gui)
         // the whole REST surface, scheme-served — `HostHandle::request`
         // is the same route table `sunmao serve`'s axum fallback answers
@@ -217,6 +232,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             shell_win,
             shell_drag,
+            shell_open,
             session_events,
             host_call
         ])

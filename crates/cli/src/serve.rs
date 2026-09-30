@@ -43,8 +43,14 @@ pub use host::HostHandle;
 pub use request::HostResponse;
 
 /// Index page — the workbench prototype adapted as the product frontend
-/// (docs/DESIGN.md tokens are its source of truth).
+/// (docs/DESIGN-SYSTEM.md tokens are its source of truth).
 const INDEX: &str = include_str!("serve/assets/index.html");
+
+/// Design tokens (custom properties + keyframes) and component styles —
+/// split per docs/DESIGN-SYSTEM.md §1; served on the shared route table
+/// so the Tauri `sunmao` scheme answers them identically.
+const TOKENS_CSS: &str = include_str!("serve/assets/tokens.css");
+const APP_CSS: &str = include_str!("serve/assets/app.css");
 
 /// MCP Apps sandbox proxy — a separate origin serving a single static
 /// page (`serve/assets/sandbox.html`); see `http::sandbox_page`/`ui/`

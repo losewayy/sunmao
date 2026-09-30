@@ -214,6 +214,14 @@ TUI.
   product, the sidecar was just one host implementation. Live ext tests
   now compile a local Rust fixture child (`tests/fixtures/ext_echo.rs`)
   instead of needing node
+- **Task `model` arg** — call-site model selector per spawn (`@route` or
+  `provider/<model-id>` via .sunmao/models.json): multi-model
+  orchestration without touching agent defs — cheap model for probes,
+  strong one for the final pass, per item in a batch. Resolution order:
+  call-site > `agents/*.md` `model:` > parent adapter; an unknown
+  selector fails the call with the available list (a typo'd route must
+  never silently inherit). `task.rs` split: spawn machinery →
+  `task/spawn.rs` (600-line budget)
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

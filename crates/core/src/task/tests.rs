@@ -1,4 +1,7 @@
+use super::spawn::spawn_parts;
 use super::*;
+use crate::session::{SessionEvent, SessionLog};
+use crate::tool::builtin_registry;
 use futures_util::stream;
 use sunmao_llm::types::Usage;
 use sunmao_llm::{ChatRequest, DeltaStream, ProviderAdapter, StreamDelta};
@@ -109,8 +112,8 @@ async fn spawn_ids_are_unique_within_a_millisecond() {
         builtin_registry(),
         dir.clone(),
     );
-    let (a, _) = spawn_parts(&ctx, None).await;
-    let (b, _) = spawn_parts(&ctx, None).await;
+    let (a, _) = spawn_parts(&ctx, None, None).await;
+    let (b, _) = spawn_parts(&ctx, None, None).await;
     assert_ne!(a, b, "concurrent spawns must not share a session id");
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -186,7 +189,7 @@ async fn tools_whitelist_and_depth_cap_trim_registry() {
     );
     let defs: Vec<_> = crate::agents::load_all(&dir, &[]);
     let reader = defs.iter().find(|d| d.name == "reader").unwrap();
-    let (_, reader_ctx) = spawn_parts(&ctx, Some(reader)).await;
+    let (_, reader_ctx) = spawn_parts(&ctx, Some(reader), None).await;
     let names: Vec<_> = reader_ctx
         .tools
         .declarations()
@@ -197,7 +200,7 @@ async fn tools_whitelist_and_depth_cap_trim_registry() {
 
     // a declared spawns whitelist auto-adds Task even if tools omitted it
     let orch = defs.iter().find(|d| d.name == "orch").unwrap();
-    let (_, orch_ctx) = spawn_parts(&ctx, Some(orch)).await;
+    let (_, orch_ctx) = spawn_parts(&ctx, Some(orch), None).await;
     let names: Vec<_> = orch_ctx
         .tools
         .declarations()
@@ -205,5 +208,53 @@ async fn tools_whitelist_and_depth_cap_trim_registry() {
         .map(|t| t.function.name.clone())
         .collect();
     assert!(names.contains(&"Task".to_string()), "spawns implies Task");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Call-site `model` routes the spawn to another adapter — the same seam
+/// OMP-style multi-model orchestration rides on. A selector that resolves
+/// to nothing fails the call loudly (a typo'd route must never silently
+/// inherit the parent's model).
+#[tokio::test]
+async fn call_site_model_routes_and_unknown_selector_fails() {
+    let dir = crate::fresh_test_dir("taskmodel");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut ctx = Context::new(
+        Arc::new(MockProvider),
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        dir.clone(),
+    );
+    let resolver = crate::models::ModelResolver::load(
+        &dir,
+        crate::models::ProviderDef {
+            base_url: "http://local/v1".into(),
+            api_key_env: None,
+            api_key: None,
+            dialect: "openai".into(),
+        },
+        "default",
+    )
+    .with_adapter("@cheap", Arc::new(MockProvider));
+    ctx.models = Some(Arc::new(resolver));
+
+    // unknown selector → tool error carrying the available selectors
+    let err = TaskTool
+        .call(json!({"prompt": "p", "model": "@nope"}), &ctx)
+        .await
+        .err()
+        .expect("unknown selector must fail");
+    assert!(
+        err.to_string().contains("unknown model selector `@nope`"),
+        "{err}"
+    );
+    // resolvable selector → spawn succeeds (the routed adapter is the
+    // child ctx's llm — observable via the override the test injected)
+    let res = TaskTool
+        .call(json!({"prompt": "p", "model": "@cheap"}), &ctx)
+        .await
+        .unwrap();
+    assert!(res.ok, "{}", res.output);
+    assert!(res.output.contains("bg done"), "{}", res.output);
     std::fs::remove_dir_all(&dir).ok();
 }

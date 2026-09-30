@@ -36,6 +36,7 @@ pub mod names {
     pub const TOOL_GUIDANCE: &str = "tool-guidance";
     pub const SHELL_DIALECT: &str = "shell-dialect";
     pub const SUBAGENT_DEFAULT: &str = "subagent-default";
+    pub const COMPACT: &str = "compact";
     pub const PROJECT_CONTEXT: &str = "project-context";
 }
 
@@ -78,24 +79,40 @@ impl PromptAssembler {
         }) {
             return def.system_prompt;
         }
-        let mut sections = vec![Section {
-            name: names::SUBAGENT_DEFAULT.into(),
-            order: 0,
-            text: include_str!("../assets/prompt/subagent-default.md")
+        self.section_or(names::SUBAGENT_DEFAULT, || {
+            include_str!("../assets/prompt/subagent-default.md")
                 .trim()
-                .to_string(),
+                .to_string()
+        })
+    }
+
+    /// The summarization instruction fed to the model during compaction —
+    /// an asset file (`assets/prompt/compact.md`), replaceable via
+    /// `prompt.d/compact.md` like every other section.
+    pub fn assemble_compact(&self) -> String {
+        self.section_or(names::COMPACT, || {
+            include_str!("../assets/prompt/compact.md")
+                .trim()
+                .to_string()
+        })
+    }
+
+    /// `prompt.md`/`prompt.d` layering applied to a single-section list —
+    /// user layer then project layer; a same-named file replaces the baked
+    /// text in place.
+    fn section_or(&self, name: &str, default: impl FnOnce() -> String) -> String {
+        let mut sections = vec![Section {
+            name: name.into(),
+            order: 0,
+            text: default(),
         }];
         apply_layer(&mut sections, &user_layer_dir(), 40);
         apply_layer(&mut sections, &self.cwd.join(".sunmao"), 50);
         sections
             .into_iter()
-            .find(|s| s.name == names::SUBAGENT_DEFAULT)
+            .find(|s| s.name == name)
             .map(|s| s.text)
-            .unwrap_or_else(|| {
-                include_str!("../assets/prompt/subagent-default.md")
-                    .trim()
-                    .to_string()
-            })
+            .unwrap_or_default()
     }
 }
 

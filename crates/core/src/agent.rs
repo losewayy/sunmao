@@ -418,7 +418,7 @@ impl AgentLoop {
             return Ok(String::new());
         }
         msgs.push(Message::user(
-            "Summarize this conversation so far for context compaction: key decisions,              files touched, current state, and what remains. Be terse and factual.",
+            crate::prompt::PromptAssembler::new(&self.ctx.cwd).assemble_compact(),
         ));
         let req = ChatRequest {
             messages: &msgs,

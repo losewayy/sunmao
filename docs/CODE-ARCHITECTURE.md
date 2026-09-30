@@ -7,9 +7,12 @@ Companion to `AGENTS.md` (operational invariants) — this file owns *shape*,
 
 ## Hard rules
 
-1. **No god files.** A file past ~600 lines gets split. A file that needs a
-   table of contents to navigate is already too big. Split by *responsibility*,
+1. **No god files.** A file past ~600 lines gets split — **enforced**:
+   `cargo run -p xtask -- arch` fails CI. A file that needs a table of
+   contents to navigate is already too big. Split by *responsibility*,
    not arbitrarily — `tool.rs` became `tool/{fs,shell,search,artifact,webmod}`.
+   Test modules move to sibling `tests.rs` files, which do count toward
+   the budget — the point is navigability, not hiding bulk.
 2. **No history rewrites.** `main` history is immutable: no force-push, no
    amend of pushed commits, no rebase of published history. A wrong commit
    gets a follow-up commit, not a rewrite. The public timeline is an asset.
@@ -35,6 +38,9 @@ Companion to `AGENTS.md` (operational invariants) — this file owns *shape*,
    schemas/descriptions ARE the wire dialect), private-API mirrors
    (`DENO_BUILTINS` shadows upstream's crate-private list — a comment says
    so), and spec data tied to verifier code.
+   The gate: `cargo run -p xtask -- arch` flags prose-shaped string
+   literals (≥80 chars, ≥5 spaces) outside `#[cfg(test)]` and
+   `Tool::function(...)` call sites — the two exemptions encoded.
 
 ## Layer map
 

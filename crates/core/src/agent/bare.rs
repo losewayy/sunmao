@@ -116,6 +116,12 @@ impl AgentLoop {
             }
             for call in tool_calls {
                 let result = if let Some(err) = malformed.get(&call.id) {
+                    observer.on_event(&LiveEvent::ToolStart {
+                        name: call.function.name.clone(),
+                        summary: "malformed arguments".into(),
+                        depth: self.ctx.depth,
+                        lane: self.ctx.lane,
+                    });
                     crate::tool::ToolResult {
                         output: format!("malformed tool call: {err}"),
                         ok: false,
@@ -164,12 +170,8 @@ impl AgentLoop {
                 .await?;
             }
         }
-        self.ctx
-            .cancelled
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        observer.on_event(&LiveEvent::TurnEnd {
-            outcome: outcome.clone(),
-        });
+        // TurnEnd + the cancelled reset live in run_turn() — shared across
+        // drivers so no exit path can skip them.
         Ok(outcome)
     }
 }

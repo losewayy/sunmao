@@ -102,10 +102,11 @@ impl AgentLoop {
     /// straddle a predecessor's, so the fold the next request sees is
     /// always a well-formed transcript.
     ///
-    /// Frontends depend on TurnEnd to unwind their "working" state — so
-    /// even an Err path emits one (`Other("<error>")`) before propagating.
-    /// The error string doubles as the outcome detail; the observer's
-    /// transcript shows why the turn died instead of hanging.
+    /// Frontends depend on TurnEnd to unwind their "working" state — this
+    /// wrapper emits it on every exit (success, veto, cancel, Err), so an
+    /// early return inside a driver can never strand a frontend. The
+    /// `cancelled` flag resets here too: a stale flag must not survive
+    /// into the next turn regardless of how this one ended.
     ///
     /// `ctx.loop_driver` picks the driver (SPEC §4.5): `Full` runs the
     /// contract loop below; `Bare` runs `run_turn_bare` — same session log
@@ -116,10 +117,26 @@ impl AgentLoop {
         observer: &dyn Observer,
     ) -> anyhow::Result<TurnOutcome> {
         let _turn_permit = self.ctx.turn_lock.lock().await;
-        match self.ctx.loop_driver {
+        let res = match self.ctx.loop_driver {
             crate::agent::LoopDriver::Full => self.run_turn_full(input, observer).await,
             crate::agent::LoopDriver::Bare => self.run_turn_bare(input, observer).await,
+        };
+        // cancelled resets at turn END on *every* exit path — an Err or an
+        // early-returned outcome must not leak the flag into the next turn
+        // (a stale flag would make the next turn short-circuit forever).
+        self.ctx
+            .cancelled
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        // TurnEnd is the frontend's "unwind working state" signal — emit it
+        // here so every inner exit (early returns included) produces exactly
+        // one, with Stop/StopFailure already fired inside the driver.
+        match &res {
+            Ok(o) => observer.on_event(&LiveEvent::TurnEnd { outcome: o.clone() }),
+            Err(e) => observer.on_event(&LiveEvent::TurnEnd {
+                outcome: TurnOutcome::Other(format!("error: {e:#}")),
+            }),
         }
+        res
     }
 
     async fn run_turn_full(
@@ -155,9 +172,6 @@ impl AgentLoop {
                         &crate::hooks::HookInput::default(),
                     )
                     .await;
-                observer.on_event(&LiveEvent::TurnEnd {
-                    outcome: TurnOutcome::Other(format!("error: {e:#}")),
-                });
                 Err(e)
             }
         }
@@ -325,6 +339,36 @@ impl AgentLoop {
                         output: format!("malformed tool call: {err}"),
                         ok: false,
                     };
+                    // still a settled failure: the live transcript shows the
+                    // pair (same as replay), and PostToolUseFailure rings —
+                    // the union event for failure listeners.
+                    observer.on_event(&LiveEvent::ToolStart {
+                        name: call.function.name.clone(),
+                        summary: "malformed arguments".into(),
+                        depth: self.ctx.depth,
+                        lane: self.ctx.lane,
+                    });
+                    observer.on_event(&LiveEvent::ToolDone {
+                        name: call.function.name.clone(),
+                        ok: false,
+                        output: result.output.clone(),
+                        depth: self.ctx.depth,
+                        lane: self.ctx.lane,
+                    });
+                    let _ = self
+                        .ctx
+                        .hooks
+                        .fire(
+                            HookEvent::PostToolUseFailure,
+                            &self.ctx.cwd,
+                            &crate::hooks::HookInput {
+                                tool_name: Some(&call.function.name),
+                                tool_use_id: Some(&call.id),
+                                tool_response: Some(&result.output),
+                                ..Default::default()
+                            },
+                        )
+                        .await;
                     let mut log = self.ctx.sessions.lock().await;
                     log.append(&SessionEvent::ToolCall {
                         call: call.clone(),
@@ -521,9 +565,10 @@ impl AgentLoop {
                 }
             }
         }
-        self.ctx
-            .cancelled
-            .store(false, std::sync::atomic::Ordering::Relaxed);
+        // TurnEnd + the cancelled reset moved to run_turn() — every exit
+        // path (early returns included) emits exactly one TurnEnd and
+        // clears the flag, so a veto or Err can't strand a frontend or
+        // poison the next turn.
         // clean turns end with Stop; anything else gets StopFailure (fired
         // by run_turn_full after inner returns) — never both
         if outcome == TurnOutcome::Completed {
@@ -537,9 +582,6 @@ impl AgentLoop {
                 )
                 .await;
         }
-        observer.on_event(&LiveEvent::TurnEnd {
-            outcome: outcome.clone(),
-        });
         Ok(outcome)
     }
 }

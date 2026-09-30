@@ -113,6 +113,16 @@ fn fixture_path() -> std::path::PathBuf {
         .into()
 }
 
+fn host_path() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tools/extension-host.mjs")
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .replace("\\\\?\\", "")
+        .into()
+}
+
 fn init(dir: &std::path::Path) -> registry::ExtInit {
     registry::ExtInit {
         cwd: dir.display().to_string(),
@@ -196,6 +206,110 @@ async fn node_fixture_full_roundtrip() {
     assert!(out.extra_context.is_empty());
     assert!(out.block_reason.is_none());
 
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The pi dialect end-to-end through the REAL sidecar: a module written in
+/// oh-my-pi's ExtensionAPI subset — `api.on("tool_call")` returning
+/// `{block:true, reason}` must veto PreToolUse, `session_start` folds
+/// extra_context, and a pi-spec `registerTool` ({parameters, execute})
+/// surfaces and calls as `ext__pi__*`.
+#[tokio::test]
+async fn js_host_pi_dialect_roundtrip() {
+    let Some(node) = which_node() else {
+        eprintln!("node not on PATH — skipping pi-dialect host test");
+        return;
+    };
+    let dir = crate::fresh_test_dir("ext-pi");
+    let ext_dir = dir.join("ext");
+    std::fs::create_dir_all(&ext_dir).unwrap();
+    std::fs::write(
+        ext_dir.join("policy.mjs"),
+        r#"export default function (api) {
+  api.on("tool_call", (event) => {
+    if (event.toolName === "Bash" && event.input?.command?.includes("rm")) {
+      return { block: true, reason: "pi veto" };
+    }
+  });
+  api.on("session_start", () => ({ extra_context: "pi warm" }));
+  api.registerTool({
+    name: "pi_ping",
+    description: "pi-spec tool",
+    parameters: { type: "object", properties: { msg: { type: "string" } } },
+    async execute(_id, params) {
+      return { content: [{ type: "text", text: `pong ${params.msg}` }] };
+    },
+  });
+}
+"#,
+    )
+    .unwrap();
+
+    let reg = registry::ExtRegistry::new();
+    let spec = ExtSpec {
+        command: node.to_string_lossy().to_string(),
+        args: vec![
+            host_path().to_string_lossy().to_string(),
+            ext_dir.display().to_string(),
+        ],
+        env: Default::default(),
+    };
+    reg.connect(&spec, &init(&dir), "pi").await.unwrap();
+
+    // pi-spec tool registered under the plugin namespace
+    let tools = reg.tools();
+    assert!(tools.iter().any(|t| t.name() == "ext__pi__pi_ping"));
+    let ctx = crate::context::Context::new(
+        Arc::new(StubLlm),
+        crate::session::SessionLog::ephemeral(),
+        crate::tool::ToolRegistry::new(),
+        dir.clone(),
+    );
+    let res = tools
+        .iter()
+        .find(|t| t.name() == "ext__pi__pi_ping")
+        .unwrap()
+        .call(json!({"msg": "via-pi"}), &ctx)
+        .await
+        .unwrap();
+    assert!(res.ok, "{}", res.output);
+    assert!(res.output.contains("pong via-pi"), "{}", res.output);
+
+    // events through the hooks seam — pi names normalized both directions
+    let mut engine = crate::hooks::HookEngine::load(&dir, "test", &[]);
+    engine.attach_ext(Arc::new(reg));
+    let veto = engine
+        .fire(
+            crate::hooks::HookEvent::PreToolUse,
+            &dir,
+            &crate::hooks::HookInput {
+                tool_name: Some("Bash"),
+                tool_input: Some(&json!({"command": "rm -rf /"})),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert_eq!(veto.block_reason.as_deref(), Some("pi veto"));
+    let benign = engine
+        .fire(
+            crate::hooks::HookEvent::PreToolUse,
+            &dir,
+            &crate::hooks::HookInput {
+                tool_name: Some("Bash"),
+                tool_input: Some(&json!({"command": "ls"})),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(benign.block_reason.is_none());
+    let start = engine
+        .fire(
+            crate::hooks::HookEvent::SessionStart,
+            &dir,
+            &crate::hooks::HookInput::default(),
+        )
+        .await;
+    assert!(start.extra_context.iter().any(|c| c.contains("pi warm")));
     std::fs::remove_dir_all(&dir).ok();
 }
 

@@ -31,6 +31,16 @@
 // handlers return effect objects; replies from multiple modules merge
 // the way hook aggregation does: `extra_context` concatenates, while
 // `block` / `updatedInput` / `permissionDecision` are last-non-null-wins.
+//
+// pi-compat (oh-my-pi / pi-mono dialect): modules written for pi's
+// ExtensionAPI run against a *subset* — `api.on` accepts pi's snake_case
+// event names (payloads translated to the pi shape and back), `tool_call`
+// handlers may return `{block:true, reason}`, `session_start` may return
+// `{extra_context}`. `api.registerTool` accepts pi's spec shape
+// ({name, parameters, execute}) — `parameters` needs a real JSON schema;
+// a zod object is warn-and-skip (run z.toJSONSchema() first).
+// sendMessage/registerCommand/ui/renderers/providers are NOT this host's
+// surface — modules needing them stay pi-only.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -45,14 +55,103 @@ const warn = (msg) => process.stderr.write(`[extension-host] ${msg}\n`);
 // kept in load order so reply merging is deterministic.
 
 const tools = new Map(); // name -> {description, input_schema, handler}
-const subscribers = new Map(); // event -> [handler, ...] in load order
+const subscribers = new Map(); // NATIVE event -> [{handler, dialect}, ...] in load order
 const modules = []; // {file, ns} — kept for dispose()
+
+// --- pi dialect -------------------------------------------------------------
+// pi/oh-my-pi event names map onto our canonical surface; handlers
+// registered under a pi name get pi-shaped payloads and pi-shaped replies
+// are normalized back. Unknown pi names subscribe to nothing useful — they
+// land on a native event that never fires, which is the honest skip.
+
+const PI_EVENT = {
+  session_start: "SessionStart",
+  session_shutdown: "SessionEnd",
+  session_before_compact: "PreCompact",
+  session_compact: "PostCompact",
+  tool_call: "PreToolUse",
+  tool_result: "PostToolUse",
+  input: "UserPromptSubmit",
+  agent_start: "SubagentStart",
+  agent_end: "SubagentStop",
+  turn_end: "Stop",
+};
+
+// Canonical payload → the pi-shape a pi-authored handler expects. Kept
+// deliberately small: names and field spellings pi documents, no invented
+// surfaces. tool_call gets {toolName, toolCallId, input}; tool_result adds
+// {result}; session/prompt events get {cwd, prompt?}; everything else gets
+// the canonical payload verbatim (fields pi doesn't read cost nothing).
+function piPayload(nativeEvent, payload) {
+  const p = payload ?? {};
+  switch (nativeEvent) {
+    case "PreToolUse":
+      return {
+        toolName: p.tool_name,
+        toolCallId: p.tool_use_id,
+        input: p.tool_input,
+        cwd: p.cwd,
+        sessionId: p.session_id,
+      };
+    case "PostToolUse":
+      return {
+        toolName: p.tool_name,
+        toolCallId: p.tool_use_id,
+        input: p.tool_input,
+        result: p.tool_response,
+        cwd: p.cwd,
+        sessionId: p.session_id,
+      };
+    case "UserPromptSubmit":
+      return { prompt: p.prompt, cwd: p.cwd, sessionId: p.session_id };
+    default:
+      return p;
+  }
+}
+
+// A pi handler's reply → canonical effect object. {block:true, reason} is
+// pi's veto spelling; permission semantics don't exist in pi so only
+// block/context/rewrite translate.
+function piReply(out) {
+  if (!out || typeof out !== "object") return {};
+  const merged = {};
+  if (out.block === true || typeof out.block === "string") {
+    merged.block = typeof out.reason === "string" ? out.reason : out.block === true ? "blocked by extension" : out.block;
+  }
+  const extra = out.extra_context ?? out.additionalContext;
+  if (extra !== undefined) merged.extra_context = extra;
+  if (out.updatedInput !== undefined) merged.updatedInput = out.updatedInput;
+  return merged;
+}
 
 function makeApi(modName) {
   return {
     registerTool(spec) {
+      // pi spec shape: {name, description, parameters, execute}. Translate
+      // once here so the dispatch path knows one shape only.
+      if (spec && typeof spec.execute === "function" && typeof spec.handler !== "function") {
+        const exec = spec.execute;
+        spec = { ...spec, handler: async (args) => {
+          const out = await exec(undefined, args, undefined, undefined, undefined);
+          // pi returns {content:[{type:"text",text}], details} — fold text
+          const content = Array.isArray(out?.content)
+            ? out.content.map((b) => (typeof b === "string" ? b : b?.text ?? "")).join("")
+            : out?.content ?? (out == null ? "" : String(out));
+          return { content, ...(out?.is_error || out?.isError ? { is_error: true } : {}) };
+        }};
+        if (spec.parameters !== undefined && spec.input_schema === undefined) {
+          spec.input_schema = spec.parameters;
+        }
+      }
       if (!spec || typeof spec.name !== "string" || typeof spec.handler !== "function") {
         warn(`${modName}: registerTool needs {name, handler} — skipped`);
+        return;
+      }
+      const schema = spec.input_schema;
+      // a zod object (parse + _def) is not JSON schema — z.toJSONSchema()
+      // is the one-line conversion; warn instead of shipping a phantom tool
+      if (schema && typeof schema.parse === "function") {
+        warn(`${modName}: registerTool '${spec.name}' got a zod object as schema — pass z.toJSONSchema(...) instead; skipped`);
         return;
       }
       tools.set(spec.name, spec);
@@ -62,8 +161,11 @@ function makeApi(modName) {
         warn(`${modName}: api.on needs (eventName, handlerFn) — skipped`);
         return;
       }
-      if (!subscribers.has(event)) subscribers.set(event, []);
-      subscribers.get(event).push(handler);
+      // pi name → native event + dialect tag; native names pass through
+      const native = PI_EVENT[event] ?? event;
+      const dialect = PI_EVENT[event] ? "pi" : "native";
+      if (!subscribers.has(native)) subscribers.set(native, []);
+      subscribers.get(native).push({ handler, dialect });
     },
     log(...args) {
       warn(
@@ -137,13 +239,16 @@ const replyError = (id, message) => {
 
 // Fold every subscriber's reply into one — the merge semantics mirror
 // hooks aggregation (apply_ext_reply on the Rust side): extra_context
-// arrays concat, the effect scalars are last-non-null-wins.
+// arrays concat, the effect scalars are last-non-null-wins. Handlers
+// registered under pi names get pi-shaped payloads and their replies
+// normalize before merging.
 async function fireEvent(event, payload) {
   const merged = {};
-  for (const handler of subscribers.get(event) ?? []) {
+  for (const { handler, dialect } of subscribers.get(event) ?? []) {
     let out;
     try {
-      out = await handler(payload);
+      out = await handler(dialect === "pi" ? piPayload(event, payload) : payload);
+      if (dialect === "pi") out = piReply(out);
     } catch (e) {
       warn(`ext/event ${event}: a handler threw: ${e.message}`);
       continue;

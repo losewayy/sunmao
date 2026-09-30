@@ -36,6 +36,7 @@ impl Observer for RelayObserver {
                 name,
                 summary,
                 depth,
+                call_id,
                 ..
             } => {
                 if let Some(s) = &self.sink {
@@ -44,6 +45,7 @@ impl Observer for RelayObserver {
                         summary: summary.clone(),
                         depth: *depth,
                         lane: self.lane,
+                        call_id: call_id.clone(),
                     });
                 }
             }
@@ -52,6 +54,7 @@ impl Observer for RelayObserver {
                 ok,
                 output,
                 depth,
+                call_id,
                 elapsed_ms,
                 ..
             } => {
@@ -62,6 +65,7 @@ impl Observer for RelayObserver {
                         output: output.clone(),
                         depth: *depth,
                         lane: self.lane,
+                        call_id: call_id.clone(),
                         elapsed_ms: *elapsed_ms,
                     });
                 }

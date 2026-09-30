@@ -1028,11 +1028,14 @@ function toolStart(ev) {
   const g = host.lastElementChild && host.lastElementChild.classList.contains('tools') ? host.lastElementChild : append(host, '<div class="tools"></div>');
   const name = (ev.depth ? '↳ ' : '') + (ev.name || '?');
   const el = append(g, toolHTML(['run', name, ev.summary || '', '', ''], { cls: 'enter', start: performance.now() }));
-  runningTools.push({ el, name: ev.name, lane: ev.lane || 0, depth: ev.depth || 0, t0: performance.now() });
+  runningTools.push({ el, name: ev.name, lane: ev.lane || 0, depth: ev.depth || 0, call_id: ev.call_id || null, t0: performance.now() });
   curBubble = null; // text after a tool call starts a new bubble
 }
 function toolDone(ev) {
-  let i = runningTools.findIndex(t => t.name === ev.name && t.lane === (ev.lane || 0) && t.depth === (ev.depth || 0));
+  // exact join key first — same-name calls in one turn mispair without it;
+  // (name, lane, depth) FIFO stays the fallback for id-less synthetic events
+  let i = ev.call_id ? runningTools.findIndex(t => t.call_id === ev.call_id) : -1;
+  if (i < 0) i = runningTools.findIndex(t => t.name === ev.name && t.lane === (ev.lane || 0) && t.depth === (ev.depth || 0));
   if (i < 0) i = runningTools.findIndex(t => t.name === ev.name);
   if (i < 0) i = 0;
   const t = runningTools[i];
@@ -1184,13 +1187,15 @@ function renderReplay(events, anim) {
       const host = msgHost();
       let g = host.lastElementChild && host.lastElementChild.classList.contains('tools') ? host.lastElementChild : append(host, '<div class="tools"></div>');
       const el = append(g, toolHTML(['run', (ev.depth ? '↳ ' : '') + (fn.name || '?'), sum, '', ''], {}));
-      if (c.id) pendingCalls.set(c.id, el);
-      else pendingCalls.set(Symbol(), el);
+      // key on (call.id, depth, lane) — relayed sub-agent calls can share a
+      // call id namespace across lanes; missing id falls back to a unique key
+      pendingCalls.set(c.id ? `${ev.depth || 0}:${ev.lane || 0}:${c.id}` : Symbol(), el);
       logEv('tool_call', `${fn.name || '?'} ${sum}`.slice(0, 140));
     } else if (t === 'tool_result') {
-      let target = pendingCalls.get(ev.call_id);
-      if (!target) { const k = [...pendingCalls.keys()][0]; if (k !== undefined) { target = pendingCalls.get(k); pendingCalls.delete(k); } }
-      else pendingCalls.delete(ev.call_id);
+      const key = `${ev.depth || 0}:${ev.lane || 0}:${ev.call_id}`;
+      let target = pendingCalls.get(key);
+      if (target) pendingCalls.delete(key);
+      else { const k = [...pendingCalls.keys()][0]; if (k !== undefined) { target = pendingCalls.get(k); pendingCalls.delete(k); } }
       if (target) setTool(target, ev.ok ? 'ok' : 'err', ev.ok ? '' : '', capOut(ev.output || ''));
       else {
         const host = msgHost();

@@ -122,6 +122,7 @@ impl AgentLoop {
                         summary: "malformed arguments".into(),
                         depth: self.ctx.depth,
                         lane: self.ctx.lane,
+                        call_id: Some(call.id.clone()),
                     });
                     crate::tool::ToolResult {
                         output: format!("malformed tool call: {err}"),
@@ -136,6 +137,7 @@ impl AgentLoop {
                         summary: call_summary(&call.function.name, &args_value),
                         depth: self.ctx.depth,
                         lane: self.ctx.lane,
+                        call_id: Some(call.id.clone()),
                     });
                     self.ctx
                         .tools
@@ -148,6 +150,7 @@ impl AgentLoop {
                     output: truncate_output(&result.output),
                     depth: self.ctx.depth,
                     lane: self.ctx.lane,
+                    call_id: Some(call.id.clone()),
                     elapsed_ms: t0.elapsed().as_millis() as u64,
                 });
                 let mut log = self.ctx.sessions.lock().await;

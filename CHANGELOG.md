@@ -286,6 +286,11 @@ TUI.
   every other settled failure
 - acp: the permission prompt's description names the specifier a
   session grant would cover
+- `LiveEvent::ToolStart/ToolDone` carry `call_id` — the provider's
+  tool_call id is the exact start↔done join key. Same-name calls in one
+  turn used to pair by FIFO position (GUI) or recency (TUI) and could
+  cross-wire; ACP tool-call ids now key on the real id, frontends fall
+  back to (name, depth, lane) only for id-less synthetic events
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

@@ -128,6 +128,7 @@ impl AgentLoop {
                 summary: String::new(),
                 depth: self.ctx.depth,
                 lane: self.ctx.lane,
+                call_id: None,
             });
             if let Err(e) = self.compact_inner(observer, "auto").await {
                 observer.on_event(&LiveEvent::ToolDone {
@@ -136,6 +137,7 @@ impl AgentLoop {
                     output: String::new(),
                     depth: self.ctx.depth,
                     lane: self.ctx.lane,
+                    call_id: None,
                     elapsed_ms: 0,
                 });
             }
@@ -174,6 +176,7 @@ impl AgentLoop {
                     summary: String::new(),
                     depth: self.ctx.depth,
                     lane: self.ctx.lane,
+                    call_id: None,
                 });
                 if let Err(e) = self.compact_inner(observer, "auto").await {
                     observer.on_event(&LiveEvent::ToolDone {
@@ -182,6 +185,7 @@ impl AgentLoop {
                         output: String::new(),
                         depth: self.ctx.depth,
                         lane: self.ctx.lane,
+                        call_id: None,
                         elapsed_ms: 0,
                     });
                 }
@@ -283,6 +287,7 @@ impl AgentLoop {
                         summary: "malformed arguments".into(),
                         depth: self.ctx.depth,
                         lane: self.ctx.lane,
+                        call_id: Some(call.id.clone()),
                     });
                     observer.on_event(&LiveEvent::ToolDone {
                         name: call.function.name.clone(),
@@ -290,6 +295,7 @@ impl AgentLoop {
                         output: result.output.clone(),
                         depth: self.ctx.depth,
                         lane: self.ctx.lane,
+                        call_id: Some(call.id.clone()),
                         elapsed_ms: 0,
                     });
                     let _ = self
@@ -391,6 +397,7 @@ impl AgentLoop {
                     summary: call_summary(&call.function.name, &args_value),
                     depth: self.ctx.depth,
                     lane: self.ctx.lane,
+                    call_id: Some(call.id.clone()),
                 });
                 let t0 = std::time::Instant::now();
 
@@ -447,6 +454,7 @@ impl AgentLoop {
                     output: truncate_output(&result.output),
                     depth: self.ctx.depth,
                     lane: self.ctx.lane,
+                    call_id: Some(call.id.clone()),
                     elapsed_ms: t0.elapsed().as_millis() as u64,
                 });
 

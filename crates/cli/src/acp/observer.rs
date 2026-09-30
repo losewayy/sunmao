@@ -44,16 +44,21 @@ impl Observer for AcpObserver {
                 summary,
                 depth,
                 lane,
+                call_id,
             } => {
                 let label = if *depth > 0 {
                     format!("↳{name}")
                 } else {
                     name.clone()
                 };
-                // ID keys on depth+lane so a sub-agent's Read doesn't collide
-                // with the parent's Read — or a parallel sibling's.
+                // the provider's call id is the exact join key; synthetic
+                // events (compact/local shell, no call_id) fall back to
+                // depth+lane+name — still unique enough for them.
+                let key = call_id
+                    .clone()
+                    .unwrap_or_else(|| format!("{depth}:{lane}:{name}"));
                 self.send(v2::SessionUpdate::ToolCallUpdate(
-                    v2::ToolCallUpdate::new(v2::ToolCallId::new(format!("{depth}:{lane}:{name}")))
+                    v2::ToolCallUpdate::new(v2::ToolCallId::new(key))
                         .name(label.clone())
                         .title(format!("{label} {summary}"))
                         .status(v2::ToolCallStatus::InProgress),
@@ -65,10 +70,14 @@ impl Observer for AcpObserver {
                 output,
                 depth,
                 lane,
+                call_id,
                 ..
             } => {
+                let key = call_id
+                    .clone()
+                    .unwrap_or_else(|| format!("{depth}:{lane}:{name}"));
                 self.send(v2::SessionUpdate::ToolCallUpdate(
-                    v2::ToolCallUpdate::new(v2::ToolCallId::new(format!("{depth}:{lane}:{name}")))
+                    v2::ToolCallUpdate::new(v2::ToolCallId::new(key))
                         .status(if *ok {
                             v2::ToolCallStatus::Completed
                         } else {

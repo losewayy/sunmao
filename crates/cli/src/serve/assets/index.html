@@ -87,13 +87,8 @@
 
   <aside class="rail glass" id="rail">
     <div class="rail-pane" id="rail-main">
-      <button class="ws" id="ws-btn" data-tip="">
-        <span class="ws-mark"><svg viewBox="0 0 48 48" fill="none" stroke-linejoin="round" stroke-width="3.2"><path d="M6 8H22V19L31 15V33L22 29V40H6Z" stroke="var(--c-text)" opacity=".9"/><path d="M24.5 8H42V40H24.5V29L33.5 33V15L24.5 19Z" stroke="var(--c-accent)"/></svg></span>
-        <span class="ws-name" id="ws-name">sunmao</span>
-        <span class="sd off" id="conn-dot" data-tip="未连接"></span>
-      </button>
       <nav class="nav">
-        <button class="nav-i" data-act="new-chat"><svg class="i"><use href="#i-pen"/></svg><span>新对话</span><kbd>Ctrl N</kbd></button>
+        <button class="nav-i" data-act="new-chat-pop"><svg class="i"><use href="#i-pen"/></svg><span>新对话</span><kbd>Ctrl N</kbd></button>
       </nav>
       <div class="lists scroll">
         <div id="sessions"></div>
@@ -101,6 +96,7 @@
       <div class="rail-foot">
         <button class="ib" data-go="settings" data-tip="设置|Ctrl ," aria-label="设置"><svg class="i"><use href="#i-settings"/></svg></button>
         <button class="ib" data-act="help" data-tip="帮助" aria-label="帮助"><svg class="i"><use href="#i-help"/></svg></button>
+        <span class="sd off" id="conn-dot" data-tip="未连接"></span>
         <span class="ver">serve</span>
       </div>
     </div>
@@ -199,8 +195,7 @@
     <div class="edge bot" aria-hidden="true"></div>
 
     <div class="composer glass" id="composer">
-      <div class="cmp-top">
-        <span class="tb"><svg class="i"><use href="#i-folder"/></svg><span class="cwd" id="cmp-cwd">…</span></span>
+      <div class="cmp-top" id="cmp-top" hidden>
         <span class="sp"></span>
         <span class="cmp-busy" id="cmp-busy"><i class="sd run"></i>执行中</span>
         <span class="cmp-wait" id="cmp-wait"><i class="sd wait"></i>等待批准 · Y / N / A</span>
@@ -227,6 +222,13 @@
         <div><dt>工具调用</dt><dd id="df-tools">0</dd></div>
         <div><dt>工具失败</dt><dd id="df-fails">0</dd></div>
         <div><dt>上下文压缩</dt><dd id="df-compact">0</dd></div>
+      </dl>
+    </section>
+    <section class="df glass" id="df-proj">
+      <div class="df-h"><span>项目</span></div>
+      <dl class="kv">
+        <div><dt>目录</dt><dd class="mono ellipsis" id="df-cwd" data-tip="">—</dd></div>
+        <div><dt>会话</dt><dd class="mono ellipsis" id="df-sess">—</dd></div>
       </dl>
     </section>
     <section class="df glass" id="df-flow"></section>
@@ -436,6 +438,9 @@ function paintWall(force) {
   if (!force && key === wKey) return;
   wKey = key;
   const cur = walls[wIdx], next = walls[wIdx ^ 1];
+  // rapid re-switches land on a canvas still fading out (.on pending) —
+  // reset it off-screen first so the .on re-add actually transitions
+  next.classList.remove('on'); void next.offsetWidth;
   next.width = w; next.height = h;
   drawWall(next.getContext('2d'), w, h, id);
   cur.classList.remove('top'); next.classList.add('top', 'on');
@@ -1006,6 +1011,7 @@ function collapse(card, html) {
 }
 function syncWait() {
   $('#cmp-wait').hidden = pendingApprovals.size === 0;
+  $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy;
   renderRail();
 }
 function decide(verdict, id) {
@@ -1028,6 +1034,7 @@ function abortTurn() {
 function setBusy(on) {
   busy = !!on;
   $('#cmp-busy').hidden = !busy;
+  $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy;
   const b = $('#send-btn');
   b.classList.toggle('stop', busy);
   $('use', b).setAttribute('href', busy ? '#i-x' : '#i-arrow-up');
@@ -1252,18 +1259,16 @@ function route(v) {
       cwd = String(v.cwd || '').replace(/^\\\\\?\\/, '');
       slashList = v.slash || [];
       models = v.models || [];
-      $('#cmp-cwd').textContent = cwd;
-      $('#cmp-cwd').parentElement.dataset.tip = cwd;
-      $('#ws-name').textContent = cwd.split(/[\\/]/).filter(Boolean).pop() || 'sunmao';
-      $('#ws-btn').dataset.tip = cwd;
+      $('#df-cwd').textContent = cwd;
+      $('#df-cwd').dataset.tip = cwd;
+      $('#df-sess').textContent = sessionId || '—';
       $('#hero-sub').textContent = cwd;
-      if (!models.length) $('#model-btn').style.display = 'none';
       setApprovalMode(v.mode);
       sandboxPort = v.sandbox_port || 0;
       busySessions.clear(); (v.busy_sessions || []).forEach(id => busySessions.add(id));
       renderReplay(v.replay || []);
       setBusy(!!v.busy);
-      refreshSessions();
+      refreshSessions(); refreshModels(); refreshProjects();
       renderCrumb();
       break;
     case 'live':
@@ -1271,6 +1276,8 @@ function route(v) {
       break;
     case 'replay':
       if (v.session) { sessionId = v.session; }
+      if (v.cwd) { cwd = String(v.cwd).replace(/^\\\\\?\\/, ''); $('#df-cwd').textContent = cwd; $('#df-cwd').dataset.tip = cwd; }
+      $('#df-sess').textContent = sessionId || '—';
       renderReplay(v.events || []);
       setApprovalMode(v.mode);
       setBusy(!!v.busy);
@@ -1311,6 +1318,7 @@ function route(v) {
       break;
     }
     case 'sessions_changed': refreshSessions(); break;
+    case 'models_changed': refreshModels(); break;
     case 'model':
       if (sess === sessionId) { modelLabel = v.label || modelLabel; $('#cmp-model').textContent = modelLabel; toast(`模型切换为 ${v.label}`, 'cpu'); }
       break;
@@ -1359,18 +1367,50 @@ async function forkSession(id) {
   }
   catch (e) { toast(`fork 失败：${e.message}`, 'alert', 'warn'); }
 }
-async function newChat() {
+async function newChat(project) {
   if (view !== 'session') show('session');
+  // no explicit project → the *current* session's root (Ctrl N keeps you
+  // in the same project)
+  project = project === undefined ? cwd : project;
   try {
-    const r = await api('/session/new', { method: 'POST' });
+    const r = await api('/session/new', jpost(project ? { cwd: project } : {}));
     if (r && r.session) { sessionId = r.session; wsSend({ type: 'view', id: r.session }); }
     renderCrumb(); refreshSessions();
   } catch (e) { toast(`新会话失败：${e.message}`, 'alert', 'warn'); }
 }
+// project picker for 新对话 — known projects (launch dir + registry) plus
+// freeform input; a path that exists on disk becomes the session's root
+let PROJECTS = null;
+async function refreshProjects() {
+  try { PROJECTS = (await api('/projects')).projects || []; } catch { PROJECTS = null; }
+}
+function newChatPop(el) {
+  if (popAnchor === el) return closePop();
+  const list = (PROJECTS || [cwd]).filter(Boolean);
+  pop(el, `<div class="lbl">新对话的项目目录</div><div class="field"><input id="np-in" placeholder="输入路径，回车创建" spellcheck="false" autocomplete="off"></div><div class="mp-list scroll">` +
+    list.map(p => `<button class="mi" data-v="${esc(p)}">${ic('folder')}<span class="mt mono"><span>${esc(p.split(/[\\/]/).filter(Boolean).pop() || p)}</span><small>${esc(p)}</small></span>${p === cwd ? ic('check', 'i sm ck') : ''}</button>`).join('') +
+    `</div>`, { place: 'bottom', cls: 'models', onMount(p) {
+      const inp = $('#np-in', p);
+      inp.addEventListener('keydown', e => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const v = inp.value.trim();
+        closePop(); newChat(v || cwd);
+      });
+      p.addEventListener('click', e => { const b = e.target.closest('.mi'); if (!b) return; closePop(); newChat(b.dataset.v); });
+      setTimeout(() => inp.focus(), 20);
+    } });
+}
+let SESSION_PROJ = {}; // session id → display project path
 async function refreshSessions() {
   try {
     const v = await api('/sessions');
-    SESSION_IDS = Array.isArray(v.sessions) ? v.sessions : [];
+    SESSION_PROJ = {};
+    SESSION_IDS = (Array.isArray(v.sessions) ? v.sessions : []).map(r => {
+      const o = typeof r === 'string' ? { id: r } : r;
+      SESSION_PROJ[o.id] = o.project || '';
+      return o.id;
+    });
     SESSION_META = v.meta && typeof v.meta === 'object' ? v.meta : {};
     renderRail(); renderCrumb();
   } catch {}
@@ -1380,6 +1420,62 @@ function refreshDataflowSoon() { clearTimeout(dfTimer); dfTimer = setTimeout(ref
 async function refreshDataflow() {
   try { renderDock(await api('/dataflow?sess=' + encodeURIComponent(sessionId))); }
   catch { $('#df-sub').textContent = '无可读会话日志'; }
+}
+
+/* ================= providers / models ================= */
+// `MODELS` = last GET /models snapshot — providers (keys redacted),
+// routes, completable selectors. The picker renders from it; the settings
+// page edits it through PUT /models.
+let MODELS = null;
+const jput = v => ({ method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(v) });
+const jpost = v => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(v) });
+async function refreshModels() {
+  try {
+    MODELS = await api('/models');
+    models = MODELS.selectors || [];
+  } catch { MODELS = null; }
+  if (view === 'settings' && setPage === 'providers') renderProviders();
+  if (popEl && popEl.classList.contains('models')) renderModelRows(popEl, $('#mp-in') ? $('#mp-in').value.trim() : '');
+}
+const provNames = () => Object.keys((MODELS && MODELS.providers) || {}).sort();
+// compose the PUT body: current file with `name` replaced/removed/added.
+// `api_key` is only written when the form actually collected one — a blank
+// field means "keep".
+function modelsBody(edit) {
+  const providers = {};
+  for (const [n, p] of Object.entries((MODELS && MODELS.providers) || {})) {
+    providers[n] = { base_url: p.base_url, dialect: p.dialect || 'openai', catalog: p.catalog || [] };
+    if (p.api_key_env) providers[n].api_key_env = p.api_key_env;
+  }
+  if (edit) {
+    if (edit.del) delete providers[edit.name];
+    else {
+      providers[edit.name] = { base_url: edit.base_url, dialect: edit.dialect, catalog: edit.setCatalog || (edit.keepCatalog ? (MODELS.providers[edit.name] || {}).catalog || [] : []) };
+      if (edit.api_key) providers[edit.name].api_key = edit.api_key;
+      else if (edit.keepKey && MODELS.providers[edit.name] && MODELS.providers[edit.name].api_key_env) providers[edit.name].api_key_env = MODELS.providers[edit.name].api_key_env;
+    }
+  }
+  return { providers, routes: (MODELS && MODELS.routes) || {} };
+}
+async function saveProviders(edit, ok) {
+  try {
+    MODELS = await api('/models', jput(modelsBody(edit)));
+    models = MODELS.selectors || [];
+    if (ok) toast(ok, 'check');
+    if (view === 'settings' && setPage === 'providers') renderProviders();
+  } catch (e) { toast(`保存失败：${e.message}`, 'alert', 'warn'); }
+}
+async function fetchCatalog(name) {
+  toast('正在拉取模型列表…', 'reset');
+  try {
+    const r = await api('/models/fetch', jpost({ provider: name }));
+    const cat = r.catalog || [];
+    if (!cat.length) return toast('该 provider 返回了空列表', 'alert', 'warn');
+    const cur = ((MODELS.providers[name] || {}).catalog) || [];
+    const merged = [...cat];
+    for (const m of cur) if (!merged.some(c => c.id === m.id)) merged.push(m);
+    await saveProviders({ name, base_url: MODELS.providers[name].base_url, dialect: MODELS.providers[name].dialect, keepKey: true, keepCatalog: false, setCatalog: merged }, `已拉取 ${cat.length} 个模型`);
+  } catch (e) { toast(`拉取失败：${e.message}`, 'alert', 'warn'); }
 }
 
 /* ================= dock ================= */
@@ -1425,8 +1521,12 @@ function sessBucket(ms) {
 const sessRow = id => {
   const on = id === sessionId, run = busySessions.has(id) || (on && busy), wait = waitingSessions.has(id);
   const title = sessTitle(id), m = SESSION_META[id] || {};
+  const proj = SESSION_PROJ[id] || '';
+  // a session running in another project wears its project name — the
+  // same-project majority stays clean
+  const foreign = proj && cwd && proj !== cwd ? `<span class="tag">${esc(proj.split(/[\\/]/).filter(Boolean).pop() || proj)}</span>` : '';
   const state = wait ? '<i class="sd wait" aria-label="等待批准"></i>' : run ? '<i class="sd run" aria-label="运行中"></i>' : `<span class="when">${sessWhen(m.mtime)}</span>`;
-  return `<button class="row sess${on ? ' on' : ''}" data-sess="${esc(id)}" data-tip="${esc(title ? title + '|' + id : id)}" data-tip-side="right"><span class="t${title ? '' : ' untitled'}">${esc(title || '新对话')}</span>${state}</button>`;
+  return `<button class="row sess${on ? ' on' : ''}" data-sess="${esc(id)}" data-tip="${esc((proj ? proj + ' · ' : '') + (title ? title + '|' + id : id))}" data-tip-side="right"><span class="t${title ? '' : ' untitled'}">${esc(title || '新对话')}</span>${foreign}${state}</button>`;
 };
 function renderRail() {
   let html = '', last = '';
@@ -1442,7 +1542,7 @@ function renderRail() {
   $('#sessions').innerHTML = html || '<div class="empty-hint">暂无会话记录</div>';
   $$('.nav-i[data-go]').forEach(b => b.classList.toggle('on', b.dataset.go === view));
 }
-const SET_NAV = [['appearance', '外观', 'palette'], ['keys', '快捷键', 'keyboard'], ['about', '关于', 'info']];
+const SET_NAV = [['appearance', '外观', 'palette'], ['providers', '模型与提供商', 'cpu'], ['keys', '快捷键', 'keyboard'], ['about', '关于', 'info']];
 function renderCrumb() {
   const c = $('#crumb');
   let h;
@@ -1724,12 +1824,112 @@ function motionPop(anchor) {
   menuPop(anchor, [{ label: '动效' }, ...OPTS.map(m => Object.assign({}, m, { on: m.v === S.motion }))], v => { S.motion = v; commit(); }, { align: 'end' });
 }
 
+/* model picker — input + filtered catalog list. Enter picks the typed
+   selector verbatim (provider/id or bare id resolve through the kernel's
+   ModelResolver); rows carry capability badges from the catalog. */
+const mbadge = m => `${m.vision ? '<span class="tag">图</span>' : ''}${m.context_length ? `<span class="tag">${m.context_length >= 1000 ? Math.round(m.context_length / 1000) + 'k' : m.context_length}</span>` : ''}${(m.thinking || []).length ? `<span class="tag">思:${(m.thinking || []).join('/')}</span>` : ''}`;
+function renderModelRows(p, q) {
+  q = (q || '').toLowerCase();
+  const rows = [];
+  const routes = (MODELS && MODELS.routes) || {};
+  for (const [r, chain] of Object.entries(routes)) {
+    const sel = '@' + r, d = Array.isArray(chain) ? chain.join(' → ') : String(chain);
+    if (!q || (sel + ' ' + d).toLowerCase().includes(q)) rows.push(`<button class="mi" data-v="${esc(sel)}">${ic('zap')}<span class="mt mono"><span>${esc(sel)}</span><small>${esc(d)}</small></span></button>`);
+  }
+  for (const n of provNames()) {
+    const p0 = MODELS.providers[n], cat = p0.catalog || [];
+    const shown = cat.filter(m => !q || `${n}/${m.id}`.toLowerCase().includes(q));
+    const listed = shown.map(m => `<button class="mi" data-v="${esc(n + '/' + m.id)}"><span class="mt mono"><span>${esc(n + '/' + m.id)}</span></span>${mbadge(m)}</button>`).join('');
+    if (listed) rows.push(`<div class="lbl">${esc(n)} · ${cat.length} 个模型</div>` + listed);
+    // no catalog yet — offer the `provider/` prefix so typing an id
+    // still lands on this provider
+    if (!cat.length && (!q || n.includes(q))) rows.push(`<button class="mi" data-v="${esc(n + '/')}"><span class="mt mono"><span>${esc(n + '/<model-id>')}</span><small>未拉取目录 — 直接输入 model id</small></span></button>`);
+  }
+  $('.mp-list', p).innerHTML = rows.join('') || `<div class="hint">无匹配 — 输入 provider/model 或模型 id，回车直接切换</div>`;
+}
+function modelPop(el) {
+  if (popAnchor === el) return closePop();
+  pop(el, `<div class="field"><input id="mp-in" placeholder="provider/model 或 @route — 回车切换" spellcheck="false" autocomplete="off"></div><div class="mp-list scroll"></div>`, { place: 'top', align: 'end', cls: 'models', onMount(p) {
+    const inp = $('#mp-in', p);
+    renderModelRows(p, '');
+    inp.addEventListener('input', () => renderModelRows(p, inp.value.trim()));
+    inp.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const v = inp.value.trim(); if (!v) return;
+      closePop(); wsSend({ type: 'model', sel: v });
+    });
+    p.addEventListener('click', e => { const b = e.target.closest('.mi'); if (!b) return; closePop(); wsSend({ type: 'model', sel: b.dataset.v }); });
+    setTimeout(() => inp.focus(), 20);
+  } });
+}
+
 const mono = t => `<span class="pill plain">${esc(t)}</span>`;
 const row = (b, s, ctl) => `<div class="cr"><div class="l"><b>${b}</b>${s ? `<span>${s}</span>` : ''}</div>${ctl}</div>`;
 const card = rows => `<div class="card glass cfg">${rows.join('')}</div>`;
 const sec = (h, p, body) => `<div class="sec">${h ? `<div class="sec-h"><h2>${h}</h2>${p ? `<p>${p}</p>` : ''}</div>` : ''}${body}</div>`;
 const head = (t, d) => `<h1>${t}</h1>${d ? `<p class="lead">${d}</p>` : ''}`;
+
+/* providers page — edits ride PUT /models (writes .sunmao/models.json,
+   every live host reloads). `pvEdit` is the open editor state; keys are
+   write-only (the page shows 已配置, a blank field means "keep"). */
+let pvEdit = null; // { name|null for add, base_url, dialect, key, dirty }
+function renderProviders() {
+  if (view !== 'settings' || setPage !== 'providers') return;
+  const host = $('#set-generic');
+  if (!MODELS) { host.innerHTML = head('模型与提供商', '') + '<div class="empty-hint">正在读取模型配置…</div>'; refreshModels(); return; }
+  const names = Object.keys(MODELS.providers || {}).sort();
+  let html = head('模型与提供商', '每个 provider 一条 OpenAI/Anthropic 兼容端点；模型目录来自 provider 自己的 /models 列表，也可手写。');
+  for (const n of names) {
+    const p = MODELS.providers[n], cat = p.catalog || [];
+    const editing = pvEdit && pvEdit.name === n;
+    let body;
+    if (editing) {
+      body = provForm(n, p);
+    } else {
+      const subs = [`${p.dialect || 'openai'} · ${p.base_url}`];
+      body = `<div class="pv-h"><b class="mono">${esc(n)}</b><span class="pv-sub">${esc(subs.join(''))}</span><span class="tag">${p.api_key_set ? 'key 已配置' : '无 key'}</span>${n === MODELS.default_provider ? '<span class="tag">本会话</span>' : ''}</div>`
+        + `<div class="pv-acts"><button class="btn ghost sm" data-pv="fetch" data-n="${esc(n)}">${ic('reset')}拉取模型</button><button class="btn ghost sm" data-pv="edit" data-n="${esc(n)}">${ic('pen')}编辑</button><button class="btn ghost sm" data-pv="del" data-n="${esc(n)}">${ic('x')}删除</button></div>`
+        + (cat.length
+          ? `<div class="pv-cat">${cat.map(m => `<span class="tag" data-tip="${esc(n + '/' + m.id)}">${esc(m.id)}${m.vision ? ' ·图' : ''}${m.context_length ? ' ·' + (m.context_length >= 1000 ? Math.round(m.context_length / 1000) + 'k' : m.context_length) : ''}</span>`).join('')}</div>`
+          : `<div class="hint">尚未拉取模型目录 — 点「拉取模型」或手写 model id</div>`);
+    }
+    html += `<div class="card glass cfg pv">${body}</div>`;
+  }
+  html += `<div class="card glass cfg pv">${pvEdit && pvEdit.name === null ? provForm('', null) : `<button class="btn ghost sm" data-pv="add">${ic('plus')}添加 provider</button>`}</div>`;
+  html += `<div class="set-foot"><span>配置写入 <code>.sunmao/models.json</code>，本会话即时生效</span></div>`;
+  host.innerHTML = html;
+}
+function provForm(n, p) {
+  const v = pvEdit || {};
+  const val = (k, d) => esc(v[k] != null ? v[k] : (p && p[k] != null ? p[k] : d || ''));
+  return `<div class="pv-form">
+    <label>名称<input data-f="name" value="${esc(n)}" ${n ? 'disabled' : ''} placeholder="如 default、deepseek"></label>
+    <label>Base URL<input data-f="base_url" value="${val('base_url')}" placeholder="https://api.example.com/v1"></label>
+    <label>协议<select data-f="dialect"><option value="openai"${val('dialect', 'openai') === 'openai' ? ' selected' : ''}>OpenAI 兼容</option><option value="anthropic"${val('dialect') === 'anthropic' ? ' selected' : ''}>Anthropic</option></select></label>
+    <label>API Key<input data-f="api_key" type="password" value="${val('api_key')}" placeholder="${p && p.api_key_set ? '已配置 — 留空保持不变' : 'sk-… 或留空（本地服务）'}"></label>
+    <div class="pv-acts"><button class="btn allow sm" data-pv="save">${ic('check')}保存</button><button class="btn ghost sm" data-pv="cancel">取消</button></div>
+  </div>`;
+}
+async function providerAction(kind, el) {
+  const cardEl = el.closest('.pv');
+  if (kind === 'add') { pvEdit = { name: null }; return renderProviders(); }
+  if (kind === 'cancel') { pvEdit = null; return renderProviders(); }
+  if (kind === 'save') {
+    const g = f => { const i = cardEl.querySelector(`[data-f="${f}"]`); return i ? i.value.trim() : ''; };
+    const name = pvEdit && pvEdit.name != null ? pvEdit.name : g('name');
+    const base = g('base_url');
+    if (!name || !base) return toast('名称与 Base URL 必填', 'alert', 'warn');
+    pvEdit = null;
+    return saveProviders({ name, base_url: base, dialect: g('dialect') || 'openai', api_key: g('api_key') || null, keepKey: true, keepCatalog: true }, '已保存 provider ' + name);
+  }
+  const n = el.dataset.n;
+  if (kind === 'edit') { pvEdit = { name: n }; return renderProviders(); }
+  if (kind === 'del') { return saveProviders({ name: n, del: true }, '已删除 ' + n); }
+  if (kind === 'fetch') return fetchCatalog(n);
+}
 const PAGES = {
+  providers: () => head('模型与提供商', '') + '<div class="empty-hint">正在读取模型配置…</div>',
   keys: () => head('快捷键', '焦点不在输入框时，审批快捷键直接裁决最早的待审批卡。') + sec('', '', card([['新对话', 'Ctrl N'], ['命令面板', 'Ctrl K'], ['打开设置', 'Ctrl ,'], ['显示或隐藏数据面板', 'Ctrl \\'], ['Allow / Deny / Always', 'Y N A'], ['发送', 'Enter'], ['换行', 'Shift Enter'], ['关闭弹层或返回', 'Esc']].map(([a, k]) => row(a, '', `<span class="keys">${k.split(' ').map(x => `<kbd>${esc(x)}</kbd>`).join('')}</span>`)))),
   about: () => head('关于', '') + `<div class="card glass cfg"><div class="ab-top">${$('#hero svg').outerHTML}<div><b>sunmao</b><span>Rust 编写的 agent 运行时内核</span></div></div>${row('会话', '', mono(sessionId || '—'))}${row('工作目录', '', mono(cwd || '—'))}${row('本地服务', TAURI ? '内嵌内核 · 自定义协议（无 TCP 监听）' : 'sunmao serve 只绑定本机', mono(location.host))}${row('内核', '', mono('sunmao-core'))}${row('许可', '', mono('MIT OR Apache-2.0'))}</div>`,
 };
@@ -1742,11 +1942,18 @@ function settingsPage(p) {
   $('#set-scroll').scrollTop = 0;
   renderCrumb();
   if (isA) { renderWallGrid(); syncSettingsUI(); }
+  else if (p === 'providers') { renderProviders(); }
 }
 
 /* ================= menus / actions ================= */
 function sessionMenu(id) {
-  return [{ v: 'resume', t: 'Resume 到此会话', icon: 'history', d: id }, { v: 'fork', t: '分叉会话', icon: 'fork', d: '复制事件日志，另起一支' }, { v: 'copy', t: '复制会话 ID', icon: 'copy' }];
+  const cur = id === sessionId;
+  const items = [];
+  if (!cur) items.push({ v: 'resume', t: '切换到此会话', icon: 'history', d: '接回它的事件日志继续' });
+  items.push({ v: 'fork', t: cur ? '从此分叉' : '分叉此会话', icon: 'fork', d: '复制事件日志，另起一支' });
+  items.push('-');
+  items.push({ v: 'copy', t: '复制会话 ID', icon: 'copy', d: id });
+  return items;
 }
 function sessionAction(v, id) {
   if (v === 'resume') resumeSession(id);
@@ -1803,12 +2010,10 @@ function act(name, el) {
       ];
       return menuPop(el, [{ label: '审批模式' }, ...MODES.map(m => Object.assign({}, m, { on: m.v === approvalMode }))], v => { wsSend({ type: 'mode', sel: v }); }, { place: 'top', align: 'end' });
     }
-    case 'pick-model': {
-      if (!models.length) return toast('无 models.json — 仅会话模型', 'info');
-      return menuPop(el, [{ label: '模型' }, ...models.map(m => ({ v: m, t: m, mono: true }))], v => { wsSend({ type: 'model', sel: v }); }, { place: 'top', align: 'end' });
-    }
+    case 'pick-model': return modelPop(el);
     case 'send': return send();
     case 'new-chat': return newChat();
+    case 'new-chat-pop': return newChatPop(el);
     case 'upload-wall': return $('#file-wall').click();
     case 'color': return colorPop(el, el.dataset.key);
     case 'font': return fontPop(el, el.dataset.key);
@@ -1835,6 +2040,7 @@ document.addEventListener('click', e => {
   const w = t.closest('[data-wall]'); if (w) { S.wallpaper = w.dataset.wall; return commit(); }
   const m = t.closest('.tc[data-mode]'); if (m) { S.mode = m.dataset.mode; return commit(); }
   const a = t.closest('[data-act]'); if (a) return act(a.dataset.act, a);
+  const pv = t.closest('[data-pv]'); if (pv) return providerAction(pv.dataset.pv, pv);
 });
 document.addEventListener('keydown', e => {
   const typing = e.target.closest && e.target.closest('input,textarea,[contenteditable]');

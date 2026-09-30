@@ -15,6 +15,7 @@ use sunmao_llm::OaiClient;
 mod acp;
 mod dataflow;
 mod doctor;
+mod plugin;
 mod tui;
 
 #[derive(Parser)]
@@ -73,6 +74,8 @@ struct Cli {
     /// One-shot mode: run a single prompt and exit (scriptable).
     #[arg(long, short = 'p')]
     print: Option<String>,
+    #[command(subcommand)]
+    command: Option<plugin::Cmd>,
 }
 
 struct StdoutObserver {
@@ -160,6 +163,14 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
     let cli = Cli::parse();
+
+    // `plugin` ops are pure file management — they never need a provider,
+    // a session log, or any of the session setup below.
+    if let Some(cmd) = &cli.command {
+        match cmd {
+            plugin::Cmd::Plugin(args) => return plugin::run(args, &cli.cwd),
+        }
+    }
 
     if cli.sessions {
         return list_sessions(&cli.session_dir);

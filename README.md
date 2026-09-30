@@ -96,6 +96,8 @@ sunmao --resume s-…                 # continue a session
 sunmao --sessions                   # list local session logs
 sunmao --dataflow <session>.jsonl   # audit report
 sunmao --acp                        # ACP server (stdio)
+sunmao plugin install <path>        # copy a plugin dir into .sunmao/plugins/<name>/
+sunmao plugin list|remove <name>    # inspect / uninstall
 ```
 
 ## Config conventions (all optional, all file-based)
@@ -113,6 +115,7 @@ sunmao --acp                        # ACP server (stdio)
 ├── agents/*.md          # named sub-agent definitions (Task.subagent_type)
 │                        # frontmatter: model / tools / spawns
 ├── models.json          # model routing — named providers + @route chains
+├── plugins/<name>/      # installed plugin bundles (`sunmao plugin …`)
 └── sessions/jobs/artifacts/   # runtime state (gitignored)
 
 .claude/settings.json    # also read — hooks + permissions merge

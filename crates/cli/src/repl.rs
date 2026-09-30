@@ -108,7 +108,7 @@ pub async fn run(
                 }
                 "help" | "h" | "?" => {
                     println!(
-                        "commands — /compact · /model [sel] · /resume [id] · /sessions · /help · /quit\n\
+                        "commands — /compact · /model [sel] · /resume [id] · /sessions · /tasks · /help · /quit\n\
                          `!cmd` runs locally; /name resolves .sunmao/commands + .claude/commands"
                     );
                     continue;
@@ -136,6 +136,28 @@ pub async fn run(
                 }
                 "sessions" => {
                     list_sessions(&cwd.join(".sunmao").join("sessions"))?;
+                    continue;
+                }
+                "tasks" => {
+                    let tasks = agent.task_roster();
+                    if tasks.is_empty() {
+                        println!("[no sub-agents this session]");
+                    } else {
+                        println!("sub-agents:");
+                        for t in &tasks {
+                            let status = match t.done {
+                                None => "running",
+                                Some(true) => "done",
+                                Some(false) => "failed",
+                            };
+                            let agent_name = t
+                                .agent
+                                .as_deref()
+                                .map(|a| format!(" @{a}"))
+                                .unwrap_or_default();
+                            println!("  {status:<7} {}{} — {}", t.id, agent_name, t.prompt);
+                        }
+                    }
                     continue;
                 }
                 "resume" => {

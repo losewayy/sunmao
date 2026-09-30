@@ -316,7 +316,24 @@ async fn spawn_detached(
     def: Option<&crate::agents::AgentDef>,
 ) -> String {
     let (sub_id, sub_ctx) = spawn_parts(ctx, def).await;
+    // roster entry — `/tasks` reads this; the completion path flips `done`
+    {
+        let mut digest: String = prompt.chars().take(60).collect();
+        if prompt.chars().count() > 60 {
+            digest.push('…');
+        }
+        ctx.live_tasks
+            .lock()
+            .unwrap()
+            .push(crate::context::TaskEntry {
+                id: sub_id.clone(),
+                agent: def.map(|d| d.name.clone()),
+                prompt: digest.split_whitespace().collect::<Vec<_>>().join(" "),
+                done: None,
+            });
+    }
     let parent_log = ctx.sessions.clone();
+    let parent_tasks = ctx.live_tasks.clone();
     let sink = ctx.live_sink.get().cloned();
     let notify_sink = sink.clone();
     let id = sub_id.clone();
@@ -335,6 +352,12 @@ async fn spawn_detached(
                     output,
                 })
                 .await;
+        }
+        {
+            let mut tasks = parent_tasks.lock().unwrap();
+            if let Some(e) = tasks.iter_mut().find(|t| t.id == id) {
+                e.done = Some(res.ok);
+            }
         }
         if let Some(s) = notify_sink {
             s.on_event(&LiveEvent::Hook {
@@ -448,6 +471,7 @@ async fn spawn_parts(ctx: &Context, def: Option<&crate::agents::AgentDef>) -> (S
         // the parent's driver applies — a preset-named loop is
         // session-level, not per-agent
         loop_driver: ctx.loop_driver,
+        live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
     };
     // extension children come up in the child's scope; their tools follow
     // the same `tools:` whitelist rule as native ones — an ext tool not on

@@ -100,6 +100,24 @@ pub struct Context {
     /// the CLI overrides after the fact. `Bare` turns skip hooks, the
     /// dispatch gate and compaction but keep the session log and observer.
     pub loop_driver: crate::agent::LoopDriver,
+    /// Live sub-agent roster — detached `Task` spawns register here,
+    /// completion flips `done`. `/tasks` reads it; sub-agent contexts get
+    /// their own (a child's roster is its own spawn tree's, not ours).
+    /// `Arc` because the detached spawn outlives its `&Context` borrow.
+    pub live_tasks: std::sync::Arc<std::sync::Mutex<Vec<TaskEntry>>>,
+}
+
+/// One detached sub-agent in the roster.
+#[derive(Debug, Clone)]
+pub struct TaskEntry {
+    /// The `sub-…-l<lane>` id — doubles as the child log's file stem.
+    pub id: String,
+    /// Agent def name, or None for a generic spawn.
+    pub agent: Option<String>,
+    /// One-line digest of the prompt it was given.
+    pub prompt: String,
+    /// None while running; Some(ok) once TaskDone landed.
+    pub done: Option<bool>,
 }
 
 impl Context {
@@ -141,6 +159,7 @@ impl Context {
             extra_plugin_roots: Vec::new(),
             ext: Arc::new(ExtRegistry::new()),
             loop_driver,
+            live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 

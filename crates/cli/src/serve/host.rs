@@ -44,8 +44,6 @@ pub(crate) struct Shared {
     /// builds a fully-seeded Context for a log (the startup assembly,
     /// reusable per session)
     pub(crate) factory: super::SessionFactory,
-    /// assembled system prompt — fresh sessions re-seed it, same as startup
-    pub(crate) system_prompt: String,
     /// model label recorded in a fresh session's Started event
     pub(crate) model_label: String,
     /// The MCP Apps sandbox listener's port — the spec's double-iframe
@@ -54,6 +52,11 @@ pub(crate) struct Shared {
     /// shell there is no listener — it's 0 and the page substitutes the
     /// `sunmao-sandbox` scheme URL instead.
     pub(crate) sandbox_port: u16,
+    /// `--system` override, already assembled — `Some` freezes every
+    /// session's prompt to it (per-project AGENTS.md stops applying);
+    /// `None` re-assembles per session dir so cross-project sessions get
+    /// their own project's prompt.
+    pub(crate) prompt_override: Option<String>,
     /// process-wide approval id space (see Pending)
     pub(crate) approval_ids: Arc<AtomicU64>,
     /// host-management channel — session drivers can't `await adopt`
@@ -109,7 +112,9 @@ impl Shared {
     /// factory + its own driver task, then SessionStart fires with the
     /// adoption's `source` (same vocabulary as TUI --resume: startup /
     /// resume / fork). Re-adopting a live id is a no-op — the same host
-    /// answers every viewer.
+    /// answers every viewer. The session's project dir comes from the
+    /// log's own path (`<project>/.sunmao/sessions/<id>.jsonl`) so a
+    /// session adopted from another project keeps running in it.
     pub(crate) async fn adopt(
         self: &Arc<Self>,
         log: SessionLog,
@@ -123,6 +128,8 @@ impl Shared {
         if let Some(h) = self.host(&id) {
             return Ok(h);
         }
+        let session_cwd = session_project(self, log.path());
+        register_project(&self.cwd, &session_cwd);
         let pending = Arc::new(Pending::new(
             self.live.clone(),
             self.approval_ids.clone(),
@@ -131,7 +138,7 @@ impl Shared {
         let approver = Arc::new(ServeApprover {
             pending: pending.clone(),
         });
-        let ctx = self.factory.build(log, approver).await?;
+        let ctx = self.factory.build(log, approver, session_cwd).await?;
         let agent = AgentLoop::new(ctx.clone());
         agent.set_live_sink(Arc::new(WsObserver::new(self.live.clone(), id.clone())));
         let (input_tx, input_rx) = mpsc::unbounded_channel::<String>();
@@ -166,7 +173,8 @@ impl Shared {
 
 /// resume/fork = adopt the target (or its copy) as a live host and let the
 /// caller's tab switch views — the previous session keeps running in its
-/// own host instead of being swapped away mid-tab.
+/// own host instead of being swapped away mid-tab. A fork stays in the
+/// source session's project (the copy lands next to the source log).
 pub(crate) async fn fork_or_resume(
     s: &Arc<Shared>,
     id: &str,
@@ -178,9 +186,9 @@ pub(crate) async fn fork_or_resume(
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
-        let dst = s
-            .cwd
-            .join(".sunmao/sessions")
+        let dst = src
+            .parent()
+            .unwrap_or(&s.cwd)
             .join(format!("s-{ms}-fork.jsonl"));
         std::fs::copy(&src, &dst).with_context(|| format!("copy {}", src.display()))?;
         dst
@@ -192,24 +200,45 @@ pub(crate) async fn fork_or_resume(
     Ok(serde_json::json!({"session": host.id}))
 }
 
-/// `POST /session/new` — a fresh log with the same Started+system seeding
-/// `main.rs` gives startup sessions, adopted as its own live host.
-pub(crate) async fn new_session(s: &Arc<Shared>) -> Result<serde_json::Value> {
+/// `POST /session/new {"cwd"?}` — a fresh log under the chosen project's
+/// `.sunmao/sessions`, seeded like startup; `cwd` defaults to the launch
+/// dir. The session's prompt is assembled from *that* dir unless a
+/// `--system` override froze it.
+pub(crate) async fn new_session(
+    s: &Arc<Shared>,
+    cwd: Option<std::path::PathBuf>,
+) -> Result<serde_json::Value> {
+    let cwd = match cwd {
+        Some(p) => {
+            let p = if p.is_absolute() { p } else { s.cwd.join(p) };
+            if !p.is_dir() {
+                anyhow::bail!("not a directory: {}", p.display());
+            }
+            p.canonicalize().unwrap_or(p)
+        }
+        None => s.cwd.clone(),
+    };
     // millis suffix: /new within the same second must not collide
     let ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
     let id = format!("{}-{}", crate::session_id(), ms % 1000);
-    let dir = s.cwd.join(".sunmao/sessions");
+    let dir = cwd.join(".sunmao/sessions");
+    let prompt = match &s.prompt_override {
+        Some(p) => p.clone(),
+        None => sunmao_core::prompt::PromptAssembler::new(&cwd)
+            .with_extra_roots(&s.roots)
+            .assemble(None),
+    };
     let mut log = sunmao_core::SessionLog::open(&dir, &id).await?;
     log.append(&SessionEvent::Started {
         model: s.model_label.clone(),
-        cwd: display_path(&s.cwd),
+        cwd: display_path(&cwd),
     })
     .await?;
     log.append(&SessionEvent::Message {
-        message: sunmao_llm::types::Message::system(s.system_prompt.clone()),
+        message: sunmao_llm::types::Message::system(prompt),
     })
     .await?;
     let host = s.adopt(log, "startup").await?;
@@ -347,17 +376,85 @@ pub(crate) fn safe_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// `id` may be a bare session id (resolved under .sunmao/sessions) or a
-/// path — paths are allowed only if they stay inside the sessions dir,
-/// otherwise a GET could read arbitrary files as JSONL.
+/// `id` may be a bare session id (resolved under the launch dir's
+/// .sunmao/sessions, then every registered project's) or a path — paths
+/// are allowed only if they stay inside a sessions dir, otherwise a GET
+/// could read arbitrary files as JSONL.
 pub(crate) fn log_path(s: &Shared, id: &str) -> Option<std::path::PathBuf> {
     let p = std::path::PathBuf::from(id);
-    let cand = if p.exists() {
-        p
-    } else {
-        s.cwd.join(".sunmao/sessions").join(format!("{id}.jsonl"))
-    };
-    cand.exists().then_some(cand)
+    if p.exists() {
+        return Some(p);
+    }
+    for dir in session_dirs(s) {
+        let cand = dir.join(format!("{id}.jsonl"));
+        if cand.exists() {
+            return Some(cand);
+        }
+    }
+    None
+}
+
+/// Every `<project>/.sunmao/sessions` dir the host knows: launch cwd first,
+/// then the project registry's — sessions adopted from another project
+/// stay findable after their dir registers.
+pub(crate) fn session_dirs(s: &Shared) -> Vec<std::path::PathBuf> {
+    let mut out = vec![s.cwd.join(".sunmao/sessions")];
+    for p in projects(s) {
+        let d = p.join(".sunmao/sessions");
+        if !out.contains(&d) {
+            out.push(d);
+        }
+    }
+    out
+}
+
+/// The project a session log belongs to — `<project>/.sunmao/sessions/`
+/// `<id>.jsonl` implies `<project>`; anything else (bare path args, odd
+/// layouts) falls back to the launch dir.
+pub(crate) fn session_project(s: &Shared, log: &std::path::Path) -> std::path::PathBuf {
+    let mut a = log.ancestors();
+    let is_sessions_layout = matches!(
+        (a.nth(1), a.next()),
+        (Some(parent), Some(grand))
+            if parent.file_name().map(|f| f == "sessions").unwrap_or(false)
+                && grand.file_name().map(|f| f == ".sunmao").unwrap_or(false)
+    );
+    if is_sessions_layout && let Some(project) = a.next() {
+        return project.to_path_buf();
+    }
+    s.cwd.clone()
+}
+
+/// The known-project registry: `.sunmao/projects.json` under the launch
+/// dir — a JSON array of project paths. `register_project` appends on
+/// adopt so `GET /projects` and session listing see every project a
+/// session has ever run in during this host's life.
+pub(crate) fn projects(s: &Shared) -> Vec<std::path::PathBuf> {
+    let path = s.cwd.join(".sunmao/projects.json");
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Vec<String>>(&t).ok())
+        .map(|v| v.into_iter().map(std::path::PathBuf::from).collect())
+        .unwrap_or_default()
+}
+
+fn register_project(launch_cwd: &std::path::Path, project: &std::path::Path) {
+    if project == launch_cwd {
+        return; // launch dir is implicit — always listed
+    }
+    let path = launch_cwd.join(".sunmao/projects.json");
+    let mut list: Vec<String> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    let disp = display_path(project);
+    if list.iter().any(|p| p == &disp) {
+        return;
+    }
+    list.push(disp);
+    if let Ok(t) = serde_json::to_string_pretty(&list) {
+        let _ = std::fs::write(&path, t);
+    }
 }
 
 /// Slash-command list for the composer menu — same candidates the TUI

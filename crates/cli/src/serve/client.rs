@@ -73,7 +73,11 @@ impl Client {
         client.emit(serde_json::json!({
             "type": "hello",
             "session": client.viewing,
-            "cwd": display_path(&client.s.cwd),
+            // cwd is the *viewed session's* project — a session adopted
+            // from elsewhere reports its own root
+            "cwd": host.as_ref()
+                .map(|h| display_path(&h.agent.session_cwd()))
+                .unwrap_or_else(|| display_path(&client.s.cwd)),
             "slash": slash_candidates(&client.s),
             "models": host.as_ref().map(|h| h.agent.model_choices()).unwrap_or_default(),
             "mode": host.as_ref().map(|h| h.agent.approval_mode().as_str()).unwrap_or("auto"),
@@ -100,6 +104,7 @@ impl Client {
             "type": "replay",
             "session": host.id,
             "events": evs,
+            "cwd": display_path(&host.agent.session_cwd()),
             "busy": host.busy.load(Ordering::Relaxed) > 0,
             "mode": host.agent.approval_mode().as_str(),
             // pending approval cards re-render — a tab arriving mid-ask
@@ -181,24 +186,33 @@ impl Client {
                     }
                 }
             }
-            "new" => match new_session(&self.s).await {
-                Ok(r) => {
-                    let new_id = r["session"].as_str().unwrap_or("").to_string();
-                    if let Some(h) = self.s.host(&new_id) {
-                        self.viewing = h.id.clone();
-                        self.send_replay(&h).await;
+            "new" => {
+                let cwd = v["cwd"].as_str().map(std::path::PathBuf::from);
+                match new_session(&self.s, cwd).await {
+                    Ok(r) => {
+                        let new_id = r["session"].as_str().unwrap_or("").to_string();
+                        if let Some(h) = self.s.host(&new_id) {
+                            self.viewing = h.id.clone();
+                            self.send_replay(&h).await;
+                        }
+                    }
+                    Err(e) => {
+                        self.emit(serde_json::json!({
+                            "type":"note","text":format!("[new session failed] {e:#}"),
+                        }));
                     }
                 }
-                Err(e) => {
-                    self.emit(serde_json::json!({
-                        "type":"note","text":format!("[new session failed] {e:#}"),
-                    }));
-                }
-            },
+            }
             "annotate" => {
                 let name = v["name"].as_str().unwrap_or("");
                 let note = v["note"].as_str().unwrap_or("");
-                let r = crate::tui::slash::annotate(&self.s.cwd, name, note);
+                // annotations write into the *viewed session's* project —
+                // same dir its artifacts resolve under
+                let dir = self
+                    .viewing_host()
+                    .map(|h| h.agent.session_cwd())
+                    .unwrap_or_else(|| self.s.cwd.clone());
+                let r = crate::tui::slash::annotate(&dir, name, note);
                 self.emit(serde_json::json!({"type":"note","sess":self.viewing,"text":r}));
             }
             "model" => {

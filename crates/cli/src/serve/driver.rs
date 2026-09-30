@@ -95,7 +95,7 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, name: &str, rest: &
         }
         "resume" => {
             if rest.is_empty() {
-                let list = tui::menu::recent_sessions(&s.cwd, 8)
+                let list = tui::menu::recent_sessions(&host.agent.session_cwd(), 8)
                     .iter()
                     .map(|i| format!("  {i}"))
                     .collect::<Vec<_>>()
@@ -114,7 +114,7 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, name: &str, rest: &
             true
         }
         "sessions" => {
-            let list = tui::menu::recent_sessions(&s.cwd, 8).join("\n");
+            let list = tui::menu::recent_sessions(&host.agent.session_cwd(), 8).join("\n");
             note(if list.is_empty() {
                 "[no sessions]".into()
             } else {

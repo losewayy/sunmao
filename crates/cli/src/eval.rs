@@ -64,7 +64,7 @@ struct QuietObserver {
 
 impl Observer for QuietObserver {
     fn on_event(&self, ev: &LiveEvent) {
-        if let LiveEvent::Content(c) = ev {
+        if let LiveEvent::Content { text: c } = ev {
             self.content.lock().unwrap().push_str(c);
         }
     }

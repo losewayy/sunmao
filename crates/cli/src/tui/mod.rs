@@ -9,7 +9,7 @@ mod blocks;
 mod driver;
 mod input;
 mod md;
-mod menu;
+pub(crate) mod menu;
 mod render;
 mod replay;
 pub mod slash;
@@ -297,8 +297,8 @@ async fn run_inner(
                 });
             }
             Some(Msg::Live(ev)) => match ev {
-                LiveEvent::Content(c) => app.stream(BlockKind::Assistant, &c),
-                LiveEvent::Reasoning(r) => app.stream(BlockKind::Thinking, &r),
+                LiveEvent::Content { text } => app.stream(BlockKind::Assistant, &text),
+                LiveEvent::Reasoning { text } => app.stream(BlockKind::Thinking, &text),
                 LiveEvent::ToolStart {
                     name,
                     summary,

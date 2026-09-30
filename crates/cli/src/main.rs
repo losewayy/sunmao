@@ -19,6 +19,7 @@ mod doctor;
 mod eval;
 mod plugin;
 mod repl;
+mod serve;
 mod tui;
 
 #[derive(Parser)]
@@ -103,19 +104,19 @@ impl Observer for StdoutObserver {
     fn on_event(&self, ev: &LiveEvent) {
         let mut in_r = self.in_reasoning.lock().unwrap();
         match ev {
-            LiveEvent::Reasoning(r) => {
+            LiveEvent::Reasoning { text } => {
                 if !*in_r {
                     eprint!("\x1b[2m"); // dim
                     *in_r = true;
                 }
-                eprint!("{r}");
+                eprint!("{text}");
             }
-            LiveEvent::Content(c) => {
+            LiveEvent::Content { text } => {
                 if *in_r {
                     eprintln!("\x1b[0m");
                     *in_r = false;
                 }
-                print!("{c}");
+                print!("{text}");
                 std::io::stdout().flush().ok();
             }
             LiveEvent::ToolStart {
@@ -293,8 +294,15 @@ async fn main() -> anyhow::Result<()> {
     } else {
         Vec::new()
     };
-    let interactive = cli.print.is_none() && !cli.acp;
+    let serving = matches!(cli.command, Some(plugin::Cmd::Serve { .. }));
+    let interactive = cli.print.is_none() && !cli.acp && !serving;
     let (tx_approval, rx_approval) = tokio::sync::mpsc::unbounded_channel();
+    // serve's approval channel is the ws broadcast — built before Context so
+    // the seam can be installed while it still takes `mut`.
+    let serve_pending = serving.then(|| {
+        let (live, _) = tokio::sync::broadcast::channel::<serde_json::Value>(512);
+        Arc::new(serve::Pending::new(live))
+    });
     let mut ctx_raw = Context::new(llm, sessions, registry, cwd.clone())
         .with_extra_plugin_roots(preset_roots.clone());
     // --loop outranks every manifest `loop:` key — explicit beats declared
@@ -305,6 +313,8 @@ async fn main() -> anyhow::Result<()> {
     ctx_raw.connect_extensions().await;
     if cli.tui {
         ctx_raw.approval = Arc::new(tui::TuiApprover { tx: tx_approval });
+    } else if let Some(p) = &serve_pending {
+        ctx_raw.approval = Arc::new(serve::ServeApprover { pending: p.clone() });
     } else if interactive {
         ctx_raw.approval = Arc::new(StdinApprover { interactive: true });
     }
@@ -355,6 +365,29 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let agent = AgentLoop::new(ctx.clone());
+
+    if let Some(plugin::Cmd::Serve { port }) = cli.command {
+        agent.set_live_sink(Arc::new(serve::WsObserver::new(
+            serve_pending.as_ref().unwrap().live.clone(),
+        )));
+        let res = serve::run(
+            agent,
+            cwd.clone(),
+            preset_roots,
+            port,
+            serve_pending.unwrap(),
+        )
+        .await;
+        ctx.hooks
+            .fire(
+                sunmao_core::hooks::HookEvent::SessionEnd,
+                &ctx.cwd,
+                &sunmao_core::hooks::HookInput::default(),
+            )
+            .await;
+        ctx.ext.shutdown().await;
+        return res;
+    }
 
     if let Some(prompt) = &cli.print {
         let obs = StdoutObserver {

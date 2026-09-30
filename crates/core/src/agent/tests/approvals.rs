@@ -15,7 +15,7 @@ async fn session_grant_skips_repeated_prompt() {
         }
     }
 
-    let dir = std::env::temp_dir().join(format!("sunmao-grant-{}", std::process::id()));
+    let dir = crate::fresh_test_dir("grant");
     std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
     // an ask rule forces the approval path for this exact Glob pattern
     std::fs::write(

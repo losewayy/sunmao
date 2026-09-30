@@ -32,7 +32,11 @@ per-key where merging applies (hooks/permissions/mcp).
 |---|---|
 | `.claude/settings.json` | `hooks` + `permissions` blocks (merged) |
 | `.claude/settings.local.json` | same, local overrides |
+| `.codex/hooks.json` | same `{"hooks": {...}}` shape — Codex bundles (e.g. rtk `init --codex`) load verbatim |
+| `.cursor/hooks.json` | Cursor flat entries `{command, matcher, timeout}` under camelCase events — normalized by `hooks/cursor.rs` |
 | `~/.claude/settings.json` | user-level same blocks |
+| `~/.codex/hooks.json` | user-level Codex hooks |
+| `~/.cursor/hooks.json` | user-level Cursor hooks |
 | `~/.sunmao/prompt.md` | user-level prompt section (applied before the project layer) |
 | `~/.sunmao/prompt.d/<name>.md` | user-level section replacement, same naming rule |
 | `~/.sunmao/presets/<name>/` | user-level preset dir — searched when the project has no match |

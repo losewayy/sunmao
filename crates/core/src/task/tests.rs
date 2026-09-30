@@ -22,7 +22,7 @@ impl ProviderAdapter for MockProvider {
 /// then surfaces it as a tagged user message (push delivery, no polling).
 #[tokio::test]
 async fn bg_task_pushes_result_into_parent_log() {
-    let dir = std::env::temp_dir().join(format!("sunmao-bg-{}", std::process::id()));
+    let dir = crate::fresh_test_dir("bg");
     std::fs::create_dir_all(&dir).unwrap();
     let ctx = Context::new(
         Arc::new(MockProvider),
@@ -71,7 +71,7 @@ async fn bg_task_pushes_result_into_parent_log() {
 /// lane suffix must keep session files distinct.
 #[tokio::test]
 async fn spawn_ids_are_unique_within_a_millisecond() {
-    let dir = std::env::temp_dir().join(format!("sunmao-uniq-{}", std::process::id()));
+    let dir = crate::fresh_test_dir("uniq");
     std::fs::create_dir_all(&dir).unwrap();
     let ctx = Context::new(
         Arc::new(MockProvider),
@@ -90,7 +90,7 @@ async fn spawn_ids_are_unique_within_a_millisecond() {
 /// agent, and self-recursion is refused.
 #[tokio::test]
 async fn spawns_whitelist_gates_children() {
-    let dir = std::env::temp_dir().join(format!("sunmao-spawns-{}", std::process::id()));
+    let dir = crate::fresh_test_dir("spawns");
     let agents = dir.join(".sunmao/agents");
     std::fs::create_dir_all(&agents).unwrap();
     std::fs::write(
@@ -134,7 +134,7 @@ async fn spawns_whitelist_gates_children() {
 /// `spawns:` list auto-adds Task, and the depth cap strips it at the leaf.
 #[tokio::test]
 async fn tools_whitelist_and_depth_cap_trim_registry() {
-    let dir = std::env::temp_dir().join(format!("sunmao-tools-{}", std::process::id()));
+    let dir = crate::fresh_test_dir("tools");
     let agents = dir.join(".sunmao/agents");
     std::fs::create_dir_all(&agents).unwrap();
     std::fs::write(

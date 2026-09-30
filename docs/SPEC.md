@@ -116,7 +116,8 @@ hook engine（核心）
 │       ├── stdin payload: tool_name/tool_input/session_id/cwd/transcript_path/hook_event_name
 │       ├── stdout 协议: permissionDecision / updatedInput / hookSpecificOutput / 退出码
 │       └── matcher: 工具名子串+regex
-│   └── (预留) gemini-dialect / cursor-dialect / copilot-dialect——字段归一化层
+│   └── (预留) gemini-dialect / copilot-dialect——字段归一化层
+│       （cursor-dialect 已实装: hooks/cursor.rs；gemini 未验过真实 bundle 暂留）
 └── 工件: transcript_path 真实落盘; fail-open 语义+审计记录每条 hook 决策
 ```
 
@@ -175,7 +176,7 @@ hook engine（核心）
 | plugin.json 打包（skills+mcp+hooks） | 加载器 | v0.4 |
 | ACP（被别人驱动） | acp-server | v0.3 |
 | MCP Apps / UI resources（渲染别家 UI） | sandboxed iframe 渲染层 | v0.5+ |
-| Codex/Gemini/Cursor hook 方言 | 归一化层 | v0.4 |
+| Codex/Cursor hook 方言 | 归一化层 | ✅ 已落地（`hooks/cursor.rs`：Codex 走 Claude 路径零改即用，Cursor flat entries + snake replies 归一进 HookOutcome；`hooks/live_tests.rs` 实测。Gemini 未验过真实 bundle，暂不归一） |
 | OpenCode/pi TS 扩展 | JS extension host 侧车 | ✅ JS 侧车已落地（`tools/extension-host.mjs` — 契约 + 模块 api 面 + 打包示例；TS 原生文件 warn-and-skip，pi-compat adapter 仍属后续） |
 | 自身扩展协议 | `sunmao` JSON-RPC | ✅ 契约 + first-party 宿主（`crates/core/src/ext/`） |
 

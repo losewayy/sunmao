@@ -71,6 +71,44 @@ stdio JSON-RPC, stdout is protocol-only (diagnostics → stderr/tracing).
 Rule that has to stay true: **stdout = JSON-RPC frames, nothing else** — a
 stray println! bricks the whole protocol.
 
+## Hook dialects (`crates/core/src/hooks.rs` + `hooks/{cursor,dialect}.rs`)
+
+One event space, three file dialects. The *Claude* spelling is the wire
+canonical: stdin payload `{session_id, transcript_path, cwd, hook_event_name,
+prompt?, source?, tool_name?, tool_use_id?, tool_input?, tool_response?}`,
+stdout reply `continue/stopReason`, `systemMessage`, `hookSpecificOutput.
+{permissionDecision, permissionDecisionReason, additionalContext,
+updatedInput}` or legacy `decision:"block"`; exit 2 = block with stderr.
+
+| File | Dialect | Normalization |
+|---|---|---|
+| `.sunmao/hooks.json`, `.claude/settings*.json`, plugin manifests | Claude | none — canonical |
+| `.codex/hooks.json`, `~/.codex/hooks.json` | Claude | none — Codex bundles (rtk `init --codex`) use the identical shape |
+| `.cursor/hooks.json`, `~/.cursor/hooks.json` | Cursor | `hooks/cursor.rs` rewrites both directions |
+
+Cursor file shape is flat: `{"version":1,"hooks":{"preToolUse":[{"command",
+"matcher","timeout"}]}}` — each entry becomes a single-command matcher group.
+camelCase events with a native counterpart map (`sessionStart`/`sessionEnd`,
+`preToolUse`/`postToolUse`, `subagentStart`/`subagentStop`,
+`beforeSubmitPrompt`→UserPromptSubmit, `preCompact`, `stop`); cursor-only
+events (beforeShellExecution, afterFileEdit, Tab hooks, …) are skipped at
+load rather than mis-fired. Matchers
+filter on *cursor* tool names (Bash→Shell, Edit→Write, `mcp__s__t`→
+`MCP:<t>`). Payloads keep cursor spellings (`hook_event_name` echoes the
+config's camelCase name; `conversation_id`, `workspace_roots` added).
+
+Cursor replies normalize into the canonical outcome: `permission`
+(allow/ask/deny) → `permissionDecision`, `user_message`+`agent_message` →
+`permissionDecisionReason`, `updated_input` → `updatedInput`,
+`additional_context`/`followup_message` → `additionalContext`,
+`continue:false`+`user_message` → `continue:false`+`stopReason`, per-entry
+`timeout` overrides the hook budget. Exit 2 keeps the same veto semantics.
+
+**Gemini is deliberately not normalized yet** — its settings shape and
+`hookSpecificOutput.tool_input` nesting were never confirmed against a real
+bundle; landing it blind would violate the "compatibility is measured, not
+claimed" rule.
+
 ## Extension protocol (`sunmao` JSON-RPC)
 
 SPEC §4.8: the contract below is backed by a first-party host —

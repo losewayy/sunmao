@@ -173,9 +173,13 @@ mod tests {
         ))
     }
 
+    fn fresh_dir(tag: &str) -> std::path::PathBuf {
+        crate::fresh_test_dir(tag)
+    }
+
     #[tokio::test]
     async fn edit_refuses_unread_file() {
-        let dir = std::env::temp_dir().join(format!("sunmao-test-{}", std::process::id()));
+        let dir = fresh_dir("edit");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("t.txt"), "hello world").unwrap();
         let ctx = test_ctx(&dir);
@@ -208,7 +212,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_allows_new_file_without_read() {
-        let dir = std::env::temp_dir().join(format!("sunmao-test-w-{}", std::process::id()));
+        let dir = fresh_dir("w");
         std::fs::create_dir_all(&dir).unwrap();
         let ctx = test_ctx(&dir);
         let res = WriteTool
@@ -236,7 +240,7 @@ mod tests {
                 anyhow::bail!("mcp call_tool failed: peer closed")
             }
         }
-        let dir = std::env::temp_dir().join(format!("sunmao-test-die-{}", std::process::id()));
+        let dir = fresh_dir("die");
         std::fs::create_dir_all(&dir).unwrap();
         let mut reg = builtin_registry();
         reg.register(DyingTool);

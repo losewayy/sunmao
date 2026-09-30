@@ -52,6 +52,17 @@ TUI.
 - rtk/context-mode conformance is *measured*, not claimed: a live test
   hangs the real `rtk` binary on PreToolUse and asserts the rewrite;
   SessionStart carries `source` for context-mode-style sidecars
+- **hook dialects: Codex + Cursor** — `.codex/hooks.json` rides the Claude
+  path unchanged (rtk `init --codex` bundles load verbatim);
+  `.cursor/hooks.json` flat `{command, matcher, timeout}` entries under
+  camelCase events are parsed by `hooks/cursor.rs`: matchers filter on
+  cursor tool names (Bash→Shell, `mcp__s__t`→`MCP:<t>`), payloads keep
+  cursor spellings, snake_case replies normalize into `HookOutcome`
+  (`permission`/`updated_input`/`additional_context`/`continue:false`).
+  Gemini deliberately deferred — its real bundle shape is unverified
+- test hygiene: pid-keyed scratch dirs recycled under Windows PID wrap —
+  every suite now carves unique dirs via `fresh_test_dir` (flakes it
+  caused: write-allows-new-file, bg-task delivery, batch lanes)
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

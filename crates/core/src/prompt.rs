@@ -291,13 +291,7 @@ mod tests {
     use super::*;
 
     fn scratch() -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "sunmao-prompt-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let d = crate::fresh_test_dir("prompt");
         std::fs::create_dir_all(&d).unwrap();
         d
     }

@@ -365,7 +365,7 @@ mod tests {
         // file-backed — same fold through the disk replay path. Unique dir
         // name: tests share a pid and run in parallel, a generic name here
         // once deleted a sibling test's fixture mid-assert.
-        let dir = std::env::temp_dir().join(format!("sunmao-test-ls-{}", std::process::id()));
+        let dir = crate::fresh_test_dir("ls");
         let mut log = SessionLog::open(&dir, "ls-fold").await.unwrap();
         log.append(&ev).await.unwrap();
         drop(log);
@@ -381,7 +381,7 @@ mod tests {
     /// replay depth>0 as ↳ blocks — losing it silently flattens transcripts.
     #[tokio::test]
     async fn tool_event_depth_roundtrips_and_defaults() {
-        let dir = std::env::temp_dir().join(format!("sunmao-test-depth-{}", std::process::id()));
+        let dir = crate::fresh_test_dir("sess-depth");
         let call = ToolCall {
             id: "c1".into(),
             kind: "function".into(),
@@ -438,7 +438,7 @@ mod tests {
     /// skips it and keeps the good events on both sides.
     #[tokio::test]
     async fn corrupt_line_is_skipped_not_fatal() {
-        let dir = std::env::temp_dir().join(format!("sunmao-test-corrupt-{}", std::process::id()));
+        let dir = crate::fresh_test_dir("corrupt");
         let mut log = SessionLog::open(&dir, "c").await.unwrap();
         log.append(&SessionEvent::Message {
             message: Message::user("before"),
@@ -513,7 +513,7 @@ mod tests {
         assert_eq!(msgs[idx + 1].role, sunmao_llm::types::Role::User);
 
         // file-backed path
-        let dir = std::env::temp_dir().join(format!("sunmao-test-dangle-{}", std::process::id()));
+        let dir = crate::fresh_test_dir("dangle");
         let mut log = SessionLog::open(&dir, "d").await.unwrap();
         for e in &evs {
             log.append(e).await.unwrap();

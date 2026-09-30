@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "sunmao",
+  "version": "0.2.0",
+  "identifier": "io.github.losewayy.sunmao",
+  "build": {
+    "frontendDist": "../cli/src/serve/assets"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.png"]
+  }
+}

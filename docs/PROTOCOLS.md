@@ -71,12 +71,15 @@ stdio JSON-RPC, stdout is protocol-only (diagnostics → stderr/tracing).
 Rule that has to stay true: **stdout = JSON-RPC frames, nothing else** — a
 stray println! bricks the whole protocol.
 
-## Extension protocol (`sunmao` JSON-RPC, contract only — no host yet)
+## Extension protocol (`sunmao` JSON-RPC)
 
-SPEC §4.8: v1 defines the contract; the first host ships at v0.5+ (a generic
-JS extension-host sidecar, `node extension-host.mjs`, speaking this protocol
-on our behalf). Design rule inherited from hooks/MCP: **a host process is a
-process boundary** — spawn per session, die with it, never hot-plug.
+SPEC §4.8: the contract below is backed by a first-party host —
+`crates/core/src/ext/` spawns children, handshakes, routes `ext/event`
+through `HookEngine::fire`, and tears down with the session. A generic
+JS extension-host sidecar (`node extension-host.mjs`) can still front
+this same protocol for TS/JS ecosystems later. Design rule inherited
+from hooks/MCP: **a host process is a process boundary** — spawn per
+session, die with it, never hot-plug.
 
 ### Lifecycle
 
@@ -104,7 +107,7 @@ notifications omit it.
 | kernel → ext | `ext/initialize` | `{protocol: 1, cwd, session_id, transcript_path}` → ext replies `{name, version, capabilities: {tools: bool, events: ["PreToolUse", ...]}}` |
 | kernel → ext | `ext/tools/list` | only sent when `capabilities.tools` → reply `{tools: [{name, description, input_schema}]}` — tools surface namespaced `ext__{plugin}__{tool}` like `mcp__` |
 | kernel → ext | `ext/tools/call` | `{name, arguments}` → reply `{content: string, is_error?: bool}` or a JSON-RPC error — errors fold to failed `ToolResult`, never turn abort |
-| kernel → ext | `ext/event` (notification→call hybrid) | `{event, payload}` where payload is the hooks dialect (tool_name/tool_input/source/…); ext may reply `{extra_context?: [..], block?: "reason"}` — same semantics as hook stdout: `block` vetoes, `extra_context` appends session facts |
+| kernel → ext | `ext/event` (request — replies carry effects) | `{event, payload}` where payload is the hooks dialect (tool_name/tool_input/source/…); ext may reply `{extra_context?: [..], block?: "reason"}` — same semantics as hook stdout: `block` vetoes, `extra_context` appends session facts |
 | kernel → ext | `ext/shutdown` | notification; then close stdin, wait ≤2s, kill |
 
 ### Contract notes

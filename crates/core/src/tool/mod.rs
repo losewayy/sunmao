@@ -49,6 +49,13 @@ impl ToolRegistry {
         self.tools.insert(tool.name().to_string(), tool.into());
     }
 
+    /// Register an already-shared impl — extension tools live on the
+    /// `ExtRegistry` (the child owns the wire); the session registry just
+    /// borrows the same handle.
+    pub fn register_arc(&mut self, tool: Arc<dyn ToolImpl>) {
+        self.tools.insert(tool.name().to_string(), tool);
+    }
+
     pub fn declarations(&self) -> Vec<Tool> {
         self.tools.values().map(|t| t.decl()).collect()
     }

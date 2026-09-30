@@ -10,6 +10,7 @@ use std::sync::Arc;
 use crate::approval::AllowAll;
 use crate::approval::Approver;
 use crate::audit::AuditLog;
+use crate::ext::ExtRegistry;
 use crate::hooks::HookEngine;
 use crate::session::SessionLog;
 use crate::tool::ToolRegistry;
@@ -89,6 +90,11 @@ pub struct Context {
     /// meaning presets win where layering implies precedence and fill gaps
     /// where lookup is first-match.
     pub extra_plugin_roots: Vec<PathBuf>,
+    /// Extension children spawned for this session (plugin.json
+    /// `extensions` specs). Empty until `connect_extensions` runs — the
+    /// sync ctor can't spawn. `Arc` because hook dispatch reads through it
+    /// while the registry owns teardown.
+    pub ext: Arc<ExtRegistry>,
 }
 
 impl Context {
@@ -125,7 +131,32 @@ impl Context {
             models: None,
             agent_name: None,
             extra_plugin_roots: Vec::new(),
+            ext: Arc::new(ExtRegistry::new()),
         }
+    }
+
+    /// Spawn every extension the plugin manifests declare: resolve specs,
+    /// handshake each child, register its `ext__*` tools into `self.tools`,
+    /// then attach the registry to the hook engine so `ext/event` rides the
+    /// same `fire()` as command hooks. Call after `with_extra_plugin_roots`
+    /// and before `SessionStart` fires so extensions can receive it.
+    /// Failures degrade per child — an unspawnable extension warns and the
+    /// rest still come up.
+    pub async fn connect_extensions(&mut self) {
+        // session id is the log's file stem — file-backed and ephemeral
+        // logs share the fallback so extension `session_id` stays stable.
+        let session_id = {
+            let log = self.sessions.lock().await;
+            log.path()
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "session".to_string())
+        };
+        crate::ext::connect_all(&self.ext, &self.cwd, &session_id, &self.extra_plugin_roots).await;
+        for tool in self.ext.tools() {
+            self.tools.register_arc(tool);
+        }
+        self.hooks.attach_ext(self.ext.clone());
     }
 
     /// Layer preset dirs onto this context. Hooks and permissions reload

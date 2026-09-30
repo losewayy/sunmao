@@ -66,6 +66,12 @@ crates/core    the kernel. Owns state, dispatch, policy. May not know
                ├── permissions.rs deny/ask/allow rule engine
                ├── approval.rs   Approver trait + risk classifier
                ├── mcp.rs        MCP client (stdio + streamable-HTTP)
+               ├── ext/          extension host — spawned extension children
+               │   ├── mod.rs    plugin manifest `extensions` spec scan
+               │   ├── registry.rs child spawn, request/reply correlation,
+               │   │             ExtTool, ExtRegistry + shutdown/Drop
+               │   ├── proto.rs  JSON-RPC frame vocabulary (line-delimited)
+               │   └── tests.rs  unit + node-gated live fixtures
                ├── agents.rs     named sub-agent definitions loader
                ├── task.rs       Task tool — nested AgentLoop, depth cap
                │   task/         nested-loop fixtures (tests.rs)

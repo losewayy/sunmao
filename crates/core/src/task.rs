@@ -397,18 +397,19 @@ async fn spawn_parts(ctx: &Context, def: Option<&crate::agents::AgentDef>) -> (S
     // declared `spawns:` whitelist needs Task present to mean anything
     // (auto-added), and the depth cap strips Task from leaf children so the
     // model never sees a spawner it can't legally use.
-    let mut tools = match def.and_then(|d| d.tools.as_ref()) {
-        Some(allow) => {
-            let mut names = (*allow).clone();
-            if def
-                .and_then(|d| d.spawns.as_ref())
-                .is_some_and(|s| !s.is_empty())
-                && !names.iter().any(|n| n == "Task")
-            {
-                names.push("Task".into());
-            }
-            builtin_registry().filtered(&names)
+    let allow_names = def.and_then(|d| d.tools.as_ref()).map(|allow| {
+        let mut names = (*allow).clone();
+        if def
+            .and_then(|d| d.spawns.as_ref())
+            .is_some_and(|s| !s.is_empty())
+            && !names.iter().any(|n| n == "Task")
+        {
+            names.push("Task".into());
         }
+        names
+    });
+    let mut tools = match &allow_names {
+        Some(names) => builtin_registry().filtered(names),
         None => builtin_registry(),
     };
     if ctx.depth + 1 >= MAX_DEPTH {
@@ -416,7 +417,7 @@ async fn spawn_parts(ctx: &Context, def: Option<&crate::agents::AgentDef>) -> (S
     }
 
     // fresh context, one depth deeper, on its own lane
-    let sub_ctx = Context {
+    let mut sub_ctx = Context {
         llm,
         llm_override: std::sync::RwLock::new(None),
         sessions: Arc::new(tokio::sync::Mutex::new(log)),
@@ -441,7 +442,20 @@ async fn spawn_parts(ctx: &Context, def: Option<&crate::agents::AgentDef>) -> (S
         models: ctx.models.clone(),
         agent_name: def.map(|d| d.name.clone()),
         extra_plugin_roots: ctx.extra_plugin_roots.clone(),
+        // the child spawns its own extension children against its own
+        // session id — parent's processes are never shared
+        ext: Arc::new(crate::ext::ExtRegistry::new()),
     };
+    // extension children come up in the child's scope; their tools follow
+    // the same `tools:` whitelist rule as native ones — an ext tool not on
+    // the list is filtered out with everything else.
+    sub_ctx.connect_extensions().await;
+    if let Some(names) = &allow_names {
+        sub_ctx.tools = sub_ctx.tools.filtered(names);
+    }
+    if ctx.depth + 1 >= MAX_DEPTH {
+        sub_ctx.tools.remove("Task");
+    }
     (sub_id, sub_ctx)
 }
 
@@ -479,6 +493,9 @@ async fn run_spawn(
             &crate::hooks::HookInput::default(),
         )
         .await;
+    // child's extension children die with its session — graceful path
+    // before the context drop falls back to the detached reaper.
+    sub_ctx.ext.shutdown().await;
     let text = obs.text.lock().unwrap().clone();
     match outcome {
         Ok(_) => ToolResult {

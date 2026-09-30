@@ -159,3 +159,75 @@ fn pending_approval_card_is_never_overwritten() {
     assert!(app.approval.is_none());
     assert_eq!(app.focus, Focus::Input);
 }
+
+/// Bare "/" + Enter must not fire the alphabetically-first builtin — it
+/// completes to `/name ` exactly like Tab. Blind-submitting the first
+/// match was the bug the user hit.
+#[test]
+fn slash_bare_enter_completes_not_submits() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<Submit>();
+    let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+    app.insert_char('/');
+    assert!(app.slash_menu.is_some());
+    input_key(&mut app, key(KeyCode::Enter), &tx);
+    assert!(rx.try_recv().is_err(), "bare / must never submit");
+    assert!(app.input.starts_with('/'));
+    assert!(app.input.ends_with(' '), "completion fills `/name `");
+}
+
+/// Arg-taking builtins complete instead of firing — `/mod`+Enter fills
+/// `/model ` and reopens the selector menu rather than listing models.
+#[test]
+fn slash_arg_command_enter_fills_and_reopens() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<Submit>();
+    let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+    for c in "/mod".chars() {
+        app.insert_char(c);
+    }
+    let m = app.slash_menu.as_ref().expect("menu opens on /mod");
+    assert_eq!(m.matches[m.selected], "model");
+    input_key(&mut app, key(KeyCode::Enter), &tx);
+    assert!(rx.try_recv().is_err(), "arg command must not submit");
+    assert_eq!(app.input, "/model ");
+    // with selectors configured the menu reopens in arg mode; a bare
+    // fixture has none, so only the fill is contract here
+}
+
+/// "Approve for session" covers the identical call everywhere — queued
+/// requests for the same (tool, specifier) inherit the verdict instead
+/// of re-asking what the user just answered.
+#[test]
+fn session_grant_auto_resolves_identical_queued_cards() {
+    let (tx, _rx) = mpsc::unbounded_channel::<Submit>();
+    let mk = |tool: &str, detail: &str| {
+        let (rtx, rrx) = tokio::sync::oneshot::channel();
+        (
+            ApprovalCard {
+                tool: tool.into(),
+                detail: detail.into(),
+                why: "risky".into(),
+                reply: rtx,
+                selected: 0,
+                parked: false,
+            },
+            rrx,
+        )
+    };
+    let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+    let (c1, _r1) = mk("Bash", "rm -rf x");
+    let (c2, mut r2) = mk("Bash", "rm -rf x");
+    let (c3, _r3) = mk("Write", "other");
+    app.queue_approval(c1);
+    app.queue_approval(c2);
+    app.queue_approval(c3);
+    resolve_card(&mut app, sunmao_core::approval::Approval::Session);
+    // the identical queued card was auto-approved; the different one was
+    // promoted into the active card slot by pop_approval
+    assert!(matches!(
+        r2.try_recv(),
+        Ok(sunmao_core::approval::Approval::Session)
+    ));
+    assert!(app.approval_backlog.is_empty());
+    assert_eq!(app.approval.as_ref().unwrap().tool, "Write");
+    let _ = tx;
+}

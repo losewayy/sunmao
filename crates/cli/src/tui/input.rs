@@ -2,6 +2,7 @@
 //! focus machine; each per-focus fn owns its own bindings.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::collections::VecDeque;
 use tokio::sync::mpsc;
 
 use super::app::{self, App, Focus, Submit};
@@ -67,6 +68,26 @@ pub(super) fn resolve_card(app: &mut App, verdict: sunmao_core::approval::Approv
             sunmao_core::approval::Approval::Deny => "[denied]",
         };
         app.push_note(&format!("{mark} {}: {}", card.tool, card.detail));
+        // session grants cover the identical call everywhere — a queued
+        // request for the same (tool, specifier) inherits the verdict
+        // instead of re-asking what the user just answered (the grant is
+        // core-side too, so auto-approval and the gate can't disagree).
+        if verdict == sunmao_core::approval::Approval::Session {
+            let (inheriting, rest): (VecDeque<_>, VecDeque<_>) = app
+                .approval_backlog
+                .drain(..)
+                .partition(|q| q.tool == card.tool && q.detail == card.detail);
+            app.approval_backlog = rest;
+            let inherited = inheriting.len();
+            for q in inheriting {
+                let _ = q.reply.send(sunmao_core::approval::Approval::Session);
+            }
+            if inherited > 0 {
+                app.push_note(&format!(
+                    "[session grant covers {inherited} queued identical request(s)]"
+                ));
+            }
+        }
     }
     // the next queued request takes the focus back; else input owns it
     app.focus = Focus::Input;
@@ -188,14 +209,22 @@ pub(super) fn input_key(
                 }
                 return false;
             }
-            // Enter *runs* the highlighted command — selection + commit, the
-            // same contract every fuzzy menu in the terminal world ships.
-            // Half-typed fragments must never be submitted. In arg mode a
-            // `provider/` prefix completes like Tab (the arg isn't done),
-            // a leaf selector submits `/model sel`.
+            // Enter *accepts* the highlighted candidate — the fragment in
+            // the buffer must never be submitted. Then the kimi rule:
+            // command-name completion submits immediately ONLY when the
+            // accepted command is a no-arg builtin; a file command or an
+            // arg-taking builtin just fills `/name ` and reopens args
+            // completion (Tab's exact behavior) — a bare `/` or a menu
+            // match the user hasn't reviewed must never fire blindly.
+            // In arg mode a `provider/` prefix completes like Tab (the
+            // arg isn't done), a leaf selector submits `/model sel`.
             KeyCode::Enter => {
-                let (name, for_args) = match &app.slash_menu {
-                    Some(m) => (m.matches[m.selected].clone(), m.for_args),
+                let (name, frag, for_args) = match &app.slash_menu {
+                    Some(m) => (
+                        m.matches[m.selected].clone(),
+                        m.fragment.clone(),
+                        m.for_args,
+                    ),
                     None => return false,
                 };
                 app.slash_menu = None;
@@ -208,10 +237,21 @@ pub(super) fn input_key(
                     }
                     app.input = format!("/model {name}");
                     app.cursor = app.input.chars().count();
-                } else {
-                    app.input = format!("/{name}");
-                    app.cursor = app.input.chars().count();
+                    return submit_app(app, tx_input);
                 }
+                // commands that take an argument fill + reopen completion;
+                // everything else is a no-arg action — run it.
+                const TAKES_ARGS: &[&str] = &["model", "resume", "annotate"];
+                if TAKES_ARGS.contains(&name.as_str()) || frag.is_empty() {
+                    // bare "/" has no fragment to stand on — complete like
+                    // Tab instead of firing the first builtin alphabetically
+                    app.input = format!("/{name} ");
+                    app.cursor = app.input.chars().count();
+                    app.refresh_slash_menu();
+                    return false;
+                }
+                app.input = format!("/{name}");
+                app.cursor = app.input.chars().count();
                 return submit_app(app, tx_input);
             }
             // Tab stays the completion key: fill `/name ` so args can follow.

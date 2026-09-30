@@ -483,6 +483,9 @@ button.tb:hover,.tb.pressed{background:var(--fill-2);color:var(--text)}
 .toast{display:flex;align-items:center;gap:8px;height:36px;padding:0 16px 0 12px;border-radius:99px;font-size:13px;white-space:nowrap;--ga:min(.96,calc(var(--glass-a) + .28));animation:blockIn .24s cubic-bezier(.2,.8,.2,1)}
 .toast .i{color:var(--ok)}
 .toast.warn .i{color:var(--warn)}
+.toast.jump{cursor:pointer}
+.toast.jump .i{color:var(--warn)}
+.toast.jump b{color:var(--warn);font-weight:600}
 .toast.out{opacity:0;transform:translateY(4px);transition:opacity .2s,transform .2s}
 #tip{position:fixed;left:0;top:0;z-index:80;padding:5px 9px;border-radius:7px;font-size:12px;line-height:1.4;color:var(--text);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .12s;--ga:min(.97,calc(var(--glass-a) + .32));box-shadow:0 8px 22px rgba(0,0,0,.3)}
 #tip.show{opacity:1}
@@ -1627,6 +1630,15 @@ function route(v) {
     case 'approval':
       waitingSessions.add(sess);
       if (sess === sessionId) { approvalCard(v); logEv('hook', `approval requested · ${v.tool}: ${(v.detail || '').slice(0, 80)}`); }
+      else {
+        // a background session raised an approval — surface it as a
+        // clickable toast that jumps the view to that session
+        const t = document.createElement('div'); t.className = 'toast glass jump';
+        t.innerHTML = ic('shield-check') + `<span>待审批 · <b>${esc(v.tool || '?')}</b> · ${esc(sess)}</span>` + ic('arrow-l', 'i xs');
+        t.addEventListener('click', () => { resumeSession(sess); t.remove(); });
+        $('#toasts').appendChild(t);
+        setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 220); }, 4200);
+      }
       renderRail();
       break;
     case 'approval_done':

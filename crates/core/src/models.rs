@@ -131,13 +131,14 @@ impl ModelResolver {
             return vec![selector.to_string()];
         }
         if let Some(name) = selector.strip_prefix('@')
-            && let Some(route) = self.file.routes.get(name) {
-                return route
-                    .selectors()
-                    .into_iter()
-                    .flat_map(|s| self.expand(s, depth + 1))
-                    .collect();
-            }
+            && let Some(route) = self.file.routes.get(name)
+        {
+            return route
+                .selectors()
+                .into_iter()
+                .flat_map(|s| self.expand(s, depth + 1))
+                .collect();
+        }
         vec![selector.to_string()]
     }
 

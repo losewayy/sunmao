@@ -16,10 +16,10 @@
 //! thinking_delta→Reasoning, tool_use start+deltas→ToolCallFragment
 //! (index = content block index; arguments accumulate as partial_json).
 
-use anyhow::{bail, Context as _};
+use anyhow::{Context as _, bail};
 use futures_util::{Stream, StreamExt};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::sse::{SseEvent, SseParser};
 use crate::types::{Message, Role, Usage};
@@ -85,9 +85,10 @@ impl AnthropicClient {
                 Role::Assistant => {
                     let mut content = Vec::new();
                     if let Some(c) = &m.content
-                        && !c.is_empty() {
-                            content.push(json!({"type": "text", "text": c}));
-                        }
+                        && !c.is_empty()
+                    {
+                        content.push(json!({"type": "text", "text": c}));
+                    }
                     for tc in m.tool_calls.clone().unwrap_or_default() {
                         let input: Value =
                             serde_json::from_str(&tc.function.arguments).unwrap_or(json!({}));
@@ -131,9 +132,9 @@ impl AnthropicClient {
                     .get_mut("content")
                     .and_then(|c| c.as_array_mut())
                     .and_then(|a| a.last_mut())
-                {
-                    blocks["cache_control"] = json!({"type": "ephemeral"});
-                }
+            {
+                blocks["cache_control"] = json!({"type": "ephemeral"});
+            }
         }
         (system, out)
     }
@@ -331,7 +332,7 @@ fn fold_events(
                 let chunk = match bytes.next().await {
                     Some(Ok(c)) => c,
                     Some(Err(e)) => {
-                        return Some((Err(e.into()), (bytes, parser, pending, start_usage)))
+                        return Some((Err(e.into()), (bytes, parser, pending, start_usage)));
                     }
                     None => return None,
                 };

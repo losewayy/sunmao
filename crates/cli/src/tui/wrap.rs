@@ -116,12 +116,13 @@ pub fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
 /// keeps wrapped rows from exploding into one span per grapheme.
 fn push_g(cur: &mut Vec<Span<'static>>, g: &str, style: ratatui::style::Style) {
     if let Some(last) = cur.last_mut()
-        && last.style == style {
-            let mut s = last.content.to_string();
-            s.push_str(g);
-            last.content = s.into();
-            return;
-        }
+        && last.style == style
+    {
+        let mut s = last.content.to_string();
+        s.push_str(g);
+        last.content = s.into();
+        return;
+    }
     cur.push(Span::styled(g.to_string(), style));
 }
 
@@ -210,9 +211,10 @@ mod tests {
         let line = plain(&format!("xx {fam} yy"));
         let out = wrap_line(&line, 5);
         // the cluster must land intact on one row — never sliced in half
-        assert!(out
-            .iter()
-            .any(|l| l.spans.iter().any(|s| s.content.as_ref().contains(fam))));
+        assert!(
+            out.iter()
+                .any(|l| l.spans.iter().any(|s| s.content.as_ref().contains(fam)))
+        );
         for l in &out {
             let joined: String = l.spans.iter().map(|s| s.content.to_string()).collect();
             assert!(display_width(&joined) <= 5);

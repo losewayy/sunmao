@@ -54,7 +54,7 @@ impl AgentLoop {
                 for seg in &segments {
                     match self.ctx.permissions.check(tool, seg) {
                         Verdict::Deny => {
-                            return Err(format!("denied by permission rules (segment: {seg})"))
+                            return Err(format!("denied by permission rules (segment: {seg})"));
                         }
                         Verdict::Ask | Verdict::PreApproved | Verdict::Default => {}
                     }

@@ -27,10 +27,12 @@ async fn pre_tool_use_hook_blocks_via_exit2() {
         serde_json::from_str(&std::fs::read_to_string(dir.join("payload.json")).unwrap()).unwrap();
     assert_eq!(payload["hook_event_name"], "PreToolUse");
     assert_eq!(payload["tool_name"], "Bash");
-    assert!(payload["transcript_path"]
-        .as_str()
-        .unwrap()
-        .ends_with(".jsonl"));
+    assert!(
+        payload["transcript_path"]
+            .as_str()
+            .unwrap()
+            .ends_with(".jsonl")
+    );
 }
 
 /// The context-mode half of the SPEC fixture: a SessionStart hook receives

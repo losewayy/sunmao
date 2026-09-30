@@ -22,13 +22,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, Result};
+use axum::Json;
 use axum::extract::{Path as AxPath, State, WebSocketUpgrade};
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::Json;
-use sunmao_core::agent::{AgentLoop, LiveEvent, Observer};
 use sunmao_core::SessionEvent;
+use sunmao_core::agent::{AgentLoop, LiveEvent, Observer};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::tui;

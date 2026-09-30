@@ -12,10 +12,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context as _;
+use rmcp::RoleClient;
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::{RunningService, ServiceExt};
 use rmcp::transport::TokioChildProcess;
-use rmcp::RoleClient;
 use serde::Deserialize;
 use serde_json::Value;
 use sunmao_llm::types::Tool;

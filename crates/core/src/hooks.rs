@@ -37,7 +37,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub(crate) use dialect::apply_ext_reply;
 use dialect::apply_result;
@@ -415,21 +415,22 @@ fn merge_hooks_file(
     // before the structured parse so a mis-shaped file warns instead of
     // loading nothing.
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text)
-        && let Some(events) = v.get("hooks").and_then(|h| h.as_object()) {
-            for (event, groups) in events {
-                if let Some(gs) = groups.as_array() {
-                    for g in gs {
-                        if g.get("command").is_some() && g.get("hooks").is_none() {
-                            tracing::warn!(
-                                "{}: '{event}' uses flat {{matcher,command}} — wrap it: \
+        && let Some(events) = v.get("hooks").and_then(|h| h.as_object())
+    {
+        for (event, groups) in events {
+            if let Some(gs) = groups.as_array() {
+                for g in gs {
+                    if g.get("command").is_some() && g.get("hooks").is_none() {
+                        tracing::warn!(
+                            "{}: '{event}' uses flat {{matcher,command}} — wrap it: \
                                  {{matcher, hooks:[{{type:\"command\", command:...}}]}}",
-                                path.display()
-                            );
-                        }
+                            path.display()
+                        );
                     }
                 }
             }
         }
+    }
     let Ok(file) = serde_json::from_str::<HooksFile>(&text) else {
         tracing::warn!("bad hooks file {}", path.display());
         return;

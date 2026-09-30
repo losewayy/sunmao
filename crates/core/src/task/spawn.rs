@@ -11,7 +11,7 @@ use sunmao_llm::ProviderAdapter;
 use crate::agent::{AgentLoop, LiveEvent, Observer};
 use crate::context::Context;
 use crate::session::{SessionEvent, SessionLog};
-use crate::tool::{builtin_registry, ToolResult};
+use crate::tool::{ToolResult, builtin_registry};
 
 /// Collects the sub-agent's final assistant text for the tool result AND
 /// relays its tool lifecycle to the session's `live_sink` — the frontend

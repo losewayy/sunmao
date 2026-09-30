@@ -3,7 +3,7 @@
 //! backs mention completion. State lives on `App`; this file owns the
 //! *what completes and how a candidate is applied* half.
 
-use super::app::{char_to_byte, App};
+use super::app::{App, char_to_byte};
 use super::slash;
 
 /// What the completion popup is serving — drives its title, hint, and

@@ -1,6 +1,6 @@
 use crate::tool::*;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // ---------- Glob ----------
 
@@ -123,7 +123,7 @@ impl ToolImpl for GrepTool {
                 return Ok(ToolResult {
                     output: "ripgrep (rg) not found on PATH".into(),
                     ok: false,
-                })
+                });
             }
             Err(e) => return Err(e.into()),
         };

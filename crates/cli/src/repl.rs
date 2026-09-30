@@ -5,8 +5,8 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
-use sunmao_core::agent::{AgentLoop, Observer};
 use sunmao_core::Context;
+use sunmao_core::agent::{AgentLoop, Observer};
 
 /// Print every `.jsonl` log in `dir` as `<id>\t<size>` rows — the
 /// `/sessions` and `--sessions` surface.

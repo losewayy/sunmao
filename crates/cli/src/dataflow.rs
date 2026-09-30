@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sunmao_core::SessionEvent;
 use tokio::io::AsyncBufReadExt;
 

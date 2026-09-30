@@ -198,16 +198,20 @@ async fn batch_tasks_fan_out_on_distinct_lanes() {
         .iter()
         .find(|m| matches!(m.role, sunmao_llm::types::Role::Tool))
         .expect("Task result must fold in");
-    assert!(tool_msg
-        .content
-        .as_deref()
-        .unwrap_or("")
-        .contains("## task 1 ✓"));
-    assert!(tool_msg
-        .content
-        .as_deref()
-        .unwrap_or("")
-        .contains("## task 2 ✓"));
+    assert!(
+        tool_msg
+            .content
+            .as_deref()
+            .unwrap_or("")
+            .contains("## task 1 ✓")
+    );
+    assert!(
+        tool_msg
+            .content
+            .as_deref()
+            .unwrap_or("")
+            .contains("## task 2 ✓")
+    );
     // two children → two distinct lanes. The roster is the durable fact —
     // relayed ToolStarts only appear if a child happens to call a tool
     // (response-queue scheduling decides that, not lane assignment).
@@ -222,11 +226,12 @@ async fn batch_tasks_fan_out_on_distinct_lanes() {
     assert_ne!(lanes[0], lanes[1], "parallel children need distinct lanes");
     assert!(lanes.iter().all(|l| *l > 0));
     // both finished → roster flipped to done
-    assert!(ctx
-        .live_tasks
-        .lock()
-        .unwrap()
-        .iter()
-        .all(|t| t.done == Some(true)));
+    assert!(
+        ctx.live_tasks
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|t| t.done == Some(true))
+    );
     std::fs::remove_dir_all(&dir).ok();
 }

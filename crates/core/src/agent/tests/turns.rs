@@ -156,9 +156,10 @@ async fn tool_call_roundtrip_feeds_back() {
     // events: user msg, assistant msg (w/ tool_calls), tool_call fact,
     // tool_result, assistant text
     let msgs = ctx.sessions.lock().await.messages().await.unwrap();
-    assert!(msgs
-        .iter()
-        .any(|m| matches!(m.role, sunmao_llm::types::Role::Tool)));
+    assert!(
+        msgs.iter()
+            .any(|m| matches!(m.role, sunmao_llm::types::Role::Tool))
+    );
 }
 
 #[tokio::test]
@@ -234,11 +235,13 @@ async fn malformed_tool_args_become_failed_result() {
         .filter(|m| matches!(m.role, sunmao_llm::types::Role::Tool))
         .collect();
     assert_eq!(tool_msgs.len(), 1, "one result per call — no duplicates");
-    assert!(tool_msgs[0]
-        .content
-        .as_deref()
-        .unwrap()
-        .contains("malformed"));
+    assert!(
+        tool_msgs[0]
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("malformed")
+    );
 }
 
 /// Auto-compaction used to check at the TOP of the loop — after the prompt

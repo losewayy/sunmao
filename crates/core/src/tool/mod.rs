@@ -97,7 +97,7 @@ impl ToolRegistry {
                 return ToolResult {
                     output: format!("invalid arguments for {name}: {e}"),
                     ok: false,
-                }
+                };
             }
         };
         match tool.call(args, ctx).await {
@@ -143,10 +143,10 @@ mod webmod;
 pub use artifact::HtmlArtifactTool;
 pub use fs::{EditTool, ReadTool, WriteTool};
 pub use search::{GlobTool, GrepTool};
-pub use shell::{render_run, run_foreground, BashTool, JobOutputTool, ShellRun};
+pub use shell::{BashTool, JobOutputTool, ShellRun, render_run, run_foreground};
 pub(crate) use todo::TODOS_LINE_PREFIX;
 pub use todo::{
-    inject_text as todos_inject_text, render as render_todos, TodoItem, TodoStatus, TodoWriteTool,
+    TodoItem, TodoStatus, TodoWriteTool, inject_text as todos_inject_text, render as render_todos,
 };
 pub use webmod::WebFetchTool;
 

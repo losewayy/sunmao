@@ -22,15 +22,15 @@ use std::io;
 use std::sync::Arc;
 
 use anyhow::Result;
+use crossterm::ExecutableCommand;
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
     EventStream, KeyEvent, KeyEventKind, MouseEventKind,
 };
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, BeginSynchronizedUpdate, EndSynchronizedUpdate,
-    EnterAlternateScreen, LeaveAlternateScreen,
+    BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode,
 };
-use crossterm::ExecutableCommand;
 use futures_util::StreamExt;
 use ratatui::Terminal;
 use sunmao_core::agent::{AgentLoop, LiveEvent, Observer, TurnOutcome};

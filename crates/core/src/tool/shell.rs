@@ -1,7 +1,7 @@
 use crate::tool::*;
 use anyhow::bail;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // ---------- Bash ----------
 
@@ -51,7 +51,7 @@ impl ToolImpl for BashTool {
                 return Ok(ToolResult {
                     output: format!("cannot parse command: {e}"),
                     ok: false,
-                })
+                });
             }
         };
         // shell/preflight: spawnfate models the which-resolve + CreateProcess
@@ -80,7 +80,7 @@ impl ToolImpl for BashTool {
                 return Ok(ToolResult {
                     output: msg,
                     ok: false,
-                })
+                });
             }
         };
 

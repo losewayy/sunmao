@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use anyhow::bail;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sunmao_llm::types::Tool;
 
 use crate::context::Context;
@@ -232,17 +232,18 @@ fn resolve_spawn_def(
         return Ok(None); // generic sub-agent, unrestricted parent
     };
     if let Some(list) = allowed.as_deref()
-        && !list.iter().any(|n| n == name) {
-            bail!(
-                "{} may not spawn `{name}` (allowed: {})",
-                parent_name.unwrap(),
-                if list.is_empty() {
-                    "none".into()
-                } else {
-                    list.join(", ")
-                }
-            );
-        }
+        && !list.iter().any(|n| n == name)
+    {
+        bail!(
+            "{} may not spawn `{name}` (allowed: {})",
+            parent_name.unwrap(),
+            if list.is_empty() {
+                "none".into()
+            } else {
+                list.join(", ")
+            }
+        );
+    }
     if parent_name.as_deref() == Some(name) {
         bail!("{name} may not spawn itself (self-recursion)");
     }

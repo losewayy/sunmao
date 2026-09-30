@@ -552,9 +552,10 @@ impl App {
     /// Age-out the toast after 3 s.
     pub fn toast_text(&mut self) -> Option<&str> {
         if let Some((_, t)) = self.toast
-            && t.elapsed() > Duration::from_secs(3) {
-                self.toast = None;
-            }
+            && t.elapsed() > Duration::from_secs(3)
+        {
+            self.toast = None;
+        }
         self.toast.as_ref().map(|(s, _)| s.as_str())
     }
 }

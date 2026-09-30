@@ -49,9 +49,10 @@ pub fn draw(f: &mut ratatui::Frame, app: &mut App) {
         draw_slash_menu(f, m, chunks[1]);
     }
     if app.focus == Focus::Approval
-        && let Some(c) = &app.approval {
-            draw_card(f, c, app.approval_backlog.len(), chunks[2]);
-        }
+        && let Some(c) = &app.approval
+    {
+        draw_card(f, c, app.approval_backlog.len(), chunks[2]);
+    }
     draw_input(f, app, chunks[3]);
     draw_status(f, app, chunks[4]);
 }

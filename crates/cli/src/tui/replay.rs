@@ -39,13 +39,13 @@ impl App {
     pub fn tool_start(&mut self, name: &str, summary: &str, depth: u8, lane: u8) {
         if let Some(prev) = self.blocks.last_mut()
             && prev.kind == BlockKind::Tool
-                && prev.tool.as_ref().is_some_and(|t| {
-                    t.name == name && t.depth == depth && t.lane == lane && t.done.is_some()
-                })
-            {
-                prev.rearm_tool(summary);
-                return;
-            }
+            && prev.tool.as_ref().is_some_and(|t| {
+                t.name == name && t.depth == depth && t.lane == lane && t.done.is_some()
+            })
+        {
+            prev.rearm_tool(summary);
+            return;
+        }
         self.blocks
             .push(Block::new_tool(name, summary, depth, lane));
         self.follow_tail();

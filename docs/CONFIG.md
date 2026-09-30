@@ -128,3 +128,34 @@ a cheap/fast model for scout-style agents, session model otherwise:
   (an env var name), never the file itself.
 - `/model [selector]` in the TUI switches the *session's* active adapter
   mid-run (next request onward); bare `/model` lists routes + providers.
+
+## Eval cases (`sunmao eval <file>`)
+
+Case-driven regression runner: each case sends `prompt` through the real
+agent loop in a fresh session, then asserts against the recorded
+`ToolCall` events and the final assistant message. A case file is one JSON
+object, a JSON array of them, or JSONL (one object per line, blank lines
+and `#`/`//` comments skipped):
+
+```jsonc
+{
+  "name": "uses-read-before-write",
+  "prompt": "fix the typo in note.txt then tell me DONE",
+  "cwd": "fixtures/case1",              // optional; relative to the eval
+                                        // file's dir, default = --cwd
+  "expect": {
+    "final_contains": "DONE",           // last assistant text must contain
+    "tool_called": ["Read", "Write"],   // each must appear as a ToolCall
+    "tool_not_called": ["Bash"],        // must NOT appear
+    "max_tool_calls": 10,               // total ToolCall events ≤ N
+    "turns": 1                          // v1 runs exactly one turn
+  }
+}
+```
+
+Each case prints `PASS`/`FAIL name — <failures>`; a summary line and a
+nonzero exit on any failure. `--report <path>` writes the case results as
+a JSON array. Every case is a real session — its log lands in
+`--session-dir` as `s-<secs>-c<idx>.jsonl`, so hooks fire and
+`transcript_path` is a real file.
+

@@ -1,4 +1,5 @@
-//! `sunmao plugin …` — install/list/remove for plugin bundles under
+//! `sunmao <subcommand>` — the `Cmd` enum is the dispatch point. `plugin`
+//! ops live here: install/list/remove for plugin bundles under
 //! `<cwd>/.sunmao/plugins/`. Pure file ops: no provider, no session.
 
 use std::path::PathBuf;
@@ -10,6 +11,8 @@ use clap::Subcommand;
 pub enum Cmd {
     /// Manage plugin bundles under .sunmao/plugins/.
     Plugin(PluginArgs),
+    /// Run eval cases against the real loop and report pass/fail.
+    Eval(crate::eval::EvalArgs),
 }
 
 #[derive(clap::Args)]

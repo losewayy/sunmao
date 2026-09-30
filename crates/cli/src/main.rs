@@ -15,6 +15,7 @@ use sunmao_llm::OaiClient;
 mod acp;
 mod dataflow;
 mod doctor;
+mod eval;
 mod plugin;
 mod tui;
 
@@ -160,6 +161,19 @@ fn session_id() -> String {
     format!("s-{now}")
 }
 
+/// Session provider adapter from the cli flags — shared by the interactive
+/// path and `sunmao eval`.
+fn provider_adapter(cli: &Cli) -> Arc<dyn sunmao_llm::ProviderAdapter> {
+    match cli.provider.as_str() {
+        "anthropic" => Arc::new(sunmao_llm::AnthropicClient::new(
+            &cli.base_url,
+            &cli.api_key,
+            &cli.model,
+        )),
+        _ => Arc::new(OaiClient::new(&cli.base_url, &cli.api_key, &cli.model)),
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -171,10 +185,8 @@ async fn main() -> anyhow::Result<()> {
 
     // `plugin` ops are pure file management — they never need a provider,
     // a session log, or any of the session setup below.
-    if let Some(cmd) = &cli.command {
-        match cmd {
-            plugin::Cmd::Plugin(args) => return plugin::run(args, &cli.cwd),
-        }
+    if let Some(plugin::Cmd::Plugin(args)) = &cli.command {
+        return plugin::run(args, &cli.cwd);
     }
 
     if cli.sessions {
@@ -212,14 +224,14 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("presets enabled: {}", cli.preset.join(", "));
     }
 
-    let llm: Arc<dyn sunmao_llm::ProviderAdapter> = match cli.provider.as_str() {
-        "anthropic" => Arc::new(sunmao_llm::AnthropicClient::new(
-            &cli.base_url,
-            &cli.api_key,
-            &cli.model,
-        )),
-        _ => Arc::new(OaiClient::new(&cli.base_url, &cli.api_key, &cli.model)),
-    };
+    // eval builds its own Context per case — each needs a fresh session log,
+    // per-case cwd, and isolated permission/read ledgers, so the shared one
+    // below can't be reused.
+    if let Some(plugin::Cmd::Eval(args)) = &cli.command {
+        return eval::run(args, &cli, &cwd, &preset_roots).await;
+    }
+
+    let llm = provider_adapter(&cli);
     // --fork: copy the source log to a fresh id, then resume the copy
     let mut resume_target = cli.resume.clone();
     if let Some(src) = &cli.fork {

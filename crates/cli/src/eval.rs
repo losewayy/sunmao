@@ -178,6 +178,7 @@ async fn run_case_inner(
     }
     let mut ctx_raw = Context::new(llm.clone(), sessions, registry, case_cwd.clone())
         .with_extra_plugin_roots(preset_roots.to_vec());
+    ctx_raw.connect_extensions().await;
     // same models.json seam as the main session — the session provider
     // registers as "default" so bare model ids resolve
     ctx_raw.models = Some(Arc::new(sunmao_core::models::ModelResolver::load(
@@ -231,6 +232,8 @@ async fn run_case_inner(
             &sunmao_core::hooks::HookInput::default(),
         )
         .await;
+    // each case is its own session — its extension children end with it
+    ctx.ext.shutdown().await;
 
     // assertions read the recorded facts, not the live stream
     let log = ctx.sessions.lock().await;

@@ -279,6 +279,8 @@ async fn main() -> anyhow::Result<()> {
     let (tx_approval, rx_approval) = tokio::sync::mpsc::unbounded_channel();
     let mut ctx_raw = Context::new(llm, sessions, registry, cwd.clone())
         .with_extra_plugin_roots(preset_roots.clone());
+    // extension children spawn before SessionStart so they can receive it
+    ctx_raw.connect_extensions().await;
     if cli.tui {
         ctx_raw.approval = Arc::new(tui::TuiApprover { tx: tx_approval });
     } else if interactive {
@@ -337,6 +339,9 @@ async fn main() -> anyhow::Result<()> {
             in_reasoning: std::sync::Mutex::new(false),
         };
         let outcome = agent.run_turn(prompt, &obs).await?;
+        // process::exit skips destructors — extension children need the
+        // graceful shutdown (ext/shutdown → EOF → kill) run explicitly.
+        ctx.ext.shutdown().await;
         std::process::exit(if matches!(outcome, TurnOutcome::Completed) {
             0
         } else {
@@ -345,7 +350,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if cli.tui {
-        return tui::run(
+        let res = tui::run(
             agent,
             &cli.model,
             cwd.clone(),
@@ -354,6 +359,8 @@ async fn main() -> anyhow::Result<()> {
             preset_roots,
         )
         .await;
+        ctx.ext.shutdown().await;
+        return res;
     }
 
     let observer = Arc::new(StdoutObserver {
@@ -498,6 +505,7 @@ async fn main() -> anyhow::Result<()> {
             &sunmao_core::hooks::HookInput::default(),
         )
         .await;
+    ctx.ext.shutdown().await;
     Ok(())
 }
 

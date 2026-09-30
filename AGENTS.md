@@ -134,6 +134,7 @@ live in [`docs/CODE-ARCHITECTURE.md`](docs/CODE-ARCHITECTURE.md). Follow them.
 | Claude-contract hooks | `crates/core/src/hooks.rs` + `hooks/{tests,live_tests}.rs` |
 | `--preset` resolution | `crates/core/src/presets.rs` (layers onto `ctx.extra_plugin_roots`) |
 | MCP client (stdio + HTTP) | `crates/core/src/mcp.rs` |
+| extension host (`ext/*` JSON-RPC) | `crates/core/src/ext/` — `mod` spec scan, `registry` children + request/reply |
 | tools | `crates/core/src/tool/{mod,fs,shell,search,artifact,webmod}.rs` |
 | sub-agents | `crates/core/src/task.rs` + `task/tests.rs` + `agents.rs` |
 | model routing | `crates/core/src/models.rs` (ModelResolver — `.sunmao/models.json`) |

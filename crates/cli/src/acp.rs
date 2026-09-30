@@ -237,7 +237,7 @@ pub async fn run(
         preset_names: preset_names.to_vec(),
     });
 
-    Agent
+    let result = Agent
         .v2()
         .name("sunmao")
         .on_receive_request(
@@ -290,6 +290,7 @@ pub async fn run(
                     let session_id = v2::SessionId::new(id.clone());
                     let mut ctx_raw = Context::new(llm, log, registry, cwd.clone())
                         .with_extra_plugin_roots(preset_roots.clone());
+                    ctx_raw.connect_extensions().await;
                     ctx_raw.approval = Arc::new(AcpApprover {
                         cx: cx.clone(),
                         session_id: session_id.clone(),
@@ -407,6 +408,7 @@ pub async fn run(
                     }
                     let mut ctx_raw =
                         Context::new(llm, log, registry, cwd).with_extra_plugin_roots(preset_roots);
+                    ctx_raw.connect_extensions().await;
                     ctx_raw.approval = Arc::new(AcpApprover {
                         cx: cx.clone(),
                         session_id: req.session_id.clone(),
@@ -437,11 +439,18 @@ pub async fn run(
                 async move |req: v2::CloseSessionRequest,
                             responder: Responder<v2::CloseSessionResponse>,
                             _cx: V2ConnectionTo<Client>| {
-                    agent
+                    let session = agent
                         .sessions
                         .lock()
                         .unwrap()
                         .remove(&req.session_id.to_string());
+                    // closed session = dead extensions — graceful shutdown
+                    // before the state drops (Drop would only detach).
+                    // Clone the ctx out of the lock: guards never cross await.
+                    let ctx = session.map(|s| s.lock().unwrap().ctx.clone());
+                    if let Some(ctx) = ctx {
+                        ctx.ext.shutdown().await;
+                    }
                     responder.respond(v2::CloseSessionResponse::new())
                 }
             },
@@ -534,5 +543,17 @@ pub async fn run(
             agent_client_protocol::on_receive_notification!(),
         )
         .connect_to(Stdio::new())
-        .await
+        .await;
+
+    // server going down = every live session's extensions go down with it
+    let exts: Vec<_> = {
+        let map = agent.sessions.lock().unwrap();
+        map.values()
+            .map(|s| s.lock().unwrap().ctx.ext.clone())
+            .collect()
+    };
+    for ext in exts {
+        ext.shutdown().await;
+    }
+    result
 }

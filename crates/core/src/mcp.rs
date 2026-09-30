@@ -41,16 +41,66 @@ impl ServerSpec {
     /// use it to address files inside their own bundle.
     fn expand_plugin_root(&mut self, root: &str) {
         if let Some(c) = &mut self.command {
-            *c = c.replace("${CLAUDE_PLUGIN_ROOT}", root);
+            *c = expand_plugin_root(c, root);
         }
         for a in &mut self.args {
-            *a = a.replace("${CLAUDE_PLUGIN_ROOT}", root);
+            *a = expand_plugin_root(a, root);
         }
         for v in self.env.values_mut() {
-            *v = v.replace("${CLAUDE_PLUGIN_ROOT}", root);
+            *v = expand_plugin_root(v, root);
         }
     }
 }
+
+/// `${CLAUDE_PLUGIN_ROOT}` substitution — shared by MCP server specs and
+/// extension specs; `root` arrives pre-stripped of the `\\?\` prefix.
+pub(crate) fn expand_plugin_root(text: &str, root: &str) -> String {
+    text.replace("${CLAUDE_PLUGIN_ROOT}", root)
+        .replace("$CLAUDE_PLUGIN_ROOT", root)
+}
+
+/// Every plugin manifest the session should read, paired with its bundle
+/// root: convention manifests, installed plugin dirs, then `extra_roots`
+/// (preset dirs — they can carry servers/extensions like any bundle).
+/// Presets without a `plugin.json` fall back to a bare `mcp.json` —
+/// reading a nonexistent manifest is the caller's `continue`.
+pub(crate) fn plugin_manifests(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<(PathBuf, PathBuf)> {
+    let mut manifests: Vec<(PathBuf, PathBuf)> = Vec::new(); // (manifest, plugin_root)
+    for p in [
+        cwd.join(".sunmao").join("plugin.json"),
+        cwd.join(".claude-plugin").join("plugin.json"),
+    ] {
+        if let Some(root) = p.parent().map(|d| d.to_path_buf()) {
+            manifests.push((p, root));
+        }
+    }
+    for base in [
+        cwd.join(".sunmao").join("plugins"),
+        cwd.join(".claude").join("plugins"),
+    ] {
+        if let Ok(entries) = std::fs::read_dir(&base) {
+            for entry in entries.flatten() {
+                let root = entry.path();
+                let manifest = root.join("plugin.json");
+                if root.is_dir() && manifest.exists() {
+                    manifests.push((manifest, root));
+                }
+            }
+        }
+    }
+    // presets: plugin.json is the bundle manifest; a bare mcp.json covers
+    // presets that ship only servers and no manifest.
+    for root in extra_roots {
+        let manifest = if root.join("plugin.json").exists() {
+            root.join("plugin.json")
+        } else {
+            root.join("mcp.json")
+        };
+        manifests.push((manifest, root.clone()));
+    }
+    manifests
+}
+
 type ClientHandle = Arc<RunningService<RoleClient, ()>>;
 
 /// One MCP server tool wrapped as a native [`ToolImpl`].
@@ -119,40 +169,7 @@ pub async fn connect_all(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<Box<dyn Too
     // `${CLAUDE_PLUGIN_ROOT}` inside a manifest's command/args/env expands
     // to the plugin's own directory.
     let mut servers: std::collections::HashMap<String, ServerSpec> = Default::default();
-    let mut manifests: Vec<(PathBuf, PathBuf)> = Vec::new(); // (manifest, plugin_root)
-    for p in [
-        cwd.join(".sunmao").join("plugin.json"),
-        cwd.join(".claude-plugin").join("plugin.json"),
-    ] {
-        if let Some(root) = p.parent().map(|d| d.to_path_buf()) {
-            manifests.push((p, root));
-        }
-    }
-    for base in [
-        cwd.join(".sunmao").join("plugins"),
-        cwd.join(".claude").join("plugins"),
-    ] {
-        if let Ok(entries) = std::fs::read_dir(&base) {
-            for entry in entries.flatten() {
-                let root = entry.path();
-                let manifest = root.join("plugin.json");
-                if root.is_dir() && manifest.exists() {
-                    manifests.push((manifest, root));
-                }
-            }
-        }
-    }
-    // presets: plugin.json is the bundle manifest; a bare mcp.json covers
-    // presets that ship only servers and no manifest.
-    for root in extra_roots {
-        let manifest = if root.join("plugin.json").exists() {
-            root.join("plugin.json")
-        } else {
-            root.join("mcp.json")
-        };
-        manifests.push((manifest, root.clone()));
-    }
-    for (p, root) in manifests {
+    for (p, root) in plugin_manifests(cwd, extra_roots) {
         let Ok(text) = std::fs::read_to_string(&p) else {
             continue;
         };

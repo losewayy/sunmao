@@ -141,10 +141,11 @@ hook engine（核心）
 - 白送的生态位：Zed / 任何 ACP client 开箱驱动我们
 - TUI 走同一会话 API——壳只是另一种 client
 
-### 4.8 `plugins` — 进程边界扩展协议（预留）
+### 4.8 `plugins` — 进程边界扩展协议
 
-- v1 只定义契约：`sunmao` JSON-RPC extension protocol（stdin/stdout，类似 ACP 但面向扩展能力：注册工具/监听事件/注入上下文）——契约已写定于 `docs/PROTOCOLS.md` "Extension protocol" 一节（事件面=hooks 并集、工具命名空间 `ext__{plugin}__{tool}`、冷拔插=进程级生命周期、无反向通道）
-- v0.5+ 落一个**通用 JS extension host 侧车**：`node extension-host.mjs` 加载 TS/JS 扩展，对本协议暴露——届时 pi-style 生态（含 pi 扩展兼容尝试）由此进入，而不是为 pi 定制
+- `sunmao` JSON-RPC extension protocol（stdin/stdout 逐行 JSON-RPC 2.0，注册工具/监听事件/注入上下文）——契约见 `docs/PROTOCOLS.md` "Extension protocol" 一节（事件面=hooks 并集、工具命名空间 `ext__{plugin}__{tool}`、冷拔插=进程级生命周期、无反向通道）
+- **宿主已落地**：`crates/core/src/ext/` 是 first-party 宿主——`Context::connect_extensions` 扫同一套 plugin manifest 的 `extensions` spec、spawn 子进程、握手注册工具并把事件分发改接进 `HookEngine::fire`；子代理 spawn 自己的 extension children（不共享父进程）
+- v0.5+ 仍可落**通用 JS extension host 侧车**（`node extension-host.mjs` 对同一契约转接 TS/JS 扩展）——届时 pi-style 生态由此进入；`examples/extensions/echo-ext.mjs` 是参考扩展兼活测试夹具
 
 ### 4.9 声明式格式加载器
 
@@ -176,7 +177,7 @@ hook engine（核心）
 | MCP Apps / UI resources（渲染别家 UI） | sandboxed iframe 渲染层 | v0.5+ |
 | Codex/Gemini/Cursor hook 方言 | 归一化层 | v0.4 |
 | OpenCode/pi TS 扩展 | JS extension host 侧车 | v0.5+（协议预留，不定制） |
-| 自身扩展协议 | `sunmao` JSON-RPC | v0.3 契约，v0.5 宿主 |
+| 自身扩展协议 | `sunmao` JSON-RPC | ✅ 契约 + first-party 宿主（`crates/core/src/ext/`） |
 
 ## 6. 里程碑
 
@@ -185,7 +186,7 @@ hook engine（核心）
 | v0.1 | kernel walks | OAI 适配 + SSE + sessions + tools(3个) + agentLoop + TUI REPL | 跑通真实任务 | ✅ 超预期完成（tools 到 10、TUI 也落了） |
 | v0.2 | trustworthy | 审批缝 + transcript 工件 + 上下文窗口管理 + 错误恢复/中断续跑 + 审计流 | 子进程崩溃不炸 agent | ✅ 大部分落地——审批闸三前端、compaction、resume/fork、审计事件流；进程崩溃容忍只验过 hook veto |
 | v0.3 | ecosystem citizen | MCP client + hooks 引擎 + claude-dialect + 格式加载器 + ACP server | rtk/context-mode 实测 | ✅ 落地（MCP 双 transport、hooks 8 事件、agents/commands/skills/plugin.json、ACP v2）；rtk/context-mode 实测通过 |
-| v0.4 | distributed | plugin.json 安装 + 扩展协议宿主 + presets + eval + HTML 工件 | 发布 | 🟡 plugin.json 安装（`sunmao plugin`）、presets（`--preset` 层叠）、eval（`sunmao eval` 断言会话事实）、HTML 工件（HtmlArtifact）已落地；扩展协议宿主未做 |
+| v0.4 | distributed | plugin.json 安装 + 扩展协议宿主 + presets + eval + HTML 工件 | 发布 | 🟡 plugin.json 安装（`sunmao plugin`）、presets（`--preset` 层叠）、eval（`sunmao eval` 断言会话事实）、HTML 工件（HtmlArtifact）已落地；扩展协议宿主（`ext/`）提前落地 |
 | v0.5+ | open frontier | JS 扩展宿主、第二 provider 方言、GUI、subagents | — | 🟡 Anthropic 方言提前落地（v0.2）、Task 子代理已上线（`spawns:`/`tools:` 白名单 + `run_in_background` 异步扇出 + `model:` 路由）；JS 宿主/GUI 未动 |
 
 ## 7. 非目标（v1 明确不做）

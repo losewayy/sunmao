@@ -41,11 +41,12 @@ stdin/TUI/ACP
 | `ProviderAdapter` | trait object | two live dialects (OAI, Anthropic) — earned its existence |
 | `Approver` | trait object | three frontends: REPL stdin, TUI y/n, ACP `request_permission` |
 | `Observer` | trait | REPL writer / TUI channel / ACP notifications — same events, three sinks |
-| `ToolRegistry` | concrete map | built-ins + boxed MCP tools + `Task` share one dispatch table |
+| `ToolRegistry` | concrete map | built-ins + boxed MCP tools + ext tools + `Task` share one dispatch table |
 | `SessionLog` | concrete | file vs ephemeral are the same fold — replay is the test |
-| `Hooks` | concrete dispatcher | one code path, any number of `command` handlers |
+| `Hooks` | concrete dispatcher | one code path, any number of `command` handlers + extension children |
+| `ExtRegistry` | concrete (`ctx.ext`) | one spawned child per extension spec — tools surface `ext__{plugin}__{name}`, `ext/event` replies fold into `HookOutcome` |
 | `PromptAssembler` | concrete | one layering order — REPL/TUI/ACP/Task can't drift |
-| process boundary | MCP child / ACP peer / hook proc / rg | everything that can fail alone is its own process |
+| process boundary | MCP child / ext child / ACP peer / hook proc / rg | everything that can fail alone is its own process |
 
 The **cold-plug principle** (CODE-ARCHITECTURE rule 6): replaceable units
 swap at the file/config layer, effective at process start — never hot.
@@ -90,6 +91,13 @@ outlive their spawn call and append into the parent log directly.
 └── plugin/         (the "this project is a plugin" dir)
     └── hooks|commands|skills|agents/
 ```
+
+A bundle's `plugin.json` may also carry `"extensions": [{command, args,
+env}]` — each spec spawns a JSON-RPC extension child per session
+(`crates/core/src/ext/`, protocol in `PROTOCOLS.md`); its tools register
+as `ext__{plugin}__{tool}` and its `ext/event` replies fold into the same
+`HookOutcome` command hooks produce. Preset dirs carry extensions the
+same way (extra plugin roots); `examples/extensions/` is the reference.
 
 `prompt.md` + `prompt.d/*.md` also load from `~/.sunmao/` (user layer, before
 the project layer). Prompt sections order: built-in assets → user → project
@@ -146,7 +154,9 @@ sunmao --acp        ACP v2 stdio server: initialize, session/{new,list,
 
 ## What's *not* in code (spec-only for later)
 
-- JS extension host (spec §"sidecar", v0.5+) — intended for the pi/TS ecosystem
+- generic JS extension-host sidecar (spec §"sidecar", v0.5+) — the
+  protocol's first-party host (`crates/core/src/ext/`) is live; the
+  sidecar would still be needed for the pi/TS ecosystem
 - Electron/Web frontend — the runtime is the seam; UIs are replaceable
 - MCP resources/prompts subscriptions
 - OTel export — usage events land in the session log already; export is later

@@ -144,6 +144,9 @@ pub struct HookEngine {
     /// Session log path — payload field `transcript_path` (the dialect
     /// requires it to be a real file; ours is the JSONL event log).
     transcript_path: PathBuf,
+    /// Extension children attached after `load` — they fire *after*
+    /// command hooks in the same event and fold into the same outcome.
+    ext: Option<std::sync::Arc<crate::ext::ExtRegistry>>,
 }
 
 impl HookEngine {
@@ -218,52 +221,70 @@ impl HookEngine {
             groups,
             session_id: session_id.to_string(),
             transcript_path,
+            ext: None,
         }
+    }
+
+    /// Attach the session's extension registry — `ext/event` requests then
+    /// deliver inside `fire` after command hooks, folding into the same
+    /// `HookOutcome` (extensions see the identical dialect payload).
+    pub fn attach_ext(&mut self, exts: std::sync::Arc<crate::ext::ExtRegistry>) {
+        self.ext = Some(exts);
+    }
+
+    /// The dialect payload both channels share — command hooks read it
+    /// from stdin, extensions get it as `ext/event`'s `payload` param.
+    fn payload(&self, event: HookEvent, cwd: &Path, input: &HookInput<'_>) -> Value {
+        json!({
+            "session_id": self.session_id,
+            "transcript_path": self.transcript_path.display().to_string().replace("\\\\?\\", ""),
+            "cwd": cwd.display().to_string().replace("\\\\?\\", ""),
+            "hook_event_name": event.as_str(),
+            "prompt": input.prompt,
+            "source": input.source,
+            "tool_name": input.tool_name,
+            "tool_use_id": input.tool_use_id,
+            "tool_input": input.tool_input,
+            "tool_response": input.tool_response,
+        })
     }
 
     /// Fire one lifecycle event.
     pub async fn fire(&self, event: HookEvent, cwd: &Path, input: &HookInput<'_>) -> HookOutcome {
-        let Some(groups) = self.groups.get(event.as_str()) else {
-            return HookOutcome::default();
-        };
+        let payload = self.payload(event, cwd, input);
         let mut outcome = HookOutcome::default();
-        for group in groups {
-            if !matches(&group.matcher, input.tool_name.unwrap_or("")) {
-                continue;
-            }
-            for hook in &group.hooks {
-                if hook.kind != "command" {
+        if let Some(groups) = self.groups.get(event.as_str()) {
+            for group in groups {
+                if !matches(&group.matcher, input.tool_name.unwrap_or("")) {
                     continue;
                 }
-                let command = expand_plugin_root(&hook.command, hook.plugin_root.as_deref());
-                tracing::debug!(event = event.as_str(), %command, "firing hook");
-                let payload = json!({
-                    "session_id": self.session_id,
-                    "transcript_path": self.transcript_path.display().to_string().replace("\\\\?\\", ""),
-                    "cwd": cwd.display().to_string().replace("\\\\?\\", ""),
-                    "hook_event_name": event.as_str(),
-                    "prompt": input.prompt,
-                    "source": input.source,
-                    "tool_name": input.tool_name,
-                    "tool_use_id": input.tool_use_id,
-                    "tool_input": input.tool_input,
-                    "tool_response": input.tool_response,
-                });
-                match run_hook_command(&command, &payload, cwd).await {
-                    Ok((code, stdout, stderr)) => {
-                        tracing::debug!(
-                            code,
-                            stdout = &stdout[..stdout.len().min(512)],
-                            stderr = &stderr[..stderr.len().min(256)],
-                            "hook finished"
-                        );
-                        apply_result(code, &stdout, &stderr, &mut outcome);
+                for hook in &group.hooks {
+                    if hook.kind != "command" {
+                        continue;
                     }
-                    Err(e) => {
-                        tracing::warn!("hook failed to spawn: {e:#}");
+                    let command = expand_plugin_root(&hook.command, hook.plugin_root.as_deref());
+                    tracing::debug!(event = event.as_str(), %command, "firing hook");
+                    match run_hook_command(&command, &payload, cwd).await {
+                        Ok((code, stdout, stderr)) => {
+                            tracing::debug!(
+                                code,
+                                stdout = &stdout[..stdout.len().min(512)],
+                                stderr = &stderr[..stderr.len().min(256)],
+                                "hook finished"
+                            );
+                            apply_result(code, &stdout, &stderr, &mut outcome);
+                        }
+                        Err(e) => {
+                            tracing::warn!("hook failed to spawn: {e:#}");
+                        }
                     }
                 }
             }
+        }
+        // extension children run after every command hook for the event —
+        // same payload, same outcome, replies carry the same effect shape.
+        if let Some(ext) = &self.ext {
+            ext.fire_event(event.as_str(), &payload, &mut outcome).await;
         }
         outcome
     }
@@ -352,6 +373,37 @@ fn matches(matcher: &str, tool_name: &str) -> bool {
     match regex::Regex::new(matcher) {
         Ok(re) => re.is_match(tool_name),
         Err(_) => tool_name.contains(matcher),
+    }
+}
+
+/// Extension reply folding — `ext/event` replies carry the same effects a
+/// hook can produce, with contract spellings: `block` (a reason string →
+/// block_reason), `extra_context` (string or list of them), `updatedInput`
+/// (PreToolUse rewrite), `permissionDecision` (same verdicts as the
+/// hook-specific channel). Non-object replies and junk fields drop quietly.
+pub(crate) fn apply_ext_reply(reply: &Value, outcome: &mut HookOutcome) {
+    if let Some(reason) = reply.get("block").and_then(|b| b.as_str()) {
+        outcome.block_reason = Some(reason.to_string());
+    }
+    match reply.get("extra_context") {
+        Some(Value::Array(items)) => {
+            for item in items {
+                if let Some(s) = item.as_str() {
+                    outcome.extra_context.push(s.to_string());
+                }
+            }
+        }
+        Some(Value::String(s)) => outcome.extra_context.push(s.clone()),
+        _ => {}
+    }
+    if let Some(updated) = reply.get("updatedInput") {
+        outcome.updated_input = Some(updated.clone());
+    }
+    match reply.get("permissionDecision").and_then(|d| d.as_str()) {
+        Some("deny") => outcome.permission_decision = Some(HookPermission::Deny),
+        Some("ask") => outcome.permission_decision = Some(HookPermission::Ask),
+        Some("allow") => outcome.permission_decision = Some(HookPermission::Allow),
+        _ => {}
     }
 }
 

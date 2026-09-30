@@ -9,6 +9,35 @@ permissions, approvals across three frontends, MCP client (stdio + HTTP),
 ACP v2 server, event-sourced sessions with resume/fork/dataflow, CJK-native
 TUI.
 
+**post-0.2 additions**
+- `sunmao plugin install|list|remove` — bundle management for
+  `.sunmao/plugins/<name>/` (the dir all five consumers already scan);
+  name sanitization keeps `plugins/` an airtight root
+- `--preset <name>` — plugin bundles layered on demand from
+  `.sunmao/presets/<name>/` or `~/.sunmao/presets/<name>/` (`+name` = the
+  SPEC's layering notation). Presets merge last into hooks/mcp/agents/
+  skills/commands; sub-agent contexts inherit them; ACP resolves
+  per-session against the request cwd
+- `sunmao eval <file>` — case-driven runner: JSON/JSONL cases assert
+  `final_contains`/`tool_called`/`tool_not_called`/`max_tool_calls`
+  against the session's own facts — the eval surface reads what the
+  audit path wrote, no shadow transcript. Per-case fresh Context,
+  `--report` writes the result array
+- `xtask arch` — the shape rules got teeth: god-file budget (600),
+  layer direction (cli→core→llm only), prose-in-code — runs in CI
+- model routing: `.sunmao/models.json` names providers + routes; agent
+  defs' `model:` frontmatter resolves through it; `/model` switches
+  mid-session (TUI + REPL + ACP)
+- Task `run_in_background: true` — detached sub-agents push `TaskDone`
+  facts into the parent's log; `spawns:`/`tools:` whitelist in agent
+  frontmatter; self-recursion blocked
+- crash tolerance: corrupt session lines skip instead of aborting
+  resume, dangling tool_calls get a synthesized `[interrupted]` result,
+  hook subprocesses die at a 60s ceiling
+- rtk/context-mode conformance is *measured*, not claimed: a live test
+  hangs the real `rtk` binary on PreToolUse and asserts the rewrite;
+  SessionStart carries `source` for context-mode-style sidecars
+
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine
   (`Producer::WinSpawn` — the which-resolve + CreateProcess path

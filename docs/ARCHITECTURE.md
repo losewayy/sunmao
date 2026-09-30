@@ -144,15 +144,19 @@ It never persists; frontends that want full tool output read the session log.
 sunmao              stdin/stdout REPL — /compact, /model, /resume, /tasks,
                     /todos, /artifacts, /<command>
 sunmao -p "..."     one-shot; exit code encodes outcome
-sunmao --tui        ratatui: block transcript (fold/copy OSC52/select via
-                    Tab+j/k/e, Enter opens a full-screen viewer), 3-option
+sunmao --tui        ratatui: block transcript (virtualized draw,
+                    fold-by-cap + `e` expand, copy OSC52, select via
+                    Tab+j/k, Enter opens a full-screen viewer), 3-option
                     approval card (once / session / deny, parkable Esc),
-                    `/` slash popup, `!` local bash (runs through
-                    deno_task_shell directly, folds into context),
-                    markdown-rendered assistant text, multiline composer,
-                    grapheme-cluster wrapping, CSI ?2026 synced frames,
-                    two-line footer (branch + live context tokens); Esc is
-                    layered (park/clear/hint), Ctrl-C cancels or quits.
+                    `/` slash popup (commands / model selectors /
+                    session picker), `@` file mentions with dir descent,
+                    paste placeholders [paste #N], `!` local bash (runs
+                    through deno_task_shell directly, folds into
+                    context), markdown-rendered assistant text,
+                    multiline composer, grapheme-cluster wrapping,
+                    CSI ?2026 synced frames, two-line footer (branch +
+                    live context tokens); Esc is layered
+                    (park/clear/hint), Ctrl-C cancels or quits.
                     Semantic theme (tokyonight), user-prompt band, tool
                     blocks with arg digest + output panel, same-tool
                     verb-grouping, ⚙ audit lines for hook facts

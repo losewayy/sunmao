@@ -98,6 +98,13 @@ TUI.
   append (bare loop every call; full loop's malformed-args branch)
   double-reported results and providers hard-rejected the transcript;
   `ToolResult` event is the single source the fold derives from
+- **skills speak HTML** (SPEC §4.10) — a skill dir without `SKILL.md`
+  falls back to `SKILL.html` (`<title>`/`<meta name="description">`
+  supply the index fields); bundled `*.html` resources count into the
+  index line. `HtmlArtifact` gets prompt guidance (deliverables → HTML,
+  check `.state.json` sidecars for annotations) and a packaged example
+  at `examples/skills/html-artifact/` (SKILL.md + a reviewable-plan
+  template + the state.json annotation convention)
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

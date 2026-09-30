@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 56rem; margin: 2rem auto;
+         padding: 0 1rem; line-height: 1.6; }
+  h1 { font-size: 1.4rem; }
+  section { margin: 1.5rem 0; }
+  section > h2 { font-size: 1.05rem; border-bottom: 1px solid #8884; padding-bottom: .3rem; }
+  ol.steps > li { margin: .5rem 0; }
+  .step-title { font-weight: 600; }
+  .risk { color: #b45309; }
+  #annotations { background: #8881; border-radius: .5rem; padding: 1rem 1.2rem; }
+  #annotations h2 { border: 0; }
+  #annotations p { opacity: .75; font-size: .9rem; }
+  code { font-size: .9em; }
+</style>
+</head>
+<body>
+<h1>{{TITLE}}</h1>
+<p class="meta">{{ONE-LINE SUMMARY — what this plan does and why}}</p>
+
+<section id="overview">
+  <h2>Overview</h2>
+  <p>{{CONTEXT — current state, constraints, the decision this plan encodes}}</p>
+</section>
+
+<section id="steps">
+  <h2>Steps</h2>
+  <ol class="steps">
+    <li><span class="step-title">{{STEP TITLE}}</span> — {{what changes, where, how to verify}}</li>
+  </ol>
+</section>
+
+<section id="risks">
+  <h2>Risks &amp; open questions</h2>
+  <ul>
+    <li class="risk">{{RISK OR QUESTION}}</li>
+  </ul>
+</section>
+
+<section id="annotations">
+  <h2>Annotations</h2>
+  <p>Reviewers: add notes to <code>.sunmao/artifacts/{{NAME}}.state.json</code>
+     — an array of <code>{"section", "note", "at"}</code> entries. The agent
+     folds them into the next revision and marks each
+     <code>"resolved": true</code>; resolved notes stay in the file.</p>
+  <!-- resolved annotations are rendered here by the next revision -->
+</section>
+</body>
+</html>

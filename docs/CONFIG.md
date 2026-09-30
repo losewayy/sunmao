@@ -16,7 +16,7 @@ per-key where merging applies (hooks/permissions/mcp).
 | `prompt.md` | markdown | system-prompt section appended to the assembly |
 | `prompt.d/<name>.md` | markdown | prompt section; a name matching a built-in section (`identity`, `tool-guidance`, `shell-dialect`, `subagent-default`) **replaces** that section — the cold-plug mechanism |
 | `commands/*.md` | markdown | `/name` injects file body as prompt |
-| `skills/*/SKILL.md` | frontmatter `name`/`description` + body | indexed; body read on demand |
+| `skills/*/SKILL.md` | frontmatter `name`/`description` + body | indexed; body read on demand. `SKILL.html` is the alternate skill body (`<title>`/`<meta name="description">` supply the index fields; `SKILL.md` wins when both exist). Bundled `*.html` files count as resources and surface in the index line |
 | `agents/*.md` | frontmatter `name`/`description`/`model`/`tools`/`spawns` + body | `Task` tool `subagent_type` picks; body = sub-agent system prompt; `model` routes the spawn (see below); `tools` (CSV/list) trims the child's tool registry; `spawns` (CSV/list, `*`=all) whitelists what it may itself spawn — a restricted parent's omitted `subagent_type` defaults to the first entry, self-recursion is refused |
 | `models.json` | `{"providers": {"p": {"base_url","api_key_env","dialect"}}, "routes": {"r": "sel" \| ["sel",...]}}` | model routing — `model:` selectors resolve `provider/model`, bare `model` (session provider), or `@route` chains; unresolvable → inherit parent |
 | `plugin/` | same tree as a plugin root | "this project is a plugin" convention |
@@ -24,7 +24,7 @@ per-key where merging applies (hooks/permissions/mcp).
 | `presets/<name>/` | plugin dir | same bundle shape as `plugins/<name>/` (plus `permissions.json`), but only active while named via `--preset <name>` — see "Presets" below |
 | `sessions/*.jsonl` | runtime state (gitignored) | session logs — `--resume`/`--fork`/`--dataflow` read these |
 | `jobs/{id}/` | runtime state | background `Bash` jobs — `output.log` + `output.idx` + `meta.json` |
-| `artifacts/` | runtime state | `HtmlArtifact` outputs |
+| `artifacts/` | runtime state | `HtmlArtifact` outputs — `{name}.html` plus `{name}.state.json` human-annotation sidecars |
 
 ## Claude-compatible (`<cwd>/.claude/`, `~/.claude/`)
 

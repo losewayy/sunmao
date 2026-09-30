@@ -1,38 +1,184 @@
+/* tokens.css — the only file allowed to carry raw design values.
+   Two layers: theme blocks (:root / [data-theme]) hold the raw palette,
+   semantic --c-* / --fs-* / --s-* tokens are what components consume
+   (docs/DESIGN-SYSTEM.md §2). Runtime-writable tokens (written by
+   apply() in index.html) keep their name: --c-text --c-text-2
+   --c-text-3 --c-accent --c-stroke --glass-rgb --glass-a --blur --veil
+   --font-ui --font-mono --noise. Everything else derives here. */
 :root{
   --font-ui:-apple-system,BlinkMacSystemFont,"Segoe UI Variable Text","Segoe UI","PingFang SC","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
   --font-mono:"JetBrains Mono","Cascadia Mono",ui-monospace,"SFMono-Regular",Consolas,"Microsoft YaHei UI",monospace;
-  --text:#E8E9F0;--text-2:#8B8FA5;--text-3:#565A70;
-  --accent:#339CFF;--on-accent:#fff;
-  --warn:#e0af68;--ok:#9ece6a;--err:#f7768e;--tool:#7dcfff;--you:#e0af68;--bot:#8c9cff;
-  --glass-rgb:22 24 31;--glass-a:.56;--blur:24px;
-  --stroke:rgba(255,255,255,.08);--stroke-2:rgba(255,255,255,.13);--hi:rgba(255,255,255,.055);
-  --fill-1:rgba(255,255,255,.045);--fill-2:rgba(255,255,255,.075);--fill-3:rgba(255,255,255,.12);
-  --sunken:rgba(0,0,0,.24);
-  --sh:0 10px 30px rgba(0,0,0,.24);--sh-float:0 16px 48px rgba(0,0,0,.4);
+
+  /* semantic colors (§3.1) */
+  --c-text:#E8E9F0;--c-text-2:#8B8FA5;--c-text-3:#565A70;
+  --c-on-accent:#fff;
+  --c-accent:#339CFF;
+  --c-ok:#9ece6a;--c-warn:#e0af68;--c-err:#f7768e;--c-tool:#7dcfff;
+  --c-mark-you:var(--c-warn);--c-mark-bot:#8c9cff;
+  --c-danger-solid:#c42b1c;
+  --c-thumb:#fff;
+  --c-allow-bg:#9ece6a;--c-allow-fg:#13200a;
+
+  /* derived colors (§3.1) — follow --c-accent / status colors */
+  --c-accent-tint:color-mix(in srgb,var(--c-accent) 9%,transparent);
+  --c-accent-soft:color-mix(in srgb,var(--c-accent) 16%,transparent);
+  --c-accent-soft-2:color-mix(in srgb,var(--c-accent) 26%,transparent);
+  --c-accent-line:color-mix(in srgb,var(--c-accent) 60%,transparent);
+  --c-selection:color-mix(in srgb,var(--c-accent) 38%,transparent);
+  --c-ok-soft:color-mix(in srgb,var(--c-ok) 16%,transparent);
+  --c-warn-soft:color-mix(in srgb,var(--c-warn) 16%,transparent);
+  --c-err-soft:color-mix(in srgb,var(--c-err) 16%,transparent);
+  --c-ok-row:color-mix(in srgb,var(--c-ok) 11%,transparent);
+  --c-err-row:color-mix(in srgb,var(--c-err) 11%,transparent);
+  --c-approve-bg:color-mix(in srgb,var(--c-warn) 12%,transparent);
+  --c-approve-line:color-mix(in srgb,var(--c-warn) 34%,transparent);
+  --c-thumb-sh:0 1px 4px rgba(0,0,0,.4),0 0 0 .5px rgba(0,0,0,.25);
+
+  /* surfaces (§3.2) */
+  --c-stroke:rgba(255,255,255,.08);--c-stroke-2:rgba(255,255,255,.13);--c-hi:rgba(255,255,255,.055);
+  --c-fill-1:rgba(255,255,255,.045);--c-fill-2:rgba(255,255,255,.075);--c-fill-3:rgba(255,255,255,.12);
+  --c-sunken:rgba(0,0,0,.24);--c-code-bg:rgba(255,255,255,.07);
+  --c-scrim:rgba(4,6,10,.28);--c-scrollbar:rgba(255,255,255,.13);
+  --c-swatch-ring:rgba(255,255,255,.25);
+  --c-page:#07090e;--c-doc:#fbfaf7;
+  --glass-rgb:22 24 31;--island-rgb:13 14 19;
+  --glass-a:.56;--blur:24px;
   --veil:rgba(6,8,12,.16);--noise:none;
-  --allow-bg:#9ece6a;--allow-fg:#13200a;
-  --amber-bg:rgba(224,175,104,.12);--amber-line:rgba(224,175,104,.34);
-  --code-bg:rgba(255,255,255,.07);
-  --island-rgb:13 14 19;
+  --c-vignette:radial-gradient(130% 95% at 50% 42%,transparent 60%,rgba(0,0,0,.26));
+
+  /* syntax palette (§3.3) — same source as the TUI theme */
   --syn-k:#bb9af7;--syn-t:#2ac3de;--syn-p:#73daca;--syn-s:#9ece6a;--syn-n:#ff9e64;--syn-v:#c0caf5;--syn-x:#6b7089;
+
+  /* typography (§4) — no half-pixel sizes for CJK */
+  --fs-2xs:11px;--fs-xs:12px;--fs-sm:13px;--fs-md:14px;--fs-lg:16px;
+  --fs-xl:18px;--fs-2xl:20px;--fs-3xl:26px;--fs-display:30px;--fs-metric:36px;
+  --fw-regular:400;--fw-medium:500;--fw-strong:600;
+  --lh-tight:1.3;--lh-ui:1.5;--lh-body:1.7;--lh-code:1.6;
+  --ls-display:-.01em;--ls-metric:-.03em;
+
+  /* spacing / heights / widths (§5) */
+  --s-0:0;--s-2:2px;--s-4:4px;--s-6:6px;--s-8:8px;--s-10:10px;--s-12:12px;
+  --s-16:16px;--s-20:20px;--s-24:24px;--s-32:32px;--s-40:40px;--s-64:64px;
+  --s-gutter:var(--s-8);
+  --h-xs:20px;--h-sm:24px;--h-md:28px;--h-lg:32px;--h-xl:36px;--h-2xl:40px;--h-3xl:48px;
+  --w-rail:252px;--w-dock:264px;--w-read:720px;--w-bubble-you:600px;
+  --w-settings:760px;--w-palette:580px;--w-starters:620px;
+  --w-pop:220px;--w-pop-max:380px;
+  --icon-xs:12px;--icon-sm:14px;--icon-md:16px;--icon-lg:20px;
+  --icon-stroke:1.75;--icon-stroke-bold:2.4;
+
+  /* radii (§6) */
+  --r-xs:4px;--r-sm:6px;--r-md:8px;--r-lg:12px;--r-xl:16px;--r-2xl:20px;--r-full:999px;
+
+  /* glass levels (§7.1) */
+  --glass-content:max(.18,calc(var(--glass-a) - .08));
+  --glass-base:var(--glass-a);
+  --glass-raised:min(.95,calc(var(--glass-a) + .18));
+  --glass-float:min(.96,calc(var(--glass-a) + .28));
+  --glass-content-hover:min(.95,calc(var(--glass-content) + .08));
+  --glass-base-hover:min(.95,calc(var(--glass-base) + .08));
+  --glass-raised-hover:min(.97,calc(var(--glass-raised) + .08));
+  --glass-float-hover:min(.97,calc(var(--glass-float) + .08));
+
+  /* shadows / rings (§7.2) */
+  --sh-0:0 4px 12px rgba(0,0,0,.25);
+  --sh-1:0 10px 30px rgba(0,0,0,.24);
+  --sh-2:0 16px 48px rgba(0,0,0,.40);
+  --sh-3:0 22px 56px rgba(0,0,0,.42);
+  --sh-thumb:0 1px 3px rgba(0,0,0,.35);
+  --sh-text:0 1px 2px rgba(0,0,0,.35);
+  --sh-text-display:0 2px 18px rgba(0,0,0,.35);
+  --sh-mark:drop-shadow(0 6px 18px rgba(0,0,0,.35));
+  --sh-inset-hi:inset 0 1px 0 var(--c-hi);
+  --ring-1:inset 0 0 0 1px var(--c-stroke);
+  --ring-2:inset 0 0 0 1px var(--c-stroke-2);
+  --ring-accent:inset 0 0 0 1px var(--c-accent-line);
+  --ring-focus:0 0 0 3px color-mix(in srgb,var(--c-accent) 45%,transparent);
+  --focus-outline:2px solid color-mix(in srgb,var(--c-accent) 80%,transparent);
+  --blur-edge:10px;
+
+  /* stacking (§7.3) */
+  --z-wall:0;--z-app:1;--z-hero:2;--z-edge:3;--z-rail:4;--z-dock:5;
+  --z-composer:6;--z-chrome:20;--z-toast:30;--z-pop:50;--z-modal:60;--z-tip:80;
+  --z-l1:1;--z-l2:2;
+
+  /* motion (§8) */
+  --dur-instant:80ms;--dur-fast:140ms;--dur-base:200ms;--dur-slow:320ms;--dur-scene:560ms;
+  --loop-breathe:1600ms;--loop-breathe-busy:1200ms;--loop-spin:1000ms;--loop-caret:1000ms;
+  --hold-toast:2600ms;--hold-toast-long:4200ms;--delay-tip:400ms;--stagger:60ms;
+  --ease-out:cubic-bezier(.2,.8,.2,1);
+  --ease-in:cubic-bezier(.4,0,1,1);
+  --ease-in-out:cubic-bezier(.65,0,.35,1);
+  --ease-spring:cubic-bezier(.34,1.4,.64,1);
+  --ease-linear:linear;
+  --move-1:4px;--move-2:6px;--move-hover:-2px;--move-join:7px;
+  --scale-pop:.985;--scale-press:.98;
+
+  /* mini theme previews (§3.2 — exempt from the theme-token rule: they
+     paint the OTHER theme) */
+  --c-mini-dk-bg:linear-gradient(155deg,#28344c,#0c1018 72%);
+  --c-mini-dk-panel:rgba(22,24,31,.62);
+  --c-mini-dk-ring:rgba(255,255,255,.12);
+  --c-mini-dk-line:rgba(232,233,240,.24);
+  --c-mini-lt-bg:linear-gradient(155deg,#e3e9f2,#b8c2d1 75%);
+  --c-mini-lt-panel:rgba(250,251,253,.78);
+  --c-mini-lt-ring:rgba(20,24,40,.08);
+  --c-mini-lt-line:rgba(28,30,40,.22);
+  --c-mini-lt-line-strong:rgba(28,30,40,.42);
+
   color-scheme:dark;
 }
+
 [data-theme="light"]{
-  --warn:#b7791f;--ok:#3d8b37;--err:#d0435c;--tool:#0b7bab;--you:#c98a2e;--bot:#5b6cf0;
-  --stroke-2:rgba(20,24,40,.14);--hi:rgba(255,255,255,.75);
-  --fill-1:rgba(20,24,40,.04);--fill-2:rgba(20,24,40,.07);--fill-3:rgba(20,24,40,.11);
-  --sunken:rgba(20,24,40,.05);
-  --sh:0 10px 30px rgba(30,36,60,.10);--sh-float:0 16px 48px rgba(30,36,60,.2);
-  --allow-bg:#3f9142;--allow-fg:#fff;
-  --amber-bg:rgba(214,158,70,.16);--amber-line:rgba(183,121,31,.38);
-  --code-bg:rgba(20,24,40,.06);
-  --island-rgb:250 250 252;
+  --c-text:#1C1E28;--c-text-2:#5D6278;--c-text-3:#9095A8;
+  --c-ok:#3d8b37;--c-warn:#b7791f;--c-err:#d0435c;--c-tool:#0b7bab;
+  --c-mark-you:#c98a2e;--c-mark-bot:#5b6cf0;
+  --c-allow-bg:#3f9142;--c-allow-fg:#fff;
+  --c-stroke:rgba(20,24,40,.07);--c-stroke-2:rgba(20,24,40,.14);--c-hi:rgba(255,255,255,.75);
+  --c-fill-1:rgba(20,24,40,.04);--c-fill-2:rgba(20,24,40,.07);--c-fill-3:rgba(20,24,40,.11);
+  --c-sunken:rgba(20,24,40,.05);--c-code-bg:rgba(20,24,40,.06);
+  --c-scrim:rgba(40,46,64,.14);--c-scrollbar:rgba(20,24,40,.18);
+  --c-swatch-ring:rgba(20,24,40,.12);
+  --c-page:#e9ecf2;
+  --glass-rgb:244 245 248;--island-rgb:250 250 252;
+  --c-vignette:radial-gradient(130% 95% at 50% 42%,transparent 60%,rgba(0,0,0,.12));
+  --sh-0:0 4px 12px rgba(30,36,60,.10);
+  --sh-1:0 10px 30px rgba(30,36,60,.10);
+  --sh-2:0 16px 48px rgba(30,36,60,.20);
+  --sh-3:0 22px 56px rgba(30,36,60,.18);
+  --sh-text:none;
+  --sh-text-display:none;
+  --sh-mark:none;
   --syn-k:#8a4fd8;--syn-t:#0b7bab;--syn-p:#1f7a6d;--syn-s:#3d7a1e;--syn-n:#b45309;--syn-v:#2d3350;--syn-x:#8a8fa3;
   color-scheme:light;
 }
-@keyframes spin{to{transform:rotate(360deg)}}
-@keyframes breathe{50%{opacity:.4}}
-@keyframes blockIn{from{opacity:0;transform:translateY(6px)}}
-@keyframes palIn{from{opacity:0;transform:translateX(-50%) translateY(-6px) scale(.985)}}
-@keyframes joinA{from{transform:translateX(-7px);opacity:.25}}
-@keyframes joinB{from{transform:translateX(7px);opacity:.25}}
+
+/* motion preference (§8.6): reduce zeroes displacement, scale, slow
+   durations, and loop pulses — fades and the spinner stay (state info).
+   The global *{…!important} override is gone. */
+@media (prefers-reduced-motion:reduce){
+  :root:not([data-motion="full"]){
+    --move-1:0px;--move-2:0px;--move-hover:0px;--move-join:0px;
+    --scale-pop:1;--scale-press:1;
+    --dur-slow:var(--dur-fast);--dur-scene:var(--dur-fast);
+    --loop-breathe:0s;--loop-breathe-busy:0s;--stagger:0ms;
+  }
+}
+:root[data-motion="reduce"]{
+  --move-1:0px;--move-2:0px;--move-hover:0px;--move-join:0px;
+  --scale-pop:1;--scale-press:1;
+  --dur-slow:var(--dur-fast);--dur-scene:var(--dur-fast);
+  --loop-breathe:0s;--loop-breathe-busy:0s;--stagger:0ms;
+}
+
+/* --ga is a registered numeric custom property so glass levels animate
+   (§8.5). Components set --ga: var(--glass-*); never a raw number. */
+@property --ga{syntax:'<number>';inherits:false;initial-value:.56}
+
+@keyframes k-spin{to{transform:rotate(360deg)}}
+@keyframes k-breathe{50%{opacity:.4}}
+@keyframes k-rise{from{opacity:0;transform:translateY(var(--move-2))}}
+@keyframes k-drop{from{opacity:0;transform:translateY(calc(var(--move-2) * -1)) scale(var(--scale-pop))}}
+@keyframes k-toast-out{to{opacity:0;transform:translateY(var(--move-1))}}
+@keyframes k-join-l{from{transform:translateX(calc(var(--move-join) * -1));opacity:.25}}
+@keyframes k-join-r{from{transform:translateX(var(--move-join));opacity:.25}}

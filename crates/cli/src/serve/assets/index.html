@@ -88,7 +88,7 @@
   <aside class="rail glass" id="rail">
     <div class="rail-pane" id="rail-main">
       <button class="ws" id="ws-btn" data-tip="">
-        <span class="ws-mark"><svg viewBox="0 0 48 48" fill="none" stroke-linejoin="round" stroke-width="3.2"><path d="M6 8H22V19L31 15V33L22 29V40H6Z" stroke="var(--text)" opacity=".9"/><path d="M24.5 8H42V40H24.5V29L33.5 33V15L24.5 19Z" stroke="var(--accent)"/></svg></span>
+        <span class="ws-mark"><svg viewBox="0 0 48 48" fill="none" stroke-linejoin="round" stroke-width="3.2"><path d="M6 8H22V19L31 15V33L22 29V40H6Z" stroke="var(--c-text)" opacity=".9"/><path d="M24.5 8H42V40H24.5V29L33.5 33V15L24.5 19Z" stroke="var(--c-accent)"/></svg></span>
         <span class="ws-name" id="ws-name">sunmao</span>
         <span class="sd off" id="conn-dot" data-tip="未连接"></span>
       </button>
@@ -115,8 +115,8 @@
     <section class="view" id="v-session">
       <div class="hero" id="hero" hidden>
         <svg viewBox="0 0 48 48" fill="none" stroke-linejoin="round" stroke-width="1.5" aria-hidden="true">
-          <path class="mk-a" d="M6 8H22V19L31 15V33L22 29V40H6Z" stroke="var(--text)" fill="color-mix(in srgb,var(--text) 8%,transparent)" opacity=".94"/>
-          <path class="mk-b" d="M24.5 8H42V40H24.5V29L33.5 33V15L24.5 19Z" stroke="var(--accent)" fill="color-mix(in srgb,var(--accent) 16%,transparent)"/>
+          <path class="mk-a" d="M6 8H22V19L31 15V33L22 29V40H6Z" stroke="var(--c-text)" fill="color-mix(in srgb,var(--c-text) 8%,transparent)" opacity=".94"/>
+          <path class="mk-b" d="M24.5 8H42V40H24.5V29L33.5 33V15L24.5 19Z" stroke="var(--c-accent)" fill="color-mix(in srgb,var(--c-accent) 16%,transparent)"/>
         </svg>
         <h1>我们该构建什么？</h1>
         <p class="hero-sub" id="hero-sub"></p>
@@ -186,6 +186,7 @@
               <div class="cr"><div class="l"><b>代码字体</b><span>工具名、命令、数字与代码块</span></div><button class="pill font" data-act="font" data-key="code" id="pv-codef"></button></div>
               <div class="cr"><div class="l"><b>半透明侧边栏</b><span>关闭后侧边栏更不透明，长列表更易读</span></div><button class="sw" role="switch" id="sw-side" data-act="side" aria-label="半透明侧边栏"></button></div>
               <div class="cr"><div class="l"><b>对比度</b><span>次级文字与描边的明暗</span></div><div class="rg"><input type="range" id="rg-con" min="0" max="100" step="1" aria-label="对比度"><output>50</output></div></div>
+              <div class="cr"><div class="l"><b>动效</b><span>跟随系统时按系统的减少动效设置</span></div><button class="pill plain" data-act="motion" id="pv-motion"></button></div>
             </div>
           </div>
           <div class="set-foot"><button class="btn ghost sm" data-act="reset-ui"><svg class="i"><use href="#i-reset"/></svg>恢复默认</button><span>仅外观偏好，本地保存</span></div>
@@ -253,7 +254,27 @@ const nf = n => Math.round(n).toLocaleString('en-US');
 const clone = o => JSON.parse(JSON.stringify(o));
 const pad = n => String(n).padStart(2, '0');
 const root = document.documentElement, app = $('#app');
-const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+/* motion — the only way JS touches timing; values come from tokens.css */
+const motion = (() => {
+  const FALLBACK = { instant: 80, fast: 140, base: 200, slow: 320, scene: 560 };
+  const css = n => getComputedStyle(root).getPropertyValue(n).trim();
+  const ms = (n, d) => { const v = css(n); return v ? parseFloat(v) * (v.endsWith('ms') ? 1 : 1000) : d; };
+  return {
+    dur: k => ms(`--dur-${k}`, FALLBACK[k]),
+    ease: k => css(`--ease-${k}`) || 'ease-out',
+    hold: k => ms(`--hold-${k}`, 2600),
+    delay: k => ms(`--delay-${k}`, 400),
+    reduced: () => root.dataset.motionEff === 'reduce',
+    wait: k => new Promise(r => setTimeout(r, motion.dur(k))),
+    // one-shot WAAPI height tween; no-op when reduced
+    height(el, from, to, k = 'slow') {
+      if (motion.reduced()) return;
+      el.animate([{ height: from + 'px' }, { height: to + 'px' }], { duration: motion.dur(k), easing: motion.ease('out') });
+    },
+  };
+})();
+/* debounces aren't motion — named constants, gate exempts the references */
+const DEBOUNCE_DATAFLOW = 400, DEBOUNCE_RESIZE = 160;
 const clock = sec => { const d = new Date(); return pad(d.getHours()) + ':' + pad(d.getMinutes()) + (sec ? ':' + pad(d.getSeconds()) : ''); };
 const fmtBytes = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? (n / 1024).toFixed(1) + ' KB' : n + ' B';
 const hex2rgb = h => { h = h.replace('#', ''); if (h.length === 3) h = [...h].map(c => c + c).join(''); const n = parseInt(h, 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; };
@@ -304,7 +325,7 @@ function setApprovalMode(m) {
 let SESSION_IDS = [], SESSION_META = {};
 const EVLOG = [];
 
-const DEFAULTS = { mode: 'dark', accent: '#339CFF', background: '#16181F', foreground: '#E8E9F0', wallpaper: 'graphite', dim: 0.16, panelOpacity: 0.72, blur: 24, translucentSidebar: false, contrast: 50, fonts: { ui: 'Segoe UI', code: 'JetBrains Mono' } };
+const DEFAULTS = { mode: 'dark', motion: 'system', accent: '#339CFF', background: '#16181F', foreground: '#E8E9F0', wallpaper: 'graphite', dim: 0.16, panelOpacity: 0.72, blur: 24, translucentSidebar: false, contrast: 50, fonts: { ui: 'Segoe UI', code: 'JetBrains Mono' } };
 const INITIAL = Object.assign(clone(DEFAULTS), { wallpaper: 'dusk-ridge', dim: 0.08, panelOpacity: 0.56, translucentSidebar: true });
 let S = (() => { try { const v = JSON.parse(localStorage.getItem('sunmao.ui')); if (v && v.fonts) return Object.assign(clone(INITIAL), v, { fonts: Object.assign({}, INITIAL.fonts, v.fonts) }); } catch {} return clone(INITIAL); })();
 const save = () => { try { localStorage.setItem('sunmao.ui', JSON.stringify(S)); } catch {} };
@@ -418,7 +439,7 @@ function paintWall(force) {
   next.width = w; next.height = h;
   drawWall(next.getContext('2d'), w, h, id);
   cur.classList.remove('top'); next.classList.add('top', 'on');
-  clearTimeout(wTimer); wTimer = setTimeout(() => cur.classList.remove('on'), 650);
+  clearTimeout(wTimer); wTimer = setTimeout(() => cur.classList.remove('on'), motion.dur('scene') + motion.dur('instant'));
   wIdx ^= 1;
 }
 function setCustom(url, select) {
@@ -451,18 +472,20 @@ function apply() {
   root.dataset.theme = light ? 'light' : 'dark';
   const bg = light ? '#F4F5F8' : S.background, fg = light ? '#1C1E28' : S.foreground;
   const b2 = light ? '#5D6278' : '#8B8FA5', b3 = light ? '#9095A8' : '#565A70', k = (S.contrast - 50) / 50;
-  st.setProperty('--text', fg);
-  st.setProperty('--text-2', k >= 0 ? mix(b2, fg, k * .45) : mix(b2, bg, -k * .4));
-  st.setProperty('--text-3', k >= 0 ? mix(b3, fg, k * .35) : mix(b3, bg, -k * .35));
-  st.setProperty('--accent', S.accent);
+  st.setProperty('--c-text', fg);
+  st.setProperty('--c-text-2', k >= 0 ? mix(b2, fg, k * .45) : mix(b2, bg, -k * .4));
+  st.setProperty('--c-text-3', k >= 0 ? mix(b3, fg, k * .35) : mix(b3, bg, -k * .35));
+  st.setProperty('--c-accent', S.accent);
   st.setProperty('--glass-rgb', hex2rgb(bg).join(' '));
   st.setProperty('--glass-a', Math.min(.95, S.panelOpacity + (light ? .14 : 0)).toFixed(3));
   st.setProperty('--blur', S.blur + 'px');
   st.setProperty('--veil', light ? `rgba(238,240,245,${(.34 + S.dim * .6).toFixed(3)})` : `rgba(6,8,12,${S.dim.toFixed(3)})`);
   const sa = .075 + k * .045;
-  st.setProperty('--stroke', light ? `rgba(20,24,40,${(sa - .005).toFixed(3)})` : `rgba(255,255,255,${sa.toFixed(3)})`);
+  st.setProperty('--c-stroke', light ? `rgba(20,24,40,${(sa - .005).toFixed(3)})` : `rgba(255,255,255,${sa.toFixed(3)})`);
   st.setProperty('--font-ui', `-apple-system, BlinkMacSystemFont, ${UI_FONTS[S.fonts.ui] || `"${S.fonts.ui}"`}${UI_FALLBACK}`);
   st.setProperty('--font-mono', `"${S.fonts.code}"${CODE_FALLBACK}`);
+  root.dataset.motion = S.motion;
+  root.dataset.motionEff = S.motion === 'system' ? (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduce' : 'full') : S.motion;
   $('#rail').classList.toggle('solid', !S.translucentSidebar);
   paintWall();
   syncSettingsUI();
@@ -814,18 +837,18 @@ function hostContextFor(it) {
     styles: {
       variables: {
         '--color-background-primary': css('--island-bg') || `rgb(${css('--island-rgb') || '13 14 19'})`,
-        '--color-background-secondary': css('--fill-2'),
+        '--color-background-secondary': css('--c-fill-2'),
         '--color-background-inverse': dark ? '#E8E9F0' : '#1a1d2e',
-        '--color-text-primary': css('--text'),
-        '--color-text-secondary': css('--text-2'),
-        '--color-text-ghost': css('--text-3'),
-        '--color-text-info': css('--tool'),
-        '--color-text-success': css('--ok'),
-        '--color-text-warning': css('--warn'),
-        '--color-text-danger': css('--err'),
-        '--color-border-primary': css('--stroke'),
-        '--color-border-secondary': css('--stroke-2'),
-        '--color-ring-primary': css('--accent'),
+        '--color-text-primary': css('--c-text'),
+        '--color-text-secondary': css('--c-text-2'),
+        '--color-text-ghost': css('--c-text-3'),
+        '--color-text-info': css('--c-tool'),
+        '--color-text-success': css('--c-ok'),
+        '--color-text-warning': css('--c-warn'),
+        '--color-text-danger': css('--c-err'),
+        '--color-border-primary': css('--c-stroke'),
+        '--color-border-secondary': css('--c-stroke-2'),
+        '--color-ring-primary': css('--c-accent'),
         '--font-sans': css('--font-ui'),
         '--font-mono': css('--font-mono'),
       },
@@ -979,7 +1002,7 @@ function collapse(card, html) {
   const h0 = card.offsetHeight; card.style.overflow = 'hidden';
   card.innerHTML = html; card.classList.add('done');
   const h1 = card.offsetHeight;
-  if (!reduced) card.animate([{ height: h0 + 'px' }, { height: h1 + 'px' }], { duration: 300, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  motion.height(card, h0, h1);
 }
 function syncWait() {
   $('#cmp-wait').hidden = pendingApprovals.size === 0;
@@ -1024,6 +1047,8 @@ function eventsHTML() {
 
 /* ================= replay ================= */
 function renderReplay(events, anim) {
+  // replay must not re-run entrance motion — §8.1.5: flag on, replay, flag off
+  root.dataset.replaying = '';
   // app islands about to be dropped get a resource-teardown first —
   // SEP-1865 says the View releases its side on this request
   for (const isl of $$('.island')) teardownIsland(isl);
@@ -1138,6 +1163,7 @@ function renderReplay(events, anim) {
   foldSettled(TX);
   updateHero();
   refreshDataflow();
+  delete root.dataset.replaying;
   requestAnimationFrame(() => { $('#scroller').scrollTop = $('#scroller').scrollHeight; });
 }
 function updateHero() {
@@ -1262,7 +1288,7 @@ function route(v) {
         t.innerHTML = ic('shield-check') + `<span>待审批 · <b>${esc(v.tool || '?')}</b> · ${esc(sess)}</span>` + ic('arrow-l', 'i xs');
         t.addEventListener('click', () => { resumeSession(sess); t.remove(); });
         $('#toasts').appendChild(t);
-        setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 220); }, 4200);
+        setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), motion.dur('fast')); }, motion.hold('toast-long'));
       }
       renderRail();
       break;
@@ -1350,7 +1376,7 @@ async function refreshSessions() {
   } catch {}
 }
 let dfTimer = 0;
-function refreshDataflowSoon() { clearTimeout(dfTimer); dfTimer = setTimeout(refreshDataflow, 400); }
+function refreshDataflowSoon() { clearTimeout(dfTimer); dfTimer = setTimeout(refreshDataflow, DEBOUNCE_DATAFLOW); }
 async function refreshDataflow() {
   try { renderDock(await api('/dataflow?sess=' + encodeURIComponent(sessionId))); }
   catch { $('#df-sub').textContent = '无可读会话日志'; }
@@ -1538,7 +1564,7 @@ function closePop() {
   if (!popEl) return;
   const p = popEl; popEl = null;
   if (popAnchor && popAnchor.classList) popAnchor.classList.remove('pressed');
-  popAnchor = null; p.classList.remove('show'); setTimeout(() => p.remove(), 160);
+  popAnchor = null; p.classList.remove('show'); setTimeout(() => p.remove(), motion.dur('fast'));
 }
 document.addEventListener('mousedown', e => { if (popEl && !popEl.contains(e.target) && !(popAnchor && popAnchor.contains && popAnchor.contains(e.target))) closePop(); }, true);
 function menuHTML(items) {
@@ -1573,13 +1599,13 @@ document.addEventListener('mouseover', e => {
       left = Math.max(6, Math.min(r.left + r.width / 2 - tr.width / 2, innerWidth - tr.width - 6));
     }
     tip.style.transform = `translate(${Math.round(left)}px,${Math.round(top)}px)`; tip.classList.add('show');
-  }, 450);
+  }, motion.delay('tip'));
 });
 document.addEventListener('mousedown', () => { clearTimeout(tipT); tip.classList.remove('show'); });
 function toast(msg, icon = 'check', cls = '') {
   const t = document.createElement('div'); t.className = 'toast glass' + (cls ? ' ' + cls : '');
   t.innerHTML = ic(icon) + `<span>${esc(msg)}</span>`; $('#toasts').appendChild(t);
-  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 220); }, 2600);
+  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), motion.dur('fast')); }, motion.hold('toast'));
 }
 
 /* ================= palette ================= */
@@ -1629,7 +1655,7 @@ function renderWallGrid() {
   const dpr = Math.min(2, devicePixelRatio || 1);
   $$('.wt[data-wall]', g).forEach(b => { const c = $('canvas', b), r = c.getBoundingClientRect(); c.width = Math.round((r.width || 112) * dpr); c.height = Math.round((r.height || 70) * dpr); const ctx = c.getContext('2d'); drawWall(ctx, c.width, c.height, b.dataset.wall); });
 }
-function setRange(sel, v, f) { const el = $(sel); el.value = v; el.style.setProperty('--p', ((v - el.min) / (el.max - el.min) * 100) + '%'); const o = el.parentElement.querySelector('output'); if (o) o.textContent = f(v); }
+function setRange(sel, v, f) { const el = $(sel); el.value = v; el.style.setProperty('--_p', ((v - el.min) / (el.max - el.min) * 100) + '%'); const o = el.parentElement.querySelector('output'); if (o) o.textContent = f(v); }
 function themeLines(o) {
   const s = v => [JSON.stringify(v), 'tk-s'], n = v => [String(v), 'tk-n'];
   const P = (k, tok, ind = '  ') => [[ind, ''], [k, 'tk-p'], [': ', 'tk-x'], tok, [',', 'tk-x']];
@@ -1661,6 +1687,7 @@ function syncSettingsUI() {
   $('#pv-uif').innerHTML = esc(S.fonts.ui) + ic('chev-d');
   $('#pv-codef').innerHTML = esc(S.fonts.code) + ic('chev-d');
   $('#sw-side').setAttribute('aria-checked', String(S.translucentSidebar));
+  $('#pv-motion').innerHTML = esc({ system: '跟随系统', full: '完整', reduce: '减少' }[S.motion] || S.motion) + ic('chev-d');
   $$('.wt[data-wall]').forEach(b => b.classList.toggle('on', b.dataset.wall === S.wallpaper));
   renderPreview();
 }
@@ -1674,7 +1701,7 @@ const CLABEL = { accent: '强调色', background: '背景', foreground: '前景'
 function colorPop(anchor, key) {
   if (popAnchor === anchor) return closePop();
   const cur = S[key].toUpperCase();
-  pop(anchor, `<div class="lbl">${CLABEL[key]}</div><div class="sws">${SWATCH[key].map(c => `<button class="swt${c === cur ? ' on' : ''}" data-c="${c}" style="--c:${c}" aria-label="${c}"></button>`).join('')}</div><div class="field"><i class="cdot" style="background:${cur}"></i><input value="${cur}" maxlength="7" spellcheck="false" aria-label="十六进制色值"></div><div class="hint">输入 #RRGGBB 后按 Enter</div>`, { align: 'end', onMount(p) {
+  pop(anchor, `<div class="lbl">${CLABEL[key]}</div><div class="sws">${SWATCH[key].map(c => `<button class="swt${c === cur ? ' on' : ''}" data-c="${c}" style="--_c:${c}" aria-label="${c}"></button>`).join('')}</div><div class="field"><i class="cdot" style="background:${cur}"></i><input value="${cur}" maxlength="7" spellcheck="false" aria-label="十六进制色值"></div><div class="hint">输入 #RRGGBB 后按 Enter</div>`, { align: 'end', onMount(p) {
     const setC = c => { S[key] = c.toUpperCase(); commit(); $$('.swt', p).forEach(b => b.classList.toggle('on', b.dataset.c === S[key])); $('.cdot', p).style.background = S[key]; $('input', p).value = S[key]; };
     p.addEventListener('click', e => { const b = e.target.closest('.swt'); if (b) setC(b.dataset.c); });
     const inp = $('input', p);
@@ -1691,6 +1718,10 @@ function hasFont(f) {
 const FONTS = { ui: ['Segoe UI', 'Microsoft YaHei UI', 'HarmonyOS Sans SC', 'system-ui'], code: ['JetBrains Mono', 'Cascadia Mono', 'Consolas', 'SF Mono'] };
 function fontPop(anchor, key) {
   menuPop(anchor, [{ label: key === 'ui' ? 'UI 字体' : '代码字体' }, ...FONTS[key].map(f => ({ v: f, t: f, on: f === S.fonts[key], d: hasFont(f) ? '' : '未安装，将回退到下一个字体', style: key === 'code' ? `font-family:"${f}",monospace` : `font-family:"${f}",sans-serif` }))], v => { S.fonts[key] = v; commit(); }, { align: 'end' });
+}
+function motionPop(anchor) {
+  const OPTS = [{ v: 'system', t: '跟随系统' }, { v: 'full', t: '完整' }, { v: 'reduce', t: '减少' }];
+  menuPop(anchor, [{ label: '动效' }, ...OPTS.map(m => Object.assign({}, m, { on: m.v === S.motion }))], v => { S.motion = v; commit(); }, { align: 'end' });
 }
 
 const mono = t => `<span class="pill plain">${esc(t)}</span>`;
@@ -1781,6 +1812,7 @@ function act(name, el) {
     case 'upload-wall': return $('#file-wall').click();
     case 'color': return colorPop(el, el.dataset.key);
     case 'font': return fontPop(el, el.dataset.key);
+    case 'motion': return motionPop(el);
     case 'side': S.translucentSidebar = !S.translucentSidebar; return commit();
     case 'reset-ui': S = clone(DEFAULTS); commit(); renderWallGrid(); return toast('已恢复默认外观', 'reset');
     case 'win-min': { const w = shellWin(); if (w) w.win('min'); return; }
@@ -1828,8 +1860,9 @@ document.addEventListener('contextmenu', e => {
   if (!e.target.closest('input,textarea,.bubble,.cmd,pre,.jp-b,.think-o')) e.preventDefault();
 });
 let rz = 0;
-addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => paintWall(), 160); });
+addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => paintWall(), DEBOUNCE_RESIZE); });
 matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => { if (S.mode === 'system') apply(); });
+matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => { if (S.motion === 'system') apply(); });
 
 /* ================= boot ================= */
 makeNoise();

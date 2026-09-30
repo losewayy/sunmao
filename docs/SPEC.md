@@ -143,7 +143,7 @@ hook engine（核心）
 
 ### 4.8 `plugins` — 进程边界扩展协议（预留）
 
-- v1 只定义契约：`sunmao` JSON-RPC extension protocol（stdin/stdout，类似 ACP 但面向扩展能力：注册工具/监听事件/注入上下文）
+- v1 只定义契约：`sunmao` JSON-RPC extension protocol（stdin/stdout，类似 ACP 但面向扩展能力：注册工具/监听事件/注入上下文）——契约已写定于 `docs/PROTOCOLS.md` "Extension protocol" 一节（事件面=hooks 并集、工具命名空间 `ext__{plugin}__{tool}`、冷拔插=进程级生命周期、无反向通道）
 - v0.5+ 落一个**通用 JS extension host 侧车**：`node extension-host.mjs` 加载 TS/JS 扩展，对本协议暴露——届时 pi-style 生态（含 pi 扩展兼容尝试）由此进入，而不是为 pi 定制
 
 ### 4.9 声明式格式加载器

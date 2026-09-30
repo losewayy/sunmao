@@ -194,6 +194,7 @@ async fn run_case_inner(
             api_key_env: None,
             api_key: Some(cli.api_key.clone()),
             dialect: cli.provider.clone(),
+            catalog: Vec::new(),
         },
         "default",
     )));

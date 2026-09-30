@@ -222,6 +222,12 @@ TUI.
   selector fails the call with the available list (a typo'd route must
   never silently inherit). `task.rs` split: spawn machinery →
   `task/spawn.rs` (600-line budget)
+- **transcript virtualization** — `draw_transcript` is now two passes:
+  cache/heights first, then only blocks intersecting the viewport window
+  materialize their lines (first visible block clips mid-block via the
+  paragraph scroll offset). Clone cost scales with what's on screen,
+  not with transcript length — scroll-back math unchanged
+  (`scroll_back` still counts absolute rows)
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

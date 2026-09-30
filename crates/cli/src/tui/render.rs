@@ -60,19 +60,13 @@ pub fn draw(f: &mut ratatui::Frame, app: &mut App) {
 fn draw_transcript(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let in_scroll = app.focus == Focus::Scrollback;
     let width = area.width as usize;
-    // Pre-wrap into visual rows so scroll_back counts what the user actually
-    // sees — Paragraph::wrap would fold at draw time and desync the math.
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    let mut sel_start = 0usize;
-    // per-block wrapped cache: a streaming token only re-wraps its own
-    // block — the rest replay from cache by (gen, width, selected).
+    let view_h = area.height as usize;
+    // Pass 1 — per-block wrapped cache: a streaming token only re-wraps
+    // its own block; the rest replay from cache by (gen, width, selected).
     app.render_cache.resize_with(app.blocks.len(), || None);
     app.render_cache.truncate(app.blocks.len());
     for (i, b) in app.blocks.iter().enumerate() {
         let selected = in_scroll && i == app.selected;
-        if selected {
-            sel_start = lines.len();
-        }
         let hit = app.render_cache[i]
             .as_ref()
             .is_some_and(|(g, w, s, _)| *g == b.gen && *w == width && *s == selected);
@@ -83,29 +77,64 @@ fn draw_transcript(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
             }
             app.render_cache[i] = Some((b.gen, width, selected, wrapped));
         }
-        if let Some((_, _, _, cached)) = &app.render_cache[i] {
-            lines.extend(cached.iter().cloned());
-        }
     }
 
+    // Pass 2 — heights + the materialization window. Blocks outside the
+    // viewport contribute their height but not their lines: the clone
+    // cost scales with what's visible, not with the transcript size.
+    let mut tops = Vec::with_capacity(app.blocks.len());
+    let mut top = 0usize;
+    let mut sel_start = 0usize;
+    for (i, _) in app.blocks.iter().enumerate() {
+        tops.push(top);
+        if in_scroll && i == app.selected {
+            sel_start = top;
+        }
+        if let Some((_, _, _, cached)) = &app.render_cache[i] {
+            top += cached.len();
+        }
+    }
+    let total = top;
+
     // keep the selected block inside the viewport when browsing
-    let total = lines.len();
     if in_scroll && total > 0 {
-        let view_h = area.height as usize;
-        let top = total.saturating_sub(app.scroll_back as usize + view_h);
-        if sel_start < top {
+        let top_row = total.saturating_sub(app.scroll_back as usize + view_h);
+        if sel_start < top_row {
             app.scroll_back = (total.saturating_sub(sel_start + view_h)) as u16;
-        } else if sel_start >= top + view_h {
+        } else if sel_start >= top_row + view_h {
             app.scroll_back = (total.saturating_sub(sel_start + 1)) as u16;
         }
     }
-    let view_h = area.height as usize;
     let cap = total.saturating_sub(view_h) as u16;
     app.scroll_back = app.scroll_back.min(cap);
 
+    // the window's absolute row range, bottom-anchored by scroll_back
+    let top_row = total.saturating_sub(app.scroll_back as usize + view_h);
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut block_offset = 0u16;
+    for (i, _) in app.blocks.iter().enumerate() {
+        let Some((_, _, _, cached)) = &app.render_cache[i] else {
+            continue;
+        };
+        let b_top = tops[i];
+        let b_bot = b_top + cached.len();
+        if b_bot <= top_row {
+            continue;
+        }
+        if b_top >= top_row + view_h {
+            break;
+        }
+        // first visible block may straddle the window edge — Paragraph
+        // scrolls within `lines`, so the offset is top_row - b_top.
+        if lines.is_empty() {
+            block_offset = (top_row - b_top) as u16;
+        }
+        lines.extend(cached.iter().cloned());
+    }
+
     let transcript = Paragraph::new(lines)
         .style(Style::default().fg(THEME.text))
-        .scroll((app.scroll_back, 0));
+        .scroll((block_offset, 0));
     f.render_widget(transcript, area);
 }
 

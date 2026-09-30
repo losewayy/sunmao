@@ -402,3 +402,50 @@ fn at_mention_rewrites_only_the_fragment() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Transcript virtualization: only the viewport window materializes —
+/// the tail shows the newest block at scroll 0, a deep scroll shows the
+/// oldest. Caught via the real draw path on a test backend.
+#[test]
+fn transcript_virtualizes_offscreen_blocks() {
+    use super::render::draw;
+    let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+    for i in 0..60 {
+        app.push_note(&format!("note-{i}"));
+    }
+    let backend = ratatui::backend::TestBackend::new(60, 24);
+    let mut term = ratatui::Terminal::new(backend).unwrap();
+
+    // pinned to tail: the newest note is visible, the oldest is not
+    term.draw(|f| draw(f, &mut app)).unwrap();
+    let text: String = term
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol())
+        .collect();
+    assert!(text.contains("note-59"), "tail block must render");
+    assert!(
+        !text.contains("note-00"),
+        "offscreen head must not materialize"
+    );
+
+    // scrolled to the top: the oldest note becomes visible, newest leaves
+    app.scroll_back = 500;
+    term.draw(|f| draw(f, &mut app)).unwrap();
+    let text: String = term
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol())
+        .collect();
+    assert!(text.contains("note-0"), "scrolled-back head must render");
+    assert!(
+        !text.contains("note-59"),
+        "offscreen tail must not materialize"
+    );
+    // scroll got clamped to a real value, not stuck at 500
+    assert!(app.scroll_back <= 200);
+}

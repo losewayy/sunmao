@@ -247,10 +247,10 @@ seam-first 的最大风险是自反的：**接缝本身就是抽象税**。纪�
 |---|---|
 | `tokio` / `reqwest` / `serde` / `clap` | async runtime / HTTP / 序列化 / CLI 解析——基础设施层不造 |
 | `rmcp`（官方 Rust MCP SDK） | MCP client——fastctx 实战背书 |
-| `deno_task_shell` | `Bash` 工具的跨平台方言解释器 |
+| `deno_task_shell` | `Bash` 工具的跨平台方言解释器；其 parser AST 同时供 `shell/preflight` 与审批缝分段（命令边界 `&&`/`;`/`||` 拆开，pipeline 保持整段——`| sh` 族模式要在 join 上匹配）。SPEC 曾列 `tree-sitter-bash`，实装弃用：执行器的语法是唯一权威语法，第二解析器只会引入口径漂移还白加依赖 |
 | `ratatui` | TUI 渲染 |
 | `rg.exe`（ripgrep 二进制） | `Grep` 后端，RG_BIN_PATH 式注入（受管子进程②档） |
-| `tree-sitter-bash` | `Bash` 命令结构化解析——审批缝把不透明命令字符串变成可分析 AST（抄 codex 作业：它的 `execpolicy` 同款） |
+| `tree-sitter-bash` | ~~`Bash` 命令结构化解析~~ **弃用，未引入**——deno_task_shell 自带 parser，执行器语法即权威语法 |
 | `agent-client-protocol` crate | ACP 传输/类型基元 |
 | 现有生态整体 | MCP servers、Claude 契约 hooks、skills、plugins——**消费，不实现** |
 

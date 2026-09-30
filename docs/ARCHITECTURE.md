@@ -25,6 +25,9 @@ stdin/TUI/ACP
        ├─ assembler.push() / finish_lenient()         llm/assemble.rs
        ├─ per tool_call:
        │     ├─ ctx.permissions.check()               core/permissions.rs
+       │     ├─ Bash: shell_segments() → per-segment  core/preflight.rs
+       │     │   rules + classifier (pipelines stay    — the &&/;/|| split
+       │     │   whole; | sh family needs the join)    is the structural gate
        │     ├─ ctx.approval.approve()                core/approval.rs
        │     ├─ hooks.fire(PreToolUse)  → exit-2 veto possible
        │     ├─ registry.call(name,args,ctx)          core/tool/*

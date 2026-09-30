@@ -42,6 +42,34 @@ impl AgentLoop {
         if let Some(H::Allow) = hook {
             return Ok(());
         }
+        // Structural pass (SPEC §4.3: 管道分拆进审批层) — a Bash command
+        // hides segments behind `|`/`&&`/`;`. Every parsed segment gets its
+        // own rules + classifier check: a deny anywhere vetoes the whole
+        // command; the FIRST risky segment decides the prompt, named by
+        // segment so the human sees which part tripped it. Parse failure
+        // (or non-Bash tools) falls back to the whole-specifier check.
+        if tool == "Bash" {
+            let segments = crate::preflight::shell_segments(specifier);
+            if segments.len() > 1 {
+                for seg in &segments {
+                    match self.ctx.permissions.check(tool, seg) {
+                        Verdict::Deny => {
+                            return Err(format!("denied by permission rules (segment: {seg})"))
+                        }
+                        Verdict::Ask => {
+                            return self.ask(tool, seg, "matched ask rule", observer).await
+                        }
+                        Verdict::PreApproved | Verdict::Default => {}
+                    }
+                }
+                for seg in &segments {
+                    if let Some(why) = crate::approval::classify(seg, &self.ctx.risk_table) {
+                        return self.ask(tool, seg, why, observer).await;
+                    }
+                }
+                return Ok(());
+            }
+        }
         // default: the risky-pattern classifier (Bash-shaped patterns today)
         if let Some(why) = crate::approval::classify(specifier, &self.ctx.risk_table) {
             return self.ask(tool, specifier, why, observer).await;

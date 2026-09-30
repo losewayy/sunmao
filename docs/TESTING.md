@@ -18,7 +18,7 @@ Current coverage:
 | `llm::sse` | incremental SSE framing (split events, CRLF, keepalives, `[DONE]`) |
 | `llm::assemble` | tool_call fragment reassembly incl. malformed-JSON rejection |
 | `llm::anthropic` | block mapping (system fold, tool_use/tool_result, stream events) |
-| `core::agent` (MockProvider) | full loop: plain turn, tool round-trip, cancel, malformed-args feedback, hook veto mid-loop, model routing + `/model` override; **loop drivers**: manifest `loop:` resolution + preset layering win, `bare` dispatches ungated (deny rule + vetoing hook both bypassed), `full` keeps enforcing |
+| `core::agent` (MockProvider) | full loop: plain turn, tool round-trip, cancel, malformed-args feedback, hook veto mid-loop, model routing + `/model` override; **loop drivers**: manifest `loop:` resolution + preset layering win, `bare` dispatches ungated (deny rule + vetoing hook both bypassed), `full` keeps enforcing; **segmented gate**: `&&`-chain deny veto + `| sh` pipeline prompt show the segment, not the whole command |
 | `core::task` | detached `run_in_background` → TaskDone push into parent log, unique spawn ids, spawns-whitelist + self-recursion guard |
 | `core::tool` | read-before-write gate (deny→read→allow), Edit normalization, dying tool backend → failed result not turn abort |
 | `core::hooks` | matcher semantics, live exit-2 veto via real subprocess, **rtk binary rewrite** + SessionStart/source contract, **Cursor dialect live-fire** (flat file → Shell matcher → `updated_input` rewrite), Codex file loading |
@@ -29,7 +29,7 @@ Current coverage:
 | `core::plugin` | install/list/remove roundtrip, name sanitization, overwrite-then-force, self-install refusal |
 | `core::presets` | name resolution (`+` strip), CLI order layering, unknown-name error lists searched dirs, preset hook actually fires |
 | `core::ext` | frame parse, reply fold into HookOutcome, parked-id correlation, live Node fixture roundtrip (handshake → `ext__*` tool call → ext/event merge), dead-child fast-fail, **pi dialect live**: `api.on("tool_call")` veto + pi-spec registerTool |
-| `core::preflight` | AST extraction (pipelines, booleans, dynamic-skip), fatal-note advisory (spawnfate) |
+| `core::preflight` | AST extraction (pipelines, booleans, dynamic-skip), fatal-note advisory (spawnfate), `shell_segments` boundary/pipeline/subshell shapes |
 | `cli::eval` | case-file parsing (object/array/JSONL), assertion checks against session facts |
 | `cli::tui` | keymap dispatch, slash-menu completion (`@route`, `provider/`), render-cache wrap invariants |
 

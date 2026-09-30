@@ -98,6 +98,7 @@ crates/cli     every frontend + flag plumbing. Thin by design — heavy logic
                │   └── *_tests.rs / tests.rs — state + render fixtures
                ├── acp.rs        ACP v2 server
                ├── dataflow.rs   session-log → audit report
+               ├── eval.rs       `sunmao eval` case runner + assertion pass
                └── doctor.rs     env self-check
 ```
 

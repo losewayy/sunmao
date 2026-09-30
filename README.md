@@ -95,6 +95,8 @@ sunmao -p "task"                    # one-shot, scriptable, exit code = outcome
 sunmao --resume s-…                 # continue a session
 sunmao --sessions                   # list local session logs
 sunmao --dataflow <session>.jsonl   # audit report
+sunmao eval <file>                  # run eval cases through the real loop;
+                                    # PASS/FAIL per case, nonzero exit on fail
 sunmao --acp                        # ACP server (stdio)
 sunmao --preset strict-audit        # layer a preset (plugin-bundle dir in
                                     # .sunmao/presets/ or ~/.sunmao/presets/)

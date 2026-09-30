@@ -352,8 +352,10 @@ impl AgentLoop {
 
     /// Record a `!` local-shell run as a durable session fact. The event
     /// folds into the message stream as a tagged user message, so the next
-    /// turn sees the evidence the user just produced.
+    /// turn sees the evidence the user just produced. Takes the turn fence:
+    /// folding a user message mid-tool-cycle would tear the transcript.
     pub async fn record_local_shell(&self, command: &str, exit_code: i32, output: &str) {
+        let _turn_permit = self.ctx.turn_lock.lock().await;
         let mut log = self.ctx.sessions.lock().await;
         let _ = log
             .append(&SessionEvent::LocalShell {
@@ -369,6 +371,9 @@ impl AgentLoop {
     /// rebuild the transcript. Fires SessionStart(source=resume) like a
     /// `--resume` startup would.
     pub async fn swap_session(&self, log: SessionLog) -> Vec<SessionEvent> {
+        // a log swap mid-turn would orphan the in-flight fold — the fence
+        // makes resume queue behind (or abort) a running turn.
+        let _turn_permit = self.ctx.turn_lock.lock().await;
         let events = log.events().await.unwrap_or_default();
         {
             let mut cur = self.ctx.sessions.lock().await;

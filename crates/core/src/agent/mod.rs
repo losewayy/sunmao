@@ -126,11 +126,9 @@ impl LoopDriver {
             cwd.join(".sunmao").join("plugins"),
             cwd.join(".claude").join("plugins"),
         ] {
-            if let Ok(entries) = std::fs::read_dir(&base) {
-                for e in entries.flatten() {
-                    if e.path().is_dir() {
-                        manifests.push(e.path().join("plugin.json"));
-                    }
+            for e in crate::sorted_entries(&base) {
+                if e.path().is_dir() {
+                    manifests.push(e.path().join("plugin.json"));
                 }
             }
         }

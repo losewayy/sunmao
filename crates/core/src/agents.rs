@@ -32,10 +32,8 @@ pub fn load_all(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<AgentDef> {
         cwd.join(".sunmao/plugin/agents"),
     ];
     for base in [cwd.join(".sunmao/plugins"), cwd.join(".claude/plugins")] {
-        if let Ok(ps) = std::fs::read_dir(&base) {
-            for p in ps.flatten() {
-                dirs.push(p.path().join("agents"));
-            }
+        for p in crate::sorted_entries(&base) {
+            dirs.push(p.path().join("agents"));
         }
     }
     for root in extra_roots {
@@ -43,10 +41,7 @@ pub fn load_all(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<AgentDef> {
     }
     let mut out = Vec::new();
     for dir in dirs {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for e in entries.flatten() {
+        for e in crate::sorted_entries(&dir) {
             let p = e.path();
             if p.extension().map(|x| x == "md").unwrap_or(false) {
                 if let Ok(text) = std::fs::read_to_string(&p) {

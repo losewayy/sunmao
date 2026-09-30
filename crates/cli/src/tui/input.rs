@@ -252,8 +252,17 @@ pub(super) fn input_key(
                     menu::MenuKind::Command => {}
                 }
                 // commands that take an argument fill + reopen completion;
-                // everything else is a no-arg action — run it.
+                // everything else is a no-arg action — run it. `/sessions`
+                // is the odd one out: it's "browse and pick", so Enter
+                // opens the same picker `/resume <frag>` serves instead
+                // of printing the flat list.
                 const TAKES_ARGS: &[&str] = &["model", "resume", "annotate"];
+                if name == "sessions" {
+                    app.input = "/sessions ".to_string();
+                    app.cursor = app.input.chars().count();
+                    app.refresh_slash_menu();
+                    return false;
+                }
                 if TAKES_ARGS.contains(&name.as_str()) || frag.is_empty() {
                     // bare "/" has no fragment to stand on — complete like
                     // Tab instead of firing the first builtin alphabetically

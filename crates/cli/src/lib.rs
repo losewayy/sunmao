@@ -366,6 +366,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             api_key_env: None,
             api_key: Some(cli.api_key.clone()),
             dialect: cli.provider.clone(),
+            catalog: Vec::new(),
         },
         "default",
     )));
@@ -508,17 +509,16 @@ async fn host_spec(cli: &Cli) -> anyhow::Result<serve::HostSpec> {
         api_key_env: None,
         api_key: Some(cli.api_key.clone()),
         dialect: cli.provider.clone(),
+        catalog: Vec::new(),
     };
     let model_label = cli.model.clone();
     let driver_override = cli.driver;
     let serve_roots = preset_roots.clone();
-    let serve_cwd = cwd.clone();
     let factory = serve::SessionFactory {
-        make: Box::new(move |log, approver| {
+        make: Box::new(move |log, approver, cwd| {
             let llm = llm.clone();
             let mcp_servers = mcp.servers.clone();
             let preset_roots = preset_roots.clone();
-            let cwd2 = serve_cwd.clone();
             let driver = driver_override;
             let default_provider = default_provider.clone();
             Box::pin(async move {
@@ -528,9 +528,10 @@ async fn host_spec(cli: &Cli) -> anyhow::Result<serve::HostSpec> {
                         registry.register_boxed(t);
                     }
                 }
-                let ctx_cwd = cwd2.clone();
-                let mut ctx_raw =
-                    Context::new(llm, log, registry, cwd2).with_extra_plugin_roots(preset_roots);
+                // `cwd` is the *session's* project — adopted logs carry
+                // their own root (cross-project resume keeps it)
+                let mut ctx_raw = Context::new(llm, log, registry, cwd.clone())
+                    .with_extra_plugin_roots(preset_roots);
                 ctx_raw.mcp_servers = mcp_servers;
                 if let Some(d) = driver {
                     ctx_raw.loop_driver = d;
@@ -538,7 +539,7 @@ async fn host_spec(cli: &Cli) -> anyhow::Result<serve::HostSpec> {
                 ctx_raw.connect_extensions().await;
                 ctx_raw.approval = approver;
                 ctx_raw.models = Some(Arc::new(sunmao_core::models::ModelResolver::load(
-                    &ctx_cwd,
+                    &cwd,
                     default_provider,
                     "default",
                 )));
@@ -550,7 +551,9 @@ async fn host_spec(cli: &Cli) -> anyhow::Result<serve::HostSpec> {
         factory,
         cwd: cwd.clone(),
         roots: serve_roots,
-        system_prompt,
+        // --system freezes the prompt; absent it each session's project
+        // dir assembles its own (AGENTS.md etc. follow the project)
+        prompt_override: cli.system.as_ref().map(|_| system_prompt.clone()),
         model_label,
         first_log,
     })

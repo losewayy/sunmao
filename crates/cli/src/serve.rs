@@ -25,7 +25,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use sunmao_core::{Context, SessionEvent, SessionLog};
+use sunmao_core::{Context, SessionLog};
 use tokio::sync::{broadcast, mpsc};
 
 mod artifacts;
@@ -36,7 +36,7 @@ mod http;
 mod request;
 mod ws;
 
-use host::{SessionOp, display_path};
+use host::SessionOp;
 
 pub use client::Client;
 pub use host::HostHandle;
@@ -62,15 +62,21 @@ pub const SANDBOX_PAGE: &str = include_str!("serve/assets/sandbox.html");
 /// Context assembly a session needs (provider, registry, MCP tools,
 /// extensions, approver, model routes, `--loop`) so every session the host
 /// adopts — startup, new, resume, fork — gets a fully-seeded kernel, not a
-/// borrowed one.
+/// borrowed one. `cwd` is the *session's* project dir — adopted logs carry
+/// their own root (a session resumed from a different project keeps its
+/// tools/sessions dir, not the launch dir).
+/// The closure `SessionFactory.make` wraps — (log, approver, session cwd)
+/// → Context.
+pub(crate) type MakeFn = dyn Fn(SessionLog, Arc<dyn sunmao_core::approval::Approver>, std::path::PathBuf) -> SessionBuild
+    + Send
+    + Sync;
+
 pub(crate) struct SessionFactory {
-    pub make: Box<
-        dyn Fn(SessionLog, Arc<dyn sunmao_core::approval::Approver>) -> SessionBuild + Send + Sync,
-    >,
+    pub make: Box<MakeFn>,
 }
 
 /// The future `SessionFactory::make` returns (boxed so the closure stays
-/// object-safe — the log/approver move in, nothing is borrowed).
+/// object-safe — the log/approver/cwd move in, nothing is borrowed).
 pub(crate) type SessionBuild =
     std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<Context>> + Send>>;
 
@@ -79,8 +85,9 @@ impl SessionFactory {
         &self,
         log: SessionLog,
         approver: Arc<dyn sunmao_core::approval::Approver>,
+        cwd: std::path::PathBuf,
     ) -> Result<Arc<Context>> {
-        Ok(Arc::new((self.make)(log, approver).await?))
+        Ok(Arc::new((self.make)(log, approver, cwd).await?))
     }
 }
 
@@ -92,7 +99,9 @@ pub(crate) struct HostSpec {
     pub factory: SessionFactory,
     pub cwd: std::path::PathBuf,
     pub roots: Vec<std::path::PathBuf>,
-    pub system_prompt: String,
+    /// `--system` override (already assembled); `None` → each session's
+    /// prompt is assembled from *its* project dir
+    pub prompt_override: Option<String>,
     pub model_label: String,
     pub first_log: Option<(SessionLog, &'static str)>,
 }
@@ -111,7 +120,7 @@ pub(crate) async fn spawn_host(spec: HostSpec, sandbox_port: u16) -> Result<Host
         live,
         sessions: Mutex::new(HashMap::new()),
         factory: spec.factory,
-        system_prompt: spec.system_prompt,
+        prompt_override: spec.prompt_override,
         model_label: spec.model_label,
         sandbox_port,
         approval_ids: Arc::new(AtomicU64::new(0)),
@@ -126,19 +135,7 @@ pub(crate) async fn spawn_host(spec: HostSpec, sandbox_port: u16) -> Result<Host
             shared.adopt(log, source).await?;
         }
         None => {
-            let id = crate::session_id();
-            let dir = shared.cwd.join(".sunmao/sessions");
-            let mut log = sunmao_core::SessionLog::open(&dir, &id).await?;
-            log.append(&SessionEvent::Started {
-                model: shared.model_label.clone(),
-                cwd: display_path(&shared.cwd),
-            })
-            .await?;
-            log.append(&SessionEvent::Message {
-                message: sunmao_llm::types::Message::system(shared.system_prompt.clone()),
-            })
-            .await?;
-            shared.adopt(log, "startup").await?;
+            host::new_session(&shared, None).await?;
         }
     }
     Ok(HostHandle { s: shared })

@@ -13,13 +13,32 @@ fn artifact_dir(cwd: &std::path::Path) -> std::path::PathBuf {
     cwd.join(".sunmao").join("artifacts")
 }
 
+/// The session's own project dir — artifacts live under the project the
+/// session runs in, which is not necessarily the host's launch dir.
+fn sess_dir(s: &Shared, sess: Option<&str>) -> std::path::PathBuf {
+    sess.and_then(|id| s.host(id))
+        .map(|h| h.agent.session_cwd())
+        .or_else(|| {
+            s.live_ids()
+                .first()
+                .and_then(|id| s.host(id))
+                .map(|h| h.agent.session_cwd())
+        })
+        .unwrap_or_else(|| s.cwd.clone())
+}
+
 /// `GET /artifacts/{name}[?rev=k]` — the versioned read (GUI.md §3).
 /// Latest is always `{name}.html`; history lives at `{name}.v{rev-1}.html`.
-pub(super) async fn artifact_get(s: &Arc<Shared>, name: &str, rev: Option<String>) -> HostResponse {
+pub(super) async fn artifact_get(
+    s: &Arc<Shared>,
+    name: &str,
+    rev: Option<String>,
+    sess: Option<String>,
+) -> HostResponse {
     if !safe_name(name) {
         return HostResponse::err(400, "bad artifact name".into());
     }
-    let dir = artifact_dir(&s.cwd);
+    let dir = artifact_dir(&sess_dir(s, sess.as_deref()));
     let latest = sunmao_core::tool::artifact_rev(&dir, name);
     if latest == 0 {
         return HostResponse::err(404, "no such artifact".into());
@@ -115,20 +134,28 @@ fn artifact_csp(html: &str) -> String {
 /// `GET /artifacts/{name}/revs` → `{"rev": N}` — the island's ◀ ▶ nav
 /// resolves the newest version lazily instead of trusting the event payload
 /// (a page reload can sit behind the artifact's true state).
-pub(super) async fn artifact_revs(s: &Arc<Shared>, name: &str) -> HostResponse {
+pub(super) async fn artifact_revs(
+    s: &Arc<Shared>,
+    name: &str,
+    sess: Option<String>,
+) -> HostResponse {
     if !safe_name(name) {
         return HostResponse::err(400, "bad artifact name".into());
     }
     HostResponse::json(serde_json::json!({
-        "rev": sunmao_core::tool::artifact_rev(&artifact_dir(&s.cwd), name),
+        "rev": sunmao_core::tool::artifact_rev(&artifact_dir(&sess_dir(s, sess.as_deref())), name),
     }))
 }
 
-pub(super) async fn artifact_notes(s: &Arc<Shared>, name: &str) -> HostResponse {
+pub(super) async fn artifact_notes(
+    s: &Arc<Shared>,
+    name: &str,
+    sess: Option<String>,
+) -> HostResponse {
     if !safe_name(name) {
         return HostResponse::err(400, "bad artifact name".into());
     }
-    let p = artifact_dir(&s.cwd).join(format!("{name}.state.json"));
+    let p = artifact_dir(&sess_dir(s, sess.as_deref())).join(format!("{name}.state.json"));
     let v: serde_json::Value = tokio::fs::read_to_string(&p)
         .await
         .ok()
@@ -137,13 +164,18 @@ pub(super) async fn artifact_notes(s: &Arc<Shared>, name: &str) -> HostResponse 
     HostResponse::json(v)
 }
 
-pub(super) async fn artifact_annotate(s: &Arc<Shared>, name: &str, body: &[u8]) -> HostResponse {
+pub(super) async fn artifact_annotate(
+    s: &Arc<Shared>,
+    name: &str,
+    body: &[u8],
+    sess: Option<String>,
+) -> HostResponse {
     let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
         return HostResponse::err(400, "bad annotate body".into());
     };
     let note = v["note"].as_str().unwrap_or("");
     HostResponse::json(serde_json::json!({
-        "result": crate::tui::slash::annotate(&s.cwd, name, note)
+        "result": crate::tui::slash::annotate(&sess_dir(s, sess.as_deref()), name, note)
     }))
 }
 
@@ -151,11 +183,11 @@ pub(super) async fn artifact_annotate(s: &Arc<Shared>, name: &str, body: &[u8]) 
 /// which server/tool produced this island, the call's arguments + raw
 /// result, and the resource's declared CSP. The island's sandbox proxy
 /// needs it before it can handshake.
-pub(super) async fn artifact_ui(s: &Arc<Shared>, name: &str) -> HostResponse {
+pub(super) async fn artifact_ui(s: &Arc<Shared>, name: &str, sess: Option<String>) -> HostResponse {
     if !safe_name(name) {
         return HostResponse::err(400, "bad artifact name".into());
     }
-    let p = artifact_dir(&s.cwd).join(format!("{name}.ui.json"));
+    let p = artifact_dir(&sess_dir(s, sess.as_deref())).join(format!("{name}.ui.json"));
     match tokio::fs::read_to_string(&p).await {
         Ok(text) => HostResponse::bytes(
             200,

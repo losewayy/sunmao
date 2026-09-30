@@ -230,6 +230,34 @@ async fn run_inner(
                         }
                         continue;
                     }
+                    Submit::Tasks => {
+                        // the live roster — detached spawns until done
+                        let tasks = agent.task_roster();
+                        let text = if tasks.is_empty() {
+                            "[no sub-agents this session]".to_string()
+                        } else {
+                            let rows = tasks
+                                .iter()
+                                .map(|t| {
+                                    let status = match t.done {
+                                        None => "running",
+                                        Some(true) => "done",
+                                        Some(false) => "failed",
+                                    };
+                                    let agent = t
+                                        .agent
+                                        .as_deref()
+                                        .map(|a| format!(" @{a}"))
+                                        .unwrap_or_default();
+                                    format!("  {status:<7} {}{} — {}", t.id, agent, t.prompt)
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            format!("sub-agents:\n{rows}")
+                        };
+                        let _ = tx_msg.send(Msg::Note(text));
+                        continue;
+                    }
                     Submit::Resume(arg) => {
                         match arg {
                             None => {

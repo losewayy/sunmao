@@ -329,6 +329,12 @@ impl AgentLoop {
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// Snapshot the live sub-agent roster (`/tasks`) — detached spawns
+    /// register at launch, `done` flips when TaskDone lands.
+    pub fn task_roster(&self) -> Vec<crate::context::TaskEntry> {
+        self.ctx.live_tasks.lock().unwrap().clone()
+    }
+
     /// Record a `!` local-shell run as a durable session fact. The event
     /// folds into the message stream as a tagged user message, so the next
     /// turn sees the evidence the user just produced.

@@ -40,6 +40,15 @@ async fn bg_task_pushes_result_into_parent_log() {
         .unwrap();
     assert!(res.ok);
     assert!(res.output.contains("sub-"), "call returns the task id");
+    // roster registers immediately as running
+    assert!(
+        ctx.live_tasks
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|t| t.done.is_none()),
+        "detached spawn must register in the roster"
+    );
 
     // the detached child appends TaskDone once it finishes — give it a
     // moment, then check the parent's fold.
@@ -55,6 +64,27 @@ async fn bg_task_pushes_result_into_parent_log() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     assert!(found, "bg task must append TaskDone to the parent log");
+    // and the roster entry flips to done
+    for _ in 0..50 {
+        if ctx
+            .live_tasks
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|t| t.done.is_some())
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        ctx.live_tasks
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|t| t.done == Some(true)),
+        "roster must settle when TaskDone lands"
+    );
 
     let msgs = ctx.sessions.lock().await.messages().await.unwrap();
     assert!(

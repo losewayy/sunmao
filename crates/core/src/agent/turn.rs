@@ -393,6 +393,10 @@ impl AgentLoop {
                         lane: self.ctx.lane,
                     })
                     .await?;
+                    // ToolResult event alone carries the result — the fold
+                    // derives the protocol message from it; appending
+                    // Message::tool_result too would double-report the call
+                    // and providers hard-reject the transcript.
                     log.append(&SessionEvent::ToolResult {
                         call_id: call.id.clone(),
                         name: call.function.name.clone(),
@@ -400,10 +404,6 @@ impl AgentLoop {
                         output: result.output.clone(),
                         depth: self.ctx.depth,
                         lane: self.ctx.lane,
-                    })
-                    .await?;
-                    log.append(&SessionEvent::Message {
-                        message: Message::tool_result(call.id.clone(), result.output),
                     })
                     .await?;
                     continue;

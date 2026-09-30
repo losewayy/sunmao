@@ -32,3 +32,94 @@ async fn pre_tool_use_hook_blocks_via_exit2() {
         .unwrap()
         .ends_with(".jsonl"));
 }
+
+/// The context-mode half of the SPEC fixture: a SessionStart hook receives
+/// `source` on stdin and may answer with `additionalContext`. Our engine
+/// must deliver the dialect fields verbatim — context-mode's plugin hinges
+/// on seeing `source` to decide which sidecar state to heal/inject.
+#[tokio::test]
+async fn session_start_delivers_source_and_collects_context() {
+    let dir = std::env::temp_dir().join(format!("sunmao-cm-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    // the hook echoes its stdin so we can inspect the payload, then appends
+    // the context-mode-style JSON on a second line... keep it simple: emit
+    // payload to a file, stdout carries the additionalContext response
+    std::fs::write(
+        dir.join(".sunmao/hooks.json"),
+        r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"cat > session-start.json; echo '{\"hookSpecificOutput\":{\"additionalContext\":\"cm warm\"}}'"}]}]}}"#,
+    )
+    .unwrap();
+    let engine = HookEngine::load(&dir, "test");
+    let out = engine
+        .fire(
+            HookEvent::SessionStart,
+            &dir,
+            &HookInput {
+                source: Some("startup"),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(out.block_reason.is_none());
+    assert_eq!(out.extra_context, vec!["cm warm".to_string()]);
+    let payload: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("session-start.json")).unwrap())
+            .unwrap();
+    assert_eq!(payload["hook_event_name"], "SessionStart");
+    assert_eq!(payload["source"], "startup");
+    assert!(payload["session_id"].is_string());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// assert its `updatedInput` rewrite flows through our dispatcher intact.
+/// Skips quietly when `rtk` isn't installed — CI exercises the contract
+/// via the mock shape in tests.rs; this pins the real wire bytes.
+#[tokio::test]
+async fn real_rtk_hook_rewrites_command() {
+    if which_rtk().is_none() {
+        eprintln!("rtk not on PATH — skipping live conformance test");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("sunmao-rtk-live-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    // exactly the registration `rtk init` writes into Claude settings
+    std::fs::write(
+        dir.join(".sunmao/hooks.json"),
+        r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"rtk hook claude"}]}]}}"#,
+    )
+    .unwrap();
+    let engine = HookEngine::load(&dir, "test");
+    let out = engine
+        .fire(
+            HookEvent::PreToolUse,
+            &dir,
+            &HookInput {
+                tool_name: Some("Bash"),
+                tool_input: Some(&json!({"command": "git status"})),
+                ..Default::default()
+            },
+        )
+        .await;
+    let rewritten = out
+        .updated_input
+        .as_ref()
+        .and_then(|v| v["command"].as_str())
+        .unwrap_or_default();
+    // rtk's single source of truth is its own `rewrite` subcommand — assert
+    // the hook output carries the prefix, not a hardcoded command shape
+    assert!(
+        rewritten.starts_with("rtk "),
+        "expected rtk rewrite, got: {rewritten}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+fn which_rtk() -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).find_map(|dir| {
+        ["rtk", "rtk.exe"]
+            .iter()
+            .map(|name| dir.join(name))
+            .find(|candidate| candidate.is_file())
+    })
+}

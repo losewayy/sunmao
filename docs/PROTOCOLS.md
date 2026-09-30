@@ -136,9 +136,7 @@ claimed" rule.
 
 SPEC §4.8: the contract below is backed by a first-party host —
 `crates/core/src/ext/` spawns children, handshakes, routes `ext/event`
-through `HookEngine::fire`, and tears down with the session. JS extension
-modules ride the same protocol via the sidecar
-(`node tools/extension-host.mjs` — "JS host sidecar" below). Design rule
+through `HookEngine::fire`, and tears down with the session. Design rule
 inherited from hooks/MCP: **a host process is a process boundary** —
 spawn per session, die with it, never hot-plug.
 
@@ -184,76 +182,11 @@ notifications omit it.
 - Tool schemas pass through verbatim to the model — a bad `input_schema`
   means the tool doesn't exist to the LLM (same rule as native `Tool::decl`).
 
-### JS host sidecar
-
-`tools/extension-host.mjs` is a zero-dependency Node script that fronts
-this exact protocol for **JS extension modules** — a plugin ships
-`.mjs`/`.js` files instead of a bespoke binary:
-
-```json
-{"command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/extension-host.mjs",
-                             "${CLAUDE_PLUGIN_ROOT}/ext"]}
-```
-
-The sidecar file is **copied into the plugin bundle** — a bundle is
-self-contained, `${CLAUDE_PLUGIN_ROOT}` only resolves inside it. In-repo
-development may instead point `args` straight at `tools/extension-host.mjs`
-plus any module dir. See `examples/js-extension/` (a real bundled copy +
-`ext/wordcount.mjs` module + install notes).
-
-Module contract — each `*.mjs` / `*.js` file in the scanned dir
-(non-recursive, sorted by name) exports a default function invoked once
-with an `api` object, plus an optional `dispose()` export run on
-`ext/shutdown`:
-
-```js
-export default function (api) {
-  api.registerTool({ name, description, input_schema, handler });
-  //   handler: async (args) => ({content} | {content, is_error: true})
-  api.on("<HookEvent>", (payload) => ({ extra_context: ["…"] }));
-  api.log("…");                       // stderr — stdout is protocol-only
-}
-```
-
-- `*.ts` files are skipped with a warning — no toolchain ships, and
-  Node's type-stripping only covers erasable syntax; ship compiled JS.
-- Modules load **before** `ext/initialize` is answered so
-  `capabilities` is truthful: `tools` = any `registerTool` across all
-  modules, `events` = union of all `api.on()` names. Early frames queue.
-- `ext/tools/list` aggregates every module's registrations;
-  `ext/tools/call` dispatches by `name` (handler throw →
-  `{content: <err>, is_error: true}`, unknown name → JSON-RPC error).
-- `ext/event` replies merge across subscribers in load order, mirroring
-  hook aggregation: `extra_context` concatenates; `block`,
-  `updatedInput`, `permissionDecision` are last-non-null-wins.
-- Degrade philosophy matches the Rust host: a module that throws on
-  import/registration warns on stderr and is skipped — one bad module
-  never takes the bridge down. Frames are handled serially, so replies
-  keep request order and `ext/shutdown` can't exit ahead of a pending
-  reply.
-
-#### pi dialect (oh-my-pi / pi-mono compat)
-
-Modules written against pi's `ExtensionAPI` run against a **documented
-subset** — the sidecar normalizes both directions rather than asking
-plugins to learn our names:
-
-- `api.on(pi_name, handler)` accepts pi's snake_case events:
-  `session_start`/`session_shutdown`, `session_before_compact`/
-  `session_compact`, `tool_call`, `tool_result`, `input`,
-  `agent_start`/`agent_end`, `turn_end` → the canonical events.
-  Handlers get **pi-shaped payloads** (`tool_call` sees
-  `{toolName, toolCallId, input, cwd, sessionId}`; `tool_result` adds
-  `result`; `input` sees `{prompt, cwd, sessionId}`); other events get
-  the canonical payload (pi ignores the extra fields).
-- `tool_call` replies: `{block: true, reason}` → our `block` reason;
-  `extra_context`/`additionalContext` and `updatedInput` pass through.
-- `api.registerTool` accepts pi's spec shape `{name, description,
-  parameters, execute}` — `parameters` must be a real JSON schema; a
-  **zod object is warn-and-skip** (call `z.toJSONSchema()` first —
-  pi's zero-dep schema shim is not this host's job). `execute`'s
-  `{content:[{type:"text",text}]}` reply folds to our `{content}`.
-- **Not this host's surface**: `sendMessage`, `registerCommand`,
-  `ui`/renderers, providers, settings, `registerProvider`, timers —
-  a module that needs them is a pi-native plugin, not a sunmao one.
-  Unknown pi event names simply never fire (the honest skip).
+A note on hosts: the protocol is language-agnostic — any child process
+speaking these frames is a valid extension. We deliberately do **not**
+ship a bundled JS host sidecar: surveyed pi-ecosystem extensions are
+~85% covered by sunmao's native surface (todos, sub-agents, truncation,
+permissions, prompt layers) or reachable through plain hooks/MCP, and
+the remainder bind to pi's in-process UI surface (`ctx.ui`, renderers)
+that a process-boundary host cannot translate. Writing a bespoke host
+stays possible; maintaining a compatibility shim is not our job.

@@ -8,6 +8,7 @@ mod app_tests;
 mod blocks;
 mod input;
 mod md;
+mod menu;
 mod render;
 mod replay;
 pub mod slash;

@@ -100,7 +100,8 @@ crates/cli     every frontend + flag plumbing. Thin by design — heavy logic
                │   ├── mod.rs    event loop, driver task, focus machine
                │   ├── app.rs    App state — blocks, composer, approval
                │   ├── menu.rs   completion popups — commands/model
-               │   │             selectors/@ file mentions + path pool
+               │   │             selectors/@ file mentions/session
+               │   │             picker + path pool
                │   ├── input.rs  composer/key input handling
                │   ├── replay.rs session replay → transcript blocks +
                │   │             turn fold-by-cap

@@ -9,7 +9,7 @@ async fn pre_tool_use_hook_blocks_via_exit2() {
         r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"cat > payload.json; echo nope >&2; exit 2"}]}]}}"#,
     )
     .unwrap();
-    let engine = HookEngine::load(&dir, "test");
+    let engine = HookEngine::load(&dir, "test", &[]);
     let out = engine
         .fire(
             HookEvent::PreToolUse,
@@ -49,7 +49,7 @@ async fn session_start_delivers_source_and_collects_context() {
         r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"cat > session-start.json; echo '{\"hookSpecificOutput\":{\"additionalContext\":\"cm warm\"}}'"}]}]}}"#,
     )
     .unwrap();
-    let engine = HookEngine::load(&dir, "test");
+    let engine = HookEngine::load(&dir, "test", &[]);
     let out = engine
         .fire(
             HookEvent::SessionStart,
@@ -88,7 +88,7 @@ async fn real_rtk_hook_rewrites_command() {
         r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"rtk hook claude"}]}]}}"#,
     )
     .unwrap();
-    let engine = HookEngine::load(&dir, "test");
+    let engine = HookEngine::load(&dir, "test", &[]);
     let out = engine
         .fire(
             HookEvent::PreToolUse,
@@ -122,4 +122,81 @@ fn which_rtk() -> Option<std::path::PathBuf> {
             .map(|name| dir.join(name))
             .find(|candidate| candidate.is_file())
     })
+}
+
+/// `--preset` end-to-end: a preset dir shaped like a plugin bundle must
+/// contribute its hooks when (and only when) it's handed to the context as
+/// an extra plugin root.
+#[tokio::test]
+async fn preset_dir_fires_its_hooks() {
+    let dir = std::env::temp_dir().join(format!(
+        "sunmao-preset-hook-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let preset = dir.join(".sunmao/presets/strict");
+    std::fs::create_dir_all(preset.join("hooks")).unwrap();
+    std::fs::write(
+        preset.join("plugin.json"),
+        r#"{"name":"strict","description":"test preset"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        preset.join("hooks/hooks.json"),
+        r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"cat >/dev/null; echo '{\"systemMessage\":\"strict preset fired\"}'"}]}]}}"#,
+    )
+    .unwrap();
+    let roots = crate::presets::resolve(&dir, &["+strict".to_string()]).unwrap();
+    assert_eq!(roots.len(), 1);
+
+    // without the preset enabled the engine sees nothing
+    let bare = HookEngine::load(&dir, "test", &[]);
+    let out = bare
+        .fire(
+            HookEvent::PreToolUse,
+            &dir,
+            &HookInput {
+                tool_name: Some("Bash"),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(out.extra_context.is_empty());
+
+    // through the Context builder the preset's hook must run
+    let ctx = crate::context::Context::new(
+        std::sync::Arc::new(MockProvider),
+        crate::session::SessionLog::ephemeral(),
+        crate::tool::builtin_registry(),
+        dir.clone(),
+    )
+    .with_extra_plugin_roots(roots);
+    let out = ctx
+        .hooks
+        .fire(
+            HookEvent::PreToolUse,
+            &dir,
+            &HookInput {
+                tool_name: Some("Bash"),
+                tool_input: Some(&json!({"command": "ls"})),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert_eq!(out.extra_context, vec!["strict preset fired".to_string()]);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+struct MockProvider;
+#[async_trait::async_trait]
+impl sunmao_llm::ProviderAdapter for MockProvider {
+    async fn stream(
+        &self,
+        _req: sunmao_llm::ChatRequest<'_>,
+    ) -> anyhow::Result<sunmao_llm::DeltaStream> {
+        Ok(Box::pin(futures_util::stream::iter(vec![])))
+    }
 }

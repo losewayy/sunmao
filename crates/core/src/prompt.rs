@@ -43,11 +43,24 @@ pub mod names {
 /// Assembles prompts for one working directory.
 pub struct PromptAssembler {
     cwd: PathBuf,
+    /// Preset plugin roots — their `skills/` subdirs join the skills index
+    /// and their `agents/` defs are resolvable by `assemble_subagent`.
+    extra_roots: Vec<PathBuf>,
 }
 
 impl PromptAssembler {
     pub fn new(cwd: impl Into<PathBuf>) -> Self {
-        Self { cwd: cwd.into() }
+        Self {
+            cwd: cwd.into(),
+            extra_roots: Vec::new(),
+        }
+    }
+
+    /// Enabled preset dirs — scanned last by every consumer this assembler
+    /// delegates to (skills index, agent defs).
+    pub fn with_extra_roots(mut self, roots: &[PathBuf]) -> Self {
+        self.extra_roots = roots.to_vec();
+        self
     }
 
     /// The session system prompt. `complete` (`--system`) wins outright.
@@ -58,7 +71,7 @@ impl PromptAssembler {
         let mut sections = builtin_sections();
         apply_layer(&mut sections, &user_layer_dir(), 40);
         apply_layer(&mut sections, &self.cwd.join(".sunmao"), 50);
-        let ctx = project_context(&self.cwd);
+        let ctx = project_context(&self.cwd, &self.extra_roots);
         if !ctx.trim().is_empty() {
             sections.push(Section {
                 name: names::PROJECT_CONTEXT.into(),
@@ -73,7 +86,7 @@ impl PromptAssembler {
     /// the `subagent-default` section — itself replaceable from `prompt.d/`.
     pub fn assemble_subagent(&self, subagent_type: Option<&str>) -> String {
         if let Some(def) = subagent_type.and_then(|t| {
-            crate::agents::load_all(&self.cwd)
+            crate::agents::load_all(&self.cwd, &self.extra_roots)
                 .into_iter()
                 .find(|d| d.name == t)
         }) {
@@ -207,7 +220,7 @@ fn render(mut sections: Vec<Section>) -> String {
 /// Project-level context: `AGENTS.md` / `CLAUDE.md` bodies plus the skills
 /// index (name + description from SKILL.md frontmatter — bodies are Read on
 /// demand). Moved here from the REPL so every frontend gets it.
-fn project_context(cwd: &Path) -> String {
+fn project_context(cwd: &Path, extra_roots: &[PathBuf]) -> String {
     let mut out = String::new();
     for name in ["AGENTS.md", "CLAUDE.md"] {
         let p = cwd.join(name);
@@ -236,6 +249,10 @@ fn project_context(cwd: &Path) -> String {
         let h = std::path::Path::new(&home);
         skills_dirs.push(h.join(".claude").join("skills"));
         skills_dirs.push(h.join(".agents").join("skills"));
+    }
+    // preset bundles contribute skills the same way, layered last
+    for root in extra_roots {
+        skills_dirs.push(root.join("skills"));
     }
     let mut lines = Vec::new();
     for skills_dir in skills_dirs {

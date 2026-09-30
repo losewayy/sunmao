@@ -79,6 +79,12 @@ pub struct Context {
     /// can be gated by that def's `spawns:` whitelist (and self-recursion
     /// blocked).
     pub agent_name: Option<String>,
+    /// Plugin roots layered on top of the convention dirs — resolved
+    /// `--preset` dirs. Install via `with_extra_plugin_roots` so the derived
+    /// seams (hooks, permissions) reload; consumers append these last,
+    /// meaning presets win where layering implies precedence and fill gaps
+    /// where lookup is first-match.
+    pub extra_plugin_roots: Vec<PathBuf>,
 }
 
 impl Context {
@@ -88,14 +94,14 @@ impl Context {
         tools: ToolRegistry,
         cwd: PathBuf,
     ) -> Self {
-        let permissions = crate::permissions::Permissions::load(&cwd);
+        let permissions = crate::permissions::Permissions::load(&cwd, &[]);
         Self {
             llm,
             llm_override: std::sync::RwLock::new(None),
             sessions: Arc::new(tokio::sync::Mutex::new(sessions)),
             tools,
             audit: AuditLog::new(),
-            hooks: HookEngine::load(&cwd, "session"),
+            hooks: HookEngine::load(&cwd, "session", &[]),
             cwd,
             permissions,
             approval: Arc::new(AllowAll),
@@ -110,7 +116,23 @@ impl Context {
             live_sink: std::sync::OnceLock::new(),
             models: None,
             agent_name: None,
+            extra_plugin_roots: Vec::new(),
         }
+    }
+
+    /// Layer preset dirs onto this context. Hooks and permissions reload
+    /// because they were already folded into the seams above; everything
+    /// else (agents, skills, commands, mcp) scans `extra_plugin_roots` at
+    /// use time and picks the roots up directly.
+    pub fn with_extra_plugin_roots(mut self, roots: Vec<PathBuf>) -> Self {
+        if roots.is_empty() {
+            return self;
+        }
+        self.extra_plugin_roots = roots;
+        self.permissions =
+            crate::permissions::Permissions::load(&self.cwd, &self.extra_plugin_roots);
+        self.hooks = HookEngine::load(&self.cwd, "session", &self.extra_plugin_roots);
+        self
     }
 
     pub fn mark_read(&self, path: &std::path::Path) {

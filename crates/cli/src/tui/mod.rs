@@ -114,6 +114,7 @@ pub async fn run(
     cwd: std::path::PathBuf,
     rx_approval: mpsc::UnboundedReceiver<ApprovalReq>,
     replay: Vec<sunmao_core::SessionEvent>,
+    extra_roots: Vec<std::path::PathBuf>,
 ) -> Result<()> {
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
@@ -125,7 +126,16 @@ pub async fn run(
     let _ = io::stdout().execute(EnableMouseCapture);
     let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
     let mut term = Terminal::new(backend)?;
-    let res = run_inner(&mut term, agent, model, cwd, rx_approval, replay).await;
+    let res = run_inner(
+        &mut term,
+        agent,
+        model,
+        cwd,
+        rx_approval,
+        replay,
+        extra_roots,
+    )
+    .await;
     let _ = io::stdout().execute(DisableBracketedPaste);
     let _ = io::stdout().execute(DisableMouseCapture);
     disable_raw_mode()?;
@@ -140,6 +150,7 @@ async fn run_inner(
     cwd: std::path::PathBuf,
     mut rx_approval: mpsc::UnboundedReceiver<ApprovalReq>,
     replay: Vec<sunmao_core::SessionEvent>,
+    extra_roots: Vec<std::path::PathBuf>,
 ) -> Result<()> {
     let agent = Arc::new(agent);
     let (tx_msg, mut rx_msg) = mpsc::unbounded_channel::<Msg>();
@@ -164,6 +175,7 @@ async fn run_inner(
     {
         let tx_msg = tx_msg.clone();
         let driver_cwd = cwd.clone();
+        let driver_roots = extra_roots.clone();
         tokio::spawn(async move {
             while let Some(sub) = rx_input.recv().await {
                 match sub {
@@ -306,7 +318,7 @@ async fn run_inner(
                         let prompt = if let Some(cmd_line) = input.trim().strip_prefix('/') {
                             let name = cmd_line.split_whitespace().next().unwrap_or("");
                             let rest = cmd_line[name.len()..].trim();
-                            match slash::command_body(&driver_cwd, name) {
+                            match slash::command_body(&driver_cwd, &driver_roots, name) {
                                 Some(body) => {
                                     if rest.is_empty() {
                                         body
@@ -420,6 +432,7 @@ async fn run_inner(
 
     let mut app = App::new(model, cwd.clone(), &session_id);
     app.model_selectors = model_selectors;
+    app.extra_roots = extra_roots;
     if !replay.is_empty() {
         app.replay(&replay);
     }

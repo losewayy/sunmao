@@ -1,0 +1,5 @@
+{
+  "name": "strict-audit",
+  "version": "0.1.0",
+  "description": "Demo preset: appends an audit note to every Bash call's PostToolUse stream. Enable with `sunmao --preset strict-audit` after copying (or symlinking) this dir to .sunmao/presets/strict-audit/."
+}

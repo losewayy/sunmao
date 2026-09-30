@@ -96,6 +96,9 @@ sunmao --resume s-…                 # continue a session
 sunmao --sessions                   # list local session logs
 sunmao --dataflow <session>.jsonl   # audit report
 sunmao --acp                        # ACP server (stdio)
+sunmao --preset strict-audit        # layer a preset (plugin-bundle dir in
+                                    # .sunmao/presets/ or ~/.sunmao/presets/)
+                                    # onto this session; repeatable, later wins
 sunmao plugin install <path>        # copy a plugin dir into .sunmao/plugins/<name>/
 sunmao plugin list|remove <name>    # inspect / uninstall
 ```
@@ -116,6 +119,7 @@ sunmao plugin list|remove <name>    # inspect / uninstall
 │                        # frontmatter: model / tools / spawns
 ├── models.json          # model routing — named providers + @route chains
 ├── plugins/<name>/      # installed plugin bundles (`sunmao plugin …`)
+├── presets/<name>/      # plugin-bundle dirs enabled per-session via --preset
 └── sessions/jobs/artifacts/   # runtime state (gitignored)
 
 .claude/settings.json    # also read — hooks + permissions merge

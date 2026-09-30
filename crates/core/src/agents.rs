@@ -7,7 +7,7 @@
 //! `*` = unrestricted) whitelists which agent names this one may itself
 //! spawn; absent means unrestricted, `[]` means the child can't Task at all.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct AgentDef {
@@ -22,8 +22,10 @@ pub struct AgentDef {
     pub spawns: Option<Vec<String>>,
 }
 
-/// Load all agent definitions under the convention dirs.
-pub fn load_all(cwd: &Path) -> Vec<AgentDef> {
+/// Load all agent definitions under the convention dirs. `extra_roots` are
+/// enabled preset dirs — their `agents/` subdirs append after the installed
+/// plugins (a same-named preset def fills the gap; first hit still wins).
+pub fn load_all(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<AgentDef> {
     let mut dirs = vec![
         cwd.join(".sunmao/agents"),
         cwd.join(".claude/agents"),
@@ -35,6 +37,9 @@ pub fn load_all(cwd: &Path) -> Vec<AgentDef> {
                 dirs.push(p.path().join("agents"));
             }
         }
+    }
+    for root in extra_roots {
+        dirs.push(root.join("agents"));
     }
     let mut out = Vec::new();
     for dir in dirs {
@@ -115,6 +120,8 @@ fn parse_list(v: &str) -> Vec<String> {
 
 /// Look up one definition by exact name — the spawn path needs the def
 /// more than once (prompt, model, tools, spawns), so callers hold it.
-pub fn find(cwd: &Path, name: &str) -> Option<AgentDef> {
-    load_all(cwd).into_iter().find(|d| d.name == name)
+pub fn find(cwd: &Path, extra_roots: &[PathBuf], name: &str) -> Option<AgentDef> {
+    load_all(cwd, extra_roots)
+        .into_iter()
+        .find(|d| d.name == name)
 }

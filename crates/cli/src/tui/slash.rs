@@ -2,7 +2,7 @@
 //! builtin names the frontends handle themselves. Shared by the REPL, the
 //! TUI driver, and the TUI's `/` popup.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Builtin commands handled locally (not file-backed). Shown in the menu
 /// alongside file commands.
@@ -18,10 +18,10 @@ const BUILTINS: &[&str] = &[
 ];
 
 /// Names the `/` menu should offer: builtins + every `<name>.md` found in
-/// the convention dirs under `cwd`.
-pub fn candidates(cwd: &Path) -> Vec<String> {
+/// the convention dirs under `cwd` plus the enabled preset roots.
+pub fn candidates(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<String> {
     let mut names: Vec<String> = BUILTINS.iter().map(|s| s.to_string()).collect();
-    for dir in command_dirs(cwd) {
+    for dir in command_dirs(cwd, extra_roots) {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for e in entries.flatten() {
                 let p = e.path();
@@ -40,14 +40,14 @@ pub fn candidates(cwd: &Path) -> Vec<String> {
 
 /// `/review` → `.sunmao/commands/review.md` or `.claude/commands/review.md`
 /// (same convention, both dirs scanned). Returns the file body.
-pub fn command_body(cwd: &Path, name: &str) -> Option<String> {
+pub fn command_body(cwd: &Path, extra_roots: &[PathBuf], name: &str) -> Option<String> {
     if !name
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
         return None;
     }
-    for dir in command_dirs(cwd) {
+    for dir in command_dirs(cwd, extra_roots) {
         let p = dir.join(format!("{name}.md"));
         if let Ok(t) = std::fs::read_to_string(&p) {
             return Some(t);
@@ -56,8 +56,10 @@ pub fn command_body(cwd: &Path, name: &str) -> Option<String> {
     None
 }
 
-/// All dirs slash commands may live in — project, claude-compat, plugin dirs.
-fn command_dirs(cwd: &Path) -> Vec<std::path::PathBuf> {
+/// All dirs slash commands may live in — project, claude-compat, plugin
+/// dirs, then enabled presets (appended last in layering order; lookup is
+/// first-hit so a preset command only fills a name nobody else claims).
+fn command_dirs(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<PathBuf> {
     let mut dirs = vec![
         cwd.join(".sunmao/commands"),
         cwd.join(".claude/commands"),
@@ -69,6 +71,9 @@ fn command_dirs(cwd: &Path) -> Vec<std::path::PathBuf> {
                 dirs.push(p.path().join("commands"));
             }
         }
+    }
+    for root in extra_roots {
+        dirs.push(root.join("commands"));
     }
     dirs
 }

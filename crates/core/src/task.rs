@@ -237,7 +237,7 @@ fn resolve_spawn_def(
     ctx: &Context,
     requested: Option<&str>,
 ) -> anyhow::Result<Option<crate::agents::AgentDef>> {
-    let all = crate::agents::load_all(&ctx.cwd);
+    let all = crate::agents::load_all(&ctx.cwd, &ctx.extra_plugin_roots);
     let known: Vec<String> = all.iter().map(|d| d.name.clone()).collect();
     // extract what the parent def contributes (whitelist + name), then drop
     // the borrow — `all` moves into the lookup below.
@@ -373,6 +373,7 @@ async fn spawn_parts(ctx: &Context, def: Option<&crate::agents::AgentDef>) -> (S
         .map(|d| d.system_prompt.clone())
         .unwrap_or_else(|| {
             crate::prompt::PromptAssembler::new(&ctx.cwd)
+                .with_extra_roots(&ctx.extra_plugin_roots)
                 .assemble_subagent(def.map(|d| d.name.as_str()))
         });
     {
@@ -421,9 +422,11 @@ async fn spawn_parts(ctx: &Context, def: Option<&crate::agents::AgentDef>) -> (S
         sessions: Arc::new(tokio::sync::Mutex::new(log)),
         tools,
         audit: crate::audit::AuditLog::new(),
-        permissions: crate::permissions::Permissions::load(&ctx.cwd),
+        permissions: crate::permissions::Permissions::load(&ctx.cwd, &ctx.extra_plugin_roots),
         approval: ctx.approval.clone(),
-        hooks: crate::hooks::HookEngine::load(&ctx.cwd, &sub_id),
+        // sub-agents inherit the parent's preset layers — a preset is a
+        // session-level property, not per-agent
+        hooks: crate::hooks::HookEngine::load(&ctx.cwd, &sub_id, &ctx.extra_plugin_roots),
         cwd: ctx.cwd.clone(),
         depth: ctx.depth + 1,
         lane,
@@ -434,6 +437,7 @@ async fn spawn_parts(ctx: &Context, def: Option<&crate::agents::AgentDef>) -> (S
         live_sink: std::sync::OnceLock::new(),
         models: ctx.models.clone(),
         agent_name: def.map(|d| d.name.clone()),
+        extra_plugin_roots: ctx.extra_plugin_roots.clone(),
     };
     (sub_id, sub_ctx)
 }

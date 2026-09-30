@@ -20,6 +20,7 @@ per-key where merging applies (hooks/permissions/mcp).
 | `models.json` | `{"providers": {"p": {"base_url","api_key_env","dialect"}}, "routes": {"r": "sel" \| ["sel",...]}}` | model routing — `model:` selectors resolve `provider/model`, bare `model` (session provider), or `@route` chains; unresolvable → inherit parent |
 | `plugin/` | same tree as a plugin root | "this project is a plugin" convention |
 | `plugins/<name>/` | plugin dir | contributes `commands/`, `skills/`, `agents/` **and** merges its `plugin.json` (`hooks` + `mcpServers`, `${CLAUDE_PLUGIN_ROOT}` → the plugin dir); `sunmao plugin install|list|remove` manages this dir |
+| `presets/<name>/` | plugin dir | same bundle shape as `plugins/<name>/` (plus `permissions.json`), but only active while named via `--preset <name>` — see "Presets" below |
 | `sessions/*.jsonl` | runtime state (gitignored) | session logs — `--resume`/`--fork`/`--dataflow` read these |
 | `jobs/{id}/` | runtime state | background `Bash` jobs — `output.log` + `output.idx` + `meta.json` |
 | `artifacts/` | runtime state | `HtmlArtifact` outputs |
@@ -33,12 +34,34 @@ per-key where merging applies (hooks/permissions/mcp).
 | `~/.claude/settings.json` | user-level same blocks |
 | `~/.sunmao/prompt.md` | user-level prompt section (applied before the project layer) |
 | `~/.sunmao/prompt.d/<name>.md` | user-level section replacement, same naming rule |
+| `~/.sunmao/presets/<name>/` | user-level preset dir — searched when the project has no match |
 | `.claude/commands/*.md` | slash commands |
 | `.claude/agents/*.md` | sub-agent defs |
 | `.claude/skills/*/SKILL.md` | skill index |
 | `.claude/plugins/<name>/` | `commands/`+`skills/`+`agents/` dirs + `plugin.json` manifest (same merge as `.sunmao/plugins/`) |
 | `.claude-plugin/plugin.json` | plugin manifest at repo root |
 | `~/.agents/skills/*/SKILL.md` | ecosystem skills |
+
+## Presets (`--preset <name>`)
+
+A preset is a directory that looks exactly like an installed plugin bundle —
+`plugin.json`, `hooks/hooks.json`, `commands/`, `skills/`, `agents/`,
+`mcp.json`, `permissions.json`. Unlike `plugins/<name>/` (always active), a
+preset contributes **only while named on the command line**:
+
+```bash
+sunmao --preset strict-audit --preset +verbose   # layers in order; + is decorative
+```
+
+Resolution: `<name>` is looked up in `<cwd>/.sunmao/presets/` first, then
+`~/.sunmao/presets/`; an unknown name is a startup error listing the dirs
+searched. Each resolved dir is an extra plugin root appended **after** the
+always-on sources — preset hooks run last, a preset `mcpServers` key
+overrides a same-named one, and `permissions.json` rules merge into the
+same deny>ask>allow table. For first-match surfaces (slash command names,
+agent defs) a preset fills gaps rather than shadowing project files.
+Sub-agents inherit the parent's presets. `sunmao --doctor` lists active and
+available presets.
 
 ## Provider config (env or flags)
 

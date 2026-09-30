@@ -113,6 +113,9 @@ pub struct App {
     /// the driver fills this once at startup; slash-menu arg completion
     /// filters it.
     pub model_selectors: Vec<String>,
+    /// enabled preset plugin roots — slash commands resolve against their
+    /// `commands/` dirs too. The driver sets this once at startup.
+    pub extra_roots: Vec<std::path::PathBuf>,
 }
 
 /// Content of the full-screen viewer — title line + the block's full text
@@ -189,6 +192,7 @@ impl App {
             viewer: None,
             busy_since: None,
             model_selectors: Vec::new(),
+            extra_roots: Vec::new(),
         };
         let mut banner = Block::new(BlockKind::Note);
         banner.text = format!(
@@ -303,7 +307,7 @@ impl App {
                 let pool = if for_args {
                     self.model_selectors.clone()
                 } else {
-                    slash::candidates(&self.cwd)
+                    slash::candidates(&self.cwd, &self.extra_roots)
                 };
                 let matches: Vec<String> = pool
                     .into_iter()

@@ -7,7 +7,7 @@
 //! the runtime's default (approval gate for risky, allow otherwise).
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Verdict {
@@ -45,7 +45,7 @@ pub struct Permissions {
 }
 
 impl Permissions {
-    pub fn load(cwd: &Path) -> Self {
+    pub fn load(cwd: &Path, extra_roots: &[PathBuf]) -> Self {
         let mut paths = vec![
             cwd.join(".sunmao").join("permissions.json"),
             cwd.join(".claude").join("settings.json"),
@@ -53,6 +53,12 @@ impl Permissions {
         ];
         if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
             paths.push(Path::new(&home).join(".claude").join("settings.json"));
+        }
+        // preset dirs merge last — a `permissions.json` in an enabled preset
+        // adds rules like any other layer (deny>ask>allow applies on check,
+        // not on load order).
+        for root in extra_roots {
+            paths.push(root.join("permissions.json"));
         }
         let mut merged = Perms::default();
         for p in paths {

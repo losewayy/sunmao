@@ -113,7 +113,7 @@ pub fn artifacts_text(cwd: &Path) -> String {
             "artifacts ({}):\n{}\n  dir: {}",
             rows.len(),
             rows.join("\n"),
-            dir.display()
+            dir.display().to_string().replace("\\\\?\\", "")
         )
     }
 }

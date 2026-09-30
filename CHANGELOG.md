@@ -105,6 +105,13 @@ TUI.
   check `.state.json` sidecars for annotations) and a packaged example
   at `examples/skills/html-artifact/` (SKILL.md + a reviewable-plan
   template + the state.json annotation convention)
+- **artifacts are visible, everywhere** — `LiveEvent::Artifact` rides
+  `ctx.live_sink` the moment `HtmlArtifact` lands: the REPL prints the
+  path, the TUI notes it inline, ACP ships a `file://` `ResourceLink`
+  content block (rendering stays the client's call). `/artifacts` lists
+  `.sunmao/artifacts` on both local frontends, `+notes` flagging state
+  sidecars. `acp.rs` split on the seam — `acp/mod.rs` is the wire,
+  `acp/observer.rs` the outbound adapters
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

@@ -142,7 +142,7 @@ async fn node_fixture_full_roundtrip() {
         eprintln!("node not on PATH — skipping live extension test");
         return;
     };
-    let dir = std::env::temp_dir().join(format!("sunmao-ext-{}", std::process::id()));
+    let dir = crate::fresh_test_dir("ext");
     std::fs::create_dir_all(&dir).unwrap();
 
     let reg = registry::ExtRegistry::new();
@@ -207,7 +207,7 @@ async fn dead_child_fails_fast() {
         eprintln!("node not on PATH — skipping live extension test");
         return;
     };
-    let dir = std::env::temp_dir().join(format!("sunmao-ext-die-{}", std::process::id()));
+    let dir = crate::fresh_test_dir("ext-die");
     std::fs::create_dir_all(&dir).unwrap();
 
     // child that answers initialize with a SessionStart subscription,

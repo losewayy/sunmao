@@ -6,7 +6,7 @@ use super::*;
 /// ToolCall, and the model sees the result of the rewritten command.
 #[tokio::test]
 async fn pretooluse_updated_input_rewrites_dispatch() {
-    let dir = std::env::temp_dir().join(format!("sunmao-rtk-{}", std::process::id()));
+    let dir = crate::fresh_test_dir("rtk");
     std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
     // the rtk hook shape: JSON on stdin, updatedInput on stdout
     // write the hook's stdout JSON to a file the hook cats — avoids
@@ -78,7 +78,7 @@ async fn pretooluse_updated_input_rewrites_dispatch() {
 /// must block the call before dispatch — same as exit-2 veto.
 #[tokio::test]
 async fn pretooluse_permission_deny_blocks() {
-    let dir = std::env::temp_dir().join(format!("sunmao-deny-{}", std::process::id()));
+    let dir = crate::fresh_test_dir("deny");
     std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
     std::fs::write(
         dir.join("hook-response.json"),

@@ -84,9 +84,19 @@ fn git_url(source: &str) -> Option<String> {
 /// RAII temp dir for `git clone` targets — deleted on drop.
 struct TempDir(PathBuf);
 
+/// pid alone recycles; nanos keeps each clone scratch dir unique even when
+/// a stale dir survives from a killed run.
+fn fresh_dir(tag: &str) -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!("sunmao-{tag}-{}-{nanos}", std::process::id()))
+}
+
 impl TempDir {
     fn new() -> anyhow::Result<Self> {
-        let dir = std::env::temp_dir().join(format!("sunmao-plugin-{}", std::process::id()));
+        let dir = fresh_dir("plugin");
         std::fs::create_dir_all(&dir)?;
         Ok(Self(dir))
     }
@@ -157,7 +167,7 @@ mod tests {
             Some("https://github.com/acme/audit-pack.git")
         );
         // an existing local path always wins over repo shorthand
-        let tmp = std::env::temp_dir().join(format!("sunmao-plug-src-{}", std::process::id()));
+        let tmp = fresh_dir("plug-src");
         std::fs::create_dir_all(&tmp).unwrap();
         assert!(git_url(&tmp.to_string_lossy()).is_none());
         // bare name without slash is a path, not a repo

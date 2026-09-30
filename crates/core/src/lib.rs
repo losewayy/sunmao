@@ -26,3 +26,16 @@ pub use agent::{AgentLoop, TurnOutcome};
 pub use context::Context;
 pub use session::{SessionEvent, SessionLog};
 pub use tool::{ToolRegistry, ToolResult};
+
+/// pid-keyed temp dirs recycle (Windows PIDs wrap fast) — a second test run
+/// landing on a recycled pid inherited leftover files and flaked. Nanos makes
+/// each caller's scratch dir unique. Test-only; production code keeps its own
+/// naming.
+#[cfg(test)]
+pub(crate) fn fresh_test_dir(tag: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!("sunmao-test-{tag}-{}-{nanos}", std::process::id()))
+}

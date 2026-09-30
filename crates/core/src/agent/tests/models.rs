@@ -5,7 +5,7 @@ async fn agent_def_model_selector_routes_the_spawn() {
     // A `model:` frontmatter selector must swap the sub-agent's adapter —
     // the parent's provider serves the Task call + continuation, while a
     // separate (observable) provider serves everything inside the child.
-    let dir = std::env::temp_dir().join(format!("sunmao-route-{}", std::process::id()));
+    let dir = crate::fresh_test_dir("route");
     std::fs::create_dir_all(dir.join(".sunmao/agents")).unwrap();
     std::fs::write(
         dir.join(".sunmao/agents/scout.md"),
@@ -87,7 +87,7 @@ async fn swap_model_installs_override_adapter() {
     // `/model sel` must move the next request onto the resolved adapter
     // and record the switch as a durable session fact. Unknown selectors
     // resolve to None — the baseline model stays.
-    let dir = std::env::temp_dir().join(format!("sunmao-swap-{}", std::process::id()));
+    let dir = crate::fresh_test_dir("swap");
     std::fs::create_dir_all(&dir).unwrap();
     let base = Arc::new(MockProvider {
         responses: std::sync::Mutex::new(std::collections::VecDeque::new()),

@@ -21,7 +21,7 @@ Current coverage:
 | `core::agent` (MockProvider) | full loop: plain turn, tool round-trip, cancel, malformed-args feedback, hook veto mid-loop, model routing + `/model` override |
 | `core::task` | detached `run_in_background` → TaskDone push into parent log, unique spawn ids, spawns-whitelist + self-recursion guard |
 | `core::tool` | read-before-write gate (deny→read→allow), Edit normalization, dying tool backend → failed result not turn abort |
-| `core::hooks` | matcher semantics, live exit-2 veto via real subprocess, **rtk binary rewrite** + SessionStart/source contract |
+| `core::hooks` | matcher semantics, live exit-2 veto via real subprocess, **rtk binary rewrite** + SessionStart/source contract, **Cursor dialect live-fire** (flat file → Shell matcher → `updated_input` rewrite), Codex file loading |
 | `core::permissions` | deny>ask>allow>default matrix, glob specifiers |
 | `core::approval` | risk classifier catches destructive patterns |
 | `core::session` | event fold: messages, tool results, compaction boundary, corrupt-line skip, dangling tool_call synthesis |

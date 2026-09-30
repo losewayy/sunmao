@@ -24,12 +24,23 @@
 //! Commands run through the embedded POSIX shell — identical on Windows.
 //! `${CLAUDE_PLUGIN_ROOT}` in plugin-bundled commands expands to the plugin
 //! directory the hook was loaded from.
+//!
+//! Second dialect on board: **Cursor** (`hooks/cursor.rs`) — `.cursor/hooks.json`
+//! flat entries, camelCase events, `permission`/`updated_input`/`additional_context`
+//! replies normalize into the same `HookOutcome`. Codex's `.codex/hooks.json`
+//! rides the Claude path (identical file shape) and needs no normalization.
+
+mod cursor;
+mod dialect;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
+
+pub(crate) use dialect::apply_ext_reply;
+use dialect::apply_result;
 
 /// A hook process that outlives this budget is abandoned — hooks advise
 /// the loop, they must never be able to hang it.
@@ -125,6 +136,10 @@ struct MatcherGroup {
     matcher: String,
     #[serde(default)]
     hooks: Vec<HookCommand>,
+    /// Which file dialect built this group — cursor flat entries are
+    /// single-command groups tagged at load (claude default).
+    #[serde(skip)]
+    dialect: cursor::Dialect,
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,6 +151,17 @@ struct HookCommand {
     /// `${CLAUDE_PLUGIN_ROOT}` expansion. None for non-plugin sources.
     #[serde(skip)]
     plugin_root: Option<PathBuf>,
+    /// Dialect tag drives payload shaping + reply normalization.
+    #[serde(skip)]
+    dialect: cursor::Dialect,
+    /// The dialect-native event name the config wrote (`preToolUse` for
+    /// cursor — payload's hook_event_name must echo it verbatim).
+    #[serde(skip)]
+    event_name: String,
+    /// Per-command timeout in seconds (cursor's per-entry field). Falls
+    /// back to the global budget when unset.
+    #[serde(skip)]
+    timeout: Option<u64>,
 }
 
 pub struct HookEngine {
@@ -157,19 +183,36 @@ impl HookEngine {
     /// dialect — native contract, ecosystem configs work unmodified.
     /// `extra_roots` are preset plugin dirs — they merge last so an enabled
     /// preset's hooks run after everything the project itself declared.
+    ///
+    /// Two more dialects ride alongside: **Codex** (`.codex/hooks.json`, same
+    /// file shape — a rtk `init --codex` bundle works verbatim) and **Cursor**
+    /// (`.cursor/hooks.json` + `~/.cursor/hooks.json`, flat entries parsed by
+    /// `cursor::merge_cursor_file`; replies normalize into `HookOutcome`).
     pub fn load(cwd: &Path, session_id: &str, extra_roots: &[PathBuf]) -> Self {
         let transcript_path = crate::session::session_log_path(cwd, session_id);
         let mut groups: HashMap<String, Vec<MatcherGroup>> = HashMap::new();
         let mut paths = vec![
             cwd.join(".sunmao").join("hooks.json"),
+            cwd.join(".codex").join("hooks.json"),
             cwd.join(".claude").join("settings.json"),
             cwd.join(".claude").join("settings.local.json"),
         ];
         if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
             paths.push(Path::new(&home).join(".claude").join("settings.json"));
+            paths.push(Path::new(&home).join(".codex").join("hooks.json"));
         }
         for path in paths {
             merge_hooks_file(&mut groups, &path, None);
+        }
+        // cursor files keep their own parser — flat {command, matcher}
+        // entries tagged Dialect::Cursor so payloads/replies normalize.
+        cursor::merge_cursor_file(&mut groups, &cwd.join(".cursor").join("hooks.json"), None);
+        if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+            cursor::merge_cursor_file(
+                &mut groups,
+                &Path::new(&home).join(".cursor").join("hooks.json"),
+                None,
+            );
         }
         // plugin manifests — a plugin dir bundles hooks/mcp/skills/commands;
         // we merge its hooks section here (mcp/skills handled by their loaders)
@@ -255,7 +298,15 @@ impl HookEngine {
         let mut outcome = HookOutcome::default();
         if let Some(groups) = self.groups.get(event.as_str()) {
             for group in groups {
-                if !matches(&group.matcher, input.tool_name.unwrap_or("")) {
+                // cursor matchers filter on THEIR tool names (Shell, MCP:<t>)
+                // — everything else matches the native name.
+                let match_name = match group.dialect {
+                    cursor::Dialect::Cursor => {
+                        cursor::cursor_tool_name(input.tool_name.unwrap_or(""))
+                    }
+                    cursor::Dialect::Claude => input.tool_name.unwrap_or("").to_string(),
+                };
+                if !matches(&group.matcher, &match_name) {
                     continue;
                 }
                 for hook in &group.hooks {
@@ -264,7 +315,24 @@ impl HookEngine {
                     }
                     let command = expand_plugin_root(&hook.command, hook.plugin_root.as_deref());
                     tracing::debug!(event = event.as_str(), %command, "firing hook");
-                    match run_hook_command(&command, &payload, cwd).await {
+                    // cursor commands read a cursor-shaped payload — their
+                    // event name, their tool names, their extra fields.
+                    let hook_payload = match hook.dialect {
+                        cursor::Dialect::Cursor => cursor::cursor_payload(
+                            &hook.event_name,
+                            &self.session_id,
+                            &self
+                                .transcript_path
+                                .display()
+                                .to_string()
+                                .replace("\\\\?\\", ""),
+                            &cwd.display().to_string().replace("\\\\?\\", ""),
+                            input,
+                            &match_name,
+                        ),
+                        cursor::Dialect::Claude => payload.clone(),
+                    };
+                    match run_hook_command(&command, &hook_payload, cwd, hook.timeout).await {
                         Ok((code, stdout, stderr)) => {
                             tracing::debug!(
                                 code,
@@ -272,6 +340,12 @@ impl HookEngine {
                                 stderr = &stderr[..stderr.len().min(256)],
                                 "hook finished"
                             );
+                            // cursor replies normalize into the dialect
+                            // apply_result already parses.
+                            let stdout = match hook.dialect {
+                                cursor::Dialect::Cursor => cursor::normalize_reply(&stdout),
+                                cursor::Dialect::Claude => stdout,
+                            };
                             apply_result(code, &stdout, &stderr, &mut outcome);
                         }
                         Err(e) => {
@@ -376,47 +450,19 @@ fn matches(matcher: &str, tool_name: &str) -> bool {
     }
 }
 
-/// Extension reply folding — `ext/event` replies carry the same effects a
-/// hook can produce, with contract spellings: `block` (a reason string →
-/// block_reason), `extra_context` (string or list of them), `updatedInput`
-/// (PreToolUse rewrite), `permissionDecision` (same verdicts as the
-/// hook-specific channel). Non-object replies and junk fields drop quietly.
-pub(crate) fn apply_ext_reply(reply: &Value, outcome: &mut HookOutcome) {
-    if let Some(reason) = reply.get("block").and_then(|b| b.as_str()) {
-        outcome.block_reason = Some(reason.to_string());
-    }
-    match reply.get("extra_context") {
-        Some(Value::Array(items)) => {
-            for item in items {
-                if let Some(s) = item.as_str() {
-                    outcome.extra_context.push(s.to_string());
-                }
-            }
-        }
-        Some(Value::String(s)) => outcome.extra_context.push(s.clone()),
-        _ => {}
-    }
-    if let Some(updated) = reply.get("updatedInput") {
-        outcome.updated_input = Some(updated.clone());
-    }
-    match reply.get("permissionDecision").and_then(|d| d.as_str()) {
-        Some("deny") => outcome.permission_decision = Some(HookPermission::Deny),
-        Some("ask") => outcome.permission_decision = Some(HookPermission::Ask),
-        Some("allow") => outcome.permission_decision = Some(HookPermission::Allow),
-        _ => {}
-    }
-}
-
 /// Hook commands get the payload on stdin and run under the embedded shell,
 /// same as the Bash tool — one execution model for all shell surfaces.
+/// `timeout_secs` overrides the global budget (cursor per-entry `timeout`).
 async fn run_hook_command(
     command: &str,
     payload: &Value,
     cwd: &Path,
+    timeout_secs: Option<u64>,
 ) -> anyhow::Result<(i32, String, String)> {
     let command = command.to_string();
     let payload = serde_json::to_string(payload)?;
     let cwd = cwd.to_path_buf();
+    let budget = timeout_secs.unwrap_or(HOOK_TIMEOUT_SECS);
     tokio::task::spawn_blocking(move || -> anyhow::Result<(i32, String, String)> {
         let list = deno_task_shell::parser::parse(&command)
             .map_err(|e| anyhow::anyhow!("bad hook command: {e}"))?;
@@ -445,7 +491,7 @@ async fn run_hook_command(
         );
         let rt = tokio::runtime::Handle::current();
         let code = match rt.block_on(tokio::time::timeout(
-            std::time::Duration::from_secs(HOOK_TIMEOUT_SECS),
+            std::time::Duration::from_secs(budget),
             exec,
         )) {
             Ok(code) => code,
@@ -453,7 +499,7 @@ async fn run_hook_command(
                 // a hung hook must not stall the agent. The feed thread is
                 // deliberately NOT joined — joining a still-writing stdin
                 // would re-create the stall we're escaping.
-                anyhow::bail!("hook timed out after {HOOK_TIMEOUT_SECS}s");
+                anyhow::bail!("hook timed out after {budget}s");
             }
         };
         let _ = feed_thread.join();
@@ -468,78 +514,6 @@ async fn run_hook_command(
         ))
     })
     .await?
-}
-
-/// Dialect semantics: exit 2 = block (stderr is the reason); exit 0 + JSON
-/// stdout may carry `decision`/`systemMessage`/`hookSpecificOutput.{additionalContext,
-/// permissionDecision,updatedInput}`.
-fn apply_result(code: i32, stdout: &str, stderr: &str, outcome: &mut HookOutcome) {
-    if code == 2 {
-        let reason = stderr.trim();
-        outcome.block_reason = Some(if reason.is_empty() {
-            "blocked by hook".into()
-        } else {
-            reason.to_string()
-        });
-        return;
-    }
-    if code != 0 {
-        return; // non-zero non-2: hook error, not a block
-    }
-    let text = stdout.trim();
-    if text.is_empty() {
-        return;
-    }
-    if let Ok(v) = serde_json::from_str::<Value>(text) {
-        if v.get("continue").and_then(|c| c.as_bool()) == Some(false) {
-            outcome.block_reason = Some(
-                v.get("stopReason")
-                    .and_then(|r| r.as_str())
-                    .unwrap_or("stopped by hook")
-                    .to_string(),
-            );
-        }
-        if let Some(msg) = v.get("systemMessage").and_then(|m| m.as_str()) {
-            outcome.extra_context.push(msg.to_string());
-        }
-        if let Some(ctx) = v
-            .pointer("/hookSpecificOutput/additionalContext")
-            .and_then(|c| c.as_str())
-        {
-            outcome.extra_context.push(ctx.to_string());
-        }
-        // hookSpecificOutput.permissionDecision — the dialect's verdict channel.
-        // deny overrides everything else a hook can say.
-        match v
-            .pointer("/hookSpecificOutput/permissionDecision")
-            .and_then(|d| d.as_str())
-        {
-            Some("deny") => {
-                outcome.permission_decision = Some(HookPermission::Deny);
-                let reason = v
-                    .pointer("/hookSpecificOutput/permissionDecisionReason")
-                    .and_then(|r| r.as_str())
-                    .unwrap_or("denied by hook");
-                outcome.block_reason = Some(reason.to_string());
-            }
-            Some("ask") => outcome.permission_decision = Some(HookPermission::Ask),
-            Some("allow") => outcome.permission_decision = Some(HookPermission::Allow),
-            _ => {}
-        }
-        // PreToolUse input rewrite — the hook replaces the tool arguments
-        // wholesale (rtk's command-rewrite mechanism depends on this).
-        if let Some(updated) = v.pointer("/hookSpecificOutput/updatedInput") {
-            outcome.updated_input = Some(updated.clone());
-        }
-        // PreToolUse/PostToolUse "decision": "block" (older dialect spelling)
-        if v.get("decision").and_then(|d| d.as_str()) == Some("block") {
-            let reason = v
-                .get("reason")
-                .and_then(|r| r.as_str())
-                .unwrap_or("blocked by hook");
-            outcome.block_reason = Some(reason.to_string());
-        }
-    }
 }
 
 #[cfg(test)]

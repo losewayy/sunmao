@@ -94,7 +94,7 @@ async fn subagent_tool_events_reach_live_sink_at_depth() {
         ])),
         calls: std::sync::atomic::AtomicUsize::new(0),
     });
-    let dir = std::env::temp_dir().join(format!("sunmao-depth-{}", std::process::id()));
+    let dir = crate::fresh_test_dir("depth");
     let ctx = Arc::new(Context::new(
         provider,
         SessionLog::ephemeral(),
@@ -187,7 +187,7 @@ async fn batch_tasks_fan_out_on_distinct_lanes() {
         ])),
         calls: std::sync::atomic::AtomicUsize::new(0),
     });
-    let dir = std::env::temp_dir().join(format!("sunmao-batch-{}", std::process::id()));
+    let dir = crate::fresh_test_dir("batch");
     let ctx = Arc::new(Context::new(
         provider.clone(),
         SessionLog::ephemeral(),

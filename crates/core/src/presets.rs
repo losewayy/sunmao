@@ -84,14 +84,7 @@ mod tests {
     use super::*;
 
     fn sandbox(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "sunmao-preset-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
+        let dir = crate::fresh_test_dir(&format!("preset-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

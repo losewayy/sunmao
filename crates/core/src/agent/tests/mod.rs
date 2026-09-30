@@ -82,6 +82,7 @@ fn live_event_wire_shape_is_stable() {
             name: "plan".into(),
             path: ".sunmao/artifacts/plan.html".into(),
             bytes: 42,
+            rev: 1,
         },
         LiveEvent::Usage(Usage::default()),
         LiveEvent::TurnEnd {

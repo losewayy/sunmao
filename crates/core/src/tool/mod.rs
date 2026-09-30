@@ -140,7 +140,7 @@ mod shell;
 mod todo;
 mod webmod;
 
-pub use artifact::HtmlArtifactTool;
+pub use artifact::{HtmlArtifactTool, artifact_rev};
 pub use fs::{EditTool, ReadTool, WriteTool};
 pub use search::{GlobTool, GrepTool};
 pub use shell::{BashTool, JobOutputTool, ShellRun, render_run, run_foreground};

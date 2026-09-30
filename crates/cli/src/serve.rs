@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, Result};
 use axum::Json;
-use axum::extract::{Path as AxPath, State, WebSocketUpgrade};
+use axum::extract::{Path as AxPath, Query, State, WebSocketUpgrade};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
@@ -250,15 +250,54 @@ async fn fork_or_resume(s: &Arc<Shared>, id: &str, fork: bool) -> Result<serde_j
     Ok(serde_json::json!({"session": new_id, "events": events.len()}))
 }
 
-async fn artifact_get(State(s): State<Arc<Shared>>, AxPath(name): AxPath<String>) -> Response {
+#[derive(serde::Deserialize)]
+struct RevQuery {
+    rev: Option<usize>,
+}
+
+/// `GET /artifacts/{name}[?rev=k]` — the versioned read (GUI.md §3).
+/// Latest is always `{name}.html`; history lives at `{name}.v{rev-1}.html`.
+async fn artifact_get(
+    State(s): State<Arc<Shared>>,
+    AxPath(name): AxPath<String>,
+    Query(q): Query<RevQuery>,
+) -> Response {
     if !safe_name(&name) {
         return (StatusCode::BAD_REQUEST, "bad artifact name").into_response();
     }
-    let p = artifact_dir(&s.cwd).join(format!("{name}.html"));
+    let dir = artifact_dir(&s.cwd);
+    let latest = sunmao_core::tool::artifact_rev(&dir, &name);
+    if latest == 0 {
+        return (StatusCode::NOT_FOUND, "no such artifact").into_response();
+    }
+    let p = match q.rev.unwrap_or(latest) {
+        r if r == 0 || r == latest => dir.join(format!("{name}.html")),
+        r if r < latest => dir.join(format!("{name}.v{r}.html")),
+        _ => {
+            return (
+                StatusCode::NOT_FOUND,
+                format!("no rev — latest is {latest}"),
+            )
+                .into_response();
+        }
+    };
     match tokio::fs::read(&p).await {
         Ok(bytes) => ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], bytes).into_response(),
-        Err(_) => (StatusCode::NOT_FOUND, "no such artifact").into_response(),
+        Err(_) => (StatusCode::NOT_FOUND, "no such revision").into_response(),
     }
+}
+
+/// `GET /artifacts/{name}/revs` → `{"rev": N}` — the island's ◀ ▶ nav
+/// resolves the newest version lazily instead of trusting the event payload
+/// (a page reload can sit behind the artifact's true state).
+async fn artifact_revs(State(s): State<Arc<Shared>>, AxPath(name): AxPath<String>) -> Response {
+    if !safe_name(&name) {
+        return (StatusCode::BAD_REQUEST, "bad artifact name").into_response();
+    }
+    Json(serde_json::json!({
+        "rev": sunmao_core::tool::artifact_rev(&artifact_dir(&s.cwd), &name),
+    }))
+    .into_response()
 }
 
 async fn artifact_notes(State(s): State<Arc<Shared>>, AxPath(name): AxPath<String>) -> Response {
@@ -502,6 +541,7 @@ pub async fn run(
         .route("/session/{id}/resume", post(resume_session))
         .route("/session/{id}/fork", post(fork_session))
         .route("/artifacts/{name}", get(artifact_get))
+        .route("/artifacts/{name}/revs", get(artifact_revs))
         .route("/artifacts/{name}/notes", get(artifact_notes))
         .route("/artifacts/{name}/annotate", post(artifact_annotate))
         .route("/dataflow", get(dataflow_current))

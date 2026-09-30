@@ -126,6 +126,16 @@ impl App {
                     self.last_usage = Some(usage.clone());
                 }
                 E::Started { .. } | E::Artifact { .. } => {}
+                E::Todos { items } => {
+                    // the task list is durable state, not transcript — a
+                    // resumed session shows it once, as a note.
+                    if !items.is_empty() {
+                        self.push_note(&format!(
+                            "task list:\n{}",
+                            sunmao_core::tool::render_todos(items)
+                        ));
+                    }
+                }
                 E::Message { message } => match message.role {
                     Role::User => {
                         if let Some(c) = &message.content {

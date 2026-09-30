@@ -74,7 +74,7 @@
 
 ### 4.3 `tools` — 作用域注册表 + 受控执行管线
 
-- 内置工具命名**强制对齐主流词表**：`Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob`、`WebFetch`、`JobOutput`、`HtmlArtifact`、`Task`——hook matcher 免费命中
+- 内置工具命名**强制对齐主流词表**：`Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob`、`WebFetch`、`JobOutput`、`HtmlArtifact`、`Task`、`TodoWrite`——hook matcher 免费命中
 - MCP 工具命名空间：`mcp__{server}__{tool}`——`mcp__*` matcher 免费命中
 - 执行管线串缝：`pre`(hooks+审批) → `exec` → `post`(hooks) —— 拦截点全部公开给 `ctx.audit` 与 `ctx.hooks`
 

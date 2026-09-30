@@ -404,6 +404,9 @@ fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
         Submit::Tasks => {
             let _ = tx_input.send(Submit::Tasks);
         }
+        Submit::Todos => {
+            let _ = tx_input.send(Submit::Todos);
+        }
         Submit::Artifacts => {
             let _ = tx_input.send(Submit::Artifacts);
         }

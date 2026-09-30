@@ -344,6 +344,12 @@ impl AgentLoop {
         self.ctx.live_tasks.lock().unwrap().clone()
     }
 
+    /// The model's current task list (`/todos`) — the hot snapshot the
+    /// `Todos` events keep durable.
+    pub fn todos(&self) -> Vec<crate::tool::TodoItem> {
+        self.ctx.todos.lock().unwrap().clone()
+    }
+
     /// Record a `!` local-shell run as a durable session fact. The event
     /// folds into the message stream as a tagged user message, so the next
     /// turn sees the evidence the user just produced.
@@ -368,6 +374,9 @@ impl AgentLoop {
             let mut cur = self.ctx.sessions.lock().await;
             *cur = log;
         }
+        // the new log's task list becomes the live snapshot — resume must
+        // not inherit the abandoned session's plan.
+        self.ctx.reseed_todos(&events);
         let _ = self
             .ctx
             .hooks

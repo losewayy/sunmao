@@ -132,7 +132,7 @@ pub struct Viewer {
 const HELP_TEXT: &str = "keys — Tab browse blocks · Enter expand · e fold · y copy · \
 g/G ends · ! bash · / commands · Esc×2 stash draft · Ctrl+S restore · \
 Ctrl+A/E/U/W line edit · Ctrl-C cancel, ×2 quits
-commands — /compact · /model · /multiline · /clear · /resume [id] · /tasks · /artifacts · /annotate · /help · /quit · \
+commands — /compact · /model · /multiline · /clear · /resume [id] · /tasks · /todos · /artifacts · /annotate · /help · /quit · \
 + every *.md in .sunmao/commands, .claude/commands, plugins/*/commands";
 
 /// One cached transcript entry: the block's `gen` and the width/selection
@@ -161,6 +161,8 @@ pub enum Submit {
     Model(Option<String>),
     /// /tasks — the live sub-agent roster
     Tasks,
+    /// /todos — the model's session task list
+    Todos,
     /// /artifacts — the .sunmao/artifacts listing
     Artifacts,
     /// /annotate <name> <note> — human notes into artifact state.json
@@ -407,6 +409,8 @@ impl App {
                     }
                     // /tasks — the live sub-agent roster, driver-side too
                     "tasks" => Submit::Tasks,
+                    // /todos — the model's task list, driver-side too
+                    "todos" => Submit::Todos,
                     // /artifacts — .sunmao/artifacts listing, driver-side
                     "artifacts" => Submit::Artifacts,
                     // /annotate <name> <note> — margin notes for the agent

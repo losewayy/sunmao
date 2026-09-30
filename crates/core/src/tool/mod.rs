@@ -127,6 +127,7 @@ pub fn builtin_registry() -> ToolRegistry {
     r.register(GrepTool);
     r.register(JobOutputTool);
     r.register(HtmlArtifactTool);
+    r.register(TodoWriteTool);
     r.register(crate::task::TaskTool);
     r.register(WebFetchTool);
     r
@@ -136,12 +137,17 @@ mod artifact;
 mod fs;
 mod search;
 mod shell;
+mod todo;
 mod webmod;
 
 pub use artifact::HtmlArtifactTool;
 pub use fs::{EditTool, ReadTool, WriteTool};
 pub use search::{GlobTool, GrepTool};
 pub use shell::{render_run, run_foreground, BashTool, JobOutputTool, ShellRun};
+pub(crate) use todo::TODOS_LINE_PREFIX;
+pub use todo::{
+    inject_text as todos_inject_text, render as render_todos, TodoItem, TodoStatus, TodoWriteTool,
+};
 pub use webmod::WebFetchTool;
 
 #[cfg(test)]
@@ -254,6 +260,122 @@ mod tests {
         let res = ctx.tools.call("mcp__dead__thing", "{}", &ctx).await;
         assert!(!res.ok);
         assert!(res.output.contains("mcp__dead__thing failed"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// TodoWrite is a whole-list replace: ctx snapshot + durable Todos
+    /// event land together, and the echo renders what now stands.
+    #[tokio::test]
+    async fn todowrite_replaces_and_records() {
+        let dir = fresh_dir("todo");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ctx = test_ctx(&dir);
+        let res = ctx
+            .tools
+            .call(
+                "TodoWrite",
+                &json!({"todos": [
+                    {"content": "first", "status": "done"},
+                    {"content": "second", "status": "in_progress"},
+                    {"content": "third", "status": "pending"}
+                ]})
+                .to_string(),
+                &ctx,
+            )
+            .await;
+        assert!(res.ok, "{}", res.output);
+        let items = ctx.todos.lock().unwrap().clone();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[1].status, TodoStatus::InProgress);
+        // durable fact, same payload
+        let events = ctx.sessions.lock().await.events().await.unwrap();
+        match events.last() {
+            Some(crate::session::SessionEvent::Todos { items: e }) => assert_eq!(e, &items),
+            other => panic!("expected Todos event, got {other:?}"),
+        }
+        // replace-all: the next write owns the whole list
+        let res2 = ctx
+            .tools
+            .call("TodoWrite", &json!({"todos": []}).to_string(), &ctx)
+            .await;
+        assert!(res2.ok);
+        assert!(ctx.todos.lock().unwrap().is_empty());
+    }
+
+    /// More than one in_progress is demoted, not refused — the tool is a
+    /// helper, not a gate.
+    #[tokio::test]
+    async fn todowrite_demotes_extra_in_progress() {
+        let dir = fresh_dir("tododem");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ctx = test_ctx(&dir);
+        let res = ctx
+            .tools
+            .call(
+                "TodoWrite",
+                &json!({"todos": [
+                    {"content": "a", "status": "in_progress"},
+                    {"content": "b", "status": "in_progress"}
+                ]})
+                .to_string(),
+                &ctx,
+            )
+            .await;
+        assert!(res.ok);
+        assert!(res.output.contains("demoted"));
+        let items = ctx.todos.lock().unwrap().clone();
+        assert_eq!(
+            items.iter().map(|t| t.status).collect::<Vec<_>>(),
+            vec![TodoStatus::InProgress, TodoStatus::Pending]
+        );
+        // blank content refuses loudly instead
+        let bad = ctx
+            .tools
+            .call(
+                "TodoWrite",
+                &json!({"todos": [{"content": "  ", "status": "pending"}]}).to_string(),
+                &ctx,
+            )
+            .await;
+        assert!(!bad.ok);
+    }
+
+    /// A file-backed log's last Todos event seeds Context::new — resume
+    /// continuity without replaying the whole fold.
+    #[tokio::test]
+    async fn todos_reseed_from_persisted_log() {
+        let dir = fresh_dir("todoseed");
+        std::fs::create_dir_all(&dir).unwrap();
+        let sdir = dir.join("sess");
+        let mut log = SessionLog::open(&sdir, "s1").await.unwrap();
+        log.append(&crate::session::SessionEvent::Todos {
+            items: vec![TodoItem {
+                content: "stale".into(),
+                status: TodoStatus::Pending,
+            }],
+        })
+        .await
+        .unwrap();
+        log.append(&crate::session::SessionEvent::Todos {
+            items: vec![TodoItem {
+                content: "fresh".into(),
+                status: TodoStatus::InProgress,
+            }],
+        })
+        .await
+        .unwrap();
+        drop(log);
+        let log2 = SessionLog::open(&sdir, "s1").await.unwrap();
+        let ctx = Arc::new(Context::new(
+            Arc::new(StubLlm),
+            log2,
+            builtin_registry(),
+            dir.clone(),
+        ));
+        let items = ctx.todos.lock().unwrap().clone();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].content, "fresh");
+        assert_eq!(items[0].status, TodoStatus::InProgress);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

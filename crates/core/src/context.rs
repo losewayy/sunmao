@@ -1,8 +1,8 @@
 //! Kernel context: the `ctx.*` seams assembled in one place.
 //!
-//! v0.1 ships concrete seams only — llm, sessions, tools, audit. No speculative
-//! interfaces: each field earns its indirection when a second implementation
-//! needs it.
+//! v0.1 ships concrete seams only — llm, sessions, tools, approvals. No
+//! speculative interfaces: each field earns its indirection when a second
+//! implementation needs it.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -108,6 +108,11 @@ pub struct Context {
     /// their own (a child's roster is its own spawn tree's, not ours).
     /// `Arc` because the detached spawn outlives its `&Context` borrow.
     pub live_tasks: std::sync::Arc<std::sync::Mutex<Vec<TaskEntry>>>,
+    /// The model's task list (`TodoWrite`) — seeded from the log's latest
+    /// `Todos` event at build and on `/resume`, echoed into every request
+    /// so compaction never erases the plan. The LOG is source of truth;
+    /// this is the hot snapshot for readers (turn injection, `/todos`).
+    pub todos: std::sync::Mutex<Vec<crate::tool::TodoItem>>,
 }
 
 /// One detached sub-agent in the roster.
@@ -166,6 +171,9 @@ impl Context {
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "session".to_string());
+        // seed the task-list snapshot before `sessions` moves — a resumed
+        // log carries the model's last TodoWrite.
+        let todos = seed_todos(sessions.path());
         Self {
             llm,
             llm_override: std::sync::RwLock::new(None),
@@ -192,7 +200,22 @@ impl Context {
             ext: Arc::new(ExtRegistry::new()),
             loop_driver,
             live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            todos: std::sync::Mutex::new(todos),
         }
+    }
+
+    /// Re-point the task-list snapshot at the events of a swapped-in log
+    /// (`/resume`). Last `Todos` fact wins; a log without one clears it.
+    pub fn reseed_todos(&self, events: &[crate::session::SessionEvent]) {
+        let items = events
+            .iter()
+            .rev()
+            .find_map(|ev| match ev {
+                crate::session::SessionEvent::Todos { items } => Some(items.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        *self.todos.lock().unwrap() = items;
     }
 
     /// Spawn every extension the plugin manifests declare: resolve specs,
@@ -283,4 +306,27 @@ impl Context {
             .unwrap()
             .insert(format!("{tool}\t{specifier}"));
     }
+}
+
+/// Recover the task list a persisted log ended on: scan for `Todos`
+/// event lines (prefiltered by the serializer's literal prefix) and take
+/// the last one. Ephemeral logs and missing files seed empty — a fresh
+/// session simply has no list yet.
+fn seed_todos(path: &std::path::Path) -> Vec<crate::tool::TodoItem> {
+    if path.as_os_str().is_empty() {
+        return Vec::new();
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    for line in text.lines().rev() {
+        if line.starts_with(crate::tool::TODOS_LINE_PREFIX) {
+            if let Ok(crate::session::SessionEvent::Todos { items }) =
+                serde_json::from_str::<crate::session::SessionEvent>(line)
+            {
+                return items;
+            }
+        }
+    }
+    Vec::new()
 }

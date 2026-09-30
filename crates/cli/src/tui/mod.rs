@@ -262,6 +262,16 @@ async fn run_inner(
                         let _ = tx_msg.send(Msg::Note(slash::artifacts_text(&driver_cwd)));
                         continue;
                     }
+                    Submit::Todos => {
+                        let items = agent.todos();
+                        let text = if items.is_empty() {
+                            "[no task list — TodoWrite creates it]".to_string()
+                        } else {
+                            format!("task list:\n{}", sunmao_core::tool::render_todos(&items))
+                        };
+                        let _ = tx_msg.send(Msg::Note(text));
+                        continue;
+                    }
                     Submit::Annotate(name, note) => {
                         let _ = tx_msg.send(Msg::Note(slash::annotate(&driver_cwd, &name, &note)));
                         continue;

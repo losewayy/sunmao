@@ -218,6 +218,17 @@ impl AgentLoop {
             }
 
             let messages = self.ctx.sessions.lock().await.messages().await?;
+            let mut messages = messages;
+            {
+                let items = self.ctx.todos.lock().unwrap().clone();
+                if !items.is_empty() {
+                    // the durable Todos fact lives in the log; the model
+                    // needs it *in* the transcript — synthetic head-of-
+                    // request message, never appended. Head placement is
+                    // safe against tool_call/tool_result pairing rules.
+                    messages.insert(0, Message::user(crate::tool::todos_inject_text(&items)));
+                }
+            }
             let decls = self.ctx.tools.declarations();
             let req = ChatRequest {
                 messages: &messages,

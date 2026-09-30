@@ -202,3 +202,41 @@ async fn cancel_flag_breaks_loop() {
     assert!(matches!(outcome, TurnOutcome::Other(ref s) if s == "cancelled"));
     assert_eq!(provider.calls.load(std::sync::atomic::Ordering::Relaxed), 0);
 }
+
+/// The turn fence: a context's turns serialize — a second run_turn queues
+/// on `ctx.turn_lock` instead of interleaving facts into the same log.
+/// Proven by holding the lock externally: the turn never reaches the
+/// provider until it's released.
+#[tokio::test]
+async fn concurrent_turns_queue_on_the_fence() {
+    let provider = Arc::new(MockProvider {
+        responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![vec![
+            StreamDelta::Content("hi".into()),
+            StreamDelta::Finish {
+                reason: Some("stop".into()),
+                usage: None,
+            },
+        ]])),
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let ctx = Arc::new(Context::new(
+        provider.clone(),
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        std::env::temp_dir(),
+    ));
+    // hold the fence — the spawned turn must stall before its first call
+    let guard = ctx.turn_lock.lock().await;
+    let agent = AgentLoop::new(ctx.clone());
+    let turn = tokio::spawn(async move { agent.run_turn("go", &NullObserver).await });
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    assert_eq!(
+        provider.calls.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "a queued turn must not reach the provider behind the fence"
+    );
+    drop(guard);
+    let outcome = turn.await.unwrap().unwrap();
+    assert!(matches!(outcome, TurnOutcome::Completed));
+    assert_eq!(provider.calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+}

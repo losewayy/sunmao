@@ -87,6 +87,10 @@ with lint debt or shape debt.
 - **Cancelled flag resets at turn END, not start** — a cancel issued before
   `run_turn` still must take effect; a mid-turn cancel is consumed and the
   next turn starts clean.
+- **One turn per Context** — `ctx.turn_lock` is the replay fence: `run_turn`,
+  `compact`, `swap_session`, `record_local_shell` all serialize through it.
+  Two concurrent turns must never interleave facts into one log. Sub-agent
+  contexts carry their own lock; parallel children stay parallel.
 - **Tool surface is a dialect too** — `declarations()` shapes go to the
   model verbatim; a bad JSON schema = the tool doesn't exist to the LLM.
 - **Product semantics are files, not literals** — prompt sections live in

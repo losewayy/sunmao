@@ -9,7 +9,20 @@ impl AgentLoop {
     /// Ask the model to summarize the transcript, then commit a `Compacted`
     /// boundary — the log fold turns it into a fresh system message.
     /// Returns the summary so frontends can show what the fold produced.
+    /// Standalone calls (the `/compact` builtin) queue behind the turn
+    /// fence; the in-turn auto-compaction uses `compact_inner`, which the
+    /// held permit already covers (tokio Mutex isn't reentrant — locking
+    /// here too would deadlock the loop).
     pub async fn compact(&self, observer: &dyn Observer, trigger: &str) -> anyhow::Result<String> {
+        let _turn_permit = self.ctx.turn_lock.lock().await;
+        self.compact_inner(observer, trigger).await
+    }
+
+    pub(super) async fn compact_inner(
+        &self,
+        observer: &dyn Observer,
+        trigger: &str,
+    ) -> anyhow::Result<String> {
         // PreCompact may veto or annotate the compaction (the dialect's
         // snapshot hook point — context-mode hangs its state capture here).
         let pre = self
@@ -83,6 +96,12 @@ impl AgentLoop {
     /// Run one turn: `input` is the user's message; returns when the model
     /// stops calling tools or we hit the iteration ceiling.
     ///
+    /// Turns serialize on `ctx.turn_lock` — a second concurrent run_turn
+    /// queues instead of interleaving facts into the session log. That's
+    /// the replay fence: one turn's ToolCall/ToolResult events can never
+    /// straddle a predecessor's, so the fold the next request sees is
+    /// always a well-formed transcript.
+    ///
     /// Frontends depend on TurnEnd to unwind their "working" state — so
     /// even an Err path emits one (`Other("<error>")`) before propagating.
     /// The error string doubles as the outcome detail; the observer's
@@ -96,6 +115,7 @@ impl AgentLoop {
         input: &str,
         observer: &dyn Observer,
     ) -> anyhow::Result<TurnOutcome> {
+        let _turn_permit = self.ctx.turn_lock.lock().await;
         match self.ctx.loop_driver {
             crate::agent::LoopDriver::Full => self.run_turn_full(input, observer).await,
             crate::agent::LoopDriver::Bare => self.run_turn_bare(input, observer).await,
@@ -206,7 +226,7 @@ impl AgentLoop {
                     depth: self.ctx.depth,
                     lane: self.ctx.lane,
                 });
-                if let Err(e) = self.compact(observer, "auto").await {
+                if let Err(e) = self.compact_inner(observer, "auto").await {
                     observer.on_event(&LiveEvent::ToolDone {
                         name: format!("compact failed: {e:#}"),
                         ok: false,

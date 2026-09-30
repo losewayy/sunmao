@@ -172,6 +172,15 @@ TUI.
   back to the whole-string check. SPEC's `tree-sitter-bash` plan dropped:
   the executor's own grammar is the only authoritative one — a second
   parser would drift and add a dep for nothing
+- **turn fence** (SPEC §4.1's watermark replay fencing) — `ctx.turn_lock`
+  serializes `run_turn`, `compact`, `swap_session` and `record_local_shell`
+  per context: concurrent prompts (ACP spawns one per request) queue
+  instead of interleaving ToolCall/ToolResult facts into one transcript.
+  `compact()` splits — public entry takes the fence, in-turn auto-compact
+  uses `compact_inner` under the already-held permit (tokio Mutex isn't
+  reentrant). SPEC §4.5 calibrated: the `agent/*` event domain = typed
+  `LiveEvent` over `Observer`/`live_sink`; deliver/cancel/intercept =
+  `run_turn`/`cancel()`/gate — compile-time contract, not a string bus
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

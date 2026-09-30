@@ -497,6 +497,8 @@ async fn spawn_parts(ctx: &Context, def: Option<&crate::agents::AgentDef>) -> (S
         // the child's list is its own plan, not a copy of the parent's —
         // sub-session logs only carry their own Todos events.
         todos: std::sync::Mutex::new(Vec::new()),
+        // own fence: children must never queue behind the parent's turn
+        turn_lock: tokio::sync::Mutex::new(()),
     };
     // extension children come up in the child's scope; their tools follow
     // the same `tools:` whitelist rule as native ones — an ext tool not on

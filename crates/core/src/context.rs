@@ -113,6 +113,15 @@ pub struct Context {
     /// so compaction never erases the plan. The LOG is source of truth;
     /// this is the hot snapshot for readers (turn injection, `/todos`).
     pub todos: std::sync::Mutex<Vec<crate::tool::TodoItem>>,
+    /// One turn at a time per context — the watermark fence. Concurrent
+    /// `run_turn` calls (ACP `session/prompt` is per-request spawned, and
+    /// any frontend could double-submit) would otherwise interleave
+    /// ToolCall/ToolResult facts into the same log and corrupt the
+    /// transcript; the mutex makes turns queue instead of weave. A second
+    /// turn's events can never straddle a predecessor's — replay stays
+    /// honest. Sub-agent contexts hold their own lock: parallel children
+    /// stay parallel.
+    pub turn_lock: tokio::sync::Mutex<()>,
 }
 
 /// One detached sub-agent in the roster.
@@ -201,6 +210,7 @@ impl Context {
             loop_driver,
             live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             todos: std::sync::Mutex::new(todos),
+            turn_lock: tokio::sync::Mutex::new(()),
         }
     }
 

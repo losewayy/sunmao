@@ -7,7 +7,8 @@ has (or should gain) a live pass against the real provider stack.
 ## Unit tests
 
 ```bash
-cargo test --workspace    # 40 tests
+cargo test --workspace    # ~95 tests
+cargo run -p xtask -- arch # shape gate — god files, layer direction, prose-in-code
 ```
 
 Current coverage:
@@ -17,14 +18,19 @@ Current coverage:
 | `llm::sse` | incremental SSE framing (split events, CRLF, keepalives, `[DONE]`) |
 | `llm::assemble` | tool_call fragment reassembly incl. malformed-JSON rejection |
 | `llm::anthropic` | block mapping (system fold, tool_use/tool_result, stream events) |
-| `core::agent` (MockProvider) | full loop: plain turn, tool round-trip, cancel, malformed-args feedback |
-| `core::tool` | read-before-write gate (deny→read→allow), Edit normalization |
-| `core::hooks` | matcher semantics, live exit-2 veto via real subprocess |
+| `core::agent` (MockProvider) | full loop: plain turn, tool round-trip, cancel, malformed-args feedback, hook veto mid-loop, model routing + `/model` override |
+| `core::task` | detached `run_in_background` → TaskDone push into parent log, unique spawn ids, spawns-whitelist + self-recursion guard |
+| `core::tool` | read-before-write gate (deny→read→allow), Edit normalization, dying tool backend → failed result not turn abort |
+| `core::hooks` | matcher semantics, live exit-2 veto via real subprocess, **rtk binary rewrite** + SessionStart/source contract |
 | `core::permissions` | deny>ask>allow>default matrix, glob specifiers |
 | `core::approval` | risk classifier catches destructive patterns |
-| `core::session` | event fold: messages, tool results, compaction boundary |
+| `core::session` | event fold: messages, tool results, compaction boundary, corrupt-line skip, dangling tool_call synthesis |
 | `core::prompt` | section layering: built-ins order, `--system` complete, `prompt.d` replace-by-name, AGENTS.md merge, subagent default/override |
+| `core::plugin` | install/list/remove roundtrip, name sanitization, overwrite-then-force, self-install refusal |
+| `core::presets` | name resolution (`+` strip), CLI order layering, unknown-name error lists searched dirs, preset hook actually fires |
 | `core::preflight` | AST extraction (pipelines, booleans, dynamic-skip), fatal-note advisory (spawnfate) |
+| `cli::eval` | case-file parsing (object/array/JSONL), assertion checks against session facts |
+| `cli::tui` | keymap dispatch, slash-menu completion (`@route`, `provider/`), render-cache wrap invariants |
 
 The `MockProvider` in `agent::tests` is the pattern to reuse: `ProviderAdapter`
 is a trait, so scripted `Vec<StreamDelta>` queues drive the whole agent loop
@@ -52,6 +58,11 @@ Verified live as of v0.2:
 | ACP | raw JSON-RPC smoke: initialize→session/new→prompt→streamed chunks |
 | TUI | CJK input renders; block browse (Tab/j/k/e/y), approval card (1-2/Esc park), `/` popup, markdown render, `❯` prompt band, tool digest headers + output panels, `×N` verb-grouping — manual smoke in `sunmao --tui` |
 | Task | `subagent_type` loaded `.claude/agents/*.md`, independent count returned |
+| Task run_in_background | detached child appended `TaskDone` to the parent log; `agent::tests::subagents` + `task::tests` cover the push path |
+| `/model` + models.json | TUI `/model` arg completion + override adapter install; `agent::tests::models` covers routing + swap |
+| `--preset` | `examples/presets/strict-audit/` live-smoked: `--preset nope` fails startup with searched dirs; a SessionStart hook in the preset fired only when named |
+| `sunmao plugin` | install/list/remove roundtrip incl. `owner/repo` git-source classification; real clone path shells `git` |
+| `sunmao eval` | live run against the local provider: PASS/FAIL lines, exit code, `--report` JSON |
 | `--dataflow` | JSON report incl. token totals from `Usage` events |
 | `--doctor` | provider probe + rg + session dir + config inventory + prompt assembly preview |
 | `shell/preflight` | `-p` ran `totallynotreal-xyz`: advisory predicted FileNotFound (936 candidates), shell answered 127 — model reported both honestly |

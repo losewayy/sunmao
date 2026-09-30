@@ -234,6 +234,16 @@ TUI.
   model gets the full bytes, file-command args expand too, `!`-mode
   keeps them literal. `/clear` resets the stash so numbers can't
   collide across transcripts
+- **cache-hit discipline** — the todos snapshot moved from head-of-
+  request injection to tail: inserting at index 0 invalidated the
+  provider's whole prompt prefix every time the plan moved; appended
+  after the last message it follows pairing rules and leaves the
+  entire history prefix byte-stable. The rest of the cache story:
+  `BTreeMap` tool declarations (stable ordering), sorted skill/
+  command indexes, and the Anthropic dialect's `cache_control`
+  breakpoints
+- acp: the permission prompt's description names the specifier a
+  session grant would cover
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

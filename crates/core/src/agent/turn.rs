@@ -46,7 +46,7 @@ impl AgentLoop {
             return Ok(());
         }
         // default: the risky-pattern classifier (Bash-shaped patterns today)
-        if let Some(why) = crate::approval::classify(specifier) {
+        if let Some(why) = crate::approval::classify(specifier, &self.ctx.risk_table) {
             return self.ask(tool, specifier, why, observer).await;
         }
         Ok(())

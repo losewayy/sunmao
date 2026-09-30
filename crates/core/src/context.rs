@@ -79,6 +79,10 @@ pub struct Context {
     /// can be gated by that def's `spawns:` whitelist (and self-recursion
     /// blocked).
     pub agent_name: Option<String>,
+    /// The approval gate's risk table — parsed once from
+    /// `.sunmao/risky-patterns.txt` when present, else the shipped default.
+    /// The file IS the policy: replace it and the gate's judgement changes.
+    pub risk_table: Vec<(String, String)>,
     /// Plugin roots layered on top of the convention dirs — resolved
     /// `--preset` dirs. Install via `with_extra_plugin_roots` so the derived
     /// seams (hooks, permissions) reload; consumers append these last,
@@ -95,6 +99,9 @@ impl Context {
         cwd: PathBuf,
     ) -> Self {
         let permissions = crate::permissions::Permissions::load(&cwd, &[]);
+        let risk_table = std::fs::read_to_string(cwd.join(".sunmao/risky-patterns.txt"))
+            .map(|t| crate::approval::parse_table(&t))
+            .unwrap_or_else(|_| crate::approval::builtin_table());
         Self {
             llm,
             llm_override: std::sync::RwLock::new(None),
@@ -104,6 +111,7 @@ impl Context {
             hooks: HookEngine::load(&cwd, "session", &[]),
             cwd,
             permissions,
+            risk_table,
             approval: Arc::new(AllowAll),
             depth: 0,
             lane: 0,
@@ -132,6 +140,14 @@ impl Context {
         self.permissions =
             crate::permissions::Permissions::load(&self.cwd, &self.extra_plugin_roots);
         self.hooks = HookEngine::load(&self.cwd, "session", &self.extra_plugin_roots);
+        // preset risky-patterns.txt files merge into the resolved table —
+        // tightening the gate is additive; wholesale replacement stays a
+        // project-file privilege.
+        for root in &self.extra_plugin_roots {
+            if let Ok(text) = std::fs::read_to_string(root.join("risky-patterns.txt")) {
+                self.risk_table.extend(crate::approval::parse_table(&text));
+            }
+        }
         self
     }
 

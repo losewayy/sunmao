@@ -424,6 +424,9 @@ async fn spawn_parts(ctx: &Context, def: Option<&crate::agents::AgentDef>) -> (S
         audit: crate::audit::AuditLog::new(),
         permissions: crate::permissions::Permissions::load(&ctx.cwd, &ctx.extra_plugin_roots),
         approval: ctx.approval.clone(),
+        // inherit the parent's resolved table (presets already folded in —
+        // re-parsing here would append them twice)
+        risk_table: ctx.risk_table.clone(),
         // sub-agents inherit the parent's preset layers — a preset is a
         // session-level property, not per-agent
         hooks: crate::hooks::HookEngine::load(&ctx.cwd, &sub_id, &ctx.extra_plugin_roots),

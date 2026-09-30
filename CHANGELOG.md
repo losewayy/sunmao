@@ -84,6 +84,16 @@ TUI.
   is warn-and-skip — `z.toJSONSchema()` is the conversion). sendMessage/
   ui/providers stay out of the contract — a module needing them is
   pi-native, not ours
+- **SessionStart/SessionEnd on every frontend** — they were missing on
+  `-p`, the TUI, and all three ACP paths (new/resume/close); a
+  context-mode-style capture hook silently lost whole surfaces
+- **`/tasks` roster** — live sub-agent list (detached spawns register at
+  launch, `done` flips when TaskDone lands); REPL + TUI builtin, slash
+  menu entry. Kill/steer/revive deliberately stay out — our sub-agents
+  share the session, not first-class channels
+- **doctor covers extensions** — plugin manifests must parse, extension
+  specs counted, node required only when a manifest actually spawns
+  `extension-host.mjs`; `--loop` now reaches `sunmao eval` too
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

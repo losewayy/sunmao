@@ -260,6 +260,17 @@ TUI.
   after listing degrades subsequent calls to failures instead of hanging
   the loop. `compile_fixture` in lib.rs shares the rustc path between
   the ext and mcp live tests
+- **self-audit fixes** (a dogfooded `sunmao -p` review of its own loop
+  surfaced these): a UserPromptSubmit veto used to skip `TurnEnd`
+  entirely — frontends hung with the queue stuck — and `cancelled` only
+  reset on the success tail, so an Err-path turn poisoned the next.
+  Both moved to `run_turn`'s wrapper tail: every exit emits exactly one
+  TurnEnd and clears the flag. The gate's `hook allow` short-circuit no
+  longer launders deny-scoped Bash segments, Session grants now apply
+  per-segment, a detached child's `TaskDone` append takes the parent's
+  `turn_lock` (no more tool_use/tool_result splits mid-turn), and
+  malformed-args calls emit ToolStart/ToolDone + PostToolUseFailure like
+  every other settled failure
 - acp: the permission prompt's description names the specifier a
   session grant would cover
 

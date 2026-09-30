@@ -278,6 +278,17 @@ fn part_text(p: &WordPart, out: &mut String) {
         }
         WordPart::Tilde => out.push('~'),
         WordPart::Command(_) => out.push_str("$(…)"),
+        // brace alternatives render as the shell wrote them: {a,b}
+        WordPart::Brace(words) => {
+            out.push('{');
+            for (i, w) in words.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&word_text(w));
+            }
+            out.push('}');
+        }
         WordPart::Quoted(parts) => {
             for p in parts {
                 part_text(p, out);
@@ -304,8 +315,11 @@ fn static_part(p: &WordPart, out: &mut String) -> bool {
             true
         }
         WordPart::Quoted(parts) => parts.iter().all(|p| static_part(p, out)),
-        // variables, ~ expansion, $(…) — runtime values, not predictable
-        WordPart::Variable(_) | WordPart::Tilde | WordPart::Command(_) => false,
+        // variables, ~ expansion, $(…), {a,b} brace expansion — runtime
+        // values or multi-word expansion, not a single predictable word
+        WordPart::Variable(_) | WordPart::Tilde | WordPart::Command(_) | WordPart::Brace(_) => {
+            false
+        }
     }
 }
 

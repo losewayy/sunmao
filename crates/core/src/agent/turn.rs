@@ -430,6 +430,7 @@ impl AgentLoop {
                     match self
                         .gate_call(
                             &call.function.name,
+                            &args_value,
                             &specifier,
                             pre.permission_decision,
                             observer,

@@ -12,6 +12,8 @@ mod md;
 pub(crate) mod menu;
 mod render;
 mod replay;
+#[cfg(test)]
+mod replay_parity;
 pub mod slash;
 #[cfg(test)]
 mod tests;
@@ -61,6 +63,8 @@ enum Msg {
     Replay(Vec<sunmao_core::SessionEvent>),
     /// /model swap landed — carries the resolved model label for the footer
     Model(String),
+    /// /mode switch landed — footer shows the new approval stance
+    Mode(sunmao_core::agent::ApprovalMode),
 }
 
 /// A risky tool call suspended on user verdict.
@@ -262,6 +266,9 @@ async fn run_inner(
     let mut app = App::new(model, cwd.clone(), &session_id);
     app.model_selectors = model_selectors;
     app.extra_roots = extra_roots;
+    // the log's recorded stance wins — a resumed full_access session must
+    // not look like it was auto all along
+    app.approval_mode = agent.approval_mode();
     if !replay.is_empty() {
         app.replay(&replay);
     }
@@ -334,6 +341,7 @@ async fn run_inner(
             Some(Msg::Note(note)) => app.push_note(&note),
             Some(Msg::Branch(b)) => app.git_branch = b,
             Some(Msg::Model(label)) => app.model = label,
+            Some(Msg::Mode(m)) => app.approval_mode = m,
             Some(Msg::Wheel(d)) => {
                 // wheel: scrolls transcript; in the viewer it scrolls that.
                 if app.focus == Focus::Viewer {

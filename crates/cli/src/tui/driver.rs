@@ -74,6 +74,42 @@ pub(super) fn spawn(
                     }
                     continue;
                 }
+                Submit::Mode(arg) => {
+                    use sunmao_core::agent::ApprovalMode;
+                    match arg {
+                        None => {
+                            let cur = agent.approval_mode();
+                            let list = ApprovalMode::ALL
+                                .iter()
+                                .map(|m| {
+                                    let mark = if *m == cur { "→" } else { " " };
+                                    format!("  {mark} {}", m.as_str())
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            let _ = tx_msg.send(Msg::Note(format!(
+                                "approval mode: {}\n{list}",
+                                cur.as_str()
+                            )));
+                        }
+                        Some(name) => match ApprovalMode::parse(&name) {
+                            Some(m) => {
+                                agent
+                                    .set_approval_mode(m, &ChanObserver(tx_msg.clone()))
+                                    .await;
+                                let _ = tx_msg.send(Msg::Mode(m));
+                                let _ = tx_msg
+                                    .send(Msg::Note(format!("[approval mode → {}]", m.as_str())));
+                            }
+                            None => {
+                                let _ = tx_msg.send(Msg::Note(format!(
+                                    "[unknown mode: {name} — always_ask · auto · read_only · full_access]"
+                                )));
+                            }
+                        },
+                    }
+                    continue;
+                }
                 Submit::Tasks => {
                     // the live roster — detached spawns until done
                     let tasks = agent.task_roster();

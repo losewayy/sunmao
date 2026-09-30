@@ -175,21 +175,23 @@ fn slash_bare_enter_completes_not_submits() {
     assert!(app.input.ends_with(' '), "completion fills `/name `");
 }
 
-/// Arg-taking builtins complete instead of firing — `/mod`+Enter fills
-/// `/model ` and reopens the selector menu rather than listing models.
+/// Arg-taking builtins complete instead of firing — `/res`+Enter fills
+/// `/resume ` and reopens the session picker rather than resuming.
+/// (`/mod` no longer works as the fixture: `mode` is a literal prefix of
+/// `model` and sorts first — pick a non-colliding prefix.)
 #[test]
 fn slash_arg_command_enter_fills_and_reopens() {
     let (tx, mut rx) = mpsc::unbounded_channel::<Submit>();
     let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
-    for c in "/mod".chars() {
+    for c in "/res".chars() {
         app.insert_char(c);
     }
-    let m = app.slash_menu.as_ref().expect("menu opens on /mod");
-    assert_eq!(m.matches[m.selected], "model");
+    let m = app.slash_menu.as_ref().expect("menu opens on /res");
+    assert_eq!(m.matches[m.selected], "resume");
     input_key(&mut app, key(KeyCode::Enter), &tx);
     assert!(rx.try_recv().is_err(), "arg command must not submit");
-    assert_eq!(app.input, "/model ");
-    // with selectors configured the menu reopens in arg mode; a bare
+    assert_eq!(app.input, "/resume ");
+    // with sessions on disk the menu reopens in picker mode; a bare
     // fixture has none, so only the fill is contract here
 }
 

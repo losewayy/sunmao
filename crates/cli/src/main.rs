@@ -318,6 +318,13 @@ async fn main() -> anyhow::Result<()> {
     } else if interactive {
         ctx_raw.approval = Arc::new(StdinApprover { interactive: true });
     }
+    // -p is the non-interactive path — it never prompts and never
+    // read_only-blocks; pin the stance so a resumed log's ModeChange
+    // can't smuggle a restrictive mode into a headless run. (Recorded
+    // posture only — the AllowAll approver is what actually skips asks.)
+    if cli.print.is_some() {
+        *ctx_raw.approval_mode.write().unwrap() = sunmao_core::agent::ApprovalMode::FullAccess;
+    }
     // Model routing seam: `.sunmao/models.json` (+ `.claude` compat) names
     // providers and routes; agent `model:` selectors resolve through it.
     // The session's own provider registers as "default" so bare model ids

@@ -291,6 +291,27 @@ TUI.
   turn used to pair by FIFO position (GUI) or recency (TUI) and could
   cross-wire; ACP tool-call ids now key on the real id, frontends fall
   back to (name, depth, lane) only for id-less synthetic events
+- **approval modes** (SPEC §4.6) — `ApprovalMode` is session state on
+  `Context`: `always_ask` prompts on every mutating call, `auto` (the
+  default) is rule-driven as before, `read_only` refuses mutations
+  outright, `full_access` never asks — `deny` rules stay a hard refusal
+  in every mode. Mutation detection is structural, not substring: Bash
+  walks the deno_task_shell AST (output redirects, command substitutions,
+  dynamic verbs all count), a per-verb flag table catches `find -exec`/
+  `fd -x`/`sort -o`, and `git` reads by subcommand (`status`/`log` read;
+  `branch`/`tag`/`remote` only in bare listing shape). The allowlist is
+  a cold-plug file (`assets/readonly-verbs.txt`, extendable per project).
+  Switching is durable: `set_approval_mode` writes a `mode_change`
+  SessionEvent under `turn_lock`, resume reseeds the stance. Entries on
+  every frontend — `/mode` (REPL+TUI menu), the GUI composer chip, and
+  ACP `session/set_config_option` ("mode"); `-p` pins `full_access`
+- **TUI↔GUI replay parity** — one canonical transcript is the golden
+  test for the seam contract: `App::replay` and index.html's
+  `renderReplay` fold the same 30-event fixture (fake-DOM driver at
+  `serve/replay_parity.mjs`, node-skipped when absent). It caught real
+  drift the day it landed — GUI kept pre-compaction DOM, stray
+  tool_results stole pending rows, `<local-shell>` leaked as user
+  bubbles — all fixed to mirror the TUI's audit-row semantics
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

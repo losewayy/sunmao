@@ -290,6 +290,10 @@ pub(super) async fn spawn_parts(
         cancelled: std::sync::atomic::AtomicBool::new(false),
         read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),
         session_grants: ctx.session_grants.clone(),
+        // the session's stance is shared, not copied — a mid-session /mode
+        // switch applies to children already running
+        approval_mode: ctx.approval_mode.clone(),
+        readonly_verbs: ctx.readonly_verbs.clone(),
         live_sink: std::sync::OnceLock::new(),
         models: ctx.models.clone(),
         agent_name: def.map(|d| d.name.clone()),

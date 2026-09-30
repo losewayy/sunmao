@@ -1,0 +1,68 @@
+# Read-only shell verbs — the Bash whitelist under `read_only` approval mode
+# (SPEC §4.6). One command name per line; `#` comments allowed. A project
+# file `.sunmao/readonly-verbs.txt` ADDS to this list (same merge convention
+# as plugin risky-patterns.txt — tightening stays project-side, but a
+# project can widen reads for its own tools). `>`/`>>` redirects and command
+# substitutions are caught structurally before this list is consulted;
+# find/fd/sort additionally get their mutating flags checked (-exec,
+# -delete, -o FILE …) — see MUTATING_ARGS in agent/mode.rs.
+#
+# Deno task-shell builtins with read semantics are included — the others
+# (cp/mv/rm/mkdir/export/unset/args/xargs…) mutate and stay off the list.
+cat
+cd
+echo
+head
+pwd
+sleep
+true
+false
+shopt
+exit
+# External tools, read-only shapes only. Commands whose subcommands mix
+# read/write (git, node, python, cargo …) stay OFF — their binary exists on
+# disk and the verb alone can't prove the invocation reads.
+ls
+dir
+find
+fd
+tree
+file
+stat
+du
+df
+which
+where
+type
+wc
+sort
+uniq
+tr
+cut
+diff
+comm
+basename
+dirname
+realpath
+readlink
+date
+printenv
+uname
+hostname
+whoami
+id
+rg
+grep
+egrep
+fgrep
+jq
+od
+hexdump
+tail
+less
+more
+man
+tac
+rev
+# git is handled by subcommand (status/log/diff/… read; commit/push write) —
+# see GIT_READ_SUBCOMMANDS in agent/mode.rs

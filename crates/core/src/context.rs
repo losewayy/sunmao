@@ -65,6 +65,14 @@ pub struct Context {
     /// the identical call, nothing broader. `Arc` so `Task` sub-agents share
     /// the session's grants (they share the same interactive session).
     pub session_grants: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// The session's approval stance (SPEC §4.6) — the gate reads this
+    /// before deciding to prompt. `Arc` shared with sub-agents: a mode
+    /// switch mid-session takes effect for a child that's already running.
+    /// Durable via `SessionEvent::ModeChange`; seeded from the log on open.
+    pub approval_mode: std::sync::Arc<std::sync::RwLock<crate::agent::ApprovalMode>>,
+    /// Bash verbs `read_only` mode still permits — builtin list extended by
+    /// `.sunmao/readonly-verbs.txt` and plugin dirs at context build.
+    pub readonly_verbs: std::sync::Arc<std::collections::HashSet<String>>,
     /// Live-event sink for nested work — `Task` sub-agents relay their tool
     /// lifecycle here (marked with `depth`) so the frontend can show a
     /// sub-agent working instead of a silently-spinning `Task` block.
@@ -180,9 +188,34 @@ impl Context {
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "session".to_string());
-        // seed the task-list snapshot before `sessions` moves — a resumed
-        // log carries the model's last TodoWrite.
+        // seed the task-list snapshot + approval mode before `sessions`
+        // moves — a resumed log carries the last TodoWrite and the last
+        // ModeChange.
         let todos = seed_todos(sessions.path());
+        let approval_mode = seed_mode(sessions.path());
+        // readonly whitelist: builtin verbs + project file + plugin dirs,
+        // merged the same way risky-patterns stacks
+        let mut verb_extra = Vec::new();
+        for f in [
+            cwd.join(".sunmao/readonly-verbs.txt"),
+            cwd.join(".sunmao/plugin/readonly-verbs.txt"),
+        ]
+        .into_iter()
+        .chain(
+            crate::sorted_entries(&cwd.join(".sunmao").join("plugins"))
+                .into_iter()
+                .chain(crate::sorted_entries(&cwd.join(".claude").join("plugins")))
+                .map(|e| e.path().join("readonly-verbs.txt")),
+        ) {
+            if let Ok(text) = std::fs::read_to_string(&f) {
+                verb_extra.extend(
+                    text.lines()
+                        .filter(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
+                        .map(|l| l.trim().to_string()),
+                );
+            }
+        }
+        let readonly_verbs = crate::agent::mode::readonly_verbs(&verb_extra);
         Self {
             llm,
             llm_override: std::sync::RwLock::new(None),
@@ -202,6 +235,8 @@ impl Context {
             session_grants: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),
+            approval_mode: std::sync::Arc::new(std::sync::RwLock::new(approval_mode)),
+            readonly_verbs: std::sync::Arc::new(readonly_verbs),
             live_sink: std::sync::OnceLock::new(),
             models: None,
             agent_name: None,
@@ -337,4 +372,24 @@ fn seed_todos(path: &std::path::Path) -> Vec<crate::tool::TodoItem> {
         }
     }
     Vec::new()
+}
+
+/// The approval stance a reopened log left behind — last `ModeChange` wins.
+/// Same line-scan trick as `seed_todos`: cheap suffix read, no full fold.
+fn seed_mode(path: &std::path::Path) -> crate::agent::ApprovalMode {
+    if path.as_os_str().is_empty() {
+        return Default::default();
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Default::default();
+    };
+    for line in text.lines().rev() {
+        if line.contains("\"mode_change\"")
+            && let Ok(crate::session::SessionEvent::ModeChange { mode }) =
+                serde_json::from_str::<crate::session::SessionEvent>(line)
+        {
+            return mode;
+        }
+    }
+    Default::default()
 }

@@ -366,6 +366,7 @@ async fn ws_client(s: Arc<Shared>, socket: axum::extract::ws::WebSocket) {
                 "cwd": display_path(&s.cwd),
                 "slash": slash_candidates(&s),
                 "models": s.agent.model_choices(),
+                "mode": s.agent.approval_mode().as_str(),
                 "busy": s.busy.load(Ordering::Relaxed) > 0,
                 "replay": evs,
             }),
@@ -436,6 +437,26 @@ async fn ws_client(s: Arc<Shared>, socket: axum::extract::ws::WebSocket) {
                         let _ = ws_send(
                             &out_tx,
                             serde_json::json!({"type":"note","text":format!("[unknown selector: {sel}]")}),
+                        )
+                        .await;
+                    }
+                }
+            }
+            "mode" => {
+                let sel = v["sel"].as_str().unwrap_or("");
+                match sunmao_core::agent::ApprovalMode::parse(sel) {
+                    Some(m) => {
+                        s.agent
+                            .set_approval_mode(m, &WsObserver(s.live.clone()))
+                            .await;
+                        let _ = s
+                            .live
+                            .send(serde_json::json!({"type":"mode","mode":m.as_str()}));
+                    }
+                    None => {
+                        let _ = ws_send(
+                            &out_tx,
+                            serde_json::json!({"type":"note","text":format!("[unknown mode: {sel}]")}),
                         )
                         .await;
                     }

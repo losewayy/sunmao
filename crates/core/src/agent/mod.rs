@@ -18,7 +18,10 @@ use crate::session::{SessionEvent, SessionLog};
 mod bare;
 mod compact;
 mod gate;
+pub mod mode;
 mod turn;
+
+pub use mode::ApprovalMode;
 
 #[cfg(test)]
 mod tests;
@@ -334,6 +337,32 @@ impl AgentLoop {
             .await;
     }
 
+    /// The session's current approval stance (SPEC §4.6).
+    pub fn approval_mode(&self) -> ApprovalMode {
+        *self.ctx.approval_mode.read().unwrap()
+    }
+
+    /// Switch the approval stance mid-session — durable as
+    /// `SessionEvent::ModeChange` and announced live as a `Hook` audit so
+    /// "who switched to full_access when" is a reconstructible fact, not a
+    /// memory toggle. Takes the turn fence: a mode flip must not land
+    /// between a turn's ToolCall and its ToolResult.
+    /// `observer` is the frontend's sink for the audit line; pass the turn
+    /// observer when called inside a turn, or the live sink otherwise.
+    pub async fn set_approval_mode(&self, mode: ApprovalMode, observer: &dyn Observer) {
+        let _turn_permit = self.ctx.turn_lock.lock().await;
+        *self.ctx.approval_mode.write().unwrap() = mode;
+        let detail = mode.as_str();
+        {
+            let mut log = self.ctx.sessions.lock().await;
+            let _ = log.append(&SessionEvent::ModeChange { mode }).await;
+        }
+        observer.on_event(&LiveEvent::Hook {
+            event: "approval.mode".into(),
+            detail: detail.to_string(),
+        });
+    }
+
     /// List what `/model` can switch to — route names + provider names.
     pub fn model_choices(&self) -> Vec<String> {
         self.ctx
@@ -412,9 +441,20 @@ impl AgentLoop {
         }
         *self.ctx.session_id.write().unwrap() = new_id.clone();
         self.ctx.hooks.retarget(&new_id, new_path);
-        // the new log's task list becomes the live snapshot — resume must
-        // not inherit the abandoned session's plan.
+        // the new log's task list + approval stance become the live
+        // state — resume must not inherit the abandoned session's plan
+        // nor its mode (a full_access session shouldn't follow the next
+        // prompt into a different log).
         self.ctx.reseed_todos(&events);
+        let mode = events
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                SessionEvent::ModeChange { mode } => Some(*mode),
+                _ => None,
+            })
+            .unwrap_or_default();
+        *self.ctx.approval_mode.write().unwrap() = mode;
         let _ = self
             .ctx
             .hooks

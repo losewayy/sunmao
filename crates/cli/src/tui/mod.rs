@@ -351,13 +351,7 @@ async fn run_inner(
                             let name = cmd_line.split_whitespace().next().unwrap_or("");
                             let rest = cmd_line[name.len()..].trim();
                             match slash::command_body(&driver_cwd, &driver_roots, name) {
-                                Some(body) => {
-                                    if rest.is_empty() {
-                                        body
-                                    } else {
-                                        format!("{body}\n\n{rest}")
-                                    }
-                                }
+                                Some(body) => slash::expand_command(&body, rest),
                                 None => {
                                     let _ = tx_msg
                                         .send(Msg::Note(format!("[unknown command: /{name}]")));

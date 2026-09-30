@@ -17,3 +17,4 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - run: cargo run -p xtask -- arch   # shape gate: god files, layer direction, prose-in-code

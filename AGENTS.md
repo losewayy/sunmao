@@ -51,15 +51,19 @@ examples/      starter hooks/mcp/permissions/agents/commands files
 
 ```bash
 cargo build                          # dev build
-cargo test --workspace               # 40 unit tests incl. 4 full loop tests
+cargo test --workspace               # unit tests incl. full loop tests
 cargo fmt --all                      # before every commit
 cargo clippy --workspace --all-targets -- -D warnings   # CI's strict gate —
                                        # must be zero warnings before push
+cargo run -p xtask -- arch           # shape gate — god files (>600 lines),
+                                     # layer direction (cli→core→llm only),
+                                     # prose-in-code (rule 6). CI fails on it.
 ./target/debug/sunmao --doctor       # env self-check (provider/rg/session dir)
 ```
 
-CI on every push to main = fmt check + clippy -D warnings + workspace test on
-`windows-latest`. A red run emails the maintainer; do not push with lint debt.
+CI on every push to main = fmt check + clippy -D warnings + workspace test +
+`xtask arch` on `windows-latest`. A red run emails the maintainer; do not push
+with lint debt or shape debt.
 
 ## Hard invariants (breaking any of these is a bug)
 

@@ -81,6 +81,11 @@ pub struct App {
     /// `!` bash mode: the composer holds a shell command; submit wraps it
     /// for the Bash tool instead of sending it as a prompt.
     pub bash_mode: bool,
+    /// Large-paste stash: pastes ≥ PASTE_STASH_LIMIT insert `[paste #N]`
+    /// markers instead of raw text; `expand_pastes` inlines the content
+    /// at submit time so the model gets the bytes, not the placeholder.
+    /// Session-scoped on purpose — a paste is input, not an artifact.
+    pub paste_stash: Vec<String>,
     /// turns/bash submitted while a turn was running — the queue holds the
     /// actual submissions (footer previews the head), not just a count, so
     /// `↑` on an empty composer can recall the tail item for editing.
@@ -124,6 +129,11 @@ g/G ends · ! bash · / commands · Esc×2 stash draft · Ctrl+S restore · \
 Ctrl+A/E/U/W line edit · Ctrl-C cancel, ×2 quits
 commands — /compact · /model · /multiline · /clear · /resume [id] · /tasks · /todos · /artifacts · /annotate · /help · /quit · \
 + every *.md in .sunmao/commands, .claude/commands, plugins/*/commands";
+
+/// Pastes at or above this many bytes stash into `paste_stash` and insert
+/// a `[paste #N]` marker instead of raw text — the composer stays small
+/// and the model gets the full content at submit.
+const PASTE_STASH_LIMIT: usize = 2048;
 
 /// One cached transcript entry: the block's `gen` and the width/selection
 /// it was wrapped at, plus the wrapped lines themselves.
@@ -185,6 +195,7 @@ impl App {
             git_branch: None,
             last_usage: None,
             bash_mode: false,
+            paste_stash: Vec::new(),
             queue: std::collections::VecDeque::new(),
             render_cache: Vec::new(),
             viewer: None,
@@ -261,12 +272,43 @@ impl App {
     }
 
     /// Bulk insert (bracketed paste): one splice + one menu refresh instead
-    /// of per-char O(n²).
+    /// of per-char O(n²). Large pastes stash and insert a `[paste #N]`
+    /// marker — the composer stays editable and the content rides at
+    /// submit (expand_pastes), kimi-style.
     pub fn insert_str(&mut self, s: &str) {
+        let s = if s.len() >= PASTE_STASH_LIMIT {
+            self.paste_stash.push(s.to_string());
+            let marker = format!("[paste #{}]", self.paste_stash.len());
+            self.toast(format!(
+                "pasted {} chars → {} (expands on send)",
+                s.len(),
+                marker
+            ));
+            marker
+        } else {
+            s.to_string()
+        };
         let byte_idx = char_to_byte(&self.input, self.cursor);
-        self.input.insert_str(byte_idx, s);
+        self.input.insert_str(byte_idx, &s);
         self.cursor += s.chars().count();
         self.refresh_slash_menu();
+    }
+
+    /// Inline `[paste #N]` markers with their stashed content, wrapped in
+    /// a tagged block the model can parse. Unknown/removed markers are
+    /// left as literal text — never invent content.
+    fn expand_pastes(&self, text: &str) -> String {
+        let mut out = text.to_string();
+        for (i, content) in self.paste_stash.iter().enumerate() {
+            let marker = format!("[paste #{}]", i + 1);
+            if out.contains(&marker) {
+                out = out.replace(
+                    &marker,
+                    &format!("\n<pasted-text>\n{content}\n</pasted-text>\n"),
+                );
+            }
+        }
+        out
     }
 
     pub fn insert_newline(&mut self) {
@@ -308,7 +350,8 @@ impl App {
         self.echo_user(&text);
 
         // literal `!cmd` works without entering bash mode — same route as a
-        // recalled `!`-history entry or a pasted line.
+        // recalled `!`-history entry or a pasted line. Markers stay literal
+        // here: the local shell isn't the model's pasted-text convention.
         if let Some(cmd) = text.trim().strip_prefix('!') {
             return if cmd.trim().is_empty() {
                 Submit::Note(String::new())
@@ -334,6 +377,7 @@ impl App {
                     "help" | "h" | "?" => Submit::Note(HELP_TEXT.to_string()),
                     "clear" => {
                         self.blocks.clear();
+                        self.paste_stash.clear();
                         self.selected = 0;
                         self.scroll_back = 0;
                         Submit::Note("[transcript cleared — session log untouched]".into())
@@ -366,11 +410,12 @@ impl App {
                             _ => Submit::Note("[usage: /annotate <name> <note>]".into()),
                         }
                     }
-                    // file commands resolve in the driver (needs cwd)
-                    _ => Submit::Turn(format!("/{cmd_line}")),
+                    // file commands resolve in the driver (needs cwd) —
+                    // paste markers expand too, $ARGUMENTS flows through
+                    _ => Submit::Turn(self.expand_pastes(&format!("/{cmd_line}"))),
                 }
             }
-            None => Submit::Turn(text),
+            None => Submit::Turn(self.expand_pastes(&text)),
         }
     }
 

@@ -11,6 +11,7 @@ per-key where merging applies (hooks/permissions/mcp).
 | `hooks.json` | `{"hooks": {"PreToolUse": [{"matcher": "Bash", "command": "..."}]}}` | Claude-contract hook procs; stdin=JSON event, exit 0 allow / 2 veto |
 | `mcp.json` | `{"mcpServers": {"name": {"command","args","env"} \| {"url"}}}` | MCP servers — stdio spawn or streamable-HTTP |
 | `permissions.json` | `{"permissions": {"allow":[..],"ask":[..],"deny":[..]}}` | `Tool(glob)` rules; deny>ask>allow>default |
+| `risky-patterns.txt` | `pattern | reason` per line | **replaces** the shipped approval-gate table outright (cold-plug); preset dirs' same-named file merges additively |
 | `plugin.json` | `{"name", "hooks":{...}, "mcpServers":{...}}` | bundle manifest — folds hooks + MCP into the same paths |
 | `prompt.md` | markdown | system-prompt section appended to the assembly |
 | `prompt.d/<name>.md` | markdown | prompt section; a name matching a built-in section (`identity`, `tool-guidance`, `shell-dialect`, `subagent-default`) **replaces** that section — the cold-plug mechanism |

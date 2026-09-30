@@ -161,6 +161,17 @@ TUI.
   snapshot head-of-request as a synthetic user message, so compaction
   can't erase the plan. `/todos` on REPL + TUI + `/` menu; sub-agent
   contexts get their own empty list, not a copy of the parent's
+- **structural Bash approval** (SPEC §4.3's 管道分拆进审批层, the real
+  one) — `preflight::shell_segments` renders the command's deno_task_shell
+  AST back to per-segment strings: `&&`/`;`/`||` boundaries split, a
+  pipeline stays one segment (the `| sh` risk family needs the join),
+  subshells inline, `$VAR`/`~`/`$(…)` keep their names. The gate runs
+  rules + risk classifier per segment: a deny anywhere vetoes the whole
+  command, the first risky segment prompts — named by segment, so the
+  human sees `curl x | sh`, not `ls && curl x | sh`. Parse failure falls
+  back to the whole-string check. SPEC's `tree-sitter-bash` plan dropped:
+  the executor's own grammar is the only authoritative one — a second
+  parser would drift and add a dep for nothing
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

@@ -15,7 +15,7 @@
 //! never touch the filesystem, so they are exempt by name.
 
 use deno_task_shell::parser::{
-    Command, CommandInner, PipeSequence, PipelineInner, Sequence, SequentialList, WordPart,
+    Command, CommandInner, PipelineInner, Sequence, SequentialList, WordPart,
 };
 use spawnfate::fs::RealFs;
 use spawnfate::model::{Producer, Severity, Shell, SpawnInput, TargetParser, Verdict};
@@ -101,61 +101,187 @@ pub fn advisories(_list: &SequentialList, _cwd: &Path) -> Vec<String> {
 /// dynamic (env-prefix, variables, tilde, `$(…)`) is skipped — an honest
 /// "can't predict" beats a wrong prediction.
 fn simple_commands(list: &SequentialList) -> Vec<FlatCommand> {
-    let mut out = Vec::new();
+    let mut words = Vec::new();
     for item in &list.items {
-        collect_sequence(&item.sequence, &mut out);
+        collect_sequence_words(&item.sequence, &mut words);
+    }
+    let mut out = Vec::new();
+    for w in words {
+        if w.is_empty() {
+            continue;
+        }
+        let mut flat = Vec::with_capacity(w.len());
+        for word in &w {
+            let Some(s) = static_word(word) else { break };
+            flat.push(s);
+        }
+        if flat.len() != w.len() || flat.is_empty() {
+            continue;
+        }
+        let file = flat.remove(0);
+        if DENO_BUILTINS.contains(&file.as_str()) {
+            continue;
+        }
+        out.push(FlatCommand { file, args: flat });
     }
     out
 }
 
-fn collect_sequence(seq: &Sequence, out: &mut Vec<FlatCommand>) {
+/// The command's execution-order segments rendered back to strings —
+/// `rm -rf x && grep q` → `["rm -rf x", "grep q"]`. This is the approval
+/// gate's structural view (SPEC §4.3: 管道分拆进审批层): a deny rule or
+/// risky pattern hidden behind `&&`/`;`/`||` must not ride the
+/// whole-command check through. A pipeline stays ONE segment — `a | b`
+/// keeps its `|` join — because the risk table's pipe-to-shell family
+/// (`| sh`, `| bash`) matches on exactly that join. `parse` failure falls
+/// back to the raw string — we never guess at structure we can't see.
+///
+/// Word rendering is best-effort display text: literal text verbatim,
+/// `$name`/`~`/`$(…)`/`"…"` preserved as themselves (not expanded) —
+/// deny/classify only need the shape, and a segment can't go *less*
+/// suspicious when a variable keeps its name.
+pub fn shell_segments(command: &str) -> Vec<String> {
+    let Ok(list) = deno_task_shell::parser::parse(command) else {
+        return vec![command.to_string()];
+    };
+    let mut out = Vec::new();
+    for item in &list.items {
+        collect_segment_text(&item.sequence, &mut out);
+    }
+    let out: Vec<String> = out
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if out.is_empty() {
+        vec![command.to_string()]
+    } else {
+        out
+    }
+}
+
+/// Flatten a sequence tree into per-simple-command word lists — preflight
+/// granularity: every pipeline sibling is its own entry.
+fn collect_sequence_words<'a>(
+    seq: &'a Sequence,
+    out: &mut Vec<Vec<&'a deno_task_shell::parser::Word>>,
+) {
     match seq {
         Sequence::ShellVar(_) => {}
-        Sequence::Pipeline(p) => collect_pipeline_inner(&p.inner, out),
+        Sequence::Pipeline(p) => collect_pipeline_words(&p.inner, out),
         Sequence::BooleanList(b) => {
-            collect_sequence(&b.current, out);
-            collect_sequence(&b.next, out);
+            collect_sequence_words(&b.current, out);
+            collect_sequence_words(&b.next, out);
         }
     }
 }
 
-fn collect_pipeline_inner(inner: &PipelineInner, out: &mut Vec<FlatCommand>) {
+fn collect_pipeline_words<'a>(
+    inner: &'a PipelineInner,
+    out: &mut Vec<Vec<&'a deno_task_shell::parser::Word>>,
+) {
     match inner {
-        PipelineInner::Command(c) => collect_command(c, out),
+        PipelineInner::Command(c) => collect_command_words(c, out),
         PipelineInner::PipeSequence(ps) => {
-            collect_pipe_sequence(ps, out);
+            collect_command_words(&ps.current, out);
+            collect_pipeline_words(&ps.next, out);
         }
     }
 }
 
-fn collect_pipe_sequence(ps: &PipeSequence, out: &mut Vec<FlatCommand>) {
-    collect_command(&ps.current, out);
-    collect_pipeline_inner(&ps.next, out);
-}
-
-fn collect_command(cmd: &Command, out: &mut Vec<FlatCommand>) {
+fn collect_command_words<'a>(
+    cmd: &'a Command,
+    out: &mut Vec<Vec<&'a deno_task_shell::parser::Word>>,
+) {
     match &cmd.inner {
         CommandInner::Subshell(list) => {
             for item in &list.items {
-                collect_sequence(&item.sequence, out);
+                collect_sequence_words(&item.sequence, out);
             }
         }
         CommandInner::Simple(sc) => {
-            // `FOO=1 cmd` — env prefix makes the call's env differ; skip the
-            // whole command rather than predict under wrong assumptions.
             if !sc.env_vars.is_empty() || sc.args.is_empty() {
-                return;
+                out.push(Vec::new());
+            } else {
+                out.push(sc.args.iter().collect());
             }
-            let mut flat = Vec::with_capacity(sc.args.len());
-            for w in &sc.args {
-                let Some(s) = static_word(w) else { return };
-                flat.push(s);
+        }
+    }
+}
+
+/// One segment per pipeline — BooleanList boundaries (`&&`/`||`) split,
+/// SequentialList items are already one-per-item in the caller.
+fn collect_segment_text(seq: &Sequence, out: &mut Vec<String>) {
+    match seq {
+        Sequence::ShellVar(_) => {}
+        Sequence::Pipeline(p) => out.push(pipeline_text(&p.inner)),
+        Sequence::BooleanList(b) => {
+            collect_segment_text(&b.current, out);
+            collect_segment_text(&b.next, out);
+        }
+    }
+}
+
+/// A pipeline renders as one segment, `|` joins preserved — the risk
+/// table's `| sh` family only means anything on the join.
+fn pipeline_text(inner: &PipelineInner) -> String {
+    match inner {
+        PipelineInner::Command(c) => command_text(c),
+        PipelineInner::PipeSequence(ps) => {
+            format!(
+                "{} | {}",
+                command_text(&ps.current),
+                pipeline_text(&ps.next)
+            )
+        }
+    }
+}
+
+fn command_text(cmd: &Command) -> String {
+    match &cmd.inner {
+        CommandInner::Subshell(list) => {
+            let mut parts = Vec::new();
+            for item in &list.items {
+                collect_segment_text(&item.sequence, &mut parts);
             }
-            let file = flat.remove(0);
-            if DENO_BUILTINS.contains(&file.as_str()) {
-                return;
+            // subshell segments inline — a gate pattern that names a
+            // dangerous inner command still sees it inside parens.
+            format!("( {} )", parts.join(" ; "))
+        }
+        CommandInner::Simple(sc) => {
+            let mut words: Vec<String> = sc
+                .env_vars
+                .iter()
+                .map(|e| format!("{}={}", e.name, word_text(&e.value)))
+                .collect();
+            words.extend(sc.args.iter().map(word_text));
+            words.join(" ")
+        }
+    }
+}
+
+/// Best-effort display text for one word — expansions stay symbolic.
+fn word_text(w: &deno_task_shell::parser::Word) -> String {
+    let mut s = String::new();
+    for p in w.parts() {
+        part_text(p, &mut s);
+    }
+    s
+}
+
+fn part_text(p: &WordPart, out: &mut String) {
+    match p {
+        WordPart::Text(t) => out.push_str(t),
+        WordPart::Variable(name) => {
+            out.push('$');
+            out.push_str(name);
+        }
+        WordPart::Tilde => out.push('~'),
+        WordPart::Command(_) => out.push_str("$(…)"),
+        WordPart::Quoted(parts) => {
+            for p in parts {
+                part_text(p, out);
             }
-            out.push(FlatCommand { file, args: flat });
         }
     }
 }
@@ -230,5 +356,29 @@ mod tests {
         // `cmd` is a real exe on every Windows box
         let adv = advisories(&parse("cmd /c ver"), Path::new(r"C:\"));
         assert!(adv.is_empty(), "{adv:?}");
+    }
+
+    /// The approval gate's structural view: command boundaries split,
+    /// pipelines stay joined (the risk table's `| sh` family needs the
+    /// join), subshells inline, unparseable input degrades to whole-string.
+    #[test]
+    fn segments_split_at_command_boundaries() {
+        assert_eq!(
+            shell_segments("cargo build && rm -rf x ; ls"),
+            vec!["cargo build", "rm -rf x", "ls"]
+        );
+        assert_eq!(
+            shell_segments("echo hi | grep h && tool run"),
+            vec!["echo hi | grep h", "tool run"]
+        );
+        // single segment → whole string (gate skips the segment pass)
+        assert_eq!(shell_segments("curl x | bash"), vec!["curl x | bash"]);
+        // subshell content inlines so patterns see inside
+        let segs = shell_segments("(rm -rf y) && ls");
+        assert!(segs[0].contains("rm -rf y"), "{segs:?}");
+        // dynamic parts keep their names, env prefix preserved
+        assert_eq!(shell_segments("FOO=1 tool $ARG"), vec!["FOO=1 tool $ARG"]);
+        // parse failure → raw string, never silent empty
+        assert_eq!(shell_segments("def (unclosed"), vec!["def (unclosed"]);
     }
 }

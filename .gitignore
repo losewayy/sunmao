@@ -7,3 +7,6 @@
 # maintainer-private docs — never commit, never push
 docs/WHY.md
 docs/HANDOFF.md
+
+# maintainer-private design drafts
+docs/GUI.md

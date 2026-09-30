@@ -247,7 +247,19 @@ TUI.
   against the newest-first session list (rescanned on menu open so
   sessions sub-agents spawned mid-turn show up). Enter on a candidate
   submits `/resume <id>` — picking a session IS the command; Tab fills
-  for a `--fork`-style edit first
+  for a `--fork`-style edit first. Bare `/sessions`+Enter opens the same
+  picker; `recent_sessions(cwd, limit)` is the single session scan the
+  picker and the bare `/resume` list share
+- **slash command arg substitution** — `/name args` expands `$ARGUMENTS`
+  and positional `$1`..`$9` where the command body placed them (the
+  Claude Code convention); placeholder-free bodies keep the appended
+  behavior
+- **live MCP fixture** — `tests/fixtures/mcp_server.rs` (rustc-compiled
+  JSONL server) proves the v0.2 crash-tolerance bar on the MCP side:
+  `tools/list` survives, a real call round-trips, and a child that dies
+  after listing degrades subsequent calls to failures instead of hanging
+  the loop. `compile_fixture` in lib.rs shares the rustc path between
+  the ext and mcp live tests
 - acp: the permission prompt's description names the specifier a
   session grant would cover
 

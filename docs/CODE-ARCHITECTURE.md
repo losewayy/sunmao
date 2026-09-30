@@ -88,6 +88,7 @@ crates/core    the kernel. Owns state, dispatch, policy. May not know
                    ├── shell.rs  Bash + background jobs + JobOutput
                    ├── search.rs Glob + Grep
                    ├── artifact.rs HtmlArtifact
+                   ├── todo.rs   TodoWrite — task list (Todos event, inject)
                    └── webmod.rs WebFetch
 
 crates/cli     every frontend + flag plumbing. Thin by design — heavy logic

@@ -154,6 +154,13 @@ TUI.
   deleted — the session log is the audit ledger; a parallel in-memory
   one was speculative duplication. `turn.rs` split at its seam: the
   dispatch gate (rules → grants → classifier → ask) is `agent/gate.rs`
+- **`TodoWrite` lands** — the last SPEC §4.3 builtin: replace-all task
+  list with demote-don't-refuse `in_progress` semantics. Writes a durable
+  `Todos` event (the log is source of truth — resume reseeds `ctx.todos`,
+  `swap_session` reseeds on log swap) and the turn loop injects the
+  snapshot head-of-request as a synthetic user message, so compaction
+  can't erase the plan. `/todos` on REPL + TUI + `/` menu; sub-agent
+  contexts get their own empty list, not a copy of the parent's
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

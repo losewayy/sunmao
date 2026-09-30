@@ -62,6 +62,8 @@ shell.rs   Bash (deno_task_shell — POSIX on Windows) + JobOutput (jobs are
            files under .sunmao/jobs/{id}/, inspectable while running)
 search.rs  Glob (200-entry cap) + Grep (managed rg child, no shell)
 artifact.rs HtmlArtifact — emits durable Artifact session facts
+todo.rs    TodoWrite — the model's task list; durable Todos events feed a
+           head-of-request injection so compaction/resume can't lose it
 webmod.rs  WebFetch — naive tag-strip → readable text, ~24KB cap
 task.rs     Task — nested AgentLoop, depth-capped at 2, own session log,
            subagent_type selects .claude/agents/*.md definitions; defs carry
@@ -108,7 +110,7 @@ the project layer). Prompt sections order: built-in assets → user → project
 ```rust
 SessionEvent::Started | Message | ToolCall | ToolResult
                   | Compacted | Artifact | Usage | Hook | LocalShell
-                  | TaskDone
+                  | TaskDone | Todos
 ```
 
 Append-only JSONL; the visible transcript is a pure fold over them. `messages()`
@@ -135,7 +137,7 @@ It never persists; frontends that want full tool output read the session log.
 
 ```text
 sunmao              stdin/stdout REPL — /compact, /model, /resume, /tasks,
-                    /artifacts, /<command>
+                    /todos, /artifacts, /<command>
 sunmao -p "..."     one-shot; exit code encodes outcome
 sunmao --tui        ratatui: block transcript (fold/copy OSC52/select via
                     Tab+j/k/e, Enter opens a full-screen viewer), 3-option

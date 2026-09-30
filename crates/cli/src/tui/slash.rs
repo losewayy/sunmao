@@ -18,6 +18,7 @@ const BUILTINS: &[&str] = &[
     "resume",
     "sessions",
     "tasks",
+    "todos",
 ];
 
 /// Names the `/` menu should offer: builtins + every `<name>.md` found in

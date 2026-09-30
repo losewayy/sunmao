@@ -494,6 +494,9 @@ async fn spawn_parts(ctx: &Context, def: Option<&crate::agents::AgentDef>) -> (S
         // session-level, not per-agent
         loop_driver: ctx.loop_driver,
         live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        // the child's list is its own plan, not a copy of the parent's —
+        // sub-session logs only carry their own Todos events.
+        todos: std::sync::Mutex::new(Vec::new()),
     };
     // extension children come up in the child's scope; their tools follow
     // the same `tools:` whitelist rule as native ones — an ext tool not on

@@ -72,6 +72,12 @@ pub enum SessionEvent {
         ok: bool,
         output: String,
     },
+    /// The model's task list after a `TodoWrite` — durable so /resume and
+    /// compaction never silently lose the plan. Kept OUT of the message
+    /// fold: the turn loop injects the current list as a synthetic user
+    /// message each iteration, so writing it into the transcript would
+    /// duplicate it once per write.
+    Todos { items: Vec<crate::tool::TodoItem> },
 }
 
 /// Where a session's event log lives — `<cwd>/.sunmao/sessions/<id>.jsonl`.

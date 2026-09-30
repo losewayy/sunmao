@@ -108,7 +108,7 @@ pub async fn run(
                 }
                 "help" | "h" | "?" => {
                     println!(
-                        "commands — /compact · /model [sel] · /resume [id] · /sessions · /tasks · /artifacts · /annotate <name> <note> · /help · /quit\n\
+                        "commands — /compact · /model [sel] · /resume [id] · /sessions · /tasks · /todos · /artifacts · /annotate <name> <note> · /help · /quit\n\
                          `!cmd` runs locally; /name resolves .sunmao/commands + .claude/commands"
                     );
                     continue;
@@ -157,6 +157,15 @@ pub async fn run(
                                 .unwrap_or_default();
                             println!("  {status:<7} {}{} — {}", t.id, agent_name, t.prompt);
                         }
+                    }
+                    continue;
+                }
+                "todos" => {
+                    let items = agent.todos();
+                    if items.is_empty() {
+                        println!("[no task list — TodoWrite creates it]");
+                    } else {
+                        println!("task list:\n{}", sunmao_core::tool::render_todos(&items));
                     }
                     continue;
                 }

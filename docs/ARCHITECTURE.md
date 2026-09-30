@@ -71,9 +71,11 @@ webmod.rs  WebFetch — naive tag-strip → readable text, ~24KB cap
 task.rs     Task — nested AgentLoop, depth-capped at 2, own session log,
            subagent_type selects .claude/agents/*.md definitions; defs carry
            model:/tools:/spawns: frontmatter (route the adapter, trim the
-           registry, whitelist what the child may itself spawn);
-           run_in_background detaches — the finished child appends
-           TaskDone into the parent's session log (push delivery)
+           registry, whitelist what the child may itself spawn); a call-site
+           `model` selector (@route/provider<id>) overrides both for
+           multi-model orchestration; run_in_background detaches — the
+           finished child appends TaskDone into the parent's session log
+           (push delivery)
 models.rs  ModelResolver — .sunmao/models.json providers + @routes;
            agent model: selectors and /model swaps resolve through it
 ```

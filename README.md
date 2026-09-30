@@ -101,7 +101,7 @@ sunmao --acp                        # ACP server (stdio)
 sunmao --preset strict-audit        # layer a preset (plugin-bundle dir in
                                     # .sunmao/presets/ or ~/.sunmao/presets/)
                                     # onto this session; repeatable, later wins
-sunmao plugin install <path>        # copy a plugin dir into .sunmao/plugins/<name>/
+sunmao plugin install <src>         # dir | git URL | owner/repo → .sunmao/plugins/<name>/
 sunmao plugin list|remove <name>    # inspect / uninstall
 ```
 

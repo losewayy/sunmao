@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use crate::approval::AllowAll;
 use crate::approval::Approver;
-use crate::audit::AuditLog;
 use crate::ext::ExtRegistry;
 use crate::hooks::HookEngine;
 use crate::session::SessionLog;
@@ -32,8 +31,6 @@ pub struct Context {
     pub sessions: Arc<tokio::sync::Mutex<SessionLog>>,
     /// Tool registry (native + managed + shell).
     pub tools: ToolRegistry,
-    /// Audit ledger — permission checks and notable facts.
-    pub audit: AuditLog,
     /// Hook dispatcher — lifecycle events fire through dialect-compatible
     /// external commands.
     pub hooks: HookEngine,
@@ -174,7 +171,6 @@ impl Context {
             llm_override: std::sync::RwLock::new(None),
             sessions: Arc::new(tokio::sync::Mutex::new(sessions)),
             tools,
-            audit: AuditLog::new(),
             hooks: HookEngine::load(&cwd, &session_id, &[]),
             cwd,
             session_id,

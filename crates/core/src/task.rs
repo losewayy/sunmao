@@ -467,7 +467,6 @@ async fn spawn_parts(ctx: &Context, def: Option<&crate::agents::AgentDef>) -> (S
         llm_override: std::sync::RwLock::new(None),
         sessions: Arc::new(tokio::sync::Mutex::new(log)),
         tools,
-        audit: crate::audit::AuditLog::new(),
         permissions: crate::permissions::Permissions::load(&ctx.cwd, &ctx.extra_plugin_roots),
         approval: ctx.approval.clone(),
         // inherit the parent's resolved table (presets already folded in —

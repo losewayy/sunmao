@@ -6,7 +6,6 @@
 pub mod agent;
 pub mod agents;
 pub mod approval;
-pub mod audit;
 pub mod context;
 pub mod ext;
 pub mod hooks;

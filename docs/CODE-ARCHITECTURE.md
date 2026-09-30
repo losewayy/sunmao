@@ -59,6 +59,8 @@ crates/core    the kernel. Owns state, dispatch, policy. May not know
                ├── agent/        AgentLoop — the one concrete loop
                │   ├── mod.rs    orchestration + Context wiring
                │   ├── turn.rs   per-turn loop (LLM call, tool dispatch, events)
+               │   ├── gate.rs   dispatch gate — rules, grants, classifier, ask
+               │   ├── bare.rs   the bare LoopDriver — straight circuit, no seam
                │   └── tests/    loop fixtures (mock providers, session replays)
                ├── session.rs    SessionEvent + SessionLog fold
                ├── hooks.rs      lifecycle hook dispatcher (Claude contract)

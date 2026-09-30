@@ -6,101 +6,6 @@ use sunmao_llm::types::Message;
 use sunmao_llm::{ChatRequest, StreamDelta};
 
 impl AgentLoop {
-    /// The dispatch gate — declarative rules, then the hook's
-    /// `permissionDecision`, session grants, then the risky-pattern
-    /// classifier as the default prompt. `deny` rules are a hard refusal
-    /// nothing overrides — a session grant never bypasses them.
-    async fn gate_call(
-        &self,
-        tool: &str,
-        specifier: &str,
-        hook: Option<crate::hooks::HookPermission>,
-        observer: &dyn Observer,
-    ) -> Result<(), String> {
-        use crate::hooks::HookPermission as H;
-        use crate::permissions::Verdict;
-        match self.ctx.permissions.check(tool, specifier) {
-            Verdict::Deny => return Err("denied by permission rules".into()),
-            Verdict::PreApproved => return Ok(()),
-            Verdict::Ask | Verdict::Default => {}
-        }
-        if let Some(H::Deny) = hook {
-            return Err("denied by hook".into());
-        }
-        // Session grants sit after both deny gates but before every ask: a
-        // grant is a standing answer to a prompt, not an override of a veto.
-        if self.ctx.session_granted(tool, specifier) {
-            return Ok(());
-        }
-        if self.ctx.permissions.check(tool, specifier) == Verdict::Ask {
-            return self
-                .ask(tool, specifier, "matched ask rule", observer)
-                .await;
-        }
-        if let Some(H::Ask) = hook {
-            return self
-                .ask(tool, specifier, "hook requested approval", observer)
-                .await;
-        }
-        if let Some(H::Allow) = hook {
-            return Ok(());
-        }
-        // default: the risky-pattern classifier (Bash-shaped patterns today)
-        if let Some(why) = crate::approval::classify(specifier, &self.ctx.risk_table) {
-            return self.ask(tool, specifier, why, observer).await;
-        }
-        Ok(())
-    }
-
-    /// One approval prompt → verdict. `Session` is recorded in
-    /// `session_grants` and audited as a durable `Hook` fact.
-    async fn ask(
-        &self,
-        tool: &str,
-        specifier: &str,
-        why: &str,
-        observer: &dyn Observer,
-    ) -> Result<(), String> {
-        // Notification: the loop is about to idle on a human — hooks can
-        // relay that (desktop toast, bell). Advisory only; outcome ignored.
-        let _ = self
-            .ctx
-            .hooks
-            .fire(
-                HookEvent::Notification,
-                &self.ctx.cwd,
-                &crate::hooks::HookInput {
-                    prompt: Some(why),
-                    tool_name: Some(tool),
-                    tool_input: Some(&serde_json::json!({ "specifier": specifier })),
-                    ..Default::default()
-                },
-            )
-            .await;
-        match self.ctx.approval.approve(tool, specifier, why).await {
-            crate::approval::Approval::Session => {
-                self.ctx.grant_session(tool, specifier);
-                let detail = format!("{tool}: {specifier}");
-                {
-                    let mut log = self.ctx.sessions.lock().await;
-                    let _ = log
-                        .append(&crate::SessionEvent::Hook {
-                            event: "approval.session".into(),
-                            detail: detail.clone(),
-                        })
-                        .await;
-                }
-                observer.on_event(&LiveEvent::Hook {
-                    event: "approval.session".into(),
-                    detail,
-                });
-                Ok(())
-            }
-            crate::approval::Approval::Once => Ok(()),
-            crate::approval::Approval::Deny => Err(format!("denied at approval gate ({why})")),
-        }
-    }
-
     /// Ask the model to summarize the transcript, then commit a `Compacted`
     /// boundary — the log fold turns it into a fresh system message.
     /// Returns the summary so frontends can show what the fold produced.
@@ -204,10 +109,10 @@ impl AgentLoop {
     ) -> anyhow::Result<TurnOutcome> {
         match self.run_turn_inner(input, observer).await {
             Ok(o) => {
-                // a non-clean outcome fires StopFailure — Stop itself is
-                // emitted inside run_turn_inner regardless; the union event
+                // non-clean outcomes fire StopFailure — Stop itself is emitted
+                // inside run_turn_inner on Completed only; the union event
                 // marks that the stop wasn't a normal completion
-                if matches!(o, TurnOutcome::Other(_)) {
+                if !matches!(o, TurnOutcome::Completed) {
                     let _ = self
                         .ctx
                         .hooks
@@ -474,6 +379,22 @@ impl AgentLoop {
                 });
 
                 let result = if let Some(reason) = pre.block_reason {
+                    // a hook veto is an audit fact too — the transcript's
+                    // failed ToolResult shows *that* it was blocked, the
+                    // Hook event keeps *why* durable
+                    {
+                        let mut log = self.ctx.sessions.lock().await;
+                        let _ = log
+                            .append(&SessionEvent::Hook {
+                                event: "PreToolUse.block".into(),
+                                detail: format!("{}: {reason}", call.function.name),
+                            })
+                            .await;
+                    }
+                    observer.on_event(&LiveEvent::Hook {
+                        event: "PreToolUse.block".into(),
+                        detail: format!("{}: {reason}", call.function.name),
+                    });
                     crate::tool::ToolResult {
                         output: format!("blocked by hook: {reason}"),
                         ok: false,
@@ -569,15 +490,19 @@ impl AgentLoop {
         self.ctx
             .cancelled
             .store(false, std::sync::atomic::Ordering::Relaxed);
-        let _ = self
-            .ctx
-            .hooks
-            .fire(
-                HookEvent::Stop,
-                &self.ctx.cwd,
-                &crate::hooks::HookInput::default(),
-            )
-            .await;
+        // clean turns end with Stop; anything else gets StopFailure (fired
+        // by run_turn_full after inner returns) — never both
+        if outcome == TurnOutcome::Completed {
+            let _ = self
+                .ctx
+                .hooks
+                .fire(
+                    HookEvent::Stop,
+                    &self.ctx.cwd,
+                    &crate::hooks::HookInput::default(),
+                )
+                .await;
+        }
         observer.on_event(&LiveEvent::TurnEnd {
             outcome: outcome.clone(),
         });

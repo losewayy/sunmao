@@ -322,6 +322,20 @@ TUI.
   honors the pinned rev), TUI/REPL notes show `· rev N`, `/artifacts`
   lists `·N revs` and hides the archives. ACP resource titles say
   `name.html (rev N)`. Legacy events deserialize with `rev: 0`
+- **`sunmao serve` is a multi-session host** (GUI.md §7 made real) —
+  every adopted session runs its own AgentLoop + input queue + approval
+  map + busy counter (`serve::Host`), built per-log by a
+  `SessionFactory` main injects (provider, registry, fresh MCP tool
+  impls sharing process-wide connections, extensions, approver, model
+  routes). resume/fork/new adopt a new host instead of swapping a
+  shared Context — the previous session keeps running and rendering in
+  other tabs. Every outbound frame carries `sess`; the tab only
+  renders its viewed session while the rail reads every session's
+  run/wait/done dot. ws gains `view`/`resume`/`fork`/`new`,
+  `approval_done`, `sessions_changed`; `hello` carries `busy_sessions`
+  and pending approval cards so a tab arriving mid-ask re-renders them.
+  serve.rs split: `serve/ws.rs` (client channel), `serve/artifacts.rs`
+  (REST read surface), `serve/driver.rs` (per-session FIFO)
 - **MCP Apps host** (SEP-1865, stable 2026-01-26) — a tool declaring
   `_meta.ui.resourceUri` renders its result as a sandboxed island:
   the call fetches the `ui://` resource, lands it as

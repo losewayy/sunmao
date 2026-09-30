@@ -730,6 +730,9 @@ const mix = (a, b, t) => { const A = hex2rgb(a), B = hex2rgb(b); return rgb2hex(
 /* ================= state ================= */
 let view = 'session', lastMain = 'session', dockOn = true, setPage = 'appearance';
 let sessionId = '', cwd = '', slashList = [], models = [], modelLabel = '', busy = false, connected = false;
+// per-session rail state — every host frame carries `sess`; the transcript
+// only renders the viewed session, the rail tracks them all
+const busySessions = new Set(), waitingSessions = new Set();
 let approvalMode = 'auto'; // kernel-reported stance — the only source of truth
 const MODE_LABELS = { always_ask: '请求批准', auto: '自动', read_only: '只读', full_access: '完全访问' };
 const MODE_ICONS = { always_ask: 'shield-check', auto: 'shield', read_only: 'eye', full_access: 'lock' };
@@ -1315,7 +1318,7 @@ function decide(verdict, id) {
   else { aid = [...pendingApprovals.keys()][0]; card = pendingApprovals.get(aid); }
   if (!card) return;
   pendingApprovals.delete(aid);
-  wsSend({ type: 'approval', id: aid, verdict });
+  wsSend({ type: 'approval', id: aid, sess: sessionId, verdict });
   const [st, title, note] = { once: ['ok', '已允许', '仅本次'], session: ['ok', '已允许', '本会话内相同命令不再询问'], deny: ['err', '已拒绝', '操作未执行'] }[verdict] || ['err', '已拒绝', ''];
   const detail = $('.cmd', card) ? $('.cmd', card).textContent.trim() : '';
   collapse(card, `<div class="ap-done">${stIcon(st)}<b>${title}</b><code>${esc(detail)}</code><span>${note}</span></div>`);
@@ -1513,6 +1516,11 @@ function connect() {
   };
 }
 function route(v) {
+  // session routing: `sess` tags every host frame — transcript-shaping
+  // messages (live/note/approval/replay) only apply when they name this
+  // tab's viewed session; rail-facing frames (busy/approval_done/session/
+  // sessions_changed) update every row.
+  const sess = typeof v.sess === 'string' ? v.sess : sessionId;
   switch (v.type) {
     case 'hello':
       sessionId = v.session || '';
@@ -1526,23 +1534,58 @@ function route(v) {
       if (!models.length) $('#model-btn').style.display = 'none';
       setApprovalMode(v.mode);
       sandboxPort = v.sandbox_port || 0;
+      busySessions.clear(); (v.busy_sessions || []).forEach(id => busySessions.add(id));
       renderReplay(v.replay || []);
       setBusy(!!v.busy);
       refreshSessions();
       renderCrumb();
       break;
-    case 'live': liveEvent(v.event); break;
+    case 'live':
+      if (sess === sessionId) liveEvent(v.event);
+      break;
     case 'replay':
-      sessionId = v.session || sessionId;
+      if (v.session) { sessionId = v.session; }
       renderReplay(v.events || []);
+      setApprovalMode(v.mode);
+      setBusy(!!v.busy);
+      (v.pending || []).forEach(c => approvalCard(c));
+      syncWait();
       refreshSessions(); renderCrumb();
       break;
-    case 'approval': approvalCard(v); logEv('hook', `approval requested · ${v.tool}: ${(v.detail || '').slice(0, 80)}`); break;
-    case 'note': addNote(v.text); logEv('note', v.text); break;
-    case 'session': sessionId = v.id || sessionId; renderCrumb(); refreshSessions(); break;
-    case 'model': modelLabel = v.label || modelLabel; $('#cmp-model').textContent = modelLabel; toast(`模型切换为 ${v.label}`, 'cpu'); break;
-    case 'mode': setApprovalMode(v.mode); toast(`审批模式切换为 ${MODE_LABELS[v.mode] || v.mode}`, 'shield'); break;
-    case 'busy': setBusy(v.busy); break;
+    case 'approval':
+      waitingSessions.add(sess);
+      if (sess === sessionId) { approvalCard(v); logEv('hook', `approval requested · ${v.tool}: ${(v.detail || '').slice(0, 80)}`); }
+      renderRail();
+      break;
+    case 'approval_done':
+      waitingSessions.delete(sess);
+      renderRail();
+      break;
+    case 'note':
+      if (sess === sessionId) { addNote(v.text); logEv('note', v.text); }
+      break;
+    case 'session': {
+      // another tab switched away (from) or the host adopted a session —
+      // a tab follows the switch only if it was viewing the source
+      const from = v.from;
+      if (!from || from === sessionId) {
+        sessionId = v.id || sessionId;
+        renderCrumb();
+      }
+      refreshSessions();
+      break;
+    }
+    case 'sessions_changed': refreshSessions(); break;
+    case 'model':
+      if (sess === sessionId) { modelLabel = v.label || modelLabel; $('#cmp-model').textContent = modelLabel; toast(`模型切换为 ${v.label}`, 'cpu'); }
+      break;
+    case 'mode':
+      if (sess === sessionId) { setApprovalMode(v.mode); toast(`审批模式切换为 ${MODE_LABELS[v.mode] || v.mode}`, 'shield'); }
+      break;
+    case 'busy':
+      busySessions[v.busy ? 'add' : 'delete'](sess);
+      if (sess === sessionId) setBusy(v.busy); else renderRail();
+      break;
     // MCP Apps bridge reply — route the kernel's result back into the
     // island that asked (keyed by artifact name + rpc id)
     case 'ui_result': {
@@ -1567,18 +1610,25 @@ async function api(path, opts) {
 }
 async function resumeSession(id) {
   if (!id || id === sessionId) return;
-  try { await api(`/session/${encodeURIComponent(id)}/resume`, { method: 'POST' }); }
+  try {
+    await api(`/session/${encodeURIComponent(id)}/resume`, { method: 'POST' });
+    wsSend({ type: 'view', id }); // adopt → re-point this tab (replay follows)
+  }
   catch (e) { toast(`resume 失败：${e.message}`, 'alert', 'warn'); }
 }
 async function forkSession(id) {
-  try { await api(`/session/${encodeURIComponent(id)}/fork`, { method: 'POST' }); toast(`已分叉 ${id}`, 'fork'); }
+  try {
+    const r = await api(`/session/${encodeURIComponent(id)}/fork`, { method: 'POST' });
+    if (r && r.session) wsSend({ type: 'view', id: r.session });
+    toast(`已分叉 ${id}`, 'fork');
+  }
   catch (e) { toast(`fork 失败：${e.message}`, 'alert', 'warn'); }
 }
 async function newChat() {
   if (view !== 'session') show('session');
   try {
     const r = await api('/session/new', { method: 'POST' });
-    if (r && r.session) sessionId = r.session; // replay broadcast repaints; this just keeps crumb/list ahead of it
+    if (r && r.session) { sessionId = r.session; wsSend({ type: 'view', id: r.session }); }
     renderCrumb(); refreshSessions();
   } catch (e) { toast(`新会话失败：${e.message}`, 'alert', 'warn'); }
 }
@@ -1586,14 +1636,13 @@ async function refreshSessions() {
   try {
     const v = await api('/sessions');
     SESSION_IDS = Array.isArray(v.sessions) ? v.sessions : [];
-    if (v.current) sessionId = v.current;
     renderRail(); renderCrumb();
   } catch {}
 }
 let dfTimer = 0;
 function refreshDataflowSoon() { clearTimeout(dfTimer); dfTimer = setTimeout(refreshDataflow, 400); }
 async function refreshDataflow() {
-  try { renderDock(await api('/dataflow')); }
+  try { renderDock(await api('/dataflow?sess=' + encodeURIComponent(sessionId))); }
   catch { $('#df-sub').textContent = '无可读会话日志'; }
 }
 
@@ -1616,7 +1665,11 @@ function renderDock(d) {
 }
 
 /* ================= rail / crumb / views ================= */
-const sessRow = id => `<button class="row sess${id === sessionId ? ' on' : ''}" data-sess="${esc(id)}" data-tip="${id === sessionId ? (busy ? '当前会话 · 运行中' : '当前会话') : '点击 resume'}"><span class="t">${esc(id)}</span><i class="sd ${id === sessionId ? (pendingApprovals.size ? 'wait' : busy ? 'run' : 'done') : ''}"></i></button>`;
+const sessRow = id => {
+  const on = id === sessionId, run = busySessions.has(id), wait = waitingSessions.has(id);
+  const tip = on ? (busy ? '当前会话 · 运行中' : '当前会话') : (run ? '运行中 · 点击查看' : wait ? '等待批准 · 点击查看' : '点击 resume');
+  return `<button class="row sess${on ? ' on' : ''}" data-sess="${esc(id)}" data-tip="${tip}"><span class="t">${esc(id)}</span><i class="sd ${wait ? 'wait' : run ? 'run' : 'done'}"></i></button>`;
+};
 function renderRail() {
   $('#sessions').innerHTML = SESSION_IDS.length
     ? SESSION_IDS.map(sessRow).join('')

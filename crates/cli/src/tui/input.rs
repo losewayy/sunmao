@@ -221,8 +221,13 @@ pub(super) fn input_key(
             // arg isn't done), a leaf selector submits `/model sel`.
             // Path mode never submits — it rewrites the @-fragment.
             KeyCode::Enter => {
-                let (name, frag, kind) = match &app.slash_menu {
-                    Some(m) => (m.matches[m.selected].clone(), m.fragment.clone(), m.kind),
+                let (name, frag, kind, cmd) = match &app.slash_menu {
+                    Some(m) => (
+                        m.matches[m.selected].clone(),
+                        m.fragment.clone(),
+                        m.kind,
+                        m.cmd.clone(),
+                    ),
                     None => return false,
                 };
                 app.slash_menu = None;
@@ -232,9 +237,10 @@ pub(super) fn input_key(
                         return false;
                     }
                     menu::MenuKind::Sessions => {
-                        // session id completes to `/resume <id>` and
+                        // session id completes to `/<cmd> <id>` and
                         // submits — picking a session IS the command
-                        app.input = format!("/resume {name}");
+                        let c = cmd.as_deref().unwrap_or("resume");
+                        app.input = format!("/{c} {name}");
                         app.cursor = app.input.chars().count();
                         return submit_app(app, tx_input);
                     }
@@ -256,7 +262,7 @@ pub(super) fn input_key(
                 // is the odd one out: it's "browse and pick", so Enter
                 // opens the same picker `/resume <frag>` serves instead
                 // of printing the flat list.
-                const TAKES_ARGS: &[&str] = &["model", "resume", "annotate"];
+                const TAKES_ARGS: &[&str] = &["model", "resume", "annotate", "fork"];
                 if name == "sessions" {
                     app.input = "/sessions ".to_string();
                     app.cursor = app.input.chars().count();
@@ -280,13 +286,15 @@ pub(super) fn input_key(
                 if let Some(m) = &app.slash_menu {
                     let name = m.matches[m.selected].clone();
                     let kind = m.kind;
+                    let cmd = m.cmd.clone();
                     app.slash_menu = None;
                     match kind {
                         menu::MenuKind::Path => {
                             app.accept_path_candidate(&name);
                         }
                         menu::MenuKind::Sessions => {
-                            app.input = format!("/resume {name}");
+                            let c = cmd.as_deref().unwrap_or("resume");
+                            app.input = format!("/{c} {name}");
                             app.cursor = app.input.chars().count();
                         }
                         menu::MenuKind::Args => {
@@ -456,6 +464,9 @@ fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
         }
         Submit::Resume(arg) => {
             let _ = tx_input.send(Submit::Resume(arg));
+        }
+        Submit::Fork(arg) => {
+            let _ = tx_input.send(Submit::Fork(arg));
         }
         Submit::Turn(t) => {
             if app.busy {

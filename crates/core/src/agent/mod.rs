@@ -375,10 +375,21 @@ impl AgentLoop {
         // makes resume queue behind (or abort) a running turn.
         let _turn_permit = self.ctx.turn_lock.lock().await;
         let events = log.events().await.unwrap_or_default();
+        // identity follows the log: hooks see the new session id and
+        // transcript path, otherwise SessionStart/resume payloads still
+        // describe the abandoned session.
+        let new_id = log
+            .path()
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "session".into());
+        let new_path = log.path().to_path_buf();
         {
             let mut cur = self.ctx.sessions.lock().await;
             *cur = log;
         }
+        *self.ctx.session_id.write().unwrap() = new_id.clone();
+        self.ctx.hooks.retarget(&new_id, new_path);
         // the new log's task list becomes the live snapshot — resume must
         // not inherit the abandoned session's plan.
         self.ctx.reseed_todos(&events);

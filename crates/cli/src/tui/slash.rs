@@ -17,6 +17,7 @@ const BUILTINS: &[&str] = &[
     "quit",
     "resume",
     "sessions",
+    "fork",
     "tasks",
     "todos",
 ];

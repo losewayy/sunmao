@@ -277,7 +277,7 @@ pub(super) async fn spawn_parts(
         // session-level property, not per-agent
         hooks: crate::hooks::HookEngine::load(&ctx.cwd, &sub_id, &ctx.extra_plugin_roots),
         cwd: ctx.cwd.clone(),
-        session_id: sub_id.clone(),
+        session_id: std::sync::RwLock::new(sub_id.clone()),
         depth: ctx.depth + 1,
         lane,
         lane_counter: ctx.lane_counter.clone(),

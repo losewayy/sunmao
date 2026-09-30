@@ -1,0 +1,17 @@
+[package]
+name = "sunmao-gui"
+description = "sunmao desktop shell — Tauri v2 window over the embedded serve host"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[build-dependencies]
+tauri-build = "2"
+
+[dependencies]
+clap = { workspace = true, features = ["env"] }
+sunmao = { path = "../cli" }
+tauri = "2"
+tokio.workspace = true
+tracing.workspace = true

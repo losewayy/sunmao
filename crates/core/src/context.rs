@@ -120,8 +120,10 @@ pub struct Context {
     /// transcript; the mutex makes turns queue instead of weave. A second
     /// turn's events can never straddle a predecessor's — replay stays
     /// honest. Sub-agent contexts hold their own lock: parallel children
-    /// stay parallel.
-    pub turn_lock: tokio::sync::Mutex<()>,
+    /// stay parallel. `Arc` so a detached child's `TaskDone` append can
+    /// take the same fence — a mid-turn child completion must not split
+    /// the parent's ToolCall/ToolResult pair.
+    pub turn_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 /// One detached sub-agent in the roster.
@@ -210,7 +212,7 @@ impl Context {
             loop_driver,
             live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             todos: std::sync::Mutex::new(todos),
-            turn_lock: tokio::sync::Mutex::new(()),
+            turn_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 

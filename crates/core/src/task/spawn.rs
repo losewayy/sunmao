@@ -147,6 +147,12 @@ pub(super) async fn spawn_detached(
     );
     let parent_log = ctx.sessions.clone();
     let parent_tasks = ctx.live_tasks.clone();
+    // The parent's turn fence: a mid-turn completion must not append the
+    // TaskDone user-message between a ToolCall and its ToolResult — that
+    // would break provider pairing (tool_result must immediately follow
+    // its tool_use) and hard-400 the next request. Waiting for the turn
+    // boundary keeps the pushed fact well-formed.
+    let parent_fence = ctx.turn_lock.clone();
     let sink = ctx.live_sink.get().cloned();
     let notify_sink = sink.clone();
     let id = sub_id.clone();
@@ -157,6 +163,7 @@ pub(super) async fn spawn_detached(
         // parent record stays lean (capped), with `id` pointing there.
         let output = crate::agent::truncate_output(&res.output);
         {
+            let _turn_permit = parent_fence.lock().await;
             let mut log = parent_log.lock().await;
             let _ = log
                 .append(&SessionEvent::TaskDone {
@@ -292,7 +299,7 @@ pub(super) async fn spawn_parts(
         // sub-session logs only carry their own Todos events.
         todos: std::sync::Mutex::new(Vec::new()),
         // own fence: children must never queue behind the parent's turn
-        turn_lock: tokio::sync::Mutex::new(()),
+        turn_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
     };
     // extension children come up in the child's scope; their tools follow
     // the same `tools:` whitelist rule as native ones — an ext tool not on

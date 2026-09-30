@@ -35,6 +35,14 @@ impl HostResponse {
         }
     }
 
+    pub(crate) fn css(s: &'static str) -> Self {
+        Self {
+            status: 200,
+            headers: vec![("content-type".into(), "text/css; charset=utf-8".into())],
+            body: s.as_bytes().to_vec(),
+        }
+    }
+
     /// Plain-text error — mirrors axum's `(StatusCode, String)` shape.
     pub(crate) fn err(status: u16, text: String) -> Self {
         Self {
@@ -125,6 +133,8 @@ impl HostHandle {
         let s = &self.s;
         match (method, segs.as_slice()) {
             ("GET" | "HEAD", []) => HostResponse::html(super::INDEX),
+            ("GET" | "HEAD", ["tokens.css"]) => HostResponse::css(super::TOKENS_CSS),
+            ("GET" | "HEAD", ["app.css"]) => HostResponse::css(super::APP_CSS),
             ("GET", ["sessions"]) => sessions_list(s).await,
             ("GET", ["session"]) => session_info(s, query_arg(query, "id")).await,
             ("POST", ["session", "new"]) => match super::host::new_session(s).await {

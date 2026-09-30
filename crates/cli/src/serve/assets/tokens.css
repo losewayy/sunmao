@@ -1,0 +1,38 @@
+:root{
+  --font-ui:-apple-system,BlinkMacSystemFont,"Segoe UI Variable Text","Segoe UI","PingFang SC","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono","Cascadia Mono",ui-monospace,"SFMono-Regular",Consolas,"Microsoft YaHei UI",monospace;
+  --text:#E8E9F0;--text-2:#8B8FA5;--text-3:#565A70;
+  --accent:#339CFF;--on-accent:#fff;
+  --warn:#e0af68;--ok:#9ece6a;--err:#f7768e;--tool:#7dcfff;--you:#e0af68;--bot:#8c9cff;
+  --glass-rgb:22 24 31;--glass-a:.56;--blur:24px;
+  --stroke:rgba(255,255,255,.08);--stroke-2:rgba(255,255,255,.13);--hi:rgba(255,255,255,.055);
+  --fill-1:rgba(255,255,255,.045);--fill-2:rgba(255,255,255,.075);--fill-3:rgba(255,255,255,.12);
+  --sunken:rgba(0,0,0,.24);
+  --sh:0 10px 30px rgba(0,0,0,.24);--sh-float:0 16px 48px rgba(0,0,0,.4);
+  --veil:rgba(6,8,12,.16);--noise:none;
+  --allow-bg:#9ece6a;--allow-fg:#13200a;
+  --amber-bg:rgba(224,175,104,.12);--amber-line:rgba(224,175,104,.34);
+  --code-bg:rgba(255,255,255,.07);
+  --island-rgb:13 14 19;
+  --syn-k:#bb9af7;--syn-t:#2ac3de;--syn-p:#73daca;--syn-s:#9ece6a;--syn-n:#ff9e64;--syn-v:#c0caf5;--syn-x:#6b7089;
+  color-scheme:dark;
+}
+[data-theme="light"]{
+  --warn:#b7791f;--ok:#3d8b37;--err:#d0435c;--tool:#0b7bab;--you:#c98a2e;--bot:#5b6cf0;
+  --stroke-2:rgba(20,24,40,.14);--hi:rgba(255,255,255,.75);
+  --fill-1:rgba(20,24,40,.04);--fill-2:rgba(20,24,40,.07);--fill-3:rgba(20,24,40,.11);
+  --sunken:rgba(20,24,40,.05);
+  --sh:0 10px 30px rgba(30,36,60,.10);--sh-float:0 16px 48px rgba(30,36,60,.2);
+  --allow-bg:#3f9142;--allow-fg:#fff;
+  --amber-bg:rgba(214,158,70,.16);--amber-line:rgba(183,121,31,.38);
+  --code-bg:rgba(20,24,40,.06);
+  --island-rgb:250 250 252;
+  --syn-k:#8a4fd8;--syn-t:#0b7bab;--syn-p:#1f7a6d;--syn-s:#3d7a1e;--syn-n:#b45309;--syn-v:#2d3350;--syn-x:#8a8fa3;
+  color-scheme:light;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes breathe{50%{opacity:.4}}
+@keyframes blockIn{from{opacity:0;transform:translateY(6px)}}
+@keyframes palIn{from{opacity:0;transform:translateX(-50%) translateY(-6px) scale(.985)}}
+@keyframes joinA{from{transform:translateX(-7px);opacity:.25}}
+@keyframes joinB{from{transform:translateX(7px);opacity:.25}}

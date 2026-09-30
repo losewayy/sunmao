@@ -16,6 +16,7 @@ use crate::hooks::HookEvent;
 use crate::session::{SessionEvent, SessionLog};
 
 mod bare;
+mod compact;
 mod gate;
 mod turn;
 

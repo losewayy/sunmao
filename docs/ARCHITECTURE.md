@@ -154,9 +154,9 @@ sunmao --acp        ACP v2 stdio server: initialize, session/{new,list,
 
 ## What's *not* in code (spec-only for later)
 
-- generic JS extension-host sidecar (spec §"sidecar", v0.5+) — the
-  protocol's first-party host (`crates/core/src/ext/`) is live; the
-  sidecar would still be needed for the pi/TS ecosystem
 - Electron/Web frontend — the runtime is the seam; UIs are replaceable
 - MCP resources/prompts subscriptions
 - OTel export — usage events land in the session log already; export is later
+- Gemini hook dialect — `.codex` + `.cursor` normalize already; Gemini's
+  real bundle shape is unverified, so it stays out (compatibility is
+  measured, not claimed)

@@ -231,10 +231,22 @@ impl HookEngine {
         for manifest in [
             cwd.join(".sunmao").join("plugin.json"),
             cwd.join(".claude-plugin").join("plugin.json"),
+            // "this project is a plugin" — same treatment as a top manifest
+            cwd.join(".sunmao").join("plugin").join("plugin.json"),
         ] {
             if let Some(root) = manifest.parent().map(|p| p.to_path_buf()) {
                 merge_plugin_manifest(&mut groups, &manifest, &root);
             }
+        }
+        // the project-plugin's conventional hooks file rides alongside its
+        // manifest, exactly like an installed bundle's
+        {
+            let root = cwd.join(".sunmao").join("plugin");
+            merge_hooks_file(
+                &mut groups,
+                &root.join("hooks").join("hooks.json"),
+                Some(&root),
+            );
         }
         // plugin bundles installed under .sunmao/plugins/<name>/ and
         // .claude/plugins/<name>/: read their manifest plus the conventional
@@ -385,6 +397,27 @@ fn merge_hooks_file(
     let Ok(text) = std::fs::read_to_string(path) else {
         return;
     };
+    // the flat {"matcher","command"} shape is a silent footgun — serde
+    // defaults swallow it into a group with zero commands. Catch it
+    // before the structured parse so a mis-shaped file warns instead of
+    // loading nothing.
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+        if let Some(events) = v.get("hooks").and_then(|h| h.as_object()) {
+            for (event, groups) in events {
+                if let Some(gs) = groups.as_array() {
+                    for g in gs {
+                        if g.get("command").is_some() && g.get("hooks").is_none() {
+                            tracing::warn!(
+                                "{}: '{event}' uses flat {{matcher,command}} — wrap it: \
+                                 {{matcher, hooks:[{{type:\"command\", command:...}}]}}",
+                                path.display()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
     let Ok(file) = serde_json::from_str::<HooksFile>(&text) else {
         tracing::warn!("bad hooks file {}", path.display());
         return;

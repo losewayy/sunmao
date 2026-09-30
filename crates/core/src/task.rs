@@ -289,6 +289,35 @@ fn resolve_spawn_def(
     }
 }
 
+/// Register a spawn in the roster — both foreground and detached spawns
+/// register; `done` flips when the result lands. `sub_ctx.lane` is the
+/// claimed lane.
+fn register_task(ctx: &Context, sub_id: &str, lane: u8, prompt: &str, def: Option<&str>) {
+    let mut digest: String = prompt.chars().take(60).collect();
+    if prompt.chars().count() > 60 {
+        digest.push('…');
+    }
+    ctx.live_tasks
+        .lock()
+        .unwrap()
+        .push(crate::context::TaskEntry {
+            id: sub_id.to_string(),
+            lane,
+            agent: def.map(String::from),
+            prompt: digest.split_whitespace().collect::<Vec<_>>().join(" "),
+            done: None,
+        });
+}
+
+/// Flip the roster entry to finished — the detached completion path and
+/// the foreground return both route here.
+fn finish_task(tasks: &std::sync::Mutex<Vec<crate::context::TaskEntry>>, sub_id: &str, ok: bool) {
+    let mut tasks = tasks.lock().unwrap();
+    if let Some(e) = tasks.iter_mut().find(|t| t.id == sub_id) {
+        e.done = Some(ok);
+    }
+}
+
 /// Run one sub-agent to completion: own context, own session file, own
 /// lane; relays its tool lifecycle to the parent's live sink.
 async fn spawn_one(
@@ -296,13 +325,17 @@ async fn spawn_one(
     prompt: &str,
     def: Option<&crate::agents::AgentDef>,
 ) -> ToolResult {
-    let (_sub_id, sub_ctx) = spawn_parts(ctx, def).await;
-    run_spawn(
+    let (sub_id, sub_ctx) = spawn_parts(ctx, def).await;
+    let lane = sub_ctx.lane;
+    register_task(ctx, &sub_id, lane, prompt, def.map(|d| d.name.as_str()));
+    let res = run_spawn(
         Arc::new(sub_ctx),
         prompt.to_string(),
         ctx.live_sink.get().cloned(),
     )
-    .await
+    .await;
+    finish_task(&ctx.live_tasks, &sub_id, res.ok);
+    res
 }
 
 /// Detached spawn (`run_in_background: true`): the tool returns an id at
@@ -317,21 +350,13 @@ async fn spawn_detached(
 ) -> String {
     let (sub_id, sub_ctx) = spawn_parts(ctx, def).await;
     // roster entry — `/tasks` reads this; the completion path flips `done`
-    {
-        let mut digest: String = prompt.chars().take(60).collect();
-        if prompt.chars().count() > 60 {
-            digest.push('…');
-        }
-        ctx.live_tasks
-            .lock()
-            .unwrap()
-            .push(crate::context::TaskEntry {
-                id: sub_id.clone(),
-                agent: def.map(|d| d.name.clone()),
-                prompt: digest.split_whitespace().collect::<Vec<_>>().join(" "),
-                done: None,
-            });
-    }
+    register_task(
+        ctx,
+        &sub_id,
+        sub_ctx.lane,
+        prompt,
+        def.map(|d| d.name.as_str()),
+    );
     let parent_log = ctx.sessions.clone();
     let parent_tasks = ctx.live_tasks.clone();
     let sink = ctx.live_sink.get().cloned();
@@ -354,10 +379,7 @@ async fn spawn_detached(
                 .await;
         }
         {
-            let mut tasks = parent_tasks.lock().unwrap();
-            if let Some(e) = tasks.iter_mut().find(|t| t.id == id) {
-                e.done = Some(res.ok);
-            }
+            finish_task(&parent_tasks, &id, res.ok);
         }
         if let Some(s) = notify_sink {
             s.on_event(&LiveEvent::Hook {
@@ -455,6 +477,7 @@ async fn spawn_parts(ctx: &Context, def: Option<&crate::agents::AgentDef>) -> (S
         // session-level property, not per-agent
         hooks: crate::hooks::HookEngine::load(&ctx.cwd, &sub_id, &ctx.extra_plugin_roots),
         cwd: ctx.cwd.clone(),
+        session_id: sub_id.clone(),
         depth: ctx.depth + 1,
         lane,
         lane_counter: ctx.lane_counter.clone(),
@@ -494,6 +517,20 @@ async fn run_spawn(
     sink: Option<Arc<dyn Observer>>,
 ) -> ToolResult {
     let lane = sub_ctx.lane;
+    // the child runs a real session (own JSONL) — lifecycle hooks fire the
+    // same way the main session's do, source names the spawn path so a
+    // capture hook can tell it apart from startup/resume
+    let _ = sub_ctx
+        .hooks
+        .fire(
+            crate::hooks::HookEvent::SessionStart,
+            &sub_ctx.cwd,
+            &crate::hooks::HookInput {
+                source: Some("subagent"),
+                ..Default::default()
+            },
+        )
+        .await;
     let _ = sub_ctx
         .hooks
         .fire(
@@ -516,6 +553,14 @@ async fn run_spawn(
         .hooks
         .fire(
             crate::hooks::HookEvent::SubagentStop,
+            &sub_ctx.cwd,
+            &crate::hooks::HookInput::default(),
+        )
+        .await;
+    let _ = sub_ctx
+        .hooks
+        .fire(
+            crate::hooks::HookEvent::SessionEnd,
             &sub_ctx.cwd,
             &crate::hooks::HookInput::default(),
         )

@@ -7,7 +7,7 @@ has (or should gain) a live pass against the real provider stack.
 ## Unit tests
 
 ```bash
-cargo test --workspace    # ~95 tests
+cargo test --workspace    # ~135 tests
 cargo run -p xtask -- arch # shape gate — god files, layer direction, prose-in-code
 ```
 

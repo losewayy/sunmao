@@ -39,6 +39,12 @@ pub struct Context {
     pub hooks: HookEngine,
     /// Working directory tools resolve paths against.
     pub cwd: PathBuf,
+    /// The session's id — the log's file stem ("session" for ephemeral
+    /// logs). Hook payloads (`session_id`, `transcript_path`) and extension
+    /// handshakes read it; a context-mode-style hook that Reads the
+    /// transcript gets a file that exists, not a literal placeholder.
+    /// Captured at Context build — /resume swaps the log, not this field.
+    pub session_id: String,
     /// Declarative permission rules (.sunmao/permissions.json + .claude settings).
     pub permissions: crate::permissions::Permissions,
     /// Approval gate — risky tool calls pause here for a verdict.
@@ -112,6 +118,9 @@ pub struct Context {
 pub struct TaskEntry {
     /// The `sub-…-l<lane>` id — doubles as the child log's file stem.
     pub id: String,
+    /// The lane this spawn claimed — unique across the spawn tree; lets a
+    /// frontend (or a test) prove distinctness without racing live events.
+    pub lane: u8,
     /// Agent def name, or None for a generic spawn.
     pub agent: Option<String>,
     /// One-line digest of the prompt it was given.
@@ -134,14 +143,22 @@ impl Context {
         // project/plugin manifests may name a loop driver — resolve before
         // `cwd` moves into the struct below.
         let loop_driver = crate::agent::LoopDriver::resolve(&cwd, &[]);
+        // the log's file stem is the session id — file-backed and ephemeral
+        // logs share the fallback so every consumer sees the same value.
+        let session_id = sessions
+            .path()
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "session".to_string());
         Self {
             llm,
             llm_override: std::sync::RwLock::new(None),
             sessions: Arc::new(tokio::sync::Mutex::new(sessions)),
             tools,
             audit: AuditLog::new(),
-            hooks: HookEngine::load(&cwd, "session", &[]),
+            hooks: HookEngine::load(&cwd, &session_id, &[]),
             cwd,
+            session_id,
             permissions,
             risk_table,
             approval: Arc::new(AllowAll),
@@ -171,16 +188,13 @@ impl Context {
     /// Failures degrade per child — an unspawnable extension warns and the
     /// rest still come up.
     pub async fn connect_extensions(&mut self) {
-        // session id is the log's file stem — file-backed and ephemeral
-        // logs share the fallback so extension `session_id` stays stable.
-        let session_id = {
-            let log = self.sessions.lock().await;
-            log.path()
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "session".to_string())
-        };
-        crate::ext::connect_all(&self.ext, &self.cwd, &session_id, &self.extra_plugin_roots).await;
+        crate::ext::connect_all(
+            &self.ext,
+            &self.cwd,
+            &self.session_id,
+            &self.extra_plugin_roots,
+        )
+        .await;
         for tool in self.ext.tools() {
             self.tools.register_arc(tool);
         }
@@ -198,7 +212,7 @@ impl Context {
         self.extra_plugin_roots = roots;
         self.permissions =
             crate::permissions::Permissions::load(&self.cwd, &self.extra_plugin_roots);
-        self.hooks = HookEngine::load(&self.cwd, "session", &self.extra_plugin_roots);
+        self.hooks = HookEngine::load(&self.cwd, &self.session_id, &self.extra_plugin_roots);
         // preset risky-patterns.txt files merge into the resolved table —
         // tightening the gate is additive; wholesale replacement stays a
         // project-file privilege.

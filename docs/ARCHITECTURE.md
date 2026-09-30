@@ -86,8 +86,8 @@ outlive their spawn call and append into the parent log directly.
 ├── plugin.json     ├── agents/*.md
 ├── prompt.md       ├── skills/*/SKILL.md
 ├── prompt.d/*.md   └── plugins/*/        (plugin dirs: commands/skills/agents scanned;
-├── skills/                               manifest fields merge only from the two
-├── agents/                               top-level plugin.json files)
+├── skills/                               manifest fields merge from every
+├── agents/                               plugin.json — top-level + plugins/*/
 └── plugin/         (the "this project is a plugin" dir)
     └── hooks|commands|skills|agents/
 ```

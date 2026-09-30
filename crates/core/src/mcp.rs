@@ -69,6 +69,8 @@ pub(crate) fn plugin_manifests(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<(Path
     for p in [
         cwd.join(".sunmao").join("plugin.json"),
         cwd.join(".claude-plugin").join("plugin.json"),
+        // "this project is a plugin" — the bundled manifest is a manifest
+        cwd.join(".sunmao").join("plugin").join("plugin.json"),
     ] {
         if let Some(root) = p.parent().map(|d| d.to_path_buf()) {
             manifests.push((p, root));
@@ -167,7 +169,14 @@ pub async fn connect_all(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<Box<dyn Too
     // `${CLAUDE_PLUGIN_ROOT}` inside a manifest's command/args/env expands
     // to the plugin's own directory.
     let mut servers: std::collections::HashMap<String, ServerSpec> = Default::default();
-    for (p, root) in plugin_manifests(cwd, extra_roots) {
+    // project mcp.json first — the manifest layers below override it, as
+    // PROTOCOLS documents
+    let project_spec = cwd.join(".sunmao").join("mcp.json");
+    let layered: Vec<(PathBuf, PathBuf)> = std::iter::once(project_spec)
+        .map(|p| (p, cwd.join(".sunmao")))
+        .chain(plugin_manifests(cwd, extra_roots))
+        .collect();
+    for (p, root) in layered {
         let Ok(text) = std::fs::read_to_string(&p) else {
             continue;
         };

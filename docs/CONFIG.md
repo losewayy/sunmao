@@ -8,7 +8,7 @@ per-key where merging applies (hooks/permissions/mcp).
 
 | File | Shape | Effect |
 |---|---|---|
-| `hooks.json` | `{"hooks": {"PreToolUse": [{"matcher": "Bash", "command": "..."}]}}` | Claude-contract hook procs; stdin=JSON event, exit 0 allow / 2 veto |
+| `hooks.json` | `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "..."}]}]}}` | Claude-contract hook procs; stdin=JSON event, exit 0 allow / 2 veto |
 | `mcp.json` | `{"mcpServers": {"name": {"command","args","env"} \| {"url"}}}` | MCP servers — stdio spawn or streamable-HTTP |
 | `permissions.json` | `{"permissions": {"allow":[..],"ask":[..],"deny":[..]}}` | `Tool(glob)` rules; deny>ask>allow>default |
 | `risky-patterns.txt` | `pattern | reason` per line | **replaces** the shipped approval-gate table outright (cold-plug); preset dirs' same-named file merges additively |
@@ -23,7 +23,7 @@ per-key where merging applies (hooks/permissions/mcp).
 | `plugins/<name>/` | plugin dir | contributes `commands/`, `skills/`, `agents/` **and** merges its `plugin.json` (`hooks` + `mcpServers`, `${CLAUDE_PLUGIN_ROOT}` → the plugin dir); `sunmao plugin install|list|remove` manages this dir — install takes a local dir, a git URL, or `owner/repo` (clones via `git`, depth 1) |
 | `presets/<name>/` | plugin dir | same bundle shape as `plugins/<name>/` (plus `permissions.json`), but only active while named via `--preset <name>` — see "Presets" below |
 | `sessions/*.jsonl` | runtime state (gitignored) | session logs — `--resume`/`--fork`/`--dataflow` read these |
-| `jobs/{id}/` | runtime state | background `Bash` jobs — `output.log` + `output.idx` + `meta.json` |
+| `jobs/{id}/` | runtime state | background `Bash` jobs — `output.log` + `exit.json` (on finish) |
 | `artifacts/` | runtime state | `HtmlArtifact` outputs — `{name}.html` plus `{name}.state.json` human-annotation sidecars |
 
 ## Claude-compatible (`<cwd>/.claude/`, `~/.claude/`)

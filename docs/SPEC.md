@@ -138,7 +138,7 @@ hook engine（核心）
 - 审批缝：`tools/*` 执行前可挂 policy（always_ask / auto / full-access 模式；`tool_input` 级规则）
 - **`shell/preflight`（差异化原语）**：Bash 命令执行前过 spawnfate 引擎——模拟 Windows spawn 各层（deno_task_shell 的 which 解析→CreateProcess→argv 序列化→目标 argv 拆分），预测命令会死在哪层/被怎么改写；结果进审计日志+警告回模型。spawnfate 同时以 MCP 形态对外发布（MCP client 的 dogfood + "我们给生态供货"的证明）
 - 审计流：每一次 hook 决策、每一次外部动作（exec/网络/写盘）、每一次上下文注入——全部进 SessionEvent 日志
-- **data-flow 文档是一等功能**：`sunmao dataflow --emit` 从日志生成"什么数据去了哪"的机器可读报告
+- **data-flow 文档是一等功能**：`sunmao --dataflow` 从日志生成"什么数据去了哪"的机器可读报告
 
 ### 4.7 ACP server — 前端桥 + 生态出口
 
@@ -199,7 +199,8 @@ hook engine（核心）
 - in-process 脚本扩展（那是 pi 的路，与进程边界立场冲突）
 - GUI（Electron 前端属 v0.5+，且需干净重写）
 - MCP server 模式（让我们被别的 agent 调用——v0.5+ 再议）
-- subagents / plan mode（学 pi 的纪律：能做扩展的不进核心；但 `SubagentStart/Stop` 事件面先留好）
+- plan mode（学 pi 的纪律：能做扩展的不进核心——subagents 已在 v0.2
+  以 Task + agents/*.md 声明式落地，本条作废修订：核心只留机制不留模式）
 - 自研 marketplace（装插件=git clone/路径，不做中心化商店）
 
 ## 8. 技术选型
@@ -207,7 +208,7 @@ hook engine（核心）
 - **语言**：Rust（定盘）——tokio + reqwest + serde + clap；TUI 用 ratatui
 - MCP client：优先 `rmcp`（官方 Rust SDK），不达标再手写 JSON-RPC
 - ACP：参照 `agent-client-protocol` Rust crate
-- 仓库形态：单仓 cargo workspace——`crates/core`（seams+engine）、`crates/dialect-claude`、`crates/acp-server`、`crates/tui`、`crates/mcp-client`、`crates/extension-proto`
+- 仓库形态：单仓 cargo workspace——`crates/core`（seams+engine）、`crates/llm`（provider 方言）、`crates/cli`（REPL/TUI/ACP/前端）。原计划的 per-concern crates 在 v0.2 合并——crate 边界按"必须分开编译的轴"切，不按文件主题切
 - 发布纪律：README+GIF+LICENSE(MIT)+CHANGELOG+CI+`docs/design/*` 设计决策留痕——沿用本家发布标准
 
 ## 9. 实现纪律（Less is more，操作化）

@@ -12,7 +12,7 @@ per-key where merging applies (hooks/permissions/mcp).
 | `mcp.json` | `{"mcpServers": {"name": {"command","args","env"} \| {"url"}}}` | MCP servers — stdio spawn or streamable-HTTP |
 | `permissions.json` | `{"permissions": {"allow":[..],"ask":[..],"deny":[..]}}` | `Tool(glob)` rules; deny>ask>allow>default |
 | `risky-patterns.txt` | `pattern | reason` per line | **replaces** the shipped approval-gate table outright (cold-plug); preset dirs' same-named file merges additively |
-| `plugin.json` | `{"name", "hooks":{...}, "mcpServers":{...}, "extensions":[{...}]}` | bundle manifest — folds hooks + MCP + extension children into the same paths; `extensions` entries are `{command, args, env}` spawn specs (`${CLAUDE_PLUGIN_ROOT}` → the plugin dir), tools surface as `ext__{name}__{tool}` |
+| `plugin.json` | `{"name", "hooks":{...}, "mcpServers":{...}, "extensions":[{...}]}` | bundle manifest — folds hooks + MCP + extension children into the same paths; `extensions` entries are `{command, args, env}` spawn specs (`${CLAUDE_PLUGIN_ROOT}` → the plugin dir) and may point at a bundled sidecar like `extension-host.mjs` (see PROTOCOLS.md "JS host sidecar"); tools surface as `ext__{name}__{tool}` |
 | `prompt.md` | markdown | system-prompt section appended to the assembly |
 | `prompt.d/<name>.md` | markdown | prompt section; a name matching a built-in section (`identity`, `tool-guidance`, `shell-dialect`, `subagent-default`) **replaces** that section — the cold-plug mechanism |
 | `commands/*.md` | markdown | `/name` injects file body as prompt |

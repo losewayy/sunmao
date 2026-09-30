@@ -31,7 +31,13 @@ TUI.
   `tools:` whitelist; `ext/event` runs inside HookEngine after command
   hooks, folding `block`/`extra_context`/`updatedInput` into the same
   HookOutcome; dead children degrade to failed calls, never aborts.
-  The v0.5 seam landed early — JS sidecar compat stays v0.5+
+  The v0.5 seam landed early
+- **JS extension-host sidecar** (`tools/extension-host.mjs`) — a
+  zero-dep Node bridge fronting the same `ext/*` protocol for `.mjs`/`.js`
+  extension modules (`api.registerTool` / `api.on` / `api.log`); event
+  replies merge with hooks semantics (extra_context concat, effect
+  scalars last-non-null-wins), `.ts` files warn-and-skip. Bundled-copy
+  example at `examples/js-extension/`
 - cold-plug reach: `.sunmao/risky-patterns.txt` replaces the shipped
   approval table outright; preset dirs' same-named file merges additively
 - model routing: `.sunmao/models.json` names providers + routes; agent

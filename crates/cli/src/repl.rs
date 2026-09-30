@@ -108,7 +108,7 @@ pub async fn run(
                 }
                 "help" | "h" | "?" => {
                     println!(
-                        "commands — /compact · /model [sel] · /resume [id] · /sessions · /tasks · /artifacts · /help · /quit\n\
+                        "commands — /compact · /model [sel] · /resume [id] · /sessions · /tasks · /artifacts · /annotate <name> <note> · /help · /quit\n\
                          `!cmd` runs locally; /name resolves .sunmao/commands + .claude/commands"
                     );
                     continue;
@@ -162,6 +162,17 @@ pub async fn run(
                 }
                 "artifacts" => {
                     println!("{}", crate::tui::slash::artifacts_text(cwd));
+                    continue;
+                }
+                "annotate" => {
+                    let mut it = cmd_line.splitn(3, char::is_whitespace);
+                    let _ = it.next();
+                    match (it.next(), it.next()) {
+                        (Some(name), Some(note)) => {
+                            println!("{}", crate::tui::slash::annotate(cwd, name, note.trim()));
+                        }
+                        _ => println!("[usage: /annotate <name> <note>]"),
+                    }
                     continue;
                 }
                 "resume" => {

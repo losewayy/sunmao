@@ -407,6 +407,9 @@ fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
         Submit::Artifacts => {
             let _ = tx_input.send(Submit::Artifacts);
         }
+        Submit::Annotate(name, note) => {
+            let _ = tx_input.send(Submit::Annotate(name, note));
+        }
     }
     false
 }

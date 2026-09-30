@@ -151,12 +151,20 @@ async fn malformed_tool_args_become_failed_result() {
     // two provider calls: the model got the failure fed back
     assert_eq!(provider.calls.load(std::sync::atomic::Ordering::Relaxed), 2);
     let msgs = ctx.sessions.lock().await.messages().await.unwrap();
-    // tool message present containing the malformed-call error
-    let tool_msg = msgs
+    // tool message present containing the malformed-call error — and
+    // exactly ONE of them: the fold derives the protocol message from the
+    // ToolResult event, so a stray Message::tool_result append would
+    // double-report the call and providers hard-reject the transcript.
+    let tool_msgs: Vec<_> = msgs
         .iter()
-        .find(|m| matches!(m.role, sunmao_llm::types::Role::Tool))
-        .expect("tool result message");
-    assert!(tool_msg.content.as_deref().unwrap().contains("malformed"));
+        .filter(|m| matches!(m.role, sunmao_llm::types::Role::Tool))
+        .collect();
+    assert_eq!(tool_msgs.len(), 1, "one result per call — no duplicates");
+    assert!(tool_msgs[0]
+        .content
+        .as_deref()
+        .unwrap()
+        .contains("malformed"));
 }
 
 #[tokio::test]

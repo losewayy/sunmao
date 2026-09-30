@@ -225,7 +225,16 @@ impl App {
                     // a resumed session shouldn't look emptier than it was.
                     self.last_usage = Some(usage.clone());
                 }
-                E::Started { .. } | E::Artifact { .. } => {}
+                E::Started { .. } => {}
+                E::Artifact { name, path, bytes } => {
+                    // same note the live sink pushes — a resumed session
+                    // shouldn't hide a deliverable it produced.
+                    self.push_note(&format!("[artifact '{name}' → {path} ({bytes} B)]"));
+                }
+                E::ModeChange { mode } => {
+                    // the stance flip is audit-visible, same as hook events
+                    self.push_audit(&format!("approval.mode — {}", mode.as_str()));
+                }
                 E::Todos { items } => {
                     // the task list is durable state, not transcript — a
                     // resumed session shows it once, as a note.

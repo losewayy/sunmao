@@ -81,6 +81,32 @@ fn invalid_params(msg: impl ToString) -> Error {
     Error::invalid_params().data(msg.to_string())
 }
 
+/// The approval-mode config option every ACP session advertises — the
+/// client's `session/set_config_option` selects map onto SPEC §4.6 stances.
+fn mode_config(current: sunmao_core::agent::ApprovalMode) -> v2::SessionConfigOption {
+    v2::SessionConfigOption::select(
+        "mode",
+        "Approval mode",
+        current.as_str(),
+        sunmao_core::agent::ApprovalMode::ALL
+            .iter()
+            .map(|m| {
+                v2::SessionConfigSelectOption::new(
+                    m.as_str(),
+                    match m {
+                        sunmao_core::agent::ApprovalMode::AlwaysAsk => "Ask for approval",
+                        sunmao_core::agent::ApprovalMode::Auto => "Auto",
+                        sunmao_core::agent::ApprovalMode::ReadOnly => "Read only",
+                        sunmao_core::agent::ApprovalMode::FullAccess => "Full access",
+                    },
+                )
+            })
+            .collect::<Vec<_>>(),
+    )
+    .category(v2::SessionConfigOptionCategory::Mode)
+    .description("Gate stance per SPEC §4.6 — always_ask/auto/read_only/full_access; deny rules apply in every mode")
+}
+
 pub async fn run(
     base_url: &str,
     api_key: &str,
@@ -197,6 +223,7 @@ pub async fn run(
                             },
                         )
                         .await;
+                    let mode = *ctx.approval_mode.read().unwrap();
                     agent.sessions.lock().unwrap().insert(
                         id,
                         Arc::new(Mutex::new(SessionState {
@@ -205,7 +232,10 @@ pub async fn run(
                             next_msg: 0,
                         })),
                     );
-                    responder.respond(v2::NewSessionResponse::new(session_id.clone()))?;
+                    responder.respond(
+                        v2::NewSessionResponse::new(session_id.clone())
+                            .config_options(vec![mode_config(mode)]),
+                    )?;
                     let _ = cx.send_notification(v2::UpdateSessionNotification::new(
                         session_id,
                         v2::SessionUpdate::StateUpdate(v2::StateUpdate::Idle(
@@ -339,6 +369,10 @@ pub async fn run(
                             },
                         )
                         .await;
+                    // the mode the reopened log was seeded with — the
+                    // response advertises it so the client's selector
+                    // shows the resumed stance, not a default
+                    let resumed_mode = *ctx.approval_mode.read().unwrap();
                     agent.sessions.lock().unwrap().insert(
                         id,
                         Arc::new(Mutex::new(SessionState {
@@ -347,7 +381,63 @@ pub async fn run(
                             next_msg: 0,
                         })),
                     );
-                    responder.respond(v2::ResumeSessionResponse::new())
+                    responder.respond(
+                        v2::ResumeSessionResponse::new()
+                            .config_options(vec![mode_config(resumed_mode)]),
+                    )
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = agent.clone();
+                async move |req: v2::SetSessionConfigOptionRequest,
+                            responder: Responder<v2::SetSessionConfigOptionResponse>,
+                            cx: V2ConnectionTo<Client>| {
+                    let session = {
+                        let map = agent.sessions.lock().unwrap();
+                        map.get(&req.session_id.to_string()).cloned()
+                    };
+                    let Some(session) = session else {
+                        return responder.respond_with_error(invalid_params("unknown session"));
+                    };
+                    if req.config_id.to_string() != "mode" {
+                        return responder.respond_with_error(invalid_params(format!(
+                            "unknown config option: {}",
+                            req.config_id
+                        )));
+                    }
+                    let wanted = match &req.value {
+                        v2::SessionConfigOptionValue::Id { value } => value.to_string(),
+                        _ => {
+                            return responder
+                                .respond_with_error(invalid_params("mode expects an id value"));
+                        }
+                    };
+                    let Some(m) = sunmao_core::agent::ApprovalMode::parse(&wanted) else {
+                        return responder
+                            .respond_with_error(invalid_params(format!("unknown mode: {wanted}")));
+                    };
+                    let (agent_loop, ctx, session_id) = {
+                        let st = session.lock().unwrap();
+                        (st.agent.clone(), st.ctx.clone(), req.session_id.clone())
+                    };
+                    // durable + live: the audit line rides the same observer
+                    // the client already subscribes to
+                    agent_loop
+                        .set_approval_mode(
+                            m,
+                            &observer::AcpObserver {
+                                connection: cx.clone(),
+                                session_id: session_id.clone(),
+                                msg_counter: std::sync::atomic::AtomicU64::new(0),
+                            },
+                        )
+                        .await;
+                    responder.respond(v2::SetSessionConfigOptionResponse::new(vec![mode_config(
+                        *ctx.approval_mode.read().unwrap(),
+                    )]))
                 }
             },
             agent_client_protocol::on_receive_request!(),

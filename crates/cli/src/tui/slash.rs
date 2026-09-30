@@ -12,6 +12,7 @@ const BUILTINS: &[&str] = &[
     "clear",
     "compact",
     "help",
+    "mode",
     "model",
     "multiline",
     "quit",

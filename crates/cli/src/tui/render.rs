@@ -371,6 +371,15 @@ fn draw_status(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| app.cwd.display().to_string());
     let mode = if app.multiline { "ml" } else { "1line" };
+    // the approval stance is always visible — read_only/full_access are
+    // the states a user most needs not to forget they're in
+    let amode = match app.approval_mode {
+        sunmao_core::agent::ApprovalMode::Auto => "auto",
+        sunmao_core::agent::ApprovalMode::AlwaysAsk => "ask",
+        sunmao_core::agent::ApprovalMode::ReadOnly => "ro",
+        sunmao_core::agent::ApprovalMode::FullAccess => "full",
+    };
+    let mode = format!("{mode}·{amode}");
     let branch = match &app.git_branch {
         Some(b) => format!("({b})"),
         None => String::new(),

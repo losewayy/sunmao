@@ -78,6 +78,10 @@ pub enum SessionEvent {
     /// message each iteration, so writing it into the transcript would
     /// duplicate it once per write.
     Todos { items: Vec<crate::tool::TodoItem> },
+    /// The approval stance changed (`/mode`, ACP set_config_option, GUI
+    /// selector). Audit, not conversation — the fold ignores it, but a
+    /// resume reseeds `Context.approval_mode` from the latest one.
+    ModeChange { mode: crate::agent::ApprovalMode },
 }
 
 /// Where a session's event log lives — `<cwd>/.sunmao/sessions/<id>.jsonl`.

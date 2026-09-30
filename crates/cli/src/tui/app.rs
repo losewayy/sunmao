@@ -114,6 +114,9 @@ pub struct App {
     /// session ids for `/resume` completion — rescanned when the sessions
     /// menu opens (sub-agent sessions land mid-session).
     pub session_ids: Vec<String>,
+    /// the session's approval stance (SPEC §4.6) — footer-visible so
+    /// read_only/full_access are never silently active
+    pub approval_mode: sunmao_core::agent::ApprovalMode,
 }
 
 /// Content of the full-screen viewer — title line + the block's full text
@@ -130,7 +133,7 @@ pub struct Viewer {
 const HELP_TEXT: &str = "keys — Tab browse blocks · Enter expand · e fold · y copy · \
 g/G ends · ! bash · / commands · Esc×2 stash draft · Ctrl+S restore · \
 Ctrl+A/E/U/W line edit · Ctrl-C cancel, ×2 quits
-commands — /compact · /model · /multiline · /clear · /resume [id] · /tasks · /todos · /artifacts · /annotate · /help · /quit · \
+commands — /compact · /model · /mode · /multiline · /clear · /resume [id] · /tasks · /todos · /artifacts · /annotate · /help · /quit · \
 + every *.md in .sunmao/commands, .claude/commands, plugins/*/commands";
 
 /// Pastes at or above this many bytes stash into `paste_stash` and insert
@@ -172,6 +175,8 @@ pub enum Submit {
     Artifacts,
     /// /annotate <name> <note> — human notes into artifact state.json
     Annotate(String, String),
+    /// /mode [name] — None lists stances, Some switches the approval mode
+    Mode(Option<String>),
 }
 
 impl App {
@@ -209,6 +214,7 @@ impl App {
             extra_roots: Vec::new(),
             file_pool: Vec::new(),
             session_ids: Vec::new(),
+            approval_mode: sunmao_core::agent::ApprovalMode::Auto,
         };
         let mut banner = Block::new(BlockKind::Note);
         banner.text = format!(
@@ -403,6 +409,12 @@ impl App {
                     "model" => {
                         let arg = cmd_line.split_whitespace().nth(1).map(|s| s.to_string());
                         Submit::Model(arg)
+                    }
+                    // /mode switches the approval stance — kernel-side via
+                    // the agent's session state, audited into the log
+                    "mode" => {
+                        let arg = cmd_line.split_whitespace().nth(1).map(|s| s.to_string());
+                        Submit::Mode(arg)
                     }
                     // /tasks — the live sub-agent roster, driver-side too
                     "tasks" => Submit::Tasks,

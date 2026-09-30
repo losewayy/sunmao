@@ -108,7 +108,7 @@ pub async fn run(
                 }
                 "help" | "h" | "?" => {
                     println!(
-                        "commands — /compact · /model [sel] · /resume [id] · /sessions · /tasks · /todos · /artifacts · /annotate <name> <note> · /help · /quit\n\
+                        "commands — /compact · /model [sel] · /mode [stance] · /resume [id] · /sessions · /tasks · /todos · /artifacts · /annotate <name> <note> · /help · /quit\n\
                          `!cmd` runs locally; /name resolves .sunmao/commands + .claude/commands"
                     );
                     continue;
@@ -130,6 +130,27 @@ pub async fn run(
                             None => {
                                 println!("[unknown selector: {rest} — try /model for the list]")
                             }
+                        }
+                    }
+                    continue;
+                }
+                "mode" => {
+                    use sunmao_core::agent::ApprovalMode;
+                    if rest.is_empty() {
+                        let cur = agent.approval_mode();
+                        println!("approval mode: {}", cur.as_str());
+                        for m in ApprovalMode::ALL {
+                            println!("  {} {}", if m == cur { "→" } else { " " }, m.as_str());
+                        }
+                    } else {
+                        match ApprovalMode::parse(rest) {
+                            Some(m) => {
+                                agent.set_approval_mode(m, &*observer.0).await;
+                                println!("[approval mode → {}]", m.as_str());
+                            }
+                            None => println!(
+                                "[unknown mode: {rest} — always_ask · auto · read_only · full_access]"
+                            ),
                         }
                     }
                     continue;

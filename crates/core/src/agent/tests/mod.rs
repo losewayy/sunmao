@@ -5,6 +5,7 @@ use futures_util::stream;
 use sunmao_llm::types::Usage;
 use sunmao_llm::{ChatRequest, DeltaStream, ProviderAdapter, StreamDelta, ToolCallFragment};
 
+mod approval_modes;
 mod approvals;
 mod driver;
 mod hooks;

@@ -486,6 +486,9 @@ fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
         Submit::Model(sel) => {
             let _ = tx_input.send(Submit::Model(sel));
         }
+        Submit::Mode(arg) => {
+            let _ = tx_input.send(Submit::Mode(arg));
+        }
         Submit::Tasks => {
             let _ = tx_input.send(Submit::Tasks);
         }

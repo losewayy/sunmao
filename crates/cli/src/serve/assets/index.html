@@ -669,6 +669,7 @@ button.tb:hover,.tb.pressed{background:var(--fill-2);color:var(--text)}
       </div>
       <div class="cmp-row">
         <textarea id="input" rows="1" placeholder="描述任务，/ 调用命令" aria-label="消息"></textarea>
+        <button class="cb mode" data-act="pick-mode" id="mode-btn" data-tip="审批模式"><svg class="i"><use href="#i-shield-check" id="mode-ic"/></svg><span id="cmp-mode">auto</span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
         <button class="cb model" data-act="pick-model" id="model-btn"><span id="cmp-model">…</span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
         <button class="cb send" data-act="send" id="send-btn" data-tip="发送|Enter" aria-label="发送"><svg class="i"><use href="#i-arrow-up"/></svg></button>
       </div>
@@ -725,6 +726,15 @@ const mix = (a, b, t) => { const A = hex2rgb(a), B = hex2rgb(b); return rgb2hex(
 /* ================= state ================= */
 let view = 'session', lastMain = 'session', dockOn = true, setPage = 'appearance';
 let sessionId = '', cwd = '', slashList = [], models = [], modelLabel = '', busy = false, connected = false;
+let approvalMode = 'auto'; // kernel-reported stance — the only source of truth
+const MODE_LABELS = { always_ask: '请求批准', auto: '自动', read_only: '只读', full_access: '完全访问' };
+const MODE_ICONS = { always_ask: 'shield-check', auto: 'shield', read_only: 'eye', full_access: 'lock' };
+function setApprovalMode(m) {
+  if (!m) return;
+  approvalMode = m;
+  $('#cmp-mode').textContent = MODE_LABELS[m] || m;
+  $('#mode-ic').setAttribute('href', '#i-' + (MODE_ICONS[m] || 'shield'));
+}
 let SESSION_IDS = [];
 const EVLOG = [];
 
@@ -1170,9 +1180,21 @@ function renderReplay(events, anim) {
       const m = ev.message || {};
       if (m.role === 'system') { logEv('message', 'system · (identity, hidden)'); continue; }
       if (m.role === 'user') {
+        const c = m.content || '';
+        if (c.startsWith('[hook context]')) {
+          // folded hook evidence — the TUI renders this as an audit row,
+          // not a prompt the user typed; the event log carries the detail
+          logEv('hook', 'hook injected context · ' + c.slice(15).slice(0, 80));
+          continue;
+        }
+        if (c.startsWith('<local-shell>')) {
+          // folded evidence — the local_shell event renders the real row
+          logEv('tool_call', '! (folded message)');
+          continue;
+        }
         closeMsg();
-        append(TX, youHTML(m.content || '', anim));
-        logEv('message', 'user · ' + (m.content || '').slice(0, 60));
+        append(TX, youHTML(c, anim));
+        logEv('message', 'user · ' + c.slice(0, 60));
       } else if (m.role === 'assistant') {
         if (m.content) { const h = msgHost(); append(h, `<div class="bubble glass">${mdRender(m.content)}</div>`); }
         logEv('message', 'assistant · ' + (m.content || '').slice(0, 60) + (m.tool_calls ? ` (+${m.tool_calls.length} calls)` : ''));
@@ -1189,21 +1211,30 @@ function renderReplay(events, anim) {
       const el = append(g, toolHTML(['run', (ev.depth ? '↳ ' : '') + (fn.name || '?'), sum, '', ''], {}));
       // key on (call.id, depth, lane) — relayed sub-agent calls can share a
       // call id namespace across lanes; missing id falls back to a unique key
-      pendingCalls.set(c.id ? `${ev.depth || 0}:${ev.lane || 0}:${c.id}` : Symbol(), el);
+      pendingCalls.set(c.id ? `${ev.depth || 0}:${ev.lane || 0}:${c.id}` : Symbol(),
+        { el, name: fn.name || '?', depth: ev.depth || 0, lane: ev.lane || 0 });
       logEv('tool_call', `${fn.name || '?'} ${sum}`.slice(0, 140));
     } else if (t === 'tool_result') {
       const key = `${ev.depth || 0}:${ev.lane || 0}:${ev.call_id}`;
-      let target = pendingCalls.get(key);
-      if (target) pendingCalls.delete(key);
-      else { const k = [...pendingCalls.keys()][0]; if (k !== undefined) { target = pendingCalls.get(k); pendingCalls.delete(k); } }
-      if (target) setTool(target, ev.ok ? 'ok' : 'err', ev.ok ? '' : '', capOut(ev.output || ''));
+      let hit = pendingCalls.get(key);
+      if (hit) pendingCalls.delete(key);
       else {
-        const host = msgHost();
-        let g = host.lastElementChild && host.lastElementChild.classList.contains('tools') ? host.lastElementChild : append(host, '<div class="tools"></div>');
-        append(g, toolHTML([ev.ok ? 'ok' : 'err', ev.name || '?', '', '', capOut(ev.output || '')]));
+        // id-less fallback (mirrors the TUI fold): newest still-running call
+        // with the same name/depth/lane — never steal an unrelated row
+        let k;
+        for (const kk of [...pendingCalls.keys()].reverse()) {
+          const p = pendingCalls.get(kk);
+          if (p.name === ev.name && p.depth === (ev.depth || 0) && p.lane === (ev.lane || 0)) { k = kk; break; }
+        }
+        if (k !== undefined) { hit = pendingCalls.get(k); pendingCalls.delete(k); }
       }
+      if (hit) setTool(hit.el, ev.ok ? 'ok' : 'err', '', capOut(ev.output || ''));
+      else addNote(`${ev.ok ? '✓' : '✗'} ${ev.name || '?'}`); // result without a call — surface, don't fabricate a row
       logEv('tool_result', `${ev.name || '?'} ${ev.ok ? 'ok' : 'err'}`);
     } else if (t === 'compacted') {
+      // compaction boundary — earlier history was summarized away, so the
+      // transcript clears exactly like the TUI's blocks.clear()
+      TX.innerHTML = ''; closeMsg(); runningTools.length = 0; pendingCalls.clear();
       addNote(`[context compacted]${ev.summary ? '\n' + ev.summary : ''}`);
       logEv('note', 'compacted');
     } else if (t === 'artifact') {
@@ -1219,15 +1250,27 @@ function renderReplay(events, anim) {
       let g = host.lastElementChild && host.lastElementChild.classList.contains('tools') ? host.lastElementChild : append(host, '<div class="tools"></div>');
       append(g, toolHTML([ev.exit_code === 0 ? 'ok' : 'err', 'shell', '$ ' + (ev.command || ''), 'exit ' + ev.exit_code, capOut(ev.output || '')]));
       logEv('tool_call', '! ' + (ev.command || ''));
+    } else if (t === 'mode_change') {
+      // audit row in the TUI — on this side the event log is the audit
+      // surface, so the fold only re-syncs the chip + logs the fact
+      setApprovalMode(ev.mode);
+      logEv('hook', `approval.mode · ${ev.mode}`);
     } else if (t === 'task_done') {
       const host = msgHost();
       append(host, `<div class="notice glass">${ic(ev.ok ? 'check' : 'x', 'i sm')}<span>子代理 <code>${esc(ev.id)}</code> ${ev.ok ? '完成' : '失败'}</span></div>`);
       logEv('tool_result', `task ${ev.id} ${ev.ok ? 'ok' : 'err'}`);
+    } else if (t === 'todos') {
+      // durable state, not transcript — a replay shows it once, as a note
+      const items = ev.items || [];
+      if (items.length) {
+        const mark = { done: 'x', in_progress: '>', pending: ' ' };
+        addNote('task list:\n' + items.map(i => `- [${mark[i.status] || ' '}] ${i.content}`).join('\n'));
+      }
     }
-    // todos: skipped (injected per-turn by the kernel)
+    // other event types have no transcript footprint
   }
   // orphans: tool calls with no result = interrupted
-  for (const el of pendingCalls.values()) setTool(el, 'err', '已中断');
+  for (const p of pendingCalls.values()) setTool(p.el, 'err', '已中断');
   updateHero();
   refreshDataflow();
   requestAnimationFrame(() => { $('#scroller').scrollTop = $('#scroller').scrollHeight; });
@@ -1298,6 +1341,7 @@ function route(v) {
       $('#ws-name').textContent = cwd.split(/[\\/]/).filter(Boolean).pop() || 'sunmao';
       $('#ws-btn').dataset.tip = cwd;
       if (!models.length) $('#model-btn').style.display = 'none';
+      setApprovalMode(v.mode);
       renderReplay(v.replay || []);
       setBusy(!!v.busy);
       refreshSessions();
@@ -1313,6 +1357,7 @@ function route(v) {
     case 'note': addNote(v.text); logEv('note', v.text); break;
     case 'session': sessionId = v.id || sessionId; renderCrumb(); refreshSessions(); break;
     case 'model': modelLabel = v.label || modelLabel; $('#cmp-model').textContent = modelLabel; toast(`模型切换为 ${v.label}`, 'cpu'); break;
+    case 'mode': setApprovalMode(v.mode); toast(`审批模式切换为 ${MODE_LABELS[v.mode] || v.mode}`, 'shield'); break;
     case 'busy': setBusy(v.busy); break;
   }
 }
@@ -1701,6 +1746,16 @@ function act(name, el) {
     case 'island-tall': { const isl = el.closest('.island'), on = isl.classList.toggle('tall'); el.innerHTML = ic(on ? 'shrink' : 'expand'); el.dataset.tip = on ? '收起' : '展开'; return; }
     case 'island-open': { const isl = el.closest('.island'); return open('/artifacts/' + encodeURIComponent(isl.dataset.artifact), '_blank'); }
     case 'think': return el.classList.toggle('open');
+    case 'pick-mode': {
+      // same four stances the kernel gates on — labels mirror the TUI's /mode
+      const MODES = [
+        { v: 'always_ask', t: '请求批准', d: '写入与风险命令前询问', icon: 'shield-check' },
+        { v: 'auto', t: '自动', d: '读写直接放行，风险命令仍询问', icon: 'shield' },
+        { v: 'read_only', t: '只读', d: '只能读取与搜索，不执行命令', icon: 'eye' },
+        { v: 'full_access', t: '完全访问', d: '不再询问；deny 规则依旧生效', icon: 'lock', warn: true },
+      ];
+      return menuPop(el, [{ label: '审批模式' }, ...MODES.map(m => Object.assign({}, m, { on: m.v === approvalMode }))], v => { wsSend({ type: 'mode', sel: v }); }, { place: 'top', align: 'end' });
+    }
     case 'pick-model': {
       if (!models.length) return toast('无 models.json — 仅会话模型', 'info');
       return menuPop(el, [{ label: '模型' }, ...models.map(m => ({ v: m, t: m, mono: true }))], v => { wsSend({ type: 'model', sel: v }); }, { place: 'top', align: 'end' });
@@ -1763,6 +1818,9 @@ apply();
 show('session');
 updateHero();
 connect();
+
+// debug/test handle — replay parity harness drives the fold through this
+window.__sunmao = { renderReplay, liveEvent, TX: () => TX, EVLOG };
 })();
 </script>
 </body>

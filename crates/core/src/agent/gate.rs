@@ -1,15 +1,21 @@
 //! The dispatch gate — declarative rules → hook `permissionDecision` →
-//! session grants → risky-pattern classifier → approval prompt. Lives apart
-//! from the turn loop: this file is the *decision*, turn.rs is the *drive*.
+//! session grants → risky-pattern classifier → approval prompt, all
+//! downstream of the session's approval mode (SPEC §4.6). Lives apart from
+//! the turn loop: this file is the *decision*, turn.rs is the *drive*.
 
 use super::*;
+use crate::agent::mode::{ApprovalMode, call_mutates};
 
 impl AgentLoop {
     /// `deny` rules are a hard refusal nothing overrides — a session grant
-    /// never bypasses them.
+    /// never bypasses them, and neither does `full_access` mode.
+    /// `args` is the (possibly hook-rewritten) tool input — `call_mutates`
+    /// needs `Bash.command`, which `specifier` already is, but other tools
+    /// may classify on more fields later.
     pub(super) async fn gate_call(
         &self,
         tool: &str,
+        args: &serde_json::Value,
         specifier: &str,
         hook: Option<crate::hooks::HookPermission>,
         observer: &dyn Observer,
@@ -18,15 +24,42 @@ impl AgentLoop {
         use crate::permissions::Verdict;
         match self.ctx.permissions.check(tool, specifier) {
             Verdict::Deny => return Err("denied by permission rules".into()),
-            Verdict::PreApproved => return Ok(()),
-            Verdict::Ask | Verdict::Default => {}
+            Verdict::Ask | Verdict::PreApproved | Verdict::Default => {}
         }
         if let Some(H::Deny) = hook {
             return Err("denied by hook".into());
         }
-        // Session grants sit after both deny gates but before every ask: a
-        // grant is a standing answer to a prompt, not an override of a veto.
-        if self.ctx.session_granted(tool, specifier) {
+        // read_only refuses mutations outright — the refusal is an audit
+        // fact, same durability as a denied prompt verdict. Ahead of
+        // grants on purpose: a standing answer is not a license to write
+        // under a mode that forbids writing.
+        let mode = self.approval_mode();
+        if mode == ApprovalMode::ReadOnly && call_mutates(tool, args, &self.ctx.readonly_verbs) {
+            let detail = format!("{tool}: {specifier}");
+            self.audit_fact("mode.readonly.block", &detail, observer)
+                .await;
+            return Err(format!("blocked by read_only mode: {tool}"));
+        }
+        // Chained Bash hides extra surfaces behind `&&`/`;`/`|` — segments
+        // get their own deny/grant/ask adjudication because whole-call
+        // rules can't see inside the chain. In Auto/FullAccess the segment
+        // pass is the whole decision (the whole-call classifier would
+        // substring-match a segment and re-prompt past its grant), so it
+        // reports whether it fully adjudicated.
+        let segmented = if tool == "Bash" {
+            self.bash_segments_check(specifier, mode, observer).await?
+        } else {
+            false
+        };
+        // Standing answers — an allow rule, a session grant, a hook allow —
+        // stop every remaining ask, but never a deny (checked above at both
+        // whole-call and segment shape).
+        if self.ctx.permissions.check(tool, specifier) == Verdict::PreApproved
+            || self.ctx.session_granted(tool, specifier)
+        {
+            return Ok(());
+        }
+        if mode == ApprovalMode::FullAccess {
             return Ok(());
         }
         if self.ctx.permissions.check(tool, specifier) == Verdict::Ask {
@@ -39,45 +72,16 @@ impl AgentLoop {
                 .ask(tool, specifier, "hook requested approval", observer)
                 .await;
         }
-        // Structural pass (SPEC §4.3: 管道分拆进审批层) — a Bash command
-        // hides segments behind `|`/`&&`/`;`. Every parsed segment gets its
-        // own rules + grant + classifier check: a deny anywhere vetoes the
-        // whole command; the FIRST risky segment decides the prompt, named
-        // by segment so the human sees which part tripped it. Runs before
-        // the hook-allow short-circuit — a blanket `allow` answers the
-        // whole call, it can't launder a deny-scoped segment inside a
-        // chain. Parse failure (or non-Bash tools) falls back to the
-        // whole-specifier check.
-        if tool == "Bash" {
-            let segments = crate::preflight::shell_segments(specifier);
-            if segments.len() > 1 {
-                for seg in &segments {
-                    match self.ctx.permissions.check(tool, seg) {
-                        Verdict::Deny => {
-                            return Err(format!("denied by permission rules (segment: {seg})"));
-                        }
-                        Verdict::Ask | Verdict::PreApproved | Verdict::Default => {}
-                    }
-                    // a session grant answers the segment's ask forever —
-                    // re-prompting on every chained command made Session
-                    // grants useless for the exact commands that need them
-                    if self.ctx.session_granted(tool, seg) {
-                        continue;
-                    }
-                    if self.ctx.permissions.check(tool, seg) == Verdict::Ask {
-                        return self.ask(tool, seg, "matched ask rule", observer).await;
-                    }
-                }
-                for seg in &segments {
-                    if self.ctx.session_granted(tool, seg) {
-                        continue;
-                    }
-                    if let Some(why) = crate::approval::classify(seg, &self.ctx.risk_table) {
-                        return self.ask(tool, seg, why, observer).await;
-                    }
-                }
-                return Ok(());
-            }
+        // always_ask: every mutating call prompts — rules/grants already
+        // answered above; safe reads still pass.
+        if mode == ApprovalMode::AlwaysAsk && call_mutates(tool, args, &self.ctx.readonly_verbs) {
+            return self.ask(tool, specifier, "always_ask mode", observer).await;
+        }
+        if segmented {
+            // multi-segment Bash already ran its ask/classifier pass per
+            // segment — the whole string is only the concatenation of what
+            // was just adjudicated
+            return Ok(());
         }
         if let Some(H::Allow) = hook {
             return Ok(());
@@ -87,6 +91,76 @@ impl AgentLoop {
             return self.ask(tool, specifier, why, observer).await;
         }
         Ok(())
+    }
+
+    /// Per-segment adjudication for chained Bash. A deny anywhere vetoes
+    /// the whole command, named by segment so the human sees which part
+    /// tripped it; a session grant or ask rule applies at segment shape
+    /// for the same reason. Only multi-segment commands take this path —
+    /// single commands are fully covered by the whole-call checks.
+    ///
+    /// Returns `true` when the segments pass and the call was fully
+    /// adjudicated at segment shape (Auto/FullAccess): the caller then
+    /// skips the whole-call classifier, which would substring-match a
+    /// granted segment and re-prompt. AlwaysAsk/ReadOnly keep the
+    /// whole-call pass — read_only's whole-call `call_mutates` already
+    /// caught chained mutations before we get here.
+    async fn bash_segments_check(
+        &self,
+        specifier: &str,
+        mode: ApprovalMode,
+        observer: &dyn Observer,
+    ) -> Result<bool, String> {
+        use crate::permissions::Verdict;
+        let segments = crate::preflight::shell_segments(specifier);
+        if segments.len() <= 1 {
+            return Ok(false);
+        }
+        for seg in segments {
+            if self.ctx.permissions.check("Bash", &seg) == Verdict::Deny {
+                return Err(format!("denied by permission rules (segment: {seg})"));
+            }
+            // a session grant answers the segment's ask forever —
+            // re-prompting on every chained command made Session
+            // grants useless for the exact commands that need them
+            if self.ctx.session_granted("Bash", &seg) {
+                continue;
+            }
+            if mode == ApprovalMode::FullAccess {
+                continue;
+            }
+            if mode == ApprovalMode::Auto {
+                if self.ctx.permissions.check("Bash", &seg) == Verdict::Ask {
+                    self.ask("Bash", &seg, "matched ask rule", observer).await?;
+                    continue;
+                }
+                if let Some(why) = crate::approval::classify(&seg, &self.ctx.risk_table) {
+                    self.ask("Bash", &seg, why, observer).await?;
+                }
+            }
+            // AlwaysAsk/ReadOnly: segment-level asks stay folded into the
+            // whole-call decision — one prompt per call, one refusal per
+            // mutating command.
+        }
+        Ok(mode == ApprovalMode::Auto || mode == ApprovalMode::FullAccess)
+    }
+
+    /// Durable + live audit fact for a gate decision — deny paths and
+    /// mode blocks must be reconstructible from the log alone.
+    async fn audit_fact(&self, event: &str, detail: &str, observer: &dyn Observer) {
+        {
+            let mut log = self.ctx.sessions.lock().await;
+            let _ = log
+                .append(&SessionEvent::Hook {
+                    event: event.to_string(),
+                    detail: detail.to_string(),
+                })
+                .await;
+        }
+        observer.on_event(&LiveEvent::Hook {
+            event: event.to_string(),
+            detail: detail.to_string(),
+        });
     }
 
     /// One approval prompt → verdict. `Session` is recorded in
@@ -118,37 +192,13 @@ impl AgentLoop {
             crate::approval::Approval::Session => {
                 self.ctx.grant_session(tool, specifier);
                 let detail = format!("{tool}: {specifier}");
-                {
-                    let mut log = self.ctx.sessions.lock().await;
-                    let _ = log
-                        .append(&crate::SessionEvent::Hook {
-                            event: "approval.session".into(),
-                            detail: detail.clone(),
-                        })
-                        .await;
-                }
-                observer.on_event(&LiveEvent::Hook {
-                    event: "approval.session".into(),
-                    detail,
-                });
+                self.audit_fact("approval.session", &detail, observer).await;
                 Ok(())
             }
             crate::approval::Approval::Once => Ok(()),
             crate::approval::Approval::Deny => {
                 let detail = format!("{tool}: {specifier} ({why})");
-                {
-                    let mut log = self.ctx.sessions.lock().await;
-                    let _ = log
-                        .append(&crate::SessionEvent::Hook {
-                            event: "approval.deny".into(),
-                            detail: detail.clone(),
-                        })
-                        .await;
-                }
-                observer.on_event(&LiveEvent::Hook {
-                    event: "approval.deny".into(),
-                    detail,
-                });
+                self.audit_fact("approval.deny", &detail, observer).await;
                 Err(format!("denied at approval gate ({why})"))
             }
         }

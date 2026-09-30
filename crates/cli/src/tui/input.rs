@@ -231,6 +231,13 @@ pub(super) fn input_key(
                         app.accept_path_candidate(&name);
                         return false;
                     }
+                    menu::MenuKind::Sessions => {
+                        // session id completes to `/resume <id>` and
+                        // submits — picking a session IS the command
+                        app.input = format!("/resume {name}");
+                        app.cursor = app.input.chars().count();
+                        return submit_app(app, tx_input);
+                    }
                     menu::MenuKind::Args => {
                         if name.ends_with('/') {
                             app.input = format!("/model {name}");
@@ -268,6 +275,10 @@ pub(super) fn input_key(
                     match kind {
                         menu::MenuKind::Path => {
                             app.accept_path_candidate(&name);
+                        }
+                        menu::MenuKind::Sessions => {
+                            app.input = format!("/resume {name}");
+                            app.cursor = app.input.chars().count();
                         }
                         menu::MenuKind::Args => {
                             app.input = format!("/model {name}");

@@ -111,6 +111,9 @@ pub struct App {
     /// the path menu opens, kept while it stays open (a stale entry is a
     /// hint, the model's Read is ground truth).
     pub file_pool: Vec<String>,
+    /// session ids for `/resume` completion — rescanned when the sessions
+    /// menu opens (sub-agent sessions land mid-session).
+    pub session_ids: Vec<String>,
 }
 
 /// Content of the full-screen viewer — title line + the block's full text
@@ -203,6 +206,7 @@ impl App {
             model_selectors: Vec::new(),
             extra_roots: Vec::new(),
             file_pool: Vec::new(),
+            session_ids: Vec::new(),
         };
         let mut banner = Block::new(BlockKind::Note);
         banner.text = format!(

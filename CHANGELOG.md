@@ -228,6 +228,12 @@ TUI.
   paragraph scroll offset). Clone cost scales with what's on screen,
   not with transcript length — scroll-back math unchanged
   (`scroll_back` still counts absolute rows)
+- **paste placeholders** — pastes ≥2 KiB stash and insert `[paste #N]`
+  instead of raw text (composer stays editable, history stores the
+  marker); submit expands markers into `<pasted-text>` blocks so the
+  model gets the full bytes, file-command args expand too, `!`-mode
+  keeps them literal. `/clear` resets the stash so numbers can't
+  collide across transcripts
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

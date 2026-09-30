@@ -449,3 +449,49 @@ fn transcript_virtualizes_offscreen_blocks() {
     // scroll got clamped to a real value, not stuck at 500
     assert!(app.scroll_back <= 200);
 }
+
+/// A large paste stashes to `[paste #N]` — the composer holds the marker,
+/// submit expands it to a tagged block the model can parse. Small pastes
+/// insert verbatim; !-mode keeps markers literal (local shell, not the
+/// model's convention).
+#[test]
+fn large_paste_stashes_and_expands_on_submit() {
+    let (_tx, _rx) = mpsc::unbounded_channel::<Submit>();
+    let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+    let big = "x".repeat(3000);
+    app.insert_str(&big);
+    assert_eq!(app.input, "[paste #1]");
+    assert_eq!(app.paste_stash.len(), 1);
+    // small paste goes straight in
+    app.insert_str(" small");
+    assert_eq!(app.input, "[paste #1] small");
+
+    let sub = app.submit();
+    let Submit::Turn(text) = sub else {
+        panic!("expected a turn");
+    };
+    assert!(text.contains("<pasted-text>"), "{text}");
+    assert!(text.contains(&"x".repeat(3000)), "content must expand");
+    assert!(!text.contains("[paste #1]"), "marker must not leak");
+
+    // !-mode: marker stays literal — the local shell isn't the model
+    let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+    app.insert_str(&"y".repeat(3000));
+    app.input = format!("!cat {}", app.input);
+    app.cursor = app.input.chars().count();
+    let Submit::Bash(cmd) = app.submit() else {
+        panic!("expected bash");
+    };
+    assert!(cmd.contains("[paste #1]"), "bash keeps the literal marker");
+}
+
+/// History stores the compact marker, not the expanded paste — Up-browse
+/// restores what the composer showed.
+#[test]
+fn paste_history_stores_the_marker() {
+    let (_tx, _rx) = mpsc::unbounded_channel::<Submit>();
+    let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+    app.insert_str(&"z".repeat(3000));
+    let _ = app.submit();
+    assert_eq!(app.history.last().unwrap(), "[paste #1]");
+}

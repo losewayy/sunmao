@@ -115,6 +115,7 @@ impl AgentLoop {
                 break;
             }
             for call in tool_calls {
+                let t0 = std::time::Instant::now();
                 let result = if let Some(err) = malformed.get(&call.id) {
                     observer.on_event(&LiveEvent::ToolStart {
                         name: call.function.name.clone(),
@@ -147,6 +148,7 @@ impl AgentLoop {
                     output: truncate_output(&result.output),
                     depth: self.ctx.depth,
                     lane: self.ctx.lane,
+                    elapsed_ms: t0.elapsed().as_millis() as u64,
                 });
                 let mut log = self.ctx.sessions.lock().await;
                 log.append(&SessionEvent::ToolCall {

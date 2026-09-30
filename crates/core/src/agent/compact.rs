@@ -88,6 +88,7 @@ impl AgentLoop {
             output: summary.clone(),
             depth: self.ctx.depth,
             lane: self.ctx.lane,
+            elapsed_ms: 0,
         });
         Ok(summary)
     }

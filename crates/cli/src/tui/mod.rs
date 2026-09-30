@@ -311,6 +311,7 @@ async fn run_inner(
                     output,
                     depth,
                     lane,
+                    ..
                 } => app.tool_done(&name, ok, &output, depth, lane),
                 LiveEvent::Hook { event, detail } => {
                     app.push_audit(&format!("{event} — {detail}"));

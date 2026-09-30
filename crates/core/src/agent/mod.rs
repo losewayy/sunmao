@@ -57,6 +57,10 @@ pub enum LiveEvent {
         output: String,
         depth: u8,
         lane: u8,
+        /// Wall time from ToolStart to done — frontends render it; replayed
+        /// transcripts (SessionEvent::ToolResult) can't carry it, so frontends
+        /// that replay fall back to nothing rather than recompute.
+        elapsed_ms: u64,
     },
     /// A hook changed the turn — input rewrite, veto, injected context, or a
     /// session-scoped approval grant. Mirrors `SessionEvent::Hook` so the

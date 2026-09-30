@@ -65,6 +65,7 @@ impl Observer for AcpObserver {
                 output,
                 depth,
                 lane,
+                ..
             } => {
                 self.send(v2::SessionUpdate::ToolCallUpdate(
                     v2::ToolCallUpdate::new(v2::ToolCallId::new(format!("{depth}:{lane}:{name}")))

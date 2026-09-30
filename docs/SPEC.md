@@ -168,7 +168,7 @@ hook engine（核心）
 | 生态面 | 我方对应物 | 状态 |
 |---|---|---|
 | MCP servers（消费） | `ctx.mcp` client（stdio+SSE） | v0.3 |
-| Claude hooks（契约+注册格式） | `claude-dialect` 默认插件 | v0.3，rtk/context-mode 实测验收 |
+| Claude hooks（契约+注册格式） | `claude-dialect` 默认插件 | ✅ rtk/context-mode 实测（`hooks/live_tests.rs`：真 rtk 二进制改写 + SessionStart/source 载荷） |
 | Claude skills/commands/agents | 格式加载器 | v0.3 |
 | AGENTS.md | 惯例加载 | v0.3 |
 | plugin.json 打包（skills+mcp+hooks） | 加载器 | v0.4 |
@@ -184,7 +184,7 @@ hook engine（核心）
 |---|---|---|---|---|
 | v0.1 | kernel walks | OAI 适配 + SSE + sessions + tools(3个) + agentLoop + TUI REPL | 跑通真实任务 | ✅ 超预期完成（tools 到 10、TUI 也落了） |
 | v0.2 | trustworthy | 审批缝 + transcript 工件 + 上下文窗口管理 + 错误恢复/中断续跑 + 审计流 | 子进程崩溃不炸 agent | ✅ 大部分落地——审批闸三前端、compaction、resume/fork、审计事件流；进程崩溃容忍只验过 hook veto |
-| v0.3 | ecosystem citizen | MCP client + hooks 引擎 + claude-dialect + 格式加载器 + ACP server | rtk/context-mode 实测 | 🟡 大半落地（MCP 双 transport、hooks 8 事件、agents/commands/skills/plugin.json、ACP v2）；rtk/context-mode 未实测 |
+| v0.3 | ecosystem citizen | MCP client + hooks 引擎 + claude-dialect + 格式加载器 + ACP server | rtk/context-mode 实测 | ✅ 落地（MCP 双 transport、hooks 8 事件、agents/commands/skills/plugin.json、ACP v2）；rtk/context-mode 实测通过 |
 | v0.4 | distributed | plugin.json 安装 + 扩展协议宿主 + presets + eval + HTML 工件 | 发布 | 🟡 plugin.json 清单已读；宿主/presets/eval 未做 |
 | v0.5+ | open frontier | JS 扩展宿主、第二 provider 方言、GUI、subagents | — | 🟡 Anthropic 方言提前落地（v0.2）、Task 子代理已上线（`spawns:`/`tools:` 白名单 + `run_in_background` 异步扇出 + `model:` 路由）；JS 宿主/GUI 未动 |
 

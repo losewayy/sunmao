@@ -59,6 +59,41 @@ impl ToolImpl for ReadTool {
                 total
             ));
         }
+        // §4.10 annotation回流 — Reading an artifact surfaces its human
+        // margin notes with it; the state file is the same doc's margin,
+        // not a separate read the model must remember to make
+        if path.extension().map(|x| x == "html").unwrap_or(false)
+            && path.parent().is_some_and(|p| p.ends_with("artifacts"))
+        {
+            let state = path.with_extension("state.json");
+            if let Ok(notes) = std::fs::read_to_string(&state) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&notes) {
+                    let open: Vec<&serde_json::Value> = v
+                        .get("annotations")
+                        .and_then(|a| a.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter(|n| n.get("resolved") != Some(&serde_json::json!(true)))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if !open.is_empty() {
+                        out.push_str("\n\n[annotations — unresolved reviewer notes:");
+                        for n in &open {
+                            let note = n.get("note").and_then(|x| x.as_str()).unwrap_or("");
+                            let at = n.get("at").and_then(|x| x.as_str()).unwrap_or("");
+                            let sec = n.get("section").and_then(|x| x.as_str()).unwrap_or("");
+                            out.push_str(&format!("\n  ({at}) {note}"));
+                            if !sec.is_empty() {
+                                out.push_str(&format!(" §{sec}"));
+                            }
+                        }
+                        out.push_str("\n  fold into the next revision;");
+                        out.push_str(" mark each \"resolved\": true]");
+                    }
+                }
+            }
+        }
         Ok(ToolResult {
             output: out,
             ok: true,
@@ -219,10 +254,17 @@ fn find_normalized(haystack: &str, needle: &str) -> Option<(usize, usize)> {
     if target.is_empty() {
         return None;
     }
-    // slide over candidate windows starting at each whitespace boundary
+    // candidate windows start at position 0 and after every whitespace
+    // char — line starts AND mid-line boundaries (a needle beginning
+    // mid-line can still normalize against whitespace drift)
     let mut found: Option<(usize, usize)> = None;
-    for (i, _) in haystack.match_indices('\n') {
-        let start = i + 1;
+    let starts = std::iter::once(0).chain(
+        haystack
+            .char_indices()
+            .filter(|(_, c)| c.is_whitespace())
+            .map(|(i, c)| i + c.len_utf8()),
+    );
+    for start in starts {
         // limit candidate window to needle length * 4 + margin
         let window_end = (start + needle.len() * 4 + 64).min(haystack.len());
         let window = &haystack[start..window_end];
@@ -236,10 +278,6 @@ fn find_normalized(haystack: &str, needle: &str) -> Option<(usize, usize)> {
                 found = Some(span);
             }
         }
-    }
-    // also try from position 0 if file doesn't start with newline
-    if haystack.starts_with(needle.trim_start()) {
-        return None; // already covered by exact match if truly exact
     }
     found
 }

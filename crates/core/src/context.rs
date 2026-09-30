@@ -137,9 +137,28 @@ impl Context {
         cwd: PathBuf,
     ) -> Self {
         let permissions = crate::permissions::Permissions::load(&cwd, &[]);
-        let risk_table = std::fs::read_to_string(cwd.join(".sunmao/risky-patterns.txt"))
+        let mut risk_table = std::fs::read_to_string(cwd.join(".sunmao/risky-patterns.txt"))
             .map(|t| crate::approval::parse_table(&t))
             .unwrap_or_else(|_| crate::approval::builtin_table());
+        // plugin bundles can tighten the gate too — same additive merge as
+        // presets; wholesale replacement stays a project-file privilege
+        for extra in std::iter::once(cwd.join(".sunmao").join("plugin"))
+            .chain(
+                crate::sorted_entries(&cwd.join(".sunmao").join("plugins"))
+                    .into_iter()
+                    .map(|e| e.path()),
+            )
+            .chain(
+                crate::sorted_entries(&cwd.join(".claude").join("plugins"))
+                    .into_iter()
+                    .map(|e| e.path()),
+            )
+            .map(|root| root.join("risky-patterns.txt"))
+        {
+            if let Ok(text) = std::fs::read_to_string(extra) {
+                risk_table.extend(crate::approval::parse_table(&text));
+            }
+        }
         // project/plugin manifests may name a loop driver — resolve before
         // `cwd` moves into the struct below.
         let loop_driver = crate::agent::LoopDriver::resolve(&cwd, &[]);

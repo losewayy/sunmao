@@ -260,30 +260,134 @@ fn project_context(cwd: &Path, extra_roots: &[PathBuf]) -> String {
             continue;
         };
         for e in entries.flatten() {
-            let skill = e.path().join("SKILL.md");
-            if let Ok(text) = std::fs::read_to_string(&skill) {
-                let mut name = e.file_name().to_string_lossy().to_string();
-                let mut desc = String::new();
-                for line in text.lines().take(20) {
-                    if let Some(v) = line.strip_prefix("name:") {
-                        name = v.trim().to_string();
-                    }
-                    if let Some(v) = line.strip_prefix("description:") {
-                        desc = v.trim().to_string();
-                    }
+            // a skill dir may speak either doc language — SKILL.md (the
+            // ecosystem contract) or SKILL.html (the first-class payload:
+            // a page for the human, structured text for the agent)
+            let mut skill = e.path().join("SKILL.md");
+            let is_html_skill = if skill.exists() {
+                false
+            } else {
+                let html = e.path().join("SKILL.html");
+                if html.exists() {
+                    skill = html;
+                    true
+                } else {
+                    continue;
                 }
-                lines.push(format!("- {} — {} ({})", name, desc, skill.display()));
+            };
+            if let Ok(text) = std::fs::read_to_string(&skill) {
+                let (name, desc) = if is_html_skill {
+                    html_skill_meta(&text)
+                } else {
+                    md_skill_meta(&text, &e.file_name().to_string_lossy())
+                };
+                // bundled .html resources surface in the index — a template
+                // the agent can copy/Read is discoverable, not invisible
+                let resources = std::fs::read_dir(e.path())
+                    .map(|rd| {
+                        rd.flatten()
+                            .filter(|f| {
+                                let n = f.file_name();
+                                let s = n.to_string_lossy();
+                                s.ends_with(".html") && s != "SKILL.html"
+                            })
+                            .map(|f| f.file_name().to_string_lossy().to_string())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let res_note = if resources.is_empty() {
+                    String::new()
+                } else {
+                    format!(" +{} .html", resources.len())
+                };
+                lines.push(format!(
+                    "- {} — {} ({}{})",
+                    name,
+                    desc,
+                    skill.display().to_string().replace("\\\\?\\", ""),
+                    res_note
+                ));
             }
         }
     }
     if !lines.is_empty() {
-        out.push_str("## Available skills (Read the SKILL.md path to load)\n");
+        out.push_str("## Available skills (Read the SKILL file path to load)\n");
         for l in &lines {
             out.push_str(l);
             out.push('\n');
         }
     }
     out
+}
+
+/// `SKILL.md` frontmatter parse: first 20 lines for `name:`/`description:`,
+/// dir name as the fallback.
+fn md_skill_meta(text: &str, fallback: &str) -> (String, String) {
+    let mut name = fallback.to_string();
+    let mut desc = String::new();
+    for line in text.lines().take(20) {
+        if let Some(v) = line.strip_prefix("name:") {
+            name = v.trim().to_string();
+        }
+        if let Some(v) = line.strip_prefix("description:") {
+            desc = v.trim().to_string();
+        }
+    }
+    (name, desc)
+}
+
+/// `SKILL.html` meta — the page already carries its identity: `<title>`
+/// is the name, `<meta name="description">` the description. Falls back
+/// to the first <h1> for the name; description may be empty.
+fn html_skill_meta(text: &str) -> (String, String) {
+    let tag_text = |open: &str, close: &str| -> Option<String> {
+        let start = text.find(open)? + open.len();
+        let end = text[start..].find(close)? + start;
+        Some(html_unescape(text[start..end].trim()))
+    };
+    let name = tag_text("<title>", "</title>")
+        .or_else(|| tag_text("<h1>", "</h1>"))
+        .unwrap_or_default();
+    let desc = html_meta_description(text).unwrap_or_default();
+    (name, desc)
+}
+
+/// Scan `<meta>` tags for `name="description"` and read its `content`
+/// attribute — attribute order varies in the wild.
+fn html_meta_description(text: &str) -> Option<String> {
+    let mut rest = text;
+    while let Some(i) = rest.find("<meta") {
+        let tail = &rest[i..];
+        let end = tail.find('>')? + 1;
+        let tag = &tail[..end];
+        if tag.contains("name=\"description\"") || tag.contains("name='description'") {
+            return attr_value(tag, "content").map(|v| html_unescape(v.trim()));
+        }
+        rest = &tail[end..];
+    }
+    None
+}
+
+/// `attr="..."` or `attr='...'` inside a tag — returns the quoted body.
+fn attr_value<'a>(tag: &'a str, attr: &str) -> Option<&'a str> {
+    for pat in [format!("{attr}=\""), format!("{attr}='")] {
+        if let Some(i) = tag.find(&pat) {
+            let s = i + pat.len();
+            let q = tag.as_bytes()[s - 1] as char;
+            return tag[s..].find(q).map(|e| &tag[s..s + e]);
+        }
+    }
+    None
+}
+
+/// The tiny escape set HTML skill titles realistically use — entities we
+/// can fix without a parser; unknown entities pass through untouched.
+fn html_unescape(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
 }
 
 #[cfg(test)]
@@ -365,5 +469,65 @@ mod tests {
     fn no_files_still_assembles() {
         let s = PromptAssembler::new(scratch()).assemble(None);
         assert!(s.contains("You are sunmao"));
+    }
+
+    #[test]
+    fn md_skill_indexes_from_frontmatter() {
+        let dir = scratch();
+        let sd = dir.join(".sunmao/skills/greeter");
+        std::fs::create_dir_all(&sd).unwrap();
+        std::fs::write(
+            sd.join("SKILL.md"),
+            "---\nname: greeter\ndescription: says hi\n---\nbody",
+        )
+        .unwrap();
+        let s = PromptAssembler::new(&dir).assemble(None);
+        assert!(s.contains("- greeter — says hi"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn html_skill_indexes_meta_and_resources() {
+        let dir = scratch();
+        let sd = dir.join(".sunmao/skills/report-card");
+        std::fs::create_dir_all(&sd).unwrap();
+        std::fs::write(
+            sd.join("SKILL.html"),
+            "<html><head><title>Report &amp; Card</title>\
+             <meta name=\"description\" content=\"builds report pages\"></head>\
+             <body></body></html>",
+        )
+        .unwrap();
+        std::fs::write(sd.join("template.html"), "<html></html>").unwrap();
+        std::fs::write(sd.join("notes.txt"), "not a resource").unwrap();
+        let s = PromptAssembler::new(&dir).assemble(None);
+        // <title> wins the name slot; &amp; unescapes; bundled .html counted
+        assert!(s.contains("- Report & Card — builds report pages"));
+        assert!(s.contains("SKILL.html +1 .html)"));
+        assert!(!s.contains("notes.txt"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn skill_md_wins_over_html_in_same_dir() {
+        let dir = scratch();
+        let sd = dir.join(".sunmao/skills/bilingual");
+        std::fs::create_dir_all(&sd).unwrap();
+        std::fs::write(sd.join("SKILL.md"), "name: md-skill\ndescription: md wins").unwrap();
+        std::fs::write(sd.join("SKILL.html"), "<title>html-loses</title>").unwrap();
+        let s = PromptAssembler::new(&dir).assemble(None);
+        assert!(s.contains("- md-skill — md wins"));
+        assert!(!s.contains("html-loses"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn html_meta_attr_order_independent() {
+        // content before name — real-world pages vary attribute order
+        let (name, desc) = html_skill_meta(
+            "<html><head><meta content=\"ordered differently\" name=\"description\">\
+             <title>T</title></head></html>",
+        );
+        assert_eq!((name.as_str(), desc.as_str()), ("T", "ordered differently"));
     }
 }

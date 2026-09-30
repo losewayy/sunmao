@@ -196,7 +196,7 @@ hook engine（核心）
 | v0.2 | trustworthy | 审批缝 + transcript 工件 + 上下文窗口管理 + 错误恢复/中断续跑 + 审计流 | 子进程崩溃不炸 agent | ✅ 大部分落地——审批闸三前端、compaction、resume/fork、审计事件流；进程崩溃容忍只验过 hook veto |
 | v0.3 | ecosystem citizen | MCP client + hooks 引擎 + claude-dialect + 格式加载器 + ACP server | rtk/context-mode 实测 | ✅ 落地（MCP 双 transport、hooks 13 事件全并集——含 PostToolUseFailure/StopFailure/Notification、agents/commands/skills/plugin.json、ACP v2）；rtk/context-mode 实测通过 |
 | v0.4 | distributed | plugin.json 安装 + 扩展协议宿主 + presets + eval + HTML 工件 | 发布 | ✅ 全部落地——plugin.json 安装（`sunmao plugin`，git URL/`owner/repo` 源）、presets（`--preset` 层叠）、eval（`sunmao eval` 断言会话事实）、HTML 工件（HtmlArtifact）、扩展协议宿主（`ext/` 提前落地）；发布待放行 |
-| v0.5+ | open frontier | JS 扩展宿主、第二 provider 方言、GUI、subagents | — | 🟡 Anthropic 方言提前落地（v0.2）、Task 子代理已上线（`spawns:`/`tools:` 白名单 + `run_in_background` 异步扇出 + `model:` 路由）、**扩展协议宿主落地**（Rust `ext/` crate——子进程扩展注册工具/订阅事件，回复按 hooks 语义合并；曾有的 JS 侧车经生态盘点后移除）、**loop 可替换**（manifest `loop:` + `--loop`，full/bare 双驱动）、hook 事件并集已齐（13 事件）——GUI 未动 |
+| v0.5+ | open frontier | JS 扩展宿主、第二 provider 方言、GUI、subagents | — | 🟡 Anthropic 方言提前落地（v0.2）、Task 子代理已上线（`spawns:`/`tools:` 白名单 + `run_in_background` 异步扇出 + `model:` 路由）、**扩展协议宿主落地**（Rust `ext/` crate——子进程扩展注册工具/订阅事件，回复按 hooks 语义合并；曾有的 JS 侧车经生态盘点后移除）、**loop 可替换**（manifest `loop:` + `--loop`，full/bare 双驱动）、hook 事件并集已齐（13 事件）、**GUI 阶段 1 上线**（`sunmao serve`：多会话宿主 + ws/replay + 审批卡 + artifact 岛屿/版本链 + MCP Apps 岛桥；Tauri 壳属阶段 2） |
 
 ## 7. 非目标（v1 明确不做）
 

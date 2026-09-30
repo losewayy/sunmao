@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 /// Builtin commands handled locally (not file-backed). Shown in the menu
 /// alongside file commands.
 const BUILTINS: &[&str] = &[
+    "artifacts",
     "clear",
     "compact",
     "help",
@@ -77,4 +78,42 @@ fn command_dirs(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<PathBuf> {
         dirs.push(root.join("commands"));
     }
     dirs
+}
+
+/// `.sunmao/artifacts` listing for `/artifacts` — one row per HtmlArtifact
+/// output, `state.json` sidecars flagged (unresolved human notes live
+/// there). Shared by the REPL and the TUI driver.
+pub fn artifacts_text(cwd: &Path) -> String {
+    let dir = cwd.join(".sunmao").join("artifacts");
+    let mut rows: Vec<String> = std::fs::read_dir(&dir)
+        .map(|rd| {
+            rd.flatten()
+                .filter_map(|e| {
+                    let p = e.path();
+                    if p.extension().map(|x| x == "html").unwrap_or(false) {
+                        let name = p.file_stem()?.to_string_lossy().to_string();
+                        let bytes = e.metadata().ok()?.len();
+                        let notes = p.with_extension("state.json").exists();
+                        Some(format!(
+                            "  {name:<24} {bytes:>7} B{}",
+                            if notes { "  +notes" } else { "" }
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    rows.sort();
+    if rows.is_empty() {
+        "[no artifacts — HtmlArtifact writes .sunmao/artifacts/*.html]".to_string()
+    } else {
+        format!(
+            "artifacts ({}):\n{}\n  dir: {}",
+            rows.len(),
+            rows.join("\n"),
+            dir.display()
+        )
+    }
 }

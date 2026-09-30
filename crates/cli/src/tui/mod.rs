@@ -258,6 +258,10 @@ async fn run_inner(
                         let _ = tx_msg.send(Msg::Note(text));
                         continue;
                     }
+                    Submit::Artifacts => {
+                        let _ = tx_msg.send(Msg::Note(slash::artifacts_text(&driver_cwd)));
+                        continue;
+                    }
                     Submit::Resume(arg) => {
                         match arg {
                             None => {

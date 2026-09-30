@@ -11,14 +11,22 @@ TUI.
 
 **post-0.2 additions**
 - `sunmao-gui` — GUI phase 2 (GUI.md §8): a Tauri v2 shell embedding the
-  SAME multi-session host (`sunmao::serve_main`) on an ephemeral
-  loopback port, frameless window onto the identical web assets. The
-  loopback page never gets Tauri's own globals, so the shell seam is an
-  `__sunmaoShell` init script + two capability-gated commands
-  (`shell_win`/`shell_drag`) for the DESIGN.md titlebar — caption
-  buttons and drag region live in the page, verbs cross IPC.
-  `crates/cli` became lib+bin so the shell reuses `Cli` and the serve
-  assembly verbatim — one host implementation, four frontends
+  SAME multi-session host in-process (`sunmao::serve_host` — the new
+  transport-free entry; `serve/` split into host/client/request +
+  axum http/ws adapters) with ZERO listening sockets. The page rides a
+  `sunmao` custom URI scheme (`http://sunmao.localhost/` on WebView2) —
+  every REST endpoint answers through the scheme handler via
+  `HostHandle::request`; the ws channel degrades to a Tauri `Channel`
+  (`session_events` outbound / `host_call` inbound — same JSON frames),
+  and the MCP Apps sandbox proxy gets its own `sunmao-sandbox` scheme —
+  SEP-1865's double-iframe still needs a second origin. Custom-scheme
+  pages never get Tauri's injected globals, so the shell seam is an
+  `__sunmaoShell` init script — caption/drag verbs plus a minimal
+  `Channel` class — with capability `local: true` (WebView2 classifies
+  `<scheme>.localhost` as a local origin). The DESIGN.md titlebar lives
+  in the page; verbs cross IPC. `crates/cli` became lib+bin so the shell
+  reuses `Cli` and the serve assembly verbatim — one host
+  implementation, four frontends
 - artifact CSP declarations (GUI.md §3): `GET /artifacts/{name}` emits a
   default-deny CSP (`default-src 'none'`); frontmatter
   `csp.resourceDomains`/`csp.connectDomains`/`csp.frameDomains` lines

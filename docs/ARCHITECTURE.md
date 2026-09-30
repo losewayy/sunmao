@@ -9,7 +9,13 @@ disagree, **this file is right** — update SPEC or fix the code.
 ```text
 sunmao-llm   crates/llm/   provider dialects + wire primitives
 sunmao-core  crates/core/  the kernel — Context, AgentLoop, sessions, tools
-sunmao       crates/cli/   every user-facing surface
+sunmao       crates/cli/   every user-facing surface (lib+bin — the GUI
+                          shell reuses Cli + the serve host verbatim)
+sunmao-gui   crates/gui/   Tauri v2 desktop shell — zero TCP: custom
+                          `sunmao`/`sunmao-sandbox` URI schemes answer
+                          REST via `HostHandle::request`; the ws channel
+                          degrades to `session_events` Channel +
+                          `host_call` invoke (same JSON frames)
 ```
 
 ## Data path (one prompt, end to end)
@@ -162,11 +168,17 @@ sunmao --tui        ratatui: block transcript (virtualized draw,
                     verb-grouping, ⚙ audit lines for hook facts
 sunmao --acp        ACP v2 stdio server: initialize, session/{new,list,
                     resume,prompt,close}, cancel, session/request_permission
+sunmao serve        multi-session web host — loopback HTTP+WebSocket;
+                    `serve/` holds the transport-free core
+                    (Host/HostHandle::request + Client hello/replay)
+                    under thin axum adapters; sessions, artifacts
+                    (CSP-sandboxed islands + annotate), dataflow
+sunmao-gui          Tauri v2 frameless window over the SAME host
+                    in-process — no TCP at all (scheme + IPC above)
 ```
 
 ## What's *not* in code (spec-only for later)
 
-- Electron/Web frontend — the runtime is the seam; UIs are replaceable
 - MCP resources/prompts subscriptions
 - OTel export — usage events land in the session log already; export is later
 - Gemini hook dialect — `.codex` + `.cursor` normalize already; Gemini's

@@ -70,3 +70,52 @@ stdio JSON-RPC, stdout is protocol-only (diagnostics → stderr/tracing).
 
 Rule that has to stay true: **stdout = JSON-RPC frames, nothing else** — a
 stray println! bricks the whole protocol.
+
+## Extension protocol (`sunmao` JSON-RPC, contract only — no host yet)
+
+SPEC §4.8: v1 defines the contract; the first host ships at v0.5+ (a generic
+JS extension-host sidecar, `node extension-host.mjs`, speaking this protocol
+on our behalf). Design rule inherited from hooks/MCP: **a host process is a
+process boundary** — spawn per session, die with it, never hot-plug.
+
+### Lifecycle
+
+Declared in a plugin bundle's `plugin.json`:
+
+```json
+{"name": "demo", "extensions": [{"command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/ext.mjs"]}]}
+```
+
+The kernel spawns one child per session at startup (cold-plug: the child is
+chosen by files, effective at process start — swapping extensions = restart).
+stdout = protocol frames only; stderr is free for logging. On session end the
+kernel sends `ext/shutdown` then closes the pipe; a child that doesn't exit
+within 2s is killed — a dying extension **degrades to a warning**, never a
+session abort (same rule as `mcp.rs`: one bad server bricks only itself).
+
+### Frames
+
+JSON-RPC 2.0, one object per line on the child's stdin/stdout. Kernel →
+extension calls carry `"id"`; extension → kernel replies carry the same `id`;
+notifications omit it.
+
+| Direction | Method | Semantics |
+|---|---|---|
+| kernel → ext | `ext/initialize` | `{protocol: 1, cwd, session_id, transcript_path}` → ext replies `{name, version, capabilities: {tools: bool, events: ["PreToolUse", ...]}}` |
+| kernel → ext | `ext/tools/list` | only sent when `capabilities.tools` → reply `{tools: [{name, description, input_schema}]}` — tools surface namespaced `ext__{plugin}__{tool}` like `mcp__` |
+| kernel → ext | `ext/tools/call` | `{name, arguments}` → reply `{content: string, is_error?: bool}` or a JSON-RPC error — errors fold to failed `ToolResult`, never turn abort |
+| kernel → ext | `ext/event` (notification→call hybrid) | `{event, payload}` where payload is the hooks dialect (tool_name/tool_input/source/…); ext may reply `{extra_context?: [..], block?: "reason"}` — same semantics as hook stdout: `block` vetoes, `extra_context` appends session facts |
+| kernel → ext | `ext/shutdown` | notification; then close stdin, wait ≤2s, kill |
+
+### Contract notes
+
+- **Event surface = the hooks union** (`HookEvent` variants) — extensions get
+  the same dialect fields, so an extension can do anything a hook can:
+  context-mode-style `source` reads, rtk-style argument rewrites, audit taps.
+- `PreToolUse` replies additionally accept `{updatedInput}` — the rtk rewrite
+  mechanism is part of the dialect, not hook-specific.
+- v1 has **no reverse channel** (extensions can't query session history or
+  call kernel services) — an extension is a passive responder. A `ext/lookup`
+  family is deliberately deferred: every reverse method is a SemVer promise.
+- Tool schemas pass through verbatim to the model — a bad `input_schema`
+  means the tool doesn't exist to the LLM (same rule as native `Tool::decl`).

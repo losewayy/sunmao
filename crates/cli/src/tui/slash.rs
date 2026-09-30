@@ -30,11 +30,10 @@ pub fn candidates(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<String> {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for e in entries.flatten() {
                 let p = e.path();
-                if p.extension().map(|x| x == "md").unwrap_or(false) {
-                    if let Some(stem) = p.file_stem() {
+                if p.extension().map(|x| x == "md").unwrap_or(false)
+                    && let Some(stem) = p.file_stem() {
                         names.push(stem.to_string_lossy().to_string());
                     }
-                }
             }
         }
     }

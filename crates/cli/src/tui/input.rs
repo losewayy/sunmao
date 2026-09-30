@@ -407,12 +407,11 @@ pub(super) fn input_key(
                 app.hist_draft = Some(app.input.clone());
                 app.hist_idx = Some(app.history.len() - 1);
                 app.input = app.history[app.hist_idx.unwrap()].clone();
-            } else if let Some(i) = app.hist_idx {
-                if i > 0 {
+            } else if let Some(i) = app.hist_idx
+                && i > 0 {
                     app.hist_idx = Some(i - 1);
                     app.input = app.history[i - 1].clone();
                 }
-            }
             app.cursor = app.input.chars().count();
         }
         KeyCode::Down => {

@@ -109,15 +109,13 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
 
     // 5. MCP servers: list without connecting (connection smoke is live-tested)
     let mcp_path = cli.cwd.join(".sunmao/mcp.json");
-    if let Ok(text) = std::fs::read_to_string(&mcp_path) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-            if let Some(servers) = v["mcpServers"].as_object() {
+    if let Ok(text) = std::fs::read_to_string(&mcp_path)
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&text)
+            && let Some(servers) = v["mcpServers"].as_object() {
                 for name in servers.keys() {
                     println!("mcp server configured: {name}");
                 }
             }
-        }
-    }
 
     // 6. model routing: models.json parses, agents dir counted
     let models_path = cli.cwd.join(".sunmao/models.json");
@@ -202,12 +200,11 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
 
 fn which_rg() -> Option<String> {
     for cand in ["rg", "rg.exe"] {
-        if let Ok(p) = std::process::Command::new(cand).arg("--version").output() {
-            if p.status.success() {
+        if let Ok(p) = std::process::Command::new(cand).arg("--version").output()
+            && p.status.success() {
                 let v = String::from_utf8_lossy(&p.stdout);
                 return Some(v.lines().next().unwrap_or("?").trim().to_string());
             }
-        }
     }
     None
 }

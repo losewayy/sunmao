@@ -329,13 +329,12 @@ fn seed_todos(path: &std::path::Path) -> Vec<crate::tool::TodoItem> {
         return Vec::new();
     };
     for line in text.lines().rev() {
-        if line.starts_with(crate::tool::TODOS_LINE_PREFIX) {
-            if let Ok(crate::session::SessionEvent::Todos { items }) =
+        if line.starts_with(crate::tool::TODOS_LINE_PREFIX)
+            && let Ok(crate::session::SessionEvent::Todos { items }) =
                 serde_json::from_str::<crate::session::SessionEvent>(line)
             {
                 return items;
             }
-        }
     }
     Vec::new()
 }

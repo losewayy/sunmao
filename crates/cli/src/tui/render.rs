@@ -48,11 +48,10 @@ pub fn draw(f: &mut ratatui::Frame, app: &mut App) {
     if let Some(m) = &app.slash_menu {
         draw_slash_menu(f, m, chunks[1]);
     }
-    if app.focus == Focus::Approval {
-        if let Some(c) = &app.approval {
+    if app.focus == Focus::Approval
+        && let Some(c) = &app.approval {
             draw_card(f, c, app.approval_backlog.len(), chunks[2]);
         }
-    }
     draw_input(f, app, chunks[3]);
     draw_status(f, app, chunks[4]);
 }
@@ -69,13 +68,13 @@ fn draw_transcript(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         let selected = in_scroll && i == app.selected;
         let hit = app.render_cache[i]
             .as_ref()
-            .is_some_and(|(g, w, s, _)| *g == b.gen && *w == width && *s == selected);
+            .is_some_and(|(g, w, s, _)| *g == b.generation && *w == width && *s == selected);
         if !hit {
             let mut wrapped = Vec::new();
             for l in b.render(selected, width) {
                 wrapped.extend(wrap::wrap_line(&l, width));
             }
-            app.render_cache[i] = Some((b.gen, width, selected, wrapped));
+            app.render_cache[i] = Some((b.generation, width, selected, wrapped));
         }
     }
 

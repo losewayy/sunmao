@@ -115,14 +115,13 @@ pub fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
 /// Append `g` to the last span when styles match, else push a new span —
 /// keeps wrapped rows from exploding into one span per grapheme.
 fn push_g(cur: &mut Vec<Span<'static>>, g: &str, style: ratatui::style::Style) {
-    if let Some(last) = cur.last_mut() {
-        if last.style == style {
+    if let Some(last) = cur.last_mut()
+        && last.style == style {
             let mut s = last.content.to_string();
             s.push_str(g);
             last.content = s.into();
             return;
         }
-    }
     cur.push(Span::styled(g.to_string(), style));
 }
 

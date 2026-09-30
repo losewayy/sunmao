@@ -84,11 +84,10 @@ impl AnthropicClient {
                 }
                 Role::Assistant => {
                     let mut content = Vec::new();
-                    if let Some(c) = &m.content {
-                        if !c.is_empty() {
+                    if let Some(c) = &m.content
+                        && !c.is_empty() {
                             content.push(json!({"type": "text", "text": c}));
                         }
-                    }
                     for tc in m.tool_calls.clone().unwrap_or_default() {
                         let input: Value =
                             serde_json::from_str(&tc.function.arguments).unwrap_or(json!({}));
@@ -127,15 +126,14 @@ impl AnthropicClient {
         // can blow past.)
         let len = out.len();
         for i in [len.wrapping_sub(2), len.wrapping_sub(1)] {
-            if i < len {
-                if let Some(blocks) = out[i]
+            if i < len
+                && let Some(blocks) = out[i]
                     .get_mut("content")
                     .and_then(|c| c.as_array_mut())
                     .and_then(|a| a.last_mut())
                 {
                     blocks["cache_control"] = json!({"type": "ephemeral"});
                 }
-            }
         }
         (system, out)
     }

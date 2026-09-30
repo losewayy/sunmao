@@ -466,7 +466,7 @@ impl App {
         }
         if let Some(b) = self.blocks.get_mut(self.selected) {
             b.collapsed = !b.collapsed;
-            b.gen += 1;
+            b.generation += 1;
         }
     }
 
@@ -551,11 +551,10 @@ impl App {
 
     /// Age-out the toast after 3 s.
     pub fn toast_text(&mut self) -> Option<&str> {
-        if let Some((_, t)) = self.toast {
-            if t.elapsed() > Duration::from_secs(3) {
+        if let Some((_, t)) = self.toast
+            && t.elapsed() > Duration::from_secs(3) {
                 self.toast = None;
             }
-        }
         self.toast.as_ref().map(|(s, _)| s.as_str())
     }
 }

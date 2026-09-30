@@ -12,6 +12,7 @@ pub mod hooks;
 pub mod mcp;
 pub mod models;
 pub mod permissions;
+pub mod plugin;
 pub mod preflight;
 pub mod prompt;
 pub mod session;

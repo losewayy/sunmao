@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 
 use crate::tui;
 
-use super::host::{Host, Shared, WsObserver, slash_candidates};
+use super::host::{Host, Input, Shared, WsObserver, slash_candidates};
 
 /// Ask the host's mgmt lane to adopt a session — drivers can't call
 /// `adopt`/`fork_or_resume` directly: adopt spawns drivers, so an awaited
@@ -34,19 +34,21 @@ async fn adopt_via_mgmt(s: &Arc<Shared>, id: &str, fork: bool) -> Result<String,
 pub(super) async fn driver(
     s: Arc<Shared>,
     host: Arc<Host>,
-    mut rx: mpsc::UnboundedReceiver<String>,
+    mut rx: mpsc::UnboundedReceiver<Input>,
 ) {
     let sess = host.id.clone();
     let emit = |v: serde_json::Value| {
         let _ = s.live.send(v);
     };
     while let Some(input) = rx.recv().await {
+        let client = input.client;
+        let input = input.text;
         host.busy.fetch_add(1, Ordering::Relaxed);
         emit(serde_json::json!({"type":"busy","sess":sess,"busy":true}));
         if let Some(cmd_line) = input.trim().strip_prefix('/') {
             let name = cmd_line.split_whitespace().next().unwrap_or("");
             let rest = cmd_line[name.len()..].trim();
-            if dispatch_builtin(&s, &host, name, rest).await {
+            if dispatch_builtin(&s, &host, name, rest, client).await {
                 // handled locally — no model turn
             } else if let Some(body) = crate::tui::slash::command_body(&s.cwd, &s.roots, name) {
                 let prompt = crate::tui::slash::expand_command(&body, rest);
@@ -69,9 +71,15 @@ pub(super) async fn driver(
 
 /// TUI-parity builtins — true when handled. Replies go out over the global
 /// bus tagged with THIS session (`sess`), so only tabs viewing it render
-/// the note; session picks broadcast a `session` frame so the rail and
-/// every tab on the old session follow the switch.
-async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, name: &str, rest: &str) -> bool {
+/// the note. A `session` switch frame carries the issuing client's id so
+/// only that tab follows — other tabs viewing the same session stay put.
+async fn dispatch_builtin(
+    s: &Arc<Shared>,
+    host: &Arc<Host>,
+    name: &str,
+    rest: &str,
+    client: u64,
+) -> bool {
     let sess = host.id.clone();
     let note = |t: String| {
         let _ = s
@@ -81,6 +89,7 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, name: &str, rest: &
     let switch = |new_id: String| {
         let _ = s.live.send(serde_json::json!({
             "type": "session", "sess": new_id, "id": new_id, "from": sess,
+            "client": client,
         }));
     };
     match name {
@@ -90,6 +99,27 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, name: &str, rest: &
                 Ok(sum) if sum.is_empty() => note("[compacted: nothing to fold]".into()),
                 Ok(sum) => note(format!("[compacted]\n{sum}")),
                 Err(e) => note(format!("[compact failed] {e:#}")),
+            }
+            true
+        }
+        "mode" => {
+            if rest.is_empty() {
+                note(format!(
+                    "approval mode: {}",
+                    host.agent.approval_mode().as_str()
+                ));
+            } else {
+                match sunmao_core::agent::ApprovalMode::parse(rest) {
+                    Some(m) => {
+                        host.agent
+                            .set_approval_mode(m, &WsObserver::new(s.live.clone(), sess.clone()))
+                            .await;
+                        let _ = s.live.send(serde_json::json!({
+                            "type":"mode","sess":sess,"mode":m.as_str(),
+                        }));
+                    }
+                    None => note(format!("[unknown mode: {rest}]")),
+                }
             }
             true
         }

@@ -15,6 +15,14 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use super::client::Client;
 use super::driver;
 
+/// One queued submission into a session's driver — the text plus which
+/// viewer client sent it, so answer-back frames (`session` switches) can
+/// target the requester instead of dragging every tab along.
+pub(crate) struct Input {
+    pub(crate) client: u64,
+    pub(crate) text: String,
+}
+
 /// One live session the host is running — its own AgentLoop, input queue,
 /// approval map and busy counter. Tabs are views onto hosts; nothing in
 /// here is shared across sessions.
@@ -22,7 +30,7 @@ pub(crate) struct Host {
     pub(crate) id: String,
     pub(crate) agent: AgentLoop,
     /// The FIFO submission queue this session's driver drains.
-    pub(crate) input: mpsc::UnboundedSender<String>,
+    pub(crate) input: mpsc::UnboundedSender<Input>,
     /// pending approval cards by id (reply oneshots)
     pub(crate) approvals: Arc<Pending>,
     /// submissions currently running (drives the busy badge + cancel)
@@ -141,7 +149,7 @@ impl Shared {
         let ctx = self.factory.build(log, approver, session_cwd).await?;
         let agent = AgentLoop::new(ctx.clone());
         agent.set_live_sink(Arc::new(WsObserver::new(self.live.clone(), id.clone())));
-        let (input_tx, input_rx) = mpsc::unbounded_channel::<String>();
+        let (input_tx, input_rx) = mpsc::unbounded_channel::<Input>();
         let host = Arc::new(Host {
             id: id.clone(),
             agent,

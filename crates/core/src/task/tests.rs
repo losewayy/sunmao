@@ -53,10 +53,10 @@ async fn bg_task_pushes_result_into_parent_log() {
         "detached spawn must register in the roster"
     );
 
-    // the detached child appends TaskDone once it finishes — give it a
-    // moment, then check the parent's fold.
+    // the detached child appends TaskDone once it finishes — the event is
+    // async, so poll generously; parallel test load makes ~2s too tight.
     let mut found = false;
-    for _ in 0..200 {
+    for _ in 0..500 {
         let evs = ctx.sessions.lock().await.events().await.unwrap_or_default();
         found = evs
             .iter()
@@ -68,7 +68,7 @@ async fn bg_task_pushes_result_into_parent_log() {
     }
     assert!(found, "bg task must append TaskDone to the parent log");
     // and the roster entry flips to done
-    for _ in 0..50 {
+    for _ in 0..500 {
         if ctx
             .live_tasks
             .lock()

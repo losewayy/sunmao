@@ -125,14 +125,21 @@ fn fixture_bin() -> Option<std::path::PathBuf> {
         } else {
             "sunmao-ext-echo"
         });
+        let tmp = out.with_extension("tmp");
         let status = std::process::Command::new(&rustc)
             .args(["--edition", "2021", "-O"])
             .arg(&src)
             .arg("-o")
-            .arg(&out)
+            .arg(&tmp)
             .status()
             .ok()?;
-        status.success().then_some(out)
+        if !status.success() {
+            return None;
+        }
+        // another test may have finished first — either way `out` ends up
+        // whole (rename over an existing dest replaces it on both OSes).
+        let _ = std::fs::rename(&tmp, &out);
+        out.is_file().then_some(out)
     })
     .clone()
 }

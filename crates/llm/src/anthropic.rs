@@ -118,16 +118,23 @@ impl AnthropicClient {
                 }
             }
         }
-        // cache breakpoint on the conversation tail: everything up to and
-        // including the last message becomes a reusable prefix — next turn's
-        // request pays only for the 1–2 new messages (rolling breakpoint).
-        if let Some(last) = out.last_mut() {
-            if let Some(blocks) = last
-                .get_mut("content")
-                .and_then(|c| c.as_array_mut())
-                .and_then(|a| a.last_mut())
-            {
-                blocks["cache_control"] = json!({"type": "ephemeral"});
+        // cache breakpoints on the last two messages' tail blocks: the
+        // newest marks the write position for the next request, the
+        // second-newest is the read anchor — its prefix is what the
+        // previous request wrote. (Writes happen only at breakpoints; a
+        // lone tail breakpoint would make the previous write findable
+        // only via the 20-block lookback, which a fat tool-result turn
+        // can blow past.)
+        let len = out.len();
+        for i in [len.wrapping_sub(2), len.wrapping_sub(1)] {
+            if i < len {
+                if let Some(blocks) = out[i]
+                    .get_mut("content")
+                    .and_then(|c| c.as_array_mut())
+                    .and_then(|a| a.last_mut())
+                {
+                    blocks["cache_control"] = json!({"type": "ephemeral"});
+                }
             }
         }
         (system, out)
@@ -402,6 +409,37 @@ mod tests {
         assert_eq!(mapped[2]["role"], "user");
         assert_eq!(mapped[2]["content"][0]["type"], "tool_result");
         assert_eq!(mapped[2]["content"][0]["tool_use_id"], "t1");
+    }
+
+    /// Prompt-cache breakpoints: the last TWO messages carry
+    /// `cache_control` — the tail marks the write position, the
+    /// second-to-last is the read anchor whose prefix the previous request
+    /// already wrote. A lone tail breakpoint would leave the prior write
+    /// findable only through the 20-block lookback, which a fat tool batch
+    /// can exceed.
+    #[test]
+    fn cache_breakpoints_mark_last_two_messages() {
+        let c = AnthropicClient::new("http://x", "k", "m");
+        let msgs = vec![
+            Message::system("sys"),
+            Message::user("q1"),
+            Message::assistant(Some("a1".into()), vec![]),
+            Message::user("q2"),
+        ];
+        let (_sys, mapped) = c.map_messages(&msgs);
+        let marked: Vec<usize> = mapped
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| {
+                m["content"]
+                    .as_array()
+                    .and_then(|a| a.last())
+                    .map(|b| b["cache_control"]["type"] == "ephemeral")
+                    .unwrap_or(false)
+            })
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(marked, vec![1, 2], "exactly the last two messages marked");
     }
 
     #[test]

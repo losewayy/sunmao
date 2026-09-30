@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 /// Builtin commands handled locally (not file-backed). Shown in the menu
 /// alongside file commands.
 const BUILTINS: &[&str] = &[
+    "annotate",
     "artifacts",
     "clear",
     "compact",
@@ -85,8 +86,7 @@ fn command_dirs(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<PathBuf> {
 }
 
 /// `.sunmao/artifacts` listing for `/artifacts` — one row per HtmlArtifact
-/// output, `state.json` sidecars flagged (unresolved human notes live
-/// there). Shared by the REPL and the TUI driver.
+/// output, `state.json` sidecars flagged (unresolved human notes live/// there). Shared by the REPL and the TUI driver.
 pub fn artifacts_text(cwd: &Path) -> String {
     let dir = cwd.join(".sunmao").join("artifacts");
     let mut rows: Vec<String> = std::fs::read_dir(&dir)
@@ -120,4 +120,75 @@ pub fn artifacts_text(cwd: &Path) -> String {
             dir.display().to_string().replace("\\\\?\\", "")
         )
     }
+}
+
+/// `/annotate <name> <note>` — append a human note to the artifact's
+/// `state.json` sidecar (SPEC §4.10 interaction回流): the note becomes
+/// agent input on the next Read. `section` may be empty — it's just the
+/// margin the note points at.
+pub fn annotate(cwd: &Path, name: &str, note: &str) -> String {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return format!("[invalid artifact name: {name} — [a-z0-9_-]]");
+    }
+    if note.trim().is_empty() {
+        return "[usage: /annotate <name> <note>]".into();
+    }
+    let dir = cwd.join(".sunmao").join("artifacts");
+    if !dir.join(format!("{name}.html")).exists() {
+        return format!("[no artifact '{name}' — see /artifacts]");
+    }
+    let state = dir.join(format!("{name}.state.json"));
+    let mut doc: serde_json::Value = std::fs::read_to_string(&state)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| serde_json::json!({"annotations": []}));
+    if !doc.is_object() {
+        return format!("[{name}.state.json is not a JSON object — fix by hand]");
+    }
+    let arr = doc
+        .as_object_mut()
+        .unwrap()
+        .entry("annotations")
+        .or_insert_with(|| serde_json::json!([]));
+    if !arr.is_array() {
+        return format!("[{name}.state.json: 'annotations' is not an array]");
+    }
+    arr.as_array_mut().unwrap().push(serde_json::json!({
+        "section": "",
+        "note": note,
+        "at": today(),
+    }));
+    match std::fs::write(&state, serde_json::to_string_pretty(&doc).unwrap()) {
+        Ok(()) => format!("[annotated {name} — the agent sees it on next Read]"),
+        Err(e) => format!("[write failed: {e}]"),
+    }
+}
+
+/// Local date as YYYY-MM-DD — civil-from-days, no chrono needed for a
+/// timestamp that only ever labels human notes.
+fn today() -> String {
+    let days = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        / 86_400) as i64;
+    let (y, m, d) = civil_from_days(days);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Howard Hinnant's civil_from_days — days since 1970-01-01 → (y, m, d).
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if m <= 2 { y + 1 } else { y }, m, d)
 }

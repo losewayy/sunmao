@@ -121,6 +121,13 @@ TUI.
   filesystem-dependent; unsorted, it rewrites the serialized prefix and
   silently kills provider cache hits. Regression test pins the skills
   index to path order
+- **annotation回流 lands** — `/annotate <name> <note>` appends
+  `{section, note, at}` entries to `.sunmao/artifacts/{name}.state.json`
+  on both local frontends, closing the §4.10 loop the packaged skill
+  describes: human writes margin notes → agent Reads the sidecar next
+  revision → marks entries resolved. `/artifacts` flags the sidecar
+  with `+notes`; a hand-written civil-from-days helper stamps dates,
+  no chrono dependency for a label
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

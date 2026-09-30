@@ -43,13 +43,11 @@ pub fn load_all(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<AgentDef> {
     for dir in dirs {
         for e in crate::sorted_entries(&dir) {
             let p = e.path();
-            if p.extension().map(|x| x == "md").unwrap_or(false) {
-                if let Ok(text) = std::fs::read_to_string(&p) {
-                    if let Some(def) = parse(&text, &p) {
+            if p.extension().map(|x| x == "md").unwrap_or(false)
+                && let Ok(text) = std::fs::read_to_string(&p)
+                    && let Some(def) = parse(&text, &p) {
                         out.push(def);
                     }
-                }
-            }
         }
     }
     out
@@ -64,8 +62,8 @@ fn parse(text: &str, path: &Path) -> Option<AgentDef> {
     let mut body = text;
 
     // YAML-lite frontmatter: --- name: x description: y model: @route ---
-    if let Some(rest) = text.strip_prefix("---") {
-        if let Some(end) = rest.find("\n---") {
+    if let Some(rest) = text.strip_prefix("---")
+        && let Some(end) = rest.find("\n---") {
             for line in rest[..end].lines() {
                 if let Some(v) = line.strip_prefix("name:") {
                     name = v.trim().to_string();
@@ -91,7 +89,6 @@ fn parse(text: &str, path: &Path) -> Option<AgentDef> {
             }
             body = &rest[end + 4..];
         }
-    }
     Some(AgentDef {
         name,
         description: desc,

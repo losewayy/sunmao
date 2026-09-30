@@ -66,8 +66,8 @@ impl ToolImpl for ReadTool {
             && path.parent().is_some_and(|p| p.ends_with("artifacts"))
         {
             let state = path.with_extension("state.json");
-            if let Ok(notes) = std::fs::read_to_string(&state) {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&notes) {
+            if let Ok(notes) = std::fs::read_to_string(&state)
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(&notes) {
                     let open: Vec<&serde_json::Value> = v
                         .get("annotations")
                         .and_then(|a| a.as_array())
@@ -92,7 +92,6 @@ impl ToolImpl for ReadTool {
                         out.push_str(" mark each \"resolved\": true]");
                     }
                 }
-            }
         }
         Ok(ToolResult {
             output: out,

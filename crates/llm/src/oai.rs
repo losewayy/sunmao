@@ -211,16 +211,14 @@ impl Chunk {
     fn into_deltas(self) -> Vec<anyhow::Result<StreamDelta>> {
         let mut out = Vec::new();
         for choice in self.choices {
-            if let Some(c) = choice.delta.content {
-                if !c.is_empty() {
+            if let Some(c) = choice.delta.content
+                && !c.is_empty() {
                     out.push(Ok(StreamDelta::Content(c)));
                 }
-            }
-            if let Some(r) = choice.delta.reasoning_content {
-                if !r.is_empty() {
+            if let Some(r) = choice.delta.reasoning_content
+                && !r.is_empty() {
                     out.push(Ok(StreamDelta::Reasoning(r)));
                 }
-            }
             if let Some(calls) = choice.delta.tool_calls {
                 let frags = calls
                     .into_iter()
@@ -241,14 +239,13 @@ impl Chunk {
             }
         }
         // some providers send usage on the [DONE]-adjacent empty-choices chunk
-        if out.is_empty() {
-            if let Some(usage) = self.usage {
+        if out.is_empty()
+            && let Some(usage) = self.usage {
                 out.push(Ok(StreamDelta::Finish {
                     reason: None,
                     usage: Some(usage),
                 }));
             }
-        }
         out
     }
 }

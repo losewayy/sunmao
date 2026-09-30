@@ -231,8 +231,8 @@ fn resolve_spawn_def(
     let Some(name) = requested else {
         return Ok(None); // generic sub-agent, unrestricted parent
     };
-    if let Some(list) = allowed.as_deref() {
-        if !list.iter().any(|n| n == name) {
+    if let Some(list) = allowed.as_deref()
+        && !list.iter().any(|n| n == name) {
             bail!(
                 "{} may not spawn `{name}` (allowed: {})",
                 parent_name.unwrap(),
@@ -243,7 +243,6 @@ fn resolve_spawn_def(
                 }
             );
         }
-    }
     if parent_name.as_deref() == Some(name) {
         bail!("{name} may not spawn itself (self-recursion)");
     }

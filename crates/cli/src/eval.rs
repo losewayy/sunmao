@@ -271,11 +271,10 @@ async fn run_case_inner(
 /// Pure assertion pass — every `expect` key → a failure string or nothing.
 fn check(expect: &Expect, tools: &[&str], final_text: &str) -> Vec<String> {
     let mut fails = Vec::new();
-    if let Some(want) = &expect.final_contains {
-        if !final_text.contains(want.as_str()) {
+    if let Some(want) = &expect.final_contains
+        && !final_text.contains(want.as_str()) {
             fails.push(format!("final_contains {want:?} missing"));
         }
-    }
     for t in &expect.tool_called {
         if !tools.contains(&t.as_str()) {
             fails.push(format!("tool {t} never called"));
@@ -286,14 +285,13 @@ fn check(expect: &Expect, tools: &[&str], final_text: &str) -> Vec<String> {
             fails.push(format!("tool {t} called despite tool_not_called"));
         }
     }
-    if let Some(max) = expect.max_tool_calls {
-        if tools.len() as u64 > max {
+    if let Some(max) = expect.max_tool_calls
+        && tools.len() as u64 > max {
             fails.push(format!(
                 "{} tool calls exceeds max_tool_calls {max}",
                 tools.len()
             ));
         }
-    }
     match expect.turns {
         Some(1) | None => {}
         Some(t) => fails.push(format!("turns {t} not supported (v1 runs 1 turn)")),

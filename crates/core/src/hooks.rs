@@ -414,8 +414,8 @@ fn merge_hooks_file(
     // defaults swallow it into a group with zero commands. Catch it
     // before the structured parse so a mis-shaped file warns instead of
     // loading nothing.
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-        if let Some(events) = v.get("hooks").and_then(|h| h.as_object()) {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text)
+        && let Some(events) = v.get("hooks").and_then(|h| h.as_object()) {
             for (event, groups) in events {
                 if let Some(gs) = groups.as_array() {
                     for g in gs {
@@ -430,7 +430,6 @@ fn merge_hooks_file(
                 }
             }
         }
-    }
     let Ok(file) = serde_json::from_str::<HooksFile>(&text) else {
         tracing::warn!("bad hooks file {}", path.display());
         return;

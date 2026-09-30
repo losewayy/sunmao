@@ -20,7 +20,7 @@ impl App {
         match last_ok {
             Some(b) => {
                 b.text.push_str(text);
-                b.gen += 1;
+                b.generation += 1;
             }
             None => {
                 let mut b = Block::new(kind);
@@ -37,8 +37,8 @@ impl App {
     /// keeps parallel batch children distinct (same depth, same tool name
     /// would otherwise alias).
     pub fn tool_start(&mut self, name: &str, summary: &str, depth: u8, lane: u8) {
-        if let Some(prev) = self.blocks.last_mut() {
-            if prev.kind == BlockKind::Tool
+        if let Some(prev) = self.blocks.last_mut()
+            && prev.kind == BlockKind::Tool
                 && prev.tool.as_ref().is_some_and(|t| {
                     t.name == name && t.depth == depth && t.lane == lane && t.done.is_some()
                 })
@@ -46,7 +46,6 @@ impl App {
                 prev.rearm_tool(summary);
                 return;
             }
-        }
         self.blocks
             .push(Block::new_tool(name, summary, depth, lane));
         self.follow_tail();
@@ -78,7 +77,7 @@ impl App {
         for b in &mut self.blocks {
             if b.open {
                 b.open = false;
-                b.gen += 1;
+                b.generation += 1;
             }
             if b.tool.as_ref().is_some_and(|t| t.done.is_none()) {
                 b.finish_tool(false, "interrupted");

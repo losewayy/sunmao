@@ -499,8 +499,12 @@ fn slash_candidates(s: &Shared) -> Vec<String> {
         .collect()
 }
 
-/// Bind 127.0.0.1 and serve until Ctrl-C. The web assets are embedded —
-/// no node, no build step, `sunmao serve` is the whole deploy story.
+/// Serve until the process exits. The web assets are embedded — no node,
+/// no build step, `sunmao serve` is the whole deploy story. `listener` is
+/// the caller's pre-bound main socket (the Tauri shell binds port 0 so it
+/// can learn the port before opening its webview); the MCP Apps sandbox
+/// proxy still gets its own listener — the spec's double-iframe needs a
+/// second origin, reported as `sandbox_port` in the ws hello.
 /// `factory` rebuilds the startup Context assembly per session — the host
 /// adopts every log as its own AgentLoop instead of swapping one shared
 /// Context between tabs.
@@ -508,18 +512,18 @@ pub async fn run(
     factory: SessionFactory,
     cwd: std::path::PathBuf,
     roots: Vec<std::path::PathBuf>,
-    port: u16,
+    listener: std::net::TcpListener,
     system_prompt: String,
     model_label: String,
     // `first_log`: `--resume`/`--fork` target resolved by main — `None`
     // boots a fresh seeded session
     first_log: Option<(SessionLog, &'static str)>,
 ) -> Result<()> {
-    // MCP Apps sandbox proxy needs its own origin (spec MUST) — a second
-    // listener on an ephemeral port serves one static page and nothing
-    // else. port+1 preferred, 0 = take whatever the OS gives.
+    let port = listener.local_addr()?.port();
+    listener.set_nonblocking(true)?;
+    let sandbox_port_hint = port.saturating_add(1);
     let sandbox_app = axum::Router::new().route("/sandbox.html", get(sandbox_page));
-    let sandbox_listener = tokio::net::TcpListener::bind(("127.0.0.1", port.saturating_add(1)))
+    let sandbox_listener = tokio::net::TcpListener::bind(("127.0.0.1", sandbox_port_hint))
         .await
         .or(tokio::net::TcpListener::bind(("127.0.0.1", 0u16)).await)?;
     let sandbox_port = sandbox_listener.local_addr()?.port();
@@ -588,7 +592,7 @@ pub async fn run(
         .route("/dataflow/{id}", get(dataflow_by_id))
         .with_state(shared.clone());
 
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
+    let listener = tokio::net::TcpListener::from_std(listener)?;
     eprintln!("sunmao serve → http://127.0.0.1:{port}  (Ctrl-C to stop)");
     axum::serve(listener, app).await?;
     Ok(())

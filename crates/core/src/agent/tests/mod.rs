@@ -61,6 +61,7 @@ impl Observer for RecObserver {
             LiveEvent::ToolStart { .. } => "ToolStart".into(),
             LiveEvent::ToolDone { .. } => "ToolDone".into(),
             LiveEvent::Hook { .. } => "Hook".into(),
+            LiveEvent::Artifact { .. } => "Artifact".into(),
             LiveEvent::Usage(_) => "Usage".into(),
         };
         self.0.lock().unwrap().push(tag);

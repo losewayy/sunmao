@@ -53,6 +53,14 @@ pub enum LiveEvent {
         event: String,
         detail: String,
     },
+    /// An HTML artifact landed on disk — emitted by `HtmlArtifact` through
+    /// `ctx.live_sink`. Frontends that can render (or link) surfaces it;
+    /// degraded frontends show the path.
+    Artifact {
+        name: String,
+        path: String,
+        bytes: usize,
+    },
     /// Token accounting for one completed LLM request — mirrors the durable
     /// `SessionEvent::Usage` so footers can show context pressure live.
     Usage(sunmao_llm::types::Usage),

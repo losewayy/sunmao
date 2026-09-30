@@ -70,7 +70,7 @@ with lint debt or shape debt.
 - **`std::process::Stdio::null()` on MCP child stderr** — protocol stdout must
   stay clean; diagnostics go to tracing/stderr only.
 - **ACP stdout is JSON-RPC only** — never println!/eprintln!-into-stdout
-  inside `acp.rs`. Logs → `tracing` (stderr).
+  inside `acp/`. Logs → `tracing` (stderr).
 - **No `MutexGuard` across `.await`** — clone what you need out of the lock,
   drop the guard, then await.
 - **Ephemeral vs file-backed SessionLog have identical fold semantics** — both
@@ -144,6 +144,6 @@ live in [`docs/CODE-ARCHITECTURE.md`](docs/CODE-ARCHITECTURE.md). Follow them.
 | fragment reassembly | `crates/llm/src/assemble.rs` |
 | REPL/flags | `crates/cli/src/main.rs` |
 | TUI (CJK-native) | `crates/cli/src/tui/` — `mod` event loop + focus, `app` state, `blocks` transcript, `render` draw, `md` markdown, `theme` palette, `slash` commands |
-| ACP server | `crates/cli/src/acp.rs` |
+| ACP server | `crates/cli/src/acp/` — `mod` wire + `observer` outbound adapters |
 | dataflow report | `crates/cli/src/dataflow.rs` |
 | env self-check | `crates/cli/src/doctor.rs` |

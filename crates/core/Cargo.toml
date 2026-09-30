@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+base64 = "0.22"
 deno_task_shell.workspace = true
 futures-util.workspace = true
 glob = "0.3"

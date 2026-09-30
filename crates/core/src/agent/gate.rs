@@ -145,9 +145,95 @@ impl AgentLoop {
         Ok(mode == ApprovalMode::Auto || mode == ApprovalMode::FullAccess)
     }
 
+    /// MCP Apps bridge (SEP-1865): an island's `tools/call` request is a
+    /// real tool call — same visibility check, same dispatch gate, same
+    /// audit. `server_tool` is the bare name the server knows; the wire
+    /// name is `mcp__{server}__{tool}` (that's what rules/grants match —
+    /// identical specifier shape as a model-initiated call).
+    /// Returns the serialized `CallToolResult` for the island's reply.
+    pub async fn mcp_app_call(
+        &self,
+        server: &str,
+        tool: &str,
+        args: serde_json::Value,
+        observer: &dyn Observer,
+    ) -> Result<serde_json::Value, String> {
+        let wire = format!("mcp__{server}__{tool}");
+        let handle = self
+            .ctx
+            .mcp_servers
+            .iter()
+            .find(|s| s.name == server)
+            .ok_or_else(|| format!("no such mcp server: {server}"))?;
+        let info = handle
+            .tools
+            .iter()
+            .find(|t| t.server_tool == tool)
+            .ok_or_else(|| format!("no such tool on {server}: {tool}"))?;
+        if !info.app_visible {
+            return Err(format!("{wire}: not callable from apps (visibility)"));
+        }
+        // the UI is not a gate bypass — declarative rules, grants, modes and
+        // the classifier all apply exactly as they do to model calls
+        self.gate_call(&wire, &args, "", None, observer).await?;
+        let mut params = rmcp::model::CallToolRequestParams::new(tool.to_string());
+        if let Some(obj) = args.as_object() {
+            params = params.with_arguments(obj.clone());
+        }
+        let res = handle
+            .client
+            .peer()
+            .call_tool(params)
+            .await
+            .map_err(|e| format!("mcp call failed: {e:#}"))?;
+        self.audit_fact("mcp.app_call", &format!("{wire} (island)"), observer)
+            .await;
+        serde_json::to_value(&res).map_err(|e| format!("result serialize: {e}"))
+    }
+
+    /// `resources/read` proxy for islands — any declared resource URI on the
+    /// same server. Read-only by nature; still audit-logged.
+    pub async fn mcp_resource_read(
+        &self,
+        server: &str,
+        uri: &str,
+        observer: &dyn Observer,
+    ) -> Result<serde_json::Value, String> {
+        let handle = self
+            .ctx
+            .mcp_servers
+            .iter()
+            .find(|s| s.name == server)
+            .ok_or_else(|| format!("no such mcp server: {server}"))?;
+        if !uri.starts_with("ui://") && !uri.contains("://") {
+            return Err("bad resource uri".into());
+        }
+        let rr = handle
+            .client
+            .peer()
+            .read_resource_once(rmcp::model::ReadResourceRequestParams::new(uri.to_string()))
+            .await
+            .map_err(|e| format!("mcp resource read failed: {e:#}"))?;
+        self.audit_fact("mcp.app_read", &format!("{server}: {uri}"), observer)
+            .await;
+        match rr {
+            rmcp::model::ReadResourceResponse::Complete(r) => {
+                serde_json::to_value(&r).map_err(|e| format!("result serialize: {e}"))
+            }
+            _ => Err("unexpected resource response shape".into()),
+        }
+    }
+
+    /// Public audit lane for frontend-sourced facts (island open-link
+    /// requests, ui/message, view logs) — durable in the log, visible on
+    /// the live spine. `event`/`detail` are advisory text, nothing more.
+    pub async fn audit_ui_event(&self, event: &str, detail: &str, observer: &dyn Observer) {
+        self.audit_fact(event, detail, observer).await;
+    }
+
     /// Durable + live audit fact for a gate decision — deny paths and
     /// mode blocks must be reconstructible from the log alone.
-    async fn audit_fact(&self, event: &str, detail: &str, observer: &dyn Observer) {
+    pub(crate) async fn audit_fact(&self, event: &str, detail: &str, observer: &dyn Observer) {
         {
             let mut log = self.ctx.sessions.lock().await;
             let _ = log

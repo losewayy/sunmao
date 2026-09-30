@@ -1094,7 +1094,157 @@ function addArtifact(ev) {
   curBubble = null;
   refreshNotes(el, ev.name);
   refreshRevs(el, ev.name, ev.rev || 0);
+  probeApp(el, ev.name);
 }
+
+/* ============ MCP Apps host (SEP-1865 / GUI.md §5) ============
+ * An artifact with a `{name}.ui.json` sidecar is an MCP App island — it
+ * renders through the spec's double-iframe sandbox: outer sandbox.html on
+ * a DIFFERENT origin (its own listener port), inner View iframe opaque.
+ * This page is the Host end of the ui/* JSON-RPC bridge; server traffic
+ * (tools/call, resources/read) proxies over the ws into the kernel's gate.
+ */
+let sandboxPort = 0; // from hello — 0 means "no sandbox listener" (older kernel)
+const pendingUi = new Map(); // `${artifact}#${id}` → island state
+const islandApps = new WeakMap(); // island el → { meta, html, inited }
+
+async function probeApp(el, name) {
+  if (!sandboxPort) return;
+  let meta;
+  try {
+    const r = await fetch(`/artifacts/${encodeURIComponent(name)}/ui`);
+    if (!r.ok) return;
+    meta = await r.json();
+  } catch { return; }
+  let html = '';
+  try { html = await (await fetch(`/artifacts/${encodeURIComponent(name)}`)).text(); } catch {}
+  const sb = document.createElement('iframe');
+  sb.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+  sb.src = `http://127.0.0.1:${sandboxPort}/sandbox.html`;
+  sb.title = name;
+  const old = $('iframe', el);
+  if (old) old.replaceWith(sb); else el.appendChild(sb);
+  islandApps.set(el, { name, meta, html, inited: false, frame: sb });
+}
+
+function postToIsland(el, msg) {
+  const sb = $('iframe', el);
+  if (sb && sb.contentWindow) sb.contentWindow.postMessage(msg, '*');
+}
+
+let appUiSeq = 0;
+function uiWs(el, id, msg) {
+  const it = islandApps.get(el);
+  const key = `${it.name}#${id}`;
+  pendingUi.set(key, el);
+  wsSend(Object.assign({ id, name: it.name }, msg));
+}
+
+function hostContextFor(it) {
+  const dark = document.documentElement.dataset.theme !== 'light';
+  return {
+    toolInfo: { tool: { name: it.meta.tool } },
+    theme: dark ? 'dark' : 'light',
+    displayMode: 'inline',
+    availableDisplayModes: ['inline', 'fullscreen'],
+    platform: 'desktop',
+    deviceCapabilities: {
+      touch: matchMedia('(pointer:coarse)').matches,
+      hover: matchMedia('(hover:hover)').matches,
+    },
+    locale: navigator.language || 'en',
+    userAgent: 'sunmao-gui',
+  };
+}
+
+function handleAppMsg(el, it, d) {
+  const { method, id, params } = d;
+  switch (method) {
+    case 'ui/notifications/sandbox-proxy-ready':
+      postToIsland(el, { jsonrpc: '2.0', method: 'ui/notifications/sandbox-resource-ready',
+        params: { html: it.html, csp: it.meta.csp || null } });
+      break;
+    case 'ui/initialize':
+      postToIsland(el, { jsonrpc: '2.0', id, result: {
+        protocolVersion: '2026-01-26',
+        hostCapabilities: { openLinks: {}, serverTools: { listChanged: false }, serverResources: {}, logging: {} },
+        hostInfo: { name: 'sunmao', version: '0.2.0' },
+        hostContext: hostContextFor(it),
+      }});
+      break;
+    case 'ui/notifications/initialized':
+      it.inited = true;
+      postToIsland(el, { jsonrpc: '2.0', method: 'ui/notifications/tool-input',
+        params: { arguments: it.meta.arguments || {} } });
+      postToIsland(el, { jsonrpc: '2.0', method: 'ui/notifications/tool-result',
+        params: it.meta.result || {} });
+      break;
+    case 'tools/call':
+      uiWs(el, id, { type: 'ui_call', name: `mcp__${it.meta.server}__${params?.name}`, args: params?.arguments || {} });
+      break;
+    case 'resources/read':
+      uiWs(el, id, { type: 'ui_read', server: it.meta.server, uri: params?.uri });
+      break;
+    case 'ui/message':
+      uiWs(el, id, { type: 'ui_message', text: params?.content?.text || '' });
+      break;
+    case 'ui/open-link': {
+      const url = params?.url || '';
+      if (/^https?:/i.test(url)) {
+        window.open(url, '_blank', 'noopener');
+        wsSend({ type: 'ui_audit', event: 'mcp.ui_open_link', detail: `${it.name}: ${url}` });
+        postToIsland(el, { jsonrpc: '2.0', id, result: {} });
+      } else {
+        postToIsland(el, { jsonrpc: '2.0', id, error: { code: -32000, message: 'Invalid URL' } });
+      }
+      break;
+    }
+    case 'ui/request-display-mode': {
+      const on = params?.mode === 'fullscreen';
+      el.classList.toggle('tall', on);
+      postToIsland(el, { jsonrpc: '2.0', id, result: { mode: on ? 'fullscreen' : 'inline' } });
+      postToIsland(el, { jsonrpc: '2.0', method: 'ui/notifications/host-context-changed',
+        params: { displayMode: on ? 'fullscreen' : 'inline' } });
+      break;
+    }
+    case 'ui/notifications/size-changed': {
+      const h = params?.height;
+      const sb = $('iframe', el);
+      if (h && sb) sb.style.height = Math.min(Math.max(Math.round(h), 80), 1400) + 'px';
+      break;
+    }
+    case 'notifications/message': case 'ui/notifications/message':
+      wsSend({ type: 'ui_audit', event: 'mcp.ui_log',
+        detail: `${it.name}: ${params?.data?.message || params?.message || 'log'}` });
+      break;
+    case 'ui/update-model-context':
+      uiWs(el, id, { type: 'ui_audit', event: 'mcp.ui_context',
+        detail: `${it.name}: ${JSON.stringify(params || {}).slice(0, 400)}` });
+      break;
+    case 'ping':
+      postToIsland(el, { jsonrpc: '2.0', id, result: {} });
+      break;
+    default:
+      if (id != null) {
+        postToIsland(el, { jsonrpc: '2.0', id, error: { code: -32601, message: `unsupported: ${method}` } });
+      }
+  }
+}
+
+// island → host: messages come from the sandbox iframe's contentWindow
+window.addEventListener('message', ev => {
+  const d = ev.data;
+  if (!d || d.jsonrpc !== '2.0') return;
+  for (const isl of $$('.island')) {
+    const it = islandApps.get(isl);
+    const sb = isl && $('iframe', isl);
+    if (it && sb && ev.source === sb.contentWindow) {
+      handleAppMsg(isl, it, d);
+      return;
+    }
+  }
+});
+
 async function refreshRevs(el, name, known) {
   let max = known | 0;
   try {
@@ -1110,6 +1260,7 @@ async function refreshRevs(el, name, known) {
   setIslandRev(el);
 }
 function setIslandRev(isl) {
+  if (islandApps.has(isl)) return; // app islands render via the sandbox bridge, not ?rev=
   const name = isl.dataset.artifact;
   const cur = +isl.dataset.revCur || 1, max = +isl.dataset.revMax || 1;
   $('.rev-n', isl).textContent = `v${cur}/${max}`;
@@ -1374,6 +1525,7 @@ function route(v) {
       $('#ws-btn').dataset.tip = cwd;
       if (!models.length) $('#model-btn').style.display = 'none';
       setApprovalMode(v.mode);
+      sandboxPort = v.sandbox_port || 0;
       renderReplay(v.replay || []);
       setBusy(!!v.busy);
       refreshSessions();
@@ -1391,6 +1543,19 @@ function route(v) {
     case 'model': modelLabel = v.label || modelLabel; $('#cmp-model').textContent = modelLabel; toast(`模型切换为 ${v.label}`, 'cpu'); break;
     case 'mode': setApprovalMode(v.mode); toast(`审批模式切换为 ${MODE_LABELS[v.mode] || v.mode}`, 'shield'); break;
     case 'busy': setBusy(v.busy); break;
+    // MCP Apps bridge reply — route the kernel's result back into the
+    // island that asked (keyed by artifact name + rpc id)
+    case 'ui_result': {
+      const el = pendingUi.get(`${v.name}#${v.id}`);
+      if (el) {
+        pendingUi.delete(`${v.name}#${v.id}`);
+        const msg = v.error != null
+          ? { jsonrpc: '2.0', id: v.id, error: { code: -32000, message: String(v.error) } }
+          : { jsonrpc: '2.0', id: v.id, result: v.result };
+        postToIsland(el, msg);
+      }
+      break;
+    }
   }
 }
 

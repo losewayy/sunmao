@@ -34,6 +34,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use crate::tui;
 
 mod driver;
+mod ws;
 
 struct Shared {
     agent: AgentLoop,
@@ -53,6 +54,10 @@ struct Shared {
     approvals: Arc<Pending>,
     /// submissions currently running (drives the busy badge + cancel affordance)
     busy: std::sync::atomic::AtomicUsize,
+    /// The MCP Apps sandbox listener's port — the spec's double-iframe
+    /// needs a second origin; hello carries it so islands can point at
+    /// `http://127.0.0.1:{sandbox_port}/sandbox.html`.
+    sandbox_port: u16,
 }
 
 /// Approval state that must exist before `Shared` — `Context.approval` is
@@ -121,6 +126,9 @@ impl Observer for WsObserver {
 /// Index page — the workbench prototype adapted as the product frontend
 /// (docs/DESIGN.md tokens are its source of truth).
 const INDEX: &str = include_str!("serve/assets/index.html");
+/// MCP Apps sandbox proxy — a separate origin serving a single static
+/// page (`serve/assets/sandbox.html`); see `sandbox_page`/`ui/` bridge.
+const SANDBOX: &str = include_str!("serve/assets/sandbox.html");
 
 /// Windows `canonicalize` yields `\?\`-prefixed paths — strip the prefix
 /// for display so the GUI's crumb shows `F:\…`, not the UNC form.
@@ -328,6 +336,32 @@ async fn artifact_annotate(
     }))
 }
 
+/// `GET /artifacts/{name}/ui` — the MCP Apps sidecar (`{name}.ui.json`):
+/// which server/tool produced this island, the call's arguments + raw
+/// result, and the resource's declared CSP. The island's sandbox proxy
+/// needs it before it can handshake.
+async fn artifact_ui(State(s): State<Arc<Shared>>, AxPath(name): AxPath<String>) -> Response {
+    if !safe_name(&name) {
+        return (StatusCode::BAD_REQUEST, "bad artifact name").into_response();
+    }
+    let p = artifact_dir(&s.cwd).join(format!("{name}.ui.json"));
+    match tokio::fs::read_to_string(&p).await {
+        Ok(text) => (
+            [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
+            text,
+        )
+            .into_response(),
+        Err(_) => (StatusCode::NOT_FOUND, "not an mcp-app artifact").into_response(),
+    }
+}
+
+/// The MCP Apps sandbox proxy page (spec: host and sandbox MUST be
+/// different origins — this rides its own listener, port reported in the
+/// ws hello). Same embedded file every request; it has no state.
+async fn sandbox_page() -> Html<&'static str> {
+    Html(SANDBOX)
+}
+
 async fn dataflow_current(State(s): State<Arc<Shared>>) -> Response {
     let p = s.agent.session_path().await;
     match crate::dataflow::report(&p).await {
@@ -355,159 +389,6 @@ fn slash_candidates(s: &Shared) -> Vec<String> {
         .collect()
 }
 
-async fn ws_upgrade(State(s): State<Arc<Shared>>, ws: WebSocketUpgrade) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| ws_client(s, socket))
-}
-
-async fn ws_send(tx: &mpsc::UnboundedSender<String>, v: serde_json::Value) -> Result<()> {
-    tx.send(v.to_string())
-        .map_err(|_| anyhow::anyhow!("ws closed"))
-}
-
-/// One browser client: subscribe to live events, snapshot the transcript on
-/// connect, then translate its messages into driver jobs / replies.
-async fn ws_client(s: Arc<Shared>, socket: axum::extract::ws::WebSocket) {
-    use axum::extract::ws::Message as WsMsg;
-    use futures_util::{SinkExt, StreamExt};
-    let (mut ws_tx, mut ws_rx) = socket.split();
-    // serialize ws writes through a channel — broadcast and replies both
-    // feed it so no two writers race on the sink.
-    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
-    let writer = tokio::spawn(async move {
-        while let Some(m) = out_rx.recv().await {
-            if ws_tx.send(WsMsg::Text(m.into())).await.is_err() {
-                break;
-            }
-        }
-    });
-
-    let mut live_rx = s.live.subscribe();
-    let forward = {
-        let out_tx = out_tx.clone();
-        tokio::spawn(async move {
-            while let Ok(v) = live_rx.recv().await {
-                if out_tx.send(v.to_string()).is_err() {
-                    break;
-                }
-            }
-        })
-    };
-
-    // hello: replay the current session + slash candidates + session id —
-    // a page reload mid-session lands back on a real transcript.
-    {
-        let evs = s.agent.session_events().await;
-        let _ = ws_send(
-            &out_tx,
-            serde_json::json!({
-                "type": "hello",
-                "session": session_id(&s.agent).await,
-                "cwd": display_path(&s.cwd),
-                "slash": slash_candidates(&s),
-                "models": s.agent.model_choices(),
-                "mode": s.agent.approval_mode().as_str(),
-                "busy": s.busy.load(Ordering::Relaxed) > 0,
-                "replay": evs,
-            }),
-        )
-        .await;
-    }
-
-    while let Some(Ok(msg)) = ws_rx.next().await {
-        let WsMsg::Text(text) = msg else { continue };
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
-            continue;
-        };
-        match v["type"].as_str().unwrap_or("") {
-            "prompt" => {
-                let text = v["text"].as_str().unwrap_or("").to_string();
-                if !text.trim().is_empty() {
-                    let _ = s.input.send(text);
-                }
-            }
-            "cancel" => s.agent.cancel(),
-            "approval" => {
-                let id = v["id"].as_u64().unwrap_or(0);
-                let verdict = match v["verdict"].as_str().unwrap_or("deny") {
-                    "once" => sunmao_core::approval::Approval::Once,
-                    "session" => sunmao_core::approval::Approval::Session,
-                    _ => sunmao_core::approval::Approval::Deny,
-                };
-                if let Some(tx) = s.approvals.map.lock().unwrap().remove(&id) {
-                    let _ = tx.send(verdict);
-                }
-            }
-            "new" => {
-                if let Err(e) = new_session_inner(&s).await {
-                    let _ = ws_send(
-                        &out_tx,
-                        serde_json::json!({"type":"note","text":format!("[new session failed] {e:#}")}),
-                    )
-                    .await;
-                }
-            }
-            "resume" | "fork" => {
-                let id = v["id"].as_str().unwrap_or("").to_string();
-                let fork = v["type"].as_str() == Some("fork");
-                if let Err(e) = fork_or_resume(&s, &id, fork).await {
-                    let _ = ws_send(
-                        &out_tx,
-                        serde_json::json!({"type":"note","text":format!("[{e:#}]")}),
-                    )
-                    .await;
-                }
-            }
-            "annotate" => {
-                let name = v["name"].as_str().unwrap_or("");
-                let note = v["note"].as_str().unwrap_or("");
-                let r = crate::tui::slash::annotate(&s.cwd, name, note);
-                let _ = ws_send(&out_tx, serde_json::json!({"type":"note","text":r})).await;
-            }
-            "model" => {
-                let sel = v["sel"].as_str().unwrap_or("");
-                match s.agent.swap_model(sel) {
-                    Some(label) => {
-                        s.agent.record_model_change(sel, &label).await;
-                        let _ = s
-                            .live
-                            .send(serde_json::json!({"type":"model","label":label}));
-                    }
-                    None => {
-                        let _ = ws_send(
-                            &out_tx,
-                            serde_json::json!({"type":"note","text":format!("[unknown selector: {sel}]")}),
-                        )
-                        .await;
-                    }
-                }
-            }
-            "mode" => {
-                let sel = v["sel"].as_str().unwrap_or("");
-                match sunmao_core::agent::ApprovalMode::parse(sel) {
-                    Some(m) => {
-                        s.agent
-                            .set_approval_mode(m, &WsObserver(s.live.clone()))
-                            .await;
-                        let _ = s
-                            .live
-                            .send(serde_json::json!({"type":"mode","mode":m.as_str()}));
-                    }
-                    None => {
-                        let _ = ws_send(
-                            &out_tx,
-                            serde_json::json!({"type":"note","text":format!("[unknown mode: {sel}]")}),
-                        )
-                        .await;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    forward.abort();
-    writer.abort();
-}
-
 /// Bind 127.0.0.1 and serve until Ctrl-C. The web assets are embedded —
 /// no node, no build step, `sunmao serve` is the whole deploy story.
 pub async fn run(
@@ -519,6 +400,18 @@ pub async fn run(
     system_prompt: String,
     model_label: String,
 ) -> Result<()> {
+    // MCP Apps sandbox proxy needs its own origin (spec MUST) — a second
+    // listener on an ephemeral port serves one static page and nothing
+    // else. port+1 preferred, 0 = take whatever the OS gives.
+    let sandbox_app = axum::Router::new().route("/sandbox.html", get(sandbox_page));
+    let sandbox_listener = tokio::net::TcpListener::bind(("127.0.0.1", port.saturating_add(1)))
+        .await
+        .or(tokio::net::TcpListener::bind(("127.0.0.1", 0u16)).await)?;
+    let sandbox_port = sandbox_listener.local_addr()?.port();
+    tokio::spawn(async move {
+        let _ = axum::serve(sandbox_listener, sandbox_app).await;
+    });
+
     let (input_tx, input_rx) = mpsc::unbounded_channel::<String>();
     let shared = Arc::new(Shared {
         agent,
@@ -530,11 +423,12 @@ pub async fn run(
         input: input_tx,
         approvals,
         busy: std::sync::atomic::AtomicUsize::new(0),
+        sandbox_port,
     });
 
     let app = axum::Router::new()
         .route("/", get(|| async { Html(INDEX) }))
-        .route("/ws", get(ws_upgrade))
+        .route("/ws", get(ws::ws_upgrade))
         .route("/sessions", get(sessions_list))
         .route("/session", get(session_info))
         .route("/session/new", post(new_session))
@@ -542,6 +436,7 @@ pub async fn run(
         .route("/session/{id}/fork", post(fork_session))
         .route("/artifacts/{name}", get(artifact_get))
         .route("/artifacts/{name}/revs", get(artifact_revs))
+        .route("/artifacts/{name}/ui", get(artifact_ui))
         .route("/artifacts/{name}/notes", get(artifact_notes))
         .route("/artifacts/{name}/annotate", post(artifact_annotate))
         .route("/dataflow", get(dataflow_current))

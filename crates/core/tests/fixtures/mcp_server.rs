@@ -4,8 +4,10 @@
 //! Contract:
 //!   initialize          → protocolVersion + capabilities.tools + serverInfo
 //!   notifications/*     → ignored (no reply)
-//!   tools/list          → one "ping" tool
-//!   tools/call ping     → text content echoing arguments.msg
+//!   tools/list          → ping + draw (SEP-1865 _meta.ui) + internal
+//!                         (["app"]-only) + model_only (["model"]-only)
+//!   tools/call <name>   → text content echoing name + arguments.msg
+//!   resources/read      → the ui://echo/app html document (with csp meta)
 //!   anything else       → method-not-found error
 //!
 //! Flags:
@@ -46,11 +48,32 @@ fn main() {
         let Some(id) = id else { continue };
         let result = match method {
             "initialize" => Some(format!(
-                "{{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{{\"tools\":{{}}}},\"serverInfo\":{{\"name\":\"mcp-echo\",\"version\":\"0.1\"}}}}"
+                "{{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{{\"tools\":{{}},\"resources\":{{}}}},\"serverInfo\":{{\"name\":\"mcp-echo\",\"version\":\"0.1\"}}}}"
             )),
             "tools/list" => {
                 saw_list = true;
-                Some("{\"tools\":[{\"name\":\"ping\",\"description\":\"echo the msg\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"msg\":{\"type\":\"string\"}}}}]}".to_string())
+                // `ping` = plain echo; `draw` carries SEP-1865 `_meta.ui` —
+                // a ui:// resourceUri + the full visibility pair; `internal`
+                // is app-only (["app"]) so the model registry must NOT see
+                // it while the bridge catalog must.
+                Some("{\"tools\":[
+                    {\"name\":\"ping\",\"description\":\"echo the msg\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"msg\":{\"type\":\"string\"}}}},
+                    {\"name\":\"draw\",\"description\":\"render a tiny ui\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"msg\":{\"type\":\"string\"}}},\"_meta\":{\"ui\":{\"resourceUri\":\"ui://echo/app\",\"visibility\":[\"model\",\"app\"]}}},
+                    {\"name\":\"internal\",\"description\":\"app-only probe\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"msg\":{\"type\":\"string\"}}},\"_meta\":{\"ui\":{\"resourceUri\":\"ui://echo/app\",\"visibility\":[\"app\"]}}},
+                    {\"name\":\"model_only\",\"description\":\"model-only probe\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"msg\":{\"type\":\"string\"}}},\"_meta\":{\"ui\":{\"visibility\":[\"model\"]}}}
+                ]}".replace('\n', "").replace("    ", ""))
+            }
+            "resources/read" => {
+                let uri = v
+                    .get("params")
+                    .and_then(|p| p.get("uri"))
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("");
+                if uri == "ui://echo/app" {
+                    Some("{\"contents\":[{\"uri\":\"ui://echo/app\",\"mimeType\":\"text/html;profile=mcp-app\",\"text\":\"<!doctype html><p>mcp-app view</p>\",\"_meta\":{\"ui\":{\"csp\":{\"connectDomains\":[\"https://api.example.com\"],\"resourceDomains\":[\"https://cdn.example.com\"]}}}}]}".to_string())
+                } else {
+                    None // unknown uri → method-not-found shape (error, not empty)
+                }
             }
             "tools/call" => {
                 let name = v
@@ -64,15 +87,9 @@ fn main() {
                     .and_then(|a| a.get("msg"))
                     .and_then(|m| m.as_str())
                     .unwrap_or("");
-                if name == "ping" {
-                    Some(format!(
-                        "{{\"content\":[{{\"type\":\"text\",\"text\":\"pong: {msg}\"}}],\"isError\":false}}"
-                    ))
-                } else {
-                    Some(format!(
-                        "{{\"content\":[{{\"type\":\"text\",\"text\":\"unknown tool {name}\"}}],\"isError\":true}}"
-                    ))
-                }
+                Some(format!(
+                    "{{\"content\":[{{\"type\":\"text\",\"text\":\"pong[{name}]: {msg}\"}}],\"isError\":false}}"
+                ))
             }
             _ => None, // method-not-found
         };

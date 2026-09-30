@@ -301,6 +301,9 @@ pub(super) async fn spawn_parts(
         // the child spawns its own extension children against its own
         // session id — parent's processes are never shared
         ext: Arc::new(crate::ext::ExtRegistry::new()),
+        // app bridges proxy against the shared server pool — a sub-agent's
+        // islands call the same MCP servers its parent's would
+        mcp_servers: ctx.mcp_servers.clone(),
         // the parent's driver applies — a preset-named loop is
         // session-level, not per-agent
         loop_driver: ctx.loop_driver,

@@ -91,7 +91,7 @@ impl ToolImpl for HtmlArtifactTool {
 /// Move the current `{name}.html` aside as `{name}.v{K}.html` and return the
 /// NEW revision number (K+1; 1 when nothing existed). Indexing keeps the
 /// chain dense: latest is always `{name}.html`, history is `v1..v{rev-1}`.
-async fn archive_prev(dir: &std::path::Path, name: &str) -> anyhow::Result<usize> {
+pub(crate) async fn archive_prev(dir: &std::path::Path, name: &str) -> anyhow::Result<usize> {
     let latest = dir.join(format!("{name}.html"));
     if !latest.exists() {
         return Ok(1);

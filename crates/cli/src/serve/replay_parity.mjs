@@ -364,7 +364,7 @@ const fakeTimers = {
   setInterval: () => 0,
   clearInterval: () => {},
 };
-const windowObj = {};
+const windowObj = { addEventListener() {}, removeEventListener() {} };
 const RealURL = URL;
 class FakeURL extends RealURL {
   static createObjectURL() { return 'blob:'; }

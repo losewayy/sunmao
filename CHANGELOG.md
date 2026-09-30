@@ -322,6 +322,22 @@ TUI.
   honors the pinned rev), TUI/REPL notes show `· rev N`, `/artifacts`
   lists `·N revs` and hides the archives. ACP resource titles say
   `name.html (rev N)`. Legacy events deserialize with `rev: 0`
+- **MCP Apps host** (SEP-1865, stable 2026-01-26) — a tool declaring
+  `_meta.ui.resourceUri` renders its result as a sandboxed island:
+  the call fetches the `ui://` resource, lands it as
+  `artifacts/mcp-{server}-{tool}.html` (riding the same version chain)
+  plus a `{name}.ui.json` sidecar with the call args, raw result and
+  declared CSP. `_meta.ui.visibility` splits the surface — `["app"]`
+  tools never reach the model registry, `["model"]` tools are refused
+  from the island. The GUI runs the spec's double-iframe sandbox proxy
+  on a second loopback origin (CSP translated from the resource's
+  `connectDomains`/`resourceDomains`/`frameDomains`/`baseUriDomains`);
+  the island's `tools/call`, `resources/read` and `ui/message` proxy
+  over the ws bridge and pass through the SAME dispatch gate — the UI
+  is never a permissions bypass, and every island action lands on the
+  audit spine (`mcp.app_call`/`mcp.app_read`/`mcp.ui_message` facts).
+  `ui/resource-teardown` and host-context `styles.variables` are
+  deferred — v1 covers the stable surface
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

@@ -130,3 +130,103 @@ async fn pretooluse_permission_deny_blocks() {
     assert!(tool_msg.content.as_deref().unwrap().contains("policy"));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The union event surface: `PostToolUseFailure` fires only on a settled
+/// bad result, `Notification` fires when the gate opens a prompt. One
+/// turn: an allowed Glob (ok) then a denied one — the failure hook must
+/// append exactly once, and the ask-rule prompt must have rung the bell.
+#[tokio::test]
+async fn failure_and_notification_events_fire_on_the_right_edges() {
+    use crate::approval::{Approval, Approver};
+
+    struct AlwaysOnce;
+    #[async_trait::async_trait]
+    impl Approver for AlwaysOnce {
+        async fn approve(&self, _t: &str, _d: &str, _w: &str) -> Approval {
+            Approval::Once
+        }
+    }
+
+    let dir = crate::fresh_test_dir("union");
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    // allowed call asks first (rings Notification), denied one is refused
+    // outright — the failure hook still sees the settled bad result
+    std::fs::write(
+        dir.join(".sunmao/permissions.json"),
+        r#"{"permissions":{"ask":["Glob(**/*.txt)"],"deny":["Glob(**/*.rs)"]}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join(".sunmao/hooks.json"),
+        r#"{"hooks":{
+          "PostToolUse":[{"matcher":"","hooks":[{"type":"command","command":"cat >> post-flag.txt; echo >> post-flag.txt"}]}],
+          "PostToolUseFailure":[{"matcher":"","hooks":[{"type":"command","command":"cat >> fail-flag.txt; echo >> fail-flag.txt"}]}],
+          "Notification":[{"matcher":"","hooks":[{"type":"command","command":"cat >> bell-flag.txt; echo >> bell-flag.txt"}]}]
+        }}"#,
+    )
+    .unwrap();
+    std::fs::write(dir.join("a.txt"), "x").unwrap();
+
+    let glob = |pattern: &str, id: &str| {
+        vec![
+            StreamDelta::ToolCalls(vec![
+                ToolCallFragment {
+                    index: 0,
+                    id: Some(id.into()),
+                    name: Some("Glob".into()),
+                    arguments: None,
+                },
+                ToolCallFragment {
+                    index: 0,
+                    arguments: Some(format!("{{\"pattern\":\"{pattern}\"}}")),
+                    ..Default::default()
+                },
+            ]),
+            StreamDelta::Finish {
+                reason: Some("tool_calls".into()),
+                usage: None,
+            },
+        ]
+    };
+    let provider = Arc::new(MockProvider {
+        responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+            glob("**/*.txt", "ok1"), // asks → approved → runs → PostToolUse only
+            glob("**/*.rs", "bad1"), // deny rule → fails → PostToolUse + Failure
+            vec![
+                StreamDelta::Content("done".into()),
+                StreamDelta::Finish {
+                    reason: Some("stop".into()),
+                    usage: None,
+                },
+            ],
+        ])),
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let mut ctx_raw = Context::new(
+        provider,
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        dir.clone(),
+    );
+    ctx_raw.approval = Arc::new(AlwaysOnce);
+    let ctx = Arc::new(ctx_raw);
+    let agent = AgentLoop::new(ctx.clone());
+    agent.run_turn("go", &NullObserver).await.unwrap();
+
+    // every hook payload lands on stdin; `cat >> flag` appends each firing
+    let posts = std::fs::read_to_string(dir.join("post-flag.txt")).unwrap();
+    assert_eq!(
+        posts.lines().count(),
+        2,
+        "PostToolUse fires for both outcomes"
+    );
+    let fails = std::fs::read_to_string(dir.join("fail-flag.txt")).unwrap();
+    assert_eq!(
+        fails.lines().count(),
+        1,
+        "PostToolUseFailure fires only on the denied call"
+    );
+    let bell = std::fs::read_to_string(dir.join("bell-flag.txt")).unwrap();
+    assert_eq!(bell.lines().count(), 1, "one ask prompt → one Notification");
+    std::fs::remove_dir_all(&dir).ok();
+}

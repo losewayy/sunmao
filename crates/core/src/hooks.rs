@@ -52,12 +52,21 @@ pub enum HookEvent {
     UserPromptSubmit,
     PreToolUse,
     PostToolUse,
+    /// A tool call ended in a failed result (deny, error, crash) — fired
+    /// after PostToolUse so failure listeners see the settled outcome.
+    PostToolUseFailure,
     PreCompact,
     PostCompact,
     Stop,
+    /// The turn aborted on an error (stream failure, hook veto abort) —
+    /// fired instead of a clean Stop when the outcome wasn't normal.
+    StopFailure,
     SessionEnd,
     SubagentStart,
     SubagentStop,
+    /// The loop wants user attention — an approval prompt fired. Hooks
+    /// can relay it (desktop notify, sound); the outcome is advisory only.
+    Notification,
 }
 
 impl HookEvent {
@@ -67,12 +76,15 @@ impl HookEvent {
             Self::UserPromptSubmit => "UserPromptSubmit",
             Self::PreToolUse => "PreToolUse",
             Self::PostToolUse => "PostToolUse",
+            Self::PostToolUseFailure => "PostToolUseFailure",
             Self::PreCompact => "PreCompact",
             Self::PostCompact => "PostCompact",
             Self::Stop => "Stop",
+            Self::StopFailure => "StopFailure",
             Self::SessionEnd => "SessionEnd",
             Self::SubagentStart => "SubagentStart",
             Self::SubagentStop => "SubagentStop",
+            Self::Notification => "Notification",
         }
     }
 }

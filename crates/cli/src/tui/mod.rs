@@ -518,6 +518,9 @@ async fn run_inner(
                 LiveEvent::Hook { event, detail } => {
                     app.push_audit(&format!("{event} — {detail}"));
                 }
+                LiveEvent::Artifact { name, path, bytes } => {
+                    app.push_note(&format!("[artifact '{name}' → {path} ({bytes} B)]"));
+                }
                 LiveEvent::Usage(u) => app.last_usage = Some(u),
                 LiveEvent::TurnEnd { outcome } => {
                     app.close_turn();

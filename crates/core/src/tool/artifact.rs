@@ -56,6 +56,15 @@ impl ToolImpl for HtmlArtifactTool {
                 bytes,
             })
             .await?;
+        // live event for frontends that can render/link artifacts — the
+        // session event above is the durable fact; this is the UI seam
+        if let Some(sink) = ctx.live_sink.get() {
+            sink.on_event(&crate::agent::LiveEvent::Artifact {
+                name: a.name.clone(),
+                path: path.display().to_string(),
+                bytes,
+            });
+        }
         Ok(ToolResult {
             output: format!(
                 "artifact '{}' → {} ({} bytes)",

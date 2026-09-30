@@ -148,6 +148,13 @@ impl Observer for StdoutObserver {
                 }
                 println!("\x1b[33m[⚙ {event} — {detail}]\x1b[0m");
             }
+            LiveEvent::Artifact { name, path, bytes } => {
+                if *in_r {
+                    eprintln!("\x1b[0m");
+                    *in_r = false;
+                }
+                println!("\x1b[36m[artifact '{name}' → {path} ({bytes} B)]\x1b[0m");
+            }
             LiveEvent::Usage(_) => {} // durable in the log; REPL stays quiet
             LiveEvent::TurnEnd { outcome } => {
                 if *in_r {

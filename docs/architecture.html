@@ -483,7 +483,7 @@
             <td class="name">acp<span>生态出口</span></td>
             <td>ACP v2 server over JSON-RPC/stdio via <code>agent-client-protocol</code>: <code>initialize</code>, <code>session/new</code>, <code>session/prompt</code>, <code>session/update</code> notifications, reverse <code>session/request_permission</code>. Stdout is JSON-RPC only — all logs go to <code>tracing</code>/stderr. The TUI is just another client of the same session API.</td>
             <td><span class="tag proc">protocol boundary</span><br><span class="tag">frontend bridge</span></td>
-            <td class="paths">cli/src/acp.rs · 431 LOC (+ tui/, dataflow.rs)<br>Lets Zed &amp; any ACP client drive the kernel — <b>in-tree</b></td>
+            <td class="paths">cli/src/acp/ · mod+observer 615 LOC (+ tui/, dataflow.rs)<br>Lets Zed &amp; any ACP client drive the kernel — <b>in-tree</b></td>
           </tr>
         </tbody>
       </table>

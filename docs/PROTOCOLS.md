@@ -53,7 +53,7 @@ Tools surface as `mcp__{server}__{tool}`, schema/description passed through.
 Merge order: `.sunmao/mcp.json` then `plugin.json`/`plugins/*/plugin.json` —
 each malformed entry warns and continues; a dead server bricks only itself.
 
-## ACP server (`crates/cli/src/acp.rs`, agent-client-protocol 2.2 + `unstable_protocol_v2`)
+## ACP server (`crates/cli/src/acp/`, agent-client-protocol 2.2 + `unstable_protocol_v2`)
 
 stdio JSON-RPC, stdout is protocol-only (diagnostics → stderr/tracing).
 

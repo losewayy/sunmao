@@ -3,6 +3,7 @@
 *.log
 .env
 .sunmao/
+_scratch/
 
 # maintainer-private docs — never commit, never push
 docs/WHY.md

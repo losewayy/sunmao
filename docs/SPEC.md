@@ -176,7 +176,7 @@ hook engine（核心）
 | ACP（被别人驱动） | acp-server | v0.3 |
 | MCP Apps / UI resources（渲染别家 UI） | sandboxed iframe 渲染层 | v0.5+ |
 | Codex/Gemini/Cursor hook 方言 | 归一化层 | v0.4 |
-| OpenCode/pi TS 扩展 | JS extension host 侧车 | v0.5+（协议预留，不定制） |
+| OpenCode/pi TS 扩展 | JS extension host 侧车 | v0.5+（契约已实现——本地 `ext/` 宿主已上，JS 侧车仍在 v0.5+） |
 | 自身扩展协议 | `sunmao` JSON-RPC | ✅ 契约 + first-party 宿主（`crates/core/src/ext/`） |
 
 ## 6. 里程碑
@@ -186,8 +186,8 @@ hook engine（核心）
 | v0.1 | kernel walks | OAI 适配 + SSE + sessions + tools(3个) + agentLoop + TUI REPL | 跑通真实任务 | ✅ 超预期完成（tools 到 10、TUI 也落了） |
 | v0.2 | trustworthy | 审批缝 + transcript 工件 + 上下文窗口管理 + 错误恢复/中断续跑 + 审计流 | 子进程崩溃不炸 agent | ✅ 大部分落地——审批闸三前端、compaction、resume/fork、审计事件流；进程崩溃容忍只验过 hook veto |
 | v0.3 | ecosystem citizen | MCP client + hooks 引擎 + claude-dialect + 格式加载器 + ACP server | rtk/context-mode 实测 | ✅ 落地（MCP 双 transport、hooks 8 事件、agents/commands/skills/plugin.json、ACP v2）；rtk/context-mode 实测通过 |
-| v0.4 | distributed | plugin.json 安装 + 扩展协议宿主 + presets + eval + HTML 工件 | 发布 | 🟡 plugin.json 安装（`sunmao plugin`）、presets（`--preset` 层叠）、eval（`sunmao eval` 断言会话事实）、HTML 工件（HtmlArtifact）已落地；扩展协议宿主（`ext/`）提前落地 |
-| v0.5+ | open frontier | JS 扩展宿主、第二 provider 方言、GUI、subagents | — | 🟡 Anthropic 方言提前落地（v0.2）、Task 子代理已上线（`spawns:`/`tools:` 白名单 + `run_in_background` 异步扇出 + `model:` 路由）；JS 宿主/GUI 未动 |
+| v0.4 | distributed | plugin.json 安装 + 扩展协议宿主 + presets + eval + HTML 工件 | 发布 | ✅ 全部落地——plugin.json 安装（`sunmao plugin`，git URL/`owner/repo` 源）、presets（`--preset` 层叠）、eval（`sunmao eval` 断言会话事实）、HTML 工件（HtmlArtifact）、扩展协议宿主（`ext/` 提前落地）；发布待放行 |
+| v0.5+ | open frontier | JS 扩展宿主、第二 provider 方言、GUI、subagents | — | 🟡 Anthropic 方言提前落地（v0.2）、Task 子代理已上线（`spawns:`/`tools:` 白名单 + `run_in_background` 异步扇出 + `model:` 路由）、**第一方扩展宿主提前落地**（`ext/` crate 模块讲 `sunmao` JSON-RPC 方言，`ext__{plugin}__{tool}` + 事件折叠进 HookOutcome）——JS 侧车（pi 兼容面）/GUI 未动 |
 
 ## 7. 非目标（v1 明确不做）
 

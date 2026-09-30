@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use tokio::sync::mpsc;
 
 use super::app::{self, App, Focus, Submit};
+use super::menu;
 
 /// Route a keypress through the focus machine. Returns true to quit.
 pub(super) fn handle_key(
@@ -218,26 +219,30 @@ pub(super) fn input_key(
             // match the user hasn't reviewed must never fire blindly.
             // In arg mode a `provider/` prefix completes like Tab (the
             // arg isn't done), a leaf selector submits `/model sel`.
+            // Path mode never submits — it rewrites the @-fragment.
             KeyCode::Enter => {
-                let (name, frag, for_args) = match &app.slash_menu {
-                    Some(m) => (
-                        m.matches[m.selected].clone(),
-                        m.fragment.clone(),
-                        m.for_args,
-                    ),
+                let (name, frag, kind) = match &app.slash_menu {
+                    Some(m) => (m.matches[m.selected].clone(), m.fragment.clone(), m.kind),
                     None => return false,
                 };
                 app.slash_menu = None;
-                if for_args {
-                    if name.ends_with('/') {
-                        app.input = format!("/model {name}");
-                        app.cursor = app.input.chars().count();
-                        app.refresh_slash_menu();
+                match kind {
+                    menu::MenuKind::Path => {
+                        app.accept_path_candidate(&name);
                         return false;
                     }
-                    app.input = format!("/model {name}");
-                    app.cursor = app.input.chars().count();
-                    return submit_app(app, tx_input);
+                    menu::MenuKind::Args => {
+                        if name.ends_with('/') {
+                            app.input = format!("/model {name}");
+                            app.cursor = app.input.chars().count();
+                            app.refresh_slash_menu();
+                            return false;
+                        }
+                        app.input = format!("/model {name}");
+                        app.cursor = app.input.chars().count();
+                        return submit_app(app, tx_input);
+                    }
+                    menu::MenuKind::Command => {}
                 }
                 // commands that take an argument fill + reopen completion;
                 // everything else is a no-arg action — run it.
@@ -258,14 +263,23 @@ pub(super) fn input_key(
             KeyCode::Tab => {
                 if let Some(m) = &app.slash_menu {
                     let name = m.matches[m.selected].clone();
-                    app.input = if m.for_args {
-                        format!("/model {name}")
-                    } else {
-                        format!("/{name} ")
-                    };
-                    app.cursor = app.input.chars().count();
+                    let kind = m.kind;
                     app.slash_menu = None;
-                    app.refresh_slash_menu();
+                    match kind {
+                        menu::MenuKind::Path => {
+                            app.accept_path_candidate(&name);
+                        }
+                        menu::MenuKind::Args => {
+                            app.input = format!("/model {name}");
+                            app.cursor = app.input.chars().count();
+                            app.refresh_slash_menu();
+                        }
+                        menu::MenuKind::Command => {
+                            app.input = format!("/{name} ");
+                            app.cursor = app.input.chars().count();
+                            app.refresh_slash_menu();
+                        }
+                    }
                 }
                 return false;
             }

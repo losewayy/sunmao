@@ -329,3 +329,76 @@ fn fold_by_cap_leaves_short_turns_alone() {
     assert_eq!(app.blocks.len(), len);
     assert!(app.blocks.iter().all(|b| b.kind != BlockKind::StepSummary));
 }
+
+/// `@` opens the path menu (Files kind): directories descend instead of
+/// terminating, files fill and close — and Enter never submits the
+/// half-typed fragment, same contract as the command menu.
+#[test]
+fn at_mention_completes_paths_with_descent() {
+    let dir = std::env::temp_dir().join(format!("sunmao-at-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/main.rs"), "fn main() {}").unwrap();
+    std::fs::write(dir.join("README.md"), "x").unwrap();
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<Submit>();
+    let mut app = App::new("m", dir.clone(), "s-test");
+    for c in "@sr".chars() {
+        app.insert_char(c);
+    }
+    let dir_pos = {
+        let m = app.slash_menu.as_ref().expect("menu opens on @sr");
+        assert_eq!(m.kind, super::menu::MenuKind::Path);
+        m.matches
+            .iter()
+            .position(|c| c == "src/")
+            .expect("src/ completes")
+    };
+
+    // selecting the directory descends — the menu stays open
+    app.slash_menu.as_mut().unwrap().selected = dir_pos;
+    input_key(&mut app, key(KeyCode::Enter), &tx);
+    assert_eq!(app.input, "@src/");
+    assert!(app.slash_menu.is_some(), "dir descend keeps the menu");
+    for c in "main".chars() {
+        app.insert_char(c);
+    }
+    input_key(&mut app, key(KeyCode::Enter), &tx);
+    assert_eq!(app.input, "@src/main.rs ");
+    assert!(app.slash_menu.is_none(), "a file terminates completion");
+    assert!(rx.try_recv().is_err(), "path accept never submits");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `@` mid-word is not a mention — `x@sr` (email-shaped text) opens no
+/// menu; only a whitespace-boundary or leading `@` counts.
+#[test]
+fn at_mention_needs_word_boundary() {
+    let (_tx, _rx) = mpsc::unbounded_channel::<Submit>();
+    let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+    for c in "x@sr".chars() {
+        app.insert_char(c);
+    }
+    assert!(app.slash_menu.is_none());
+}
+
+/// A `@` fragment inside an otherwise normal sentence completes against
+/// the same pool — the mention rewrites in place, nothing else moves.
+#[test]
+fn at_mention_rewrites_only_the_fragment() {
+    let dir = std::env::temp_dir().join(format!("sunmao-at2-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("note.txt"), "x").unwrap();
+
+    let mut app = App::new("m", dir.clone(), "s-test");
+    app.input = "check @no please".into();
+    app.cursor = "check @no".chars().count();
+    app.refresh_slash_menu();
+    assert!(app.slash_menu.is_some());
+    assert!(app.accept_path_candidate("note.txt"));
+    assert_eq!(app.input, "check @note.txt please");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

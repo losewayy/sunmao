@@ -196,6 +196,15 @@ TUI.
   onto the summary or its shifted block, and `e` splices the folded
   steps back one-way — `close_turn` refolds on the next over-cap turn.
   Long `--resume` transcripts get the same treatment on replay
+- **`@` file mentions** — the CC convention, third kind of completion
+  popup (`MenuKind::{Command, Args, Path}`): `@` at a word boundary opens
+  a Files menu over a repo-relative pool (VCS/build/dependency dirs
+  skipped, depth-6/3000-entry bounds, dirs carry `/` and descend on
+  accept). The candidate rewrites only the `@` fragment in place —
+  mid-sentence mentions keep the tail, Enter/Tab fill but never submit.
+  `tool-guidance.md` teaches the model the `@path` → Read convention;
+  popup logic split into `tui/menu.rs` (app.rs was nearing the file
+  budget)
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

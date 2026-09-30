@@ -6,7 +6,7 @@
 use std::time::{Duration, Instant};
 
 use super::blocks::{Block, BlockKind};
-use super::slash;
+use super::menu::SlashMenu;
 
 /// Where the keyboard currently lives. Modeled after grok-build's parkable
 /// focus: an approval card or scrollback selection can hold the keys while
@@ -34,20 +34,6 @@ pub struct ApprovalCard {
     /// Approver API that doesn't exist yet)
     pub selected: usize,
     pub parked: bool,
-}
-
-/// Slash-command popup state. Open while the composer is exactly a `/…`
-/// fragment with no whitespace; walks `slash::candidates`. In `for_args`
-/// mode it completes the *argument* of an already-chosen builtin (today
-/// only `/model <selector>`) — the menu rows are selectors, not commands.
-pub struct SlashMenu {
-    /// name list filtered by the fragment after `/`
-    pub matches: Vec<String>,
-    pub selected: usize,
-    /// the fragment that produced `matches` (drives the Search row)
-    pub fragment: String,
-    /// true when completing a command argument instead of a command name
-    pub for_args: bool,
 }
 
 pub struct App {
@@ -116,6 +102,10 @@ pub struct App {
     /// enabled preset plugin roots — slash commands resolve against their
     /// `commands/` dirs too. The driver sets this once at startup.
     pub extra_roots: Vec<std::path::PathBuf>,
+    /// repo-relative path pool for `@` mention completion — rebuilt when
+    /// the path menu opens, kept while it stays open (a stale entry is a
+    /// hint, the model's Read is ground truth).
+    pub file_pool: Vec<String>,
 }
 
 /// Content of the full-screen viewer — title line + the block's full text
@@ -201,6 +191,7 @@ impl App {
             busy_since: None,
             model_selectors: Vec::new(),
             extra_roots: Vec::new(),
+            file_pool: Vec::new(),
         };
         let mut banner = Block::new(BlockKind::Note);
         banner.text = format!(
@@ -289,55 +280,6 @@ impl App {
             self.input.remove(byte_idx);
             self.cursor -= 1;
             self.refresh_slash_menu();
-        }
-    }
-
-    /// The composer is a slash fragment: `/cmd` (command completion) or
-    /// `/model <arg>` (selector completion). Returns (is_args, fragment).
-    /// Bash mode owns the buffer, so no slash menu there.
-    fn slash_fragment(&self) -> Option<(bool, &str)> {
-        if self.bash_mode {
-            return None;
-        }
-        let rest = self.input.strip_prefix('/')?;
-        if let Some(frag) = rest.strip_prefix("model ") {
-            return Some((true, frag));
-        }
-        if rest.chars().any(char::is_whitespace) {
-            return None;
-        }
-        Some((false, rest))
-    }
-
-    pub fn refresh_slash_menu(&mut self) {
-        match self.slash_fragment() {
-            Some((for_args, frag)) => {
-                let pool = if for_args {
-                    self.model_selectors.clone()
-                } else {
-                    slash::candidates(&self.cwd, &self.extra_roots)
-                };
-                let matches: Vec<String> = pool
-                    .into_iter()
-                    .filter(|c| c.starts_with(frag) || c.contains(frag))
-                    .collect();
-                if matches.is_empty() {
-                    self.slash_menu = None;
-                } else {
-                    let sel = self
-                        .slash_menu
-                        .as_ref()
-                        .map(|m| m.selected.min(matches.len() - 1))
-                        .unwrap_or(0);
-                    self.slash_menu = Some(SlashMenu {
-                        matches,
-                        selected: sel,
-                        fragment: frag.to_string(),
-                        for_args,
-                    });
-                }
-            }
-            None => self.slash_menu = None,
         }
     }
 

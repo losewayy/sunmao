@@ -6,7 +6,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block as WBlock, Borders, Paragraph, Wrap};
 
-use super::app::{self, App, ApprovalCard, Focus, SlashMenu};
+use super::app::{self, App, ApprovalCard, Focus};
+use super::menu::{MenuKind, SlashMenu};
 use super::theme::{self, THEME};
 use super::wrap;
 
@@ -115,10 +116,10 @@ fn draw_slash_menu(f: &mut ratatui::Frame, m: &SlashMenu, area: Rect) {
         Line::from(Span::styled(rule.clone(), Style::default().fg(THEME.user))),
         Line::from(vec![
             Span::styled(
-                if m.for_args {
-                    " Models".to_string()
-                } else {
-                    " Commands".to_string()
+                match m.kind {
+                    MenuKind::Path => " Files".to_string(),
+                    MenuKind::Args => " Models".to_string(),
+                    MenuKind::Command => " Commands".to_string(),
                 },
                 Style::default().fg(THEME.user).add_modifier(Modifier::BOLD),
             ),
@@ -129,7 +130,11 @@ fn draw_slash_menu(f: &mut ratatui::Frame, m: &SlashMenu, area: Rect) {
             },
         ]),
         Line::from(Span::styled(
-            " ↑↓ navigate · Enter run · Tab complete · Esc cancel",
+            if m.kind == MenuKind::Command {
+                " ↑↓ navigate · Enter run · Tab complete · Esc cancel"
+            } else {
+                " ↑↓ navigate · Enter select · Tab complete · Esc cancel"
+            },
             Style::default().fg(THEME.faint),
         )),
         Line::from(""),
@@ -148,11 +153,12 @@ fn draw_slash_menu(f: &mut ratatui::Frame, m: &SlashMenu, area: Rect) {
     let end = (start + 8).min(m.matches.len());
     for (i, name) in m.matches.iter().enumerate().take(end).skip(start) {
         let sel = i == m.selected;
-        // arg mode completes selectors (no leading slash)
-        let label = if m.for_args {
-            format!("  {name}")
-        } else {
+        // arg mode completes selectors (no prefix), path mode shows the
+        // relative path verbatim
+        let label = if m.kind == MenuKind::Command {
             format!("/{name}")
+        } else {
+            format!("  {name}")
         };
         rows.push(Line::from(Span::styled(
             format!("{} {}", if sel { " ❯" } else { "  " }, label),

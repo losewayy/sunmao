@@ -35,6 +35,32 @@ pub struct SlashMenu {
     pub kind: MenuKind,
 }
 
+/// Session ids under `<cwd>/.sunmao/sessions`, newest first (mtime),
+/// `.jsonl` stems only, capped at `limit`. Shared by the `/resume`
+/// picker (menu.rs) and the bare `/resume` list (mod.rs) — one truth
+/// for "what sessions exist".
+pub(super) fn recent_sessions(cwd: &std::path::Path, limit: usize) -> Vec<String> {
+    let dir = cwd.join(".sunmao").join("sessions");
+    let mut entries: Vec<_> = std::fs::read_dir(&dir)
+        .map(|rd| {
+            rd.flatten()
+                .filter_map(|e| {
+                    let p = e.path();
+                    if p.extension().map(|x| x == "jsonl").unwrap_or(false) {
+                        let stem = p.file_stem()?.to_string_lossy().to_string();
+                        let m = e.metadata().ok()?.modified().ok()?;
+                        Some((m, stem))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    entries.sort_by_key(|b| std::cmp::Reverse(b.0));
+    entries.into_iter().take(limit).map(|(_, s)| s).collect()
+}
+
 impl App {
     /// The composer is a slash fragment: `/cmd` (command completion) or
     /// `/model <arg>`/ `/resume <id>` (arg completion). Returns the arg
@@ -167,27 +193,8 @@ impl App {
 
     /// Session ids for `/resume` completion — rescanned when the menu
     /// opens so sessions the model spawned mid-turn show up too.
-    /// Newest first (mtime), `.jsonl` stems only.
     fn scan_sessions(&self) -> Vec<String> {
-        let dir = self.cwd.join(".sunmao").join("sessions");
-        let mut entries: Vec<_> = std::fs::read_dir(&dir)
-            .map(|rd| {
-                rd.flatten()
-                    .filter_map(|e| {
-                        let p = e.path();
-                        if p.extension().map(|x| x == "jsonl").unwrap_or(false) {
-                            let stem = p.file_stem()?.to_string_lossy().to_string();
-                            let m = e.metadata().ok()?.modified().ok()?;
-                            Some((m, stem))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        entries.sort_by_key(|b| std::cmp::Reverse(b.0));
-        entries.into_iter().take(50).map(|(_, s)| s).collect()
+        recent_sessions(&self.cwd, 50)
     }
 
     /// Re-evaluate which completion popup (if any) the composer shows —

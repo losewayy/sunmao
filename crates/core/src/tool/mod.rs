@@ -210,4 +210,38 @@ mod tests {
             .unwrap();
         assert!(res.ok);
     }
+
+    /// v0.2 acceptance — a crashed/dying tool backend (MCP child exit,
+    /// transport error) surfaces as a failed ToolResult, never an
+    /// Err that aborts the turn.
+    #[tokio::test]
+    async fn tool_backend_failure_becomes_failed_result() {
+        struct DyingTool;
+        #[async_trait::async_trait]
+        impl crate::tool::ToolImpl for DyingTool {
+            fn name(&self) -> &'static str {
+                "mcp__dead__thing"
+            }
+            fn decl(&self) -> Tool {
+                Tool::function("mcp__dead__thing", "dies", json!({}))
+            }
+            async fn call(&self, _a: Value, _c: &Context) -> anyhow::Result<ToolResult> {
+                anyhow::bail!("mcp call_tool failed: peer closed")
+            }
+        }
+        let dir = std::env::temp_dir().join(format!("sunmao-test-die-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut reg = builtin_registry();
+        reg.register(DyingTool);
+        let ctx = Arc::new(Context::new(
+            Arc::new(StubLlm),
+            SessionLog::ephemeral(),
+            reg,
+            dir.to_path_buf(),
+        ));
+        let res = ctx.tools.call("mcp__dead__thing", "{}", &ctx).await;
+        assert!(!res.ok);
+        assert!(res.output.contains("mcp__dead__thing failed"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

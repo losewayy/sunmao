@@ -88,39 +88,53 @@ async fn dispatch_resolves_parked_id() {
     assert!(state.lock().unwrap().pending.is_empty());
 }
 
-// — live, gated on `node` —
+// — live, gated on `rustc` (the fixture is a local .rs child) —
 
-fn which_node() -> Option<std::path::PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).find_map(|dir| {
-        ["node", "node.exe"]
-            .iter()
-            .map(|name| dir.join(name))
-            .find(|c| c.is_file())
+/// The extension child for live tests: `tests/fixtures/ext_echo.rs`
+/// compiled once per test run. `rustc` rides with the toolchain cargo
+/// came from — PATH first, CARGO's sibling as fallback.
+fn rustc() -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("PATH") {
+        if let Some(hit) = std::env::split_paths(&path).find_map(|dir| {
+            ["rustc", "rustc.exe"]
+                .iter()
+                .map(|name| dir.join(name))
+                .find(|c| c.is_file())
+        }) {
+            return Some(hit);
+        }
+    }
+    let sibling = std::path::Path::new(env!("CARGO"))
+        .parent()?
+        .join(if cfg!(windows) { "rustc.exe" } else { "rustc" });
+    sibling.is_file().then_some(sibling)
+}
+
+/// Compile `tests/fixtures/ext_echo.rs` once; every live test reuses the
+/// binary (fixture flags select behavior: `--die` for the dead-child
+/// case). Returns None when rustc isn't on this box — tests degrade to
+/// a skip, same contract the old node fixture had.
+fn fixture_bin() -> Option<std::path::PathBuf> {
+    static BIN: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    BIN.get_or_init(|| {
+        let rustc = rustc()?;
+        let src =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ext_echo.rs");
+        let out = std::env::temp_dir().join(if cfg!(windows) {
+            "sunmao-ext-echo.exe"
+        } else {
+            "sunmao-ext-echo"
+        });
+        let status = std::process::Command::new(&rustc)
+            .args(["--edition", "2021", "-O"])
+            .arg(&src)
+            .arg("-o")
+            .arg(&out)
+            .status()
+            .ok()?;
+        status.success().then_some(out)
     })
-}
-
-fn fixture_path() -> std::path::PathBuf {
-    // CARGO_MANIFEST_DIR = crates/core → workspace root is two up.
-    // canonicalize() returns `\\?\` verbatim paths on Windows — node
-    // can't load them (same reason hooks strip the prefix).
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/extensions/echo-ext.mjs")
-        .canonicalize()
-        .unwrap()
-        .to_string_lossy()
-        .replace("\\\\?\\", "")
-        .into()
-}
-
-fn host_path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tools/extension-host.mjs")
-        .canonicalize()
-        .unwrap()
-        .to_string_lossy()
-        .replace("\\\\?\\", "")
-        .into()
+    .clone()
 }
 
 fn init(dir: &std::path::Path) -> registry::ExtInit {
@@ -142,14 +156,15 @@ impl sunmao_llm::ProviderAdapter for StubLlm {
     }
 }
 
-/// End-to-end against the shipped example: initialize handshake, tool
-/// registration under `ext__echo__*`, a real `ext/tools/call`, the
-/// `ext/event` reply folding through `HookEngine::fire`, and subscription
-/// filtering (fixture subscribes to SessionStart, not PreToolUse).
+/// End-to-end against the Rust fixture: initialize handshake, tool
+/// registration under `ext__echo__*`, a real `ext/tools/call`, `ext/event`
+/// replies folding through `HookEngine::fire`, subscription filtering
+/// (fixture isn't subscribed to Stop → nothing arrives), and a live
+/// PreToolUse veto.
 #[tokio::test]
-async fn node_fixture_full_roundtrip() {
-    let Some(node) = which_node() else {
-        eprintln!("node not on PATH — skipping live extension test");
+async fn fixture_full_roundtrip() {
+    let Some(bin) = fixture_bin() else {
+        eprintln!("rustc not found — skipping live extension test");
         return;
     };
     let dir = crate::fresh_test_dir("ext");
@@ -157,8 +172,8 @@ async fn node_fixture_full_roundtrip() {
 
     let reg = registry::ExtRegistry::new();
     let spec = ExtSpec {
-        command: node.to_string_lossy().to_string(),
-        args: vec![fixture_path().to_string_lossy().to_string()],
+        command: bin.to_string_lossy().to_string(),
+        args: vec![],
         env: Default::default(),
     };
     reg.connect(&spec, &init(&dir), "echo").await.unwrap();
@@ -176,10 +191,11 @@ async fn node_fixture_full_roundtrip() {
     );
     let res = tools[0].call(json!({"msg": "hi"}), &ctx).await.unwrap();
     assert!(res.ok);
-    assert!(res.output.contains("hi"));
+    assert!(res.output.contains("hi"), "{}", res.output);
 
     // event delivery through the hooks seam — fixture answers SessionStart
-    // with extra_context; PreToolUse is not subscribed → nothing arrives
+    // with extra_context and vetoes PreToolUse on "rm"; it is NOT
+    // subscribed to Stop, so that event must arrive nowhere.
     let mut engine = crate::hooks::HookEngine::load(&dir, "test", &[]);
     engine.attach_ext(Arc::new(reg));
     let out = engine
@@ -193,91 +209,7 @@ async fn node_fixture_full_roundtrip() {
         )
         .await;
     assert!(out.extra_context.iter().any(|c| c.contains("warm")));
-    let out = engine
-        .fire(
-            crate::hooks::HookEvent::PreToolUse,
-            &dir,
-            &crate::hooks::HookInput {
-                tool_name: Some("Bash"),
-                ..Default::default()
-            },
-        )
-        .await;
-    assert!(out.extra_context.is_empty());
-    assert!(out.block_reason.is_none());
 
-    std::fs::remove_dir_all(&dir).ok();
-}
-
-/// The pi dialect end-to-end through the REAL sidecar: a module written in
-/// oh-my-pi's ExtensionAPI subset — `api.on("tool_call")` returning
-/// `{block:true, reason}` must veto PreToolUse, `session_start` folds
-/// extra_context, and a pi-spec `registerTool` ({parameters, execute})
-/// surfaces and calls as `ext__pi__*`.
-#[tokio::test]
-async fn js_host_pi_dialect_roundtrip() {
-    let Some(node) = which_node() else {
-        eprintln!("node not on PATH — skipping pi-dialect host test");
-        return;
-    };
-    let dir = crate::fresh_test_dir("ext-pi");
-    let ext_dir = dir.join("ext");
-    std::fs::create_dir_all(&ext_dir).unwrap();
-    std::fs::write(
-        ext_dir.join("policy.mjs"),
-        r#"export default function (api) {
-  api.on("tool_call", (event) => {
-    if (event.toolName === "Bash" && event.input?.command?.includes("rm")) {
-      return { block: true, reason: "pi veto" };
-    }
-  });
-  api.on("session_start", () => ({ extra_context: "pi warm" }));
-  api.registerTool({
-    name: "pi_ping",
-    description: "pi-spec tool",
-    parameters: { type: "object", properties: { msg: { type: "string" } } },
-    async execute(_id, params) {
-      return { content: [{ type: "text", text: `pong ${params.msg}` }] };
-    },
-  });
-}
-"#,
-    )
-    .unwrap();
-
-    let reg = registry::ExtRegistry::new();
-    let spec = ExtSpec {
-        command: node.to_string_lossy().to_string(),
-        args: vec![
-            host_path().to_string_lossy().to_string(),
-            ext_dir.display().to_string(),
-        ],
-        env: Default::default(),
-    };
-    reg.connect(&spec, &init(&dir), "pi").await.unwrap();
-
-    // pi-spec tool registered under the plugin namespace
-    let tools = reg.tools();
-    assert!(tools.iter().any(|t| t.name() == "ext__pi__pi_ping"));
-    let ctx = crate::context::Context::new(
-        Arc::new(StubLlm),
-        crate::session::SessionLog::ephemeral(),
-        crate::tool::ToolRegistry::new(),
-        dir.clone(),
-    );
-    let res = tools
-        .iter()
-        .find(|t| t.name() == "ext__pi__pi_ping")
-        .unwrap()
-        .call(json!({"msg": "via-pi"}), &ctx)
-        .await
-        .unwrap();
-    assert!(res.ok, "{}", res.output);
-    assert!(res.output.contains("pong via-pi"), "{}", res.output);
-
-    // events through the hooks seam — pi names normalized both directions
-    let mut engine = crate::hooks::HookEngine::load(&dir, "test", &[]);
-    engine.attach_ext(Arc::new(reg));
     let veto = engine
         .fire(
             crate::hooks::HookEvent::PreToolUse,
@@ -289,7 +221,8 @@ async fn js_host_pi_dialect_roundtrip() {
             },
         )
         .await;
-    assert_eq!(veto.block_reason.as_deref(), Some("pi veto"));
+    assert_eq!(veto.block_reason.as_deref(), Some("fake veto"));
+
     let benign = engine
         .fire(
             crate::hooks::HookEvent::PreToolUse,
@@ -302,44 +235,37 @@ async fn js_host_pi_dialect_roundtrip() {
         )
         .await;
     assert!(benign.block_reason.is_none());
-    let start = engine
+
+    let unsubscribed = engine
         .fire(
-            crate::hooks::HookEvent::SessionStart,
+            crate::hooks::HookEvent::Stop,
             &dir,
             &crate::hooks::HookInput::default(),
         )
         .await;
-    assert!(start.extra_context.iter().any(|c| c.contains("pi warm")));
+    assert!(unsubscribed.extra_context.is_empty());
+    assert!(unsubscribed.block_reason.is_none());
+
     std::fs::remove_dir_all(&dir).ok();
 }
 
 /// Dead-child semantics: requests after the child exits fail fast as an
-/// error — never panic, never hang the loop.
+/// error — never panic, never hang the loop. The fixture's `--die` mode
+/// answers initialize then exits, so connect succeeds and the next
+/// request hits the dead path.
 #[tokio::test]
 async fn dead_child_fails_fast() {
-    let Some(node) = which_node() else {
-        eprintln!("node not on PATH — skipping live extension test");
+    let Some(bin) = fixture_bin() else {
+        eprintln!("rustc not found — skipping live extension test");
         return;
     };
     let dir = crate::fresh_test_dir("ext-die");
     std::fs::create_dir_all(&dir).unwrap();
 
-    // child that answers initialize with a SessionStart subscription,
-    // then exits — connect succeeds, the next request must hit the dead
-    // path and degrade, not panic or hang.
-    let script = r#"
-        const rl = require('readline').createInterface({input: process.stdin});
-        rl.on('line', (l) => {
-            const m = JSON.parse(l);
-            if (m.method === 'ext/initialize') {
-                process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{name:'die',version:'0',capabilities:{tools:false,events:['SessionStart']}}})+'\n', () => process.exit(0));
-            }
-        });
-    "#;
     let reg = registry::ExtRegistry::new();
     let spec = ExtSpec {
-        command: node.to_string_lossy().to_string(),
-        args: vec!["-e".into(), script.into()],
+        command: bin.to_string_lossy().to_string(),
+        args: vec!["--die".into()],
         env: Default::default(),
     };
     reg.connect(&spec, &init(&dir), "die").await.unwrap();

@@ -205,6 +205,15 @@ TUI.
   `tool-guidance.md` teaches the model the `@path` → Read convention;
   popup logic split into `tui/menu.rs` (app.rs was nearing the file
   budget)
+- **removed the JS extension-host sidecar** (`tools/extension-host.mjs`,
+  `examples/js-extension/`, `examples/extensions/`) — an ecosystem survey
+  showed the pi-compatible extension surface overlaps the native tool
+  surface, and the remaining pi-only bits bind pi's in-process UI which
+  a process boundary cannot translate. The `ext/*` JSON-RPC protocol and
+  the `crates/core/src/ext/` Rust host stay — the protocol is the
+  product, the sidecar was just one host implementation. Live ext tests
+  now compile a local Rust fixture child (`tests/fixtures/ext_echo.rs`)
+  instead of needing node
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

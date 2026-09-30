@@ -15,6 +15,7 @@ use crate::context::Context;
 use crate::hooks::HookEvent;
 use crate::session::{SessionEvent, SessionLog};
 
+mod bare;
 mod turn;
 
 #[cfg(test)]
@@ -65,6 +66,87 @@ pub enum TurnOutcome {
     Completed,
     LengthLimited,
     Other(String),
+}
+
+/// Which built-in loop driver runs turns — SPEC §4.5's "the loop is a
+/// plugin" stance made concrete. Selected by the `loop` key in a
+/// plugin/preset manifest, or `--loop` on the CLI (highest precedence).
+/// Cold-plug rule: the choice is a file/flag, applied at context build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LoopDriver {
+    /// The full contract loop: lifecycle hooks, dispatch gate, approvals,
+    /// auto-compaction. This is what "the audit spine" means.
+    #[default]
+    Full,
+    /// The minimal loop: message → stream → dispatch → record. No hooks,
+    /// no permission gate, no compaction — turns still fold into the same
+    /// event-sourced log and still relay live events. For eval rigs and
+    /// air-gapped/minimal deployments where the gate's prompts are noise.
+    Bare,
+}
+
+impl LoopDriver {
+    /// Parse a manifest/flag spelling. Unknown names are refused loudly —
+    /// silently falling back to Full would run a stricter session than
+    /// the operator asked for without telling them.
+    pub fn parse(name: &str) -> anyhow::Result<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "full" | "default" => Ok(Self::Full),
+            "bare" | "minimal" => Ok(Self::Bare),
+            other => anyhow::bail!("unknown loop driver {other:?} (known: full, bare)"),
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Bare => "bare",
+        }
+    }
+
+    /// Resolve the driver a set of plugin roots declares. Scan order is the
+    /// layering order — project manifest first, installed bundles, then
+    /// preset roots last so a `--preset` picks the loop. First `"loop"` key
+    /// found wins the slot at its layer; the LAST layer's declaration wins
+    /// overall (same precedence every preset seam follows).
+    pub(crate) fn resolve(cwd: &std::path::Path, extra_roots: &[std::path::PathBuf]) -> Self {
+        let mut manifests = vec![
+            cwd.join(".sunmao").join("plugin.json"),
+            cwd.join(".claude-plugin").join("plugin.json"),
+        ];
+        for base in [
+            cwd.join(".sunmao").join("plugins"),
+            cwd.join(".claude").join("plugins"),
+        ] {
+            if let Ok(entries) = std::fs::read_dir(&base) {
+                for e in entries.flatten() {
+                    if e.path().is_dir() {
+                        manifests.push(e.path().join("plugin.json"));
+                    }
+                }
+            }
+        }
+        for root in extra_roots {
+            manifests.push(root.join("plugin.json"));
+        }
+        let mut chosen = Self::default();
+        for manifest in manifests {
+            let Ok(text) = std::fs::read_to_string(&manifest) else {
+                continue;
+            };
+            let Ok(file) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
+            let Some(name) = file.get("loop").and_then(|l| l.as_str()) else {
+                continue;
+            };
+            match Self::parse(name) {
+                Ok(d) => chosen = d,
+                Err(e) => tracing::warn!("{}: {e:#}", manifest.display()),
+            }
+        }
+        chosen
+    }
 }
 
 /// Observer sink — the REPL prints these, a GUI would render them.

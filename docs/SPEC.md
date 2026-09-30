@@ -128,6 +128,7 @@ hook engine（核心）
 - `Agent` 公开契约：deliver/cancel/intercept；`agent/*` 实时事件域（`agent/assistant-stream`、`agent/status`、`agent/request`）
 - `agentLoop` 默认 driver：input → sessions 开 turn → systemPrompt 组装 → llm 流式 → tools 分发 → 事实追加回日志——**它是插件，不是内核特权层**
 - 这保留了 dsh 的"换循环即换产品"能力（极简 loop、PTC code-mode loop、审计严格 loop 都是预设层）
+- ✅ **已落地**：`Context.loop_driver`（`LoopDriver` enum）由 manifest `loop:` 键解析——项目 `plugin.json` → `plugins/*` → preset，后层赢；`--loop` 旗标再压过一切声明。内置驱动两个：`full`（契约循环：hooks+审批闸+auto-compact）与 `bare`（`agent/bare.rs`——straight 电路，session 日志/observer/cancel/迭代上限全保留，hooks/gate/compaction 全不跑）。PTC code-mode 等第三驱动照同缝加。
 
 ### 4.6 `audit` — 审批与审计
 

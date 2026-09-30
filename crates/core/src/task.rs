@@ -445,6 +445,9 @@ async fn spawn_parts(ctx: &Context, def: Option<&crate::agents::AgentDef>) -> (S
         // the child spawns its own extension children against its own
         // session id — parent's processes are never shared
         ext: Arc::new(crate::ext::ExtRegistry::new()),
+        // the parent's driver applies — a preset-named loop is
+        // session-level, not per-agent
+        loop_driver: ctx.loop_driver,
     };
     // extension children come up in the child's scope; their tools follow
     // the same `tools:` whitelist rule as native ones — an ext tool not on

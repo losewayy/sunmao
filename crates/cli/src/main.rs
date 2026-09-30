@@ -80,8 +80,17 @@ struct Cli {
     /// presets layer after earlier ones. A leading `+` is decorative.
     #[arg(long)]
     preset: Vec<String>,
+    /// Loop driver override — `full` (contract loop) or `bare` (no hooks,
+    /// no gate, no auto-compaction). Wins over any manifest `loop:` key.
+    #[arg(long = "loop", value_parser = parse_driver)]
+    driver: Option<sunmao_core::agent::LoopDriver>,
     #[command(subcommand)]
     command: Option<plugin::Cmd>,
+}
+
+/// clap needs a String error, not anyhow — same refusal surface.
+fn parse_driver(s: &str) -> Result<sunmao_core::agent::LoopDriver, String> {
+    sunmao_core::agent::LoopDriver::parse(s).map_err(|e| e.to_string())
 }
 
 struct StdoutObserver {
@@ -279,6 +288,10 @@ async fn main() -> anyhow::Result<()> {
     let (tx_approval, rx_approval) = tokio::sync::mpsc::unbounded_channel();
     let mut ctx_raw = Context::new(llm, sessions, registry, cwd.clone())
         .with_extra_plugin_roots(preset_roots.clone());
+    // --loop outranks every manifest `loop:` key — explicit beats declared
+    if let Some(d) = cli.driver {
+        ctx_raw.loop_driver = d;
+    }
     // extension children spawn before SessionStart so they can receive it
     ctx_raw.connect_extensions().await;
     if cli.tui {

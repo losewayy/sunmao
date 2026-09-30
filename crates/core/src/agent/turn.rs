@@ -166,7 +166,22 @@ impl AgentLoop {
     /// even an Err path emits one (`Other("<error>")`) before propagating.
     /// The error string doubles as the outcome detail; the observer's
     /// transcript shows why the turn died instead of hanging.
+    ///
+    /// `ctx.loop_driver` picks the driver (SPEC §4.5): `Full` runs the
+    /// contract loop below; `Bare` runs `run_turn_bare` — same session log
+    /// and observer, no hooks/gate/compaction.
     pub async fn run_turn(
+        &self,
+        input: &str,
+        observer: &dyn Observer,
+    ) -> anyhow::Result<TurnOutcome> {
+        match self.ctx.loop_driver {
+            crate::agent::LoopDriver::Full => self.run_turn_full(input, observer).await,
+            crate::agent::LoopDriver::Bare => self.run_turn_bare(input, observer).await,
+        }
+    }
+
+    async fn run_turn_full(
         &self,
         input: &str,
         observer: &dyn Observer,

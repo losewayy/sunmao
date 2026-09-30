@@ -242,6 +242,12 @@ TUI.
   `BTreeMap` tool declarations (stable ordering), sorted skill/
   command indexes, and the Anthropic dialect's `cache_control`
   breakpoints
+- **`/resume` session picker** — a third arg-completing builtin joins
+  `/model`: after `/resume ` (or `/sessions `) the composer completes
+  against the newest-first session list (rescanned on menu open so
+  sessions sub-agents spawned mid-turn show up). Enter on a candidate
+  submits `/resume <id>` — picking a session IS the command; Tab fills
+  for a `--fork`-style edit first
 - acp: the permission prompt's description names the specifier a
   session grant would cover
 

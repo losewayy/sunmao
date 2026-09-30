@@ -148,6 +148,7 @@ fn draw_slash_menu(f: &mut ratatui::Frame, m: &SlashMenu, area: Rect) {
                 match m.kind {
                     MenuKind::Path => " Files".to_string(),
                     MenuKind::Args => " Models".to_string(),
+                    MenuKind::Sessions => " Sessions".to_string(),
                     MenuKind::Command => " Commands".to_string(),
                 },
                 Style::default().fg(THEME.user).add_modifier(Modifier::BOLD),

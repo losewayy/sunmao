@@ -4,6 +4,7 @@
 //! *what completes and how a candidate is applied* half.
 
 use super::app::{char_to_byte, App};
+use super::slash;
 
 /// What the completion popup is serving — drives its title, hint, and
 /// the accept action (a path candidate rewrites the `@` fragment in
@@ -14,6 +15,8 @@ pub enum MenuKind {
     Command,
     /// argument of a chosen builtin (today: `/model <selector>`)
     Args,
+    /// `/resume <id>` / `/sessions` — session-file picker (newest first)
+    Sessions,
     /// `@…` fragment — repo-relative file/dir mention (CC convention)
     Path,
 }
@@ -34,20 +37,25 @@ pub struct SlashMenu {
 
 impl App {
     /// The composer is a slash fragment: `/cmd` (command completion) or
-    /// `/model <arg>` (selector completion). Returns (is_args, fragment).
-    /// Bash mode owns the buffer, so no slash menu there.
-    fn slash_fragment(&self) -> Option<(bool, &str)> {
+    /// `/model <arg>`/ `/resume <id>` (arg completion). Returns the arg
+    /// kind + fragment. Bash mode owns the buffer, so no menu there.
+    fn slash_fragment(&self) -> Option<(MenuKind, &str)> {
         if self.bash_mode {
             return None;
         }
         let rest = self.input.strip_prefix('/')?;
         if let Some(frag) = rest.strip_prefix("model ") {
-            return Some((true, frag));
+            return Some((MenuKind::Args, frag));
+        }
+        for name in ["resume ", "sessions "] {
+            if let Some(frag) = rest.strip_prefix(name) {
+                return Some((MenuKind::Sessions, frag));
+            }
         }
         if rest.chars().any(char::is_whitespace) {
             return None;
         }
-        Some((false, rest))
+        Some((MenuKind::Command, rest))
     }
 
     /// The `@` mention fragment immediately before the cursor, if any:
@@ -157,6 +165,31 @@ impl App {
         out
     }
 
+    /// Session ids for `/resume` completion — rescanned when the menu
+    /// opens so sessions the model spawned mid-turn show up too.
+    /// Newest first (mtime), `.jsonl` stems only.
+    fn scan_sessions(&self) -> Vec<String> {
+        let dir = self.cwd.join(".sunmao").join("sessions");
+        let mut entries: Vec<_> = std::fs::read_dir(&dir)
+            .map(|rd| {
+                rd.flatten()
+                    .filter_map(|e| {
+                        let p = e.path();
+                        if p.extension().map(|x| x == "jsonl").unwrap_or(false) {
+                            let stem = p.file_stem()?.to_string_lossy().to_string();
+                            let m = e.metadata().ok()?.modified().ok()?;
+                            Some((m, stem))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        entries.sort_by_key(|b| std::cmp::Reverse(b.0));
+        entries.into_iter().take(50).map(|(_, s)| s).collect()
+    }
+
     /// Re-evaluate which completion popup (if any) the composer shows —
     /// `@` mentions preempt the slash menu (`/x @y` completes y).
     pub fn refresh_slash_menu(&mut self) {
@@ -196,11 +229,41 @@ impl App {
             return;
         }
         match self.slash_fragment() {
-            Some((for_args, frag)) => {
-                let pool = if for_args {
-                    self.model_selectors.clone()
+            Some((MenuKind::Sessions, frag)) => {
+                let frag = frag.to_string();
+                if self
+                    .slash_menu
+                    .as_ref()
+                    .is_none_or(|m| m.kind != MenuKind::Sessions)
+                {
+                    self.session_ids = self.scan_sessions();
+                }
+                let matches: Vec<String> = self
+                    .session_ids
+                    .iter()
+                    .filter(|c| c.starts_with(&frag) || c.contains(&frag))
+                    .cloned()
+                    .collect();
+                if matches.is_empty() {
+                    self.slash_menu = None;
                 } else {
-                    super::slash::candidates(&self.cwd, &self.extra_roots)
+                    let sel = self
+                        .slash_menu
+                        .as_ref()
+                        .map(|m| m.selected.min(matches.len() - 1))
+                        .unwrap_or(0);
+                    self.slash_menu = Some(SlashMenu {
+                        matches,
+                        selected: sel,
+                        fragment: frag,
+                        kind: MenuKind::Sessions,
+                    });
+                }
+            }
+            Some((kind, frag)) => {
+                let pool = match kind {
+                    MenuKind::Args => self.model_selectors.clone(),
+                    _ => slash::candidates(&self.cwd, &self.extra_roots),
                 };
                 let matches: Vec<String> = pool
                     .into_iter()
@@ -218,11 +281,7 @@ impl App {
                         matches,
                         selected: sel,
                         fragment: frag.to_string(),
-                        kind: if for_args {
-                            MenuKind::Args
-                        } else {
-                            MenuKind::Command
-                        },
+                        kind,
                     });
                 }
             }

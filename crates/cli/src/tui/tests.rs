@@ -403,6 +403,76 @@ fn at_mention_rewrites_only_the_fragment() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `/resume <frag>` opens the session picker (Sessions kind): Enter on a
+/// candidate submits `/resume <id>` — picking a session IS the command.
+/// Completing the command name (`/res`+Enter) fills `/resume ` and the
+/// picker opens on the freshly scanned session dir.
+#[test]
+fn resume_picker_lists_sessions_and_enter_resumes() {
+    let dir = std::env::temp_dir().join(format!("sunmao-sess-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let sdir = dir.join(".sunmao").join("sessions");
+    std::fs::create_dir_all(&sdir).unwrap();
+    std::fs::write(sdir.join("s-alpha.jsonl"), "").unwrap();
+    std::fs::write(sdir.join("s-beta.jsonl"), "").unwrap();
+    std::fs::write(sdir.join("other.txt"), "").unwrap(); // non-jsonl ignored
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<Submit>();
+    let mut app = App::new("m", dir.clone(), "s-test");
+    for c in "/res".chars() {
+        app.insert_char(c);
+    }
+    // resume is arg-taking: Enter fills `/resume `, then the picker opens
+    input_key(&mut app, key(KeyCode::Enter), &tx);
+    assert_eq!(app.input, "/resume ");
+    let m = app
+        .slash_menu
+        .as_ref()
+        .expect("sessions picker must open after fill");
+    assert_eq!(m.kind, super::menu::MenuKind::Sessions);
+    assert!(m.matches.contains(&"s-alpha".to_string()));
+    assert!(m.matches.contains(&"s-beta".to_string()));
+    assert!(!m.matches.iter().any(|c| c == "other"));
+
+    // filter by fragment, then Enter resumes the selected session
+    for c in "beta".chars() {
+        app.insert_char(c);
+    }
+    let m = app.slash_menu.as_ref().expect("picker stays on filter");
+    assert_eq!(m.matches, vec!["s-beta".to_string()]);
+    input_key(&mut app, key(KeyCode::Enter), &tx);
+    match rx.try_recv() {
+        Ok(Submit::Resume(Some(id))) => assert_eq!(id, "s-beta"),
+        other => panic!("expected Resume(Some(s-beta)), got {other:?}"),
+    }
+    assert!(app.input.is_empty(), "submit drains the buffer");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Tab on a session candidate fills `/resume <id>` without submitting —
+/// the user may want `/resume --fork`-style edits first.
+#[test]
+fn resume_picker_tab_fills_without_submit() {
+    let dir = std::env::temp_dir().join(format!("sunmao-sess2-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let sdir = dir.join(".sunmao").join("sessions");
+    std::fs::create_dir_all(&sdir).unwrap();
+    std::fs::write(sdir.join("s-only.jsonl"), "").unwrap();
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<Submit>();
+    let mut app = App::new("m", dir.clone(), "s-test");
+    for c in "/resume s".chars() {
+        app.insert_char(c);
+    }
+    assert!(app.slash_menu.is_some());
+    input_key(&mut app, key(KeyCode::Tab), &tx);
+    assert_eq!(app.input, "/resume s-only");
+    assert!(rx.try_recv().is_err(), "Tab must not submit");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Transcript virtualization: only the viewport window materializes —
 /// the tail shows the newest block at scroll 0, a deep scroll shows the
 /// oldest. Caught via the real draw path on a test backend.

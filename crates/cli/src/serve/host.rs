@@ -324,10 +324,18 @@ impl Observer for WsObserver {
     }
 }
 
-/// Windows `canonicalize` yields `\?\`-prefixed paths — strip the prefix
-/// for display so the GUI's crumb shows `F:\…`, not the UNC form.
+/// Windows `canonicalize` yields `\\?\`-prefixed verbatim paths — strip the
+/// prefix for display so the GUI shows `F:\…` (and `\\server\…` for the
+/// `\\?\UNC\` form), not the verbatim spelling.
 pub(crate) fn display_path(p: &std::path::Path) -> String {
-    p.display().to_string().replace("\\?\\", "")
+    let s = p.display().to_string();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        s
+    }
 }
 
 /// artifact names are `[a-z0-9_-]` — the same whitelist /annotate enforces;

@@ -87,7 +87,7 @@ code{font-family:var(--font-mono)}
 .view[hidden]{display:none}
 .edge{position:absolute;left:0;right:0;z-index:3;pointer-events:none;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
 .edge.top{top:0;height:58px;-webkit-mask-image:linear-gradient(#000 30%,transparent);mask-image:linear-gradient(#000 30%,transparent)}
-.edge.bot{bottom:0;height:30px;-webkit-mask-image:linear-gradient(transparent,#000 70%);mask-image:linear-gradient(transparent,#000 70%)}
+.edge.bot{bottom:0;height:64px;-webkit-mask-image:linear-gradient(transparent,#000 60%);mask-image:linear-gradient(transparent,#000 60%)}
 #app[data-view="settings"] .edge.bot{display:none}
 
 /* ---------- titlebar ---------- */
@@ -96,7 +96,7 @@ code{font-family:var(--font-mono)}
 .crumb{position:absolute;left:12px;top:8px;height:32px;max-width:60%;display:flex;align-items:center;gap:7px;padding:0 10px 0 14px;border-radius:99px;font-size:13px}
 .crumb .c1{color:var(--text-2);white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis}
 .crumb .cs{color:var(--text-2);opacity:.6}
-.crumb .c2{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crumb .c2{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:340px}
 .crumb .i{color:var(--text-2)}
 .crumb:hover,.crumb.pressed{--ga:min(.95,calc(var(--glass-a) + .1))}
 .capsule{position:absolute;right:12px;top:8px;height:32px;display:flex;align-items:center;gap:2px;padding:0 3px;border-radius:99px}
@@ -112,6 +112,10 @@ code{font-family:var(--font-mono)}
 .cap.close:hover{background:#c42b1c;color:#fff}
 body.shell .caption{display:flex}
 body.shell .capsule{right:146px}
+/* the titlebar is pointer-transparent in the browser (content scrolls
+   under it); under the shell it IS the drag surface, so it must catch
+   the press itself — otherwise mousedown falls through to the stage */
+body.shell .titlebar{pointer-events:auto}
 
 /* ---------- shared controls ---------- */
 .ib{width:30px;height:30px;display:inline-grid;place-items:center;border-radius:8px;color:var(--text-2);flex:none;transition:background .1s,color .1s}
@@ -170,10 +174,13 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px color
 .lists{flex:1;min-height:0;overflow-y:auto;margin:12px -4px 0;padding:0 4px 8px}
 .grp{display:flex;align-items:center;justify-content:space-between;height:28px;padding:0 3px 0 10px;margin-top:10px;font-size:12px;color:var(--text-3)}
 .grp:first-child{margin-top:0}
-.row{display:flex;align-items:center;gap:8px;width:100%;height:30px;padding:0 10px;border-radius:8px;font-size:13px;color:var(--text-2)}
+.row{display:flex;align-items:center;gap:8px;width:100%;height:32px;padding:0 10px;border-radius:8px;font-size:13px;color:color-mix(in srgb,var(--text) 78%,var(--text-2));transition:background .12s,color .12s}
 .row:hover{background:var(--fill-1);color:var(--text)}
-.row.on{background:var(--fill-2);color:var(--text)}
+.row.on{background:var(--fill-2);color:var(--text);box-shadow:inset 0 0 0 1px var(--stroke)}
 .row .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
+.row .t.untitled{color:var(--text-3)}
+.row .when{flex:none;font:11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--text-3);opacity:.85}
+.row:hover .when,.row.on .when{opacity:1}
 .row .cnt{font:11px var(--font-mono);color:var(--text-3)}
 .rail-foot{display:flex;align-items:center;gap:2px;height:36px;margin-top:4px}
 .rail-foot .ver{margin-left:auto;margin-right:8px;font:11px var(--font-mono);color:var(--text-3)}
@@ -185,28 +192,36 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px color
 .empty-hint{padding:8px 10px;font-size:12px;color:var(--text-3);line-height:1.55}
 
 /* ---------- transcript ---------- */
-.scroller{position:absolute;inset:0;overflow-y:auto;padding:58px 24px 122px}
+.scroller{position:absolute;inset:0;overflow-y:auto;padding:64px 24px 168px;scroll-padding-bottom:168px}
 .tx{max-width:720px;margin:0 auto}
-.msg{margin-top:22px}
+.msg{margin-top:30px}
 .msg:first-child{margin-top:4px}
-.msg>*+*{margin-top:6px}
-.msg-h{display:flex;align-items:center;gap:8px;height:20px;padding-left:3px;font-size:11px;font-weight:650;letter-spacing:.06em;color:color-mix(in srgb,var(--text) 82%,transparent);text-shadow:0 1px 2px rgba(0,0,0,.35)}
+.msg>*+*{margin-top:8px}
+.msg-h{display:flex;align-items:center;gap:8px;height:20px;padding-left:4px;font-size:12px;font-weight:600;color:color-mix(in srgb,var(--text) 86%,transparent);text-shadow:0 1px 2px rgba(0,0,0,.35)}
 [data-theme="light"] .msg-h{text-shadow:none;color:var(--text)}
-.msg-h .dot{width:7px;height:7px;border-radius:50%;flex:none}
+.msg-h .dot{width:6px;height:6px;border-radius:50%;flex:none}
 .msg.you .dot{background:var(--you)}
 .msg.bot .dot{background:var(--bot)}
-.msg-h time,.msg-h .model{font:400 11.5px/1 var(--font-mono);letter-spacing:0;color:var(--text-2)}
-.bubble{width:fit-content;max-width:100%;padding:10px 14px;border-radius:14px;font-size:14px;line-height:1.72;--ga:max(.2,calc(var(--glass-a) - .06));user-select:text}
-.msg.you .bubble{background-image:linear-gradient(rgba(255,255,255,.05),rgba(255,255,255,.05)),var(--noise);white-space:pre-wrap}
-[data-theme="light"] .msg.you .bubble{background-image:linear-gradient(rgba(255,255,255,.4),rgba(255,255,255,.4)),var(--noise)}
+.msg-h time,.msg-h .model{font:400 11px/1 var(--font-mono);color:var(--text-3)}
+.msg.you{display:flex;flex-direction:column;align-items:flex-end}
+.msg.you .msg-h{flex-direction:row-reverse;padding:0 4px 0 0}
+.bubble{width:fit-content;max-width:100%;padding:11px 16px;border-radius:14px;font-size:14px;line-height:1.72;--ga:max(.2,calc(var(--glass-a) - .06));user-select:text;overflow-wrap:anywhere}
+.msg.bot>.bubble{width:100%}
+.msg.you .bubble{max-width:min(600px,88%);border-radius:14px 14px 4px 14px;background-image:linear-gradient(color-mix(in srgb,var(--accent) 9%,transparent),color-mix(in srgb,var(--accent) 9%,transparent)),var(--noise);border-color:color-mix(in srgb,var(--accent) 18%,var(--stroke));white-space:pre-wrap}
+[data-theme="light"] .msg.you .bubble{background-image:linear-gradient(color-mix(in srgb,var(--accent) 8%,rgba(255,255,255,.4)),color-mix(in srgb,var(--accent) 8%,rgba(255,255,255,.4))),var(--noise)}
 .bubble p{margin:0}
-.bubble p+p{margin-top:8px}
-.bubble code,.note-line code,.pf code,.cr code{font-size:12.5px;background:var(--code-bg);padding:1px 5px;border-radius:5px}
-.bubble h1,.bubble h2,.bubble h3,.bubble h4{margin:12px 0 4px;font-weight:600;line-height:1.4}
+.bubble p+p,.bubble p+ul,.bubble p+ol,.bubble ul+p,.bubble ol+p{margin-top:10px}
+.bubble b,.bubble strong{font-weight:600;color:var(--text)}
+.bubble code,.note-line code,.pf code,.cr code{font-size:.86em;background:var(--code-bg);padding:.12em .42em;border-radius:5px;box-shadow:inset 0 0 0 1px var(--stroke)}
+.bubble code{color:color-mix(in srgb,var(--text) 88%,var(--tool))}
+.bubble b code,.bubble strong code{font-weight:500}
+.bubble h1,.bubble h2,.bubble h3,.bubble h4{margin:18px 0 6px;font-weight:600;line-height:1.4;letter-spacing:-.005em}
 .bubble h1:first-child,.bubble h2:first-child,.bubble h3:first-child,.bubble h4:first-child{margin-top:0}
 .bubble h1{font-size:19px}.bubble h2{font-size:17px}.bubble h3{font-size:15px}.bubble h4{font-size:14px}
-.bubble ul,.bubble ol{margin:4px 0;padding-left:22px}
-.bubble li{margin:2px 0}
+.bubble ul,.bubble ol{margin:6px 0;padding-left:22px}
+.bubble li{margin:4px 0;padding-left:2px}
+.bubble li::marker{color:var(--text-3)}
+.bubble ol>li::marker{font:12.5px var(--font-mono);font-variant-numeric:tabular-nums}
 .bubble blockquote{margin:6px 0;padding:2px 0 2px 12px;color:var(--text-2);box-shadow:inset 2px 0 0 var(--stroke-2)}
 .bubble hr{border:0;border-top:1px solid var(--stroke-2);margin:10px 0}
 .bubble a{color:var(--accent);text-decoration:none}
@@ -214,9 +229,25 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px color
 .bubble pre{margin:8px 0;padding:10px 12px;border-radius:9px;background:var(--sunken);box-shadow:inset 0 0 0 1px var(--stroke);font:12.5px/1.62 var(--font-mono);overflow-x:auto;user-select:text}
 .bubble pre code{background:none;padding:0;font-size:inherit;border-radius:0}
 .tk-k{color:var(--syn-k)}.tk-t{color:var(--syn-t)}.tk-p{color:var(--syn-p)}.tk-s{color:var(--syn-s)}.tk-n{color:var(--syn-n)}.tk-v{color:var(--syn-v)}.tk-x{color:var(--syn-x)}
-.tools{display:flex;flex-direction:column;gap:4px}
-.tool{border-radius:10px;overflow:hidden;--ga:max(.18,calc(var(--glass-a) - .1))}
-.tool-h{display:flex;align-items:center;gap:10px;width:100%;height:34px;padding:0 10px 0 8px;font-size:12.5px}
+/* work card — one glass card per run of tool calls + the short narration
+   between them; 3+ steps earn a summary header and fold once settled */
+.tools{display:flex;flex-direction:column;border-radius:12px;overflow:hidden;padding:3px 0;--ga:max(.18,calc(var(--glass-a) - .1))}
+.tools.many{padding-top:0}
+.tg-h{display:none;align-items:center;gap:10px;width:100%;height:38px;padding:0 12px 0 8px;font-size:12.5px;color:var(--text-2);transition:background .12s}
+.tools.many .tg-h{display:flex}
+.tools.many:not(.fold) .tg-h{box-shadow:inset 0 -1px 0 var(--stroke);margin-bottom:3px}
+.tg-h:hover{background:var(--fill-1)}
+.tg-s{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left;color:var(--text)}
+.tg-bad{flex:none;font-size:12px;color:var(--err)}
+.tg-n{flex:none;font:11.5px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--text-3)}
+.tg-h .chev{color:var(--text-3);transform:rotate(90deg);transition:transform .18s cubic-bezier(.2,.8,.2,1)}
+.tools.fold .tg-h .chev{transform:none}
+.tools.fold>.tool:not(.bad),.tools.fold>.tool.bad.xs,.tools.fold>.bubble{display:none}
+.tools>.bubble.step{width:auto;margin:0;padding:6px 14px 2px 38px;border:0;border-radius:0;background:none;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none;font-size:13px;line-height:1.6;color:var(--text-2)}
+.tools>.bubble.step:first-of-type{padding-top:5px}
+.tools>.bubble.step+.tool{margin-top:2px}
+.tool{overflow:hidden}
+.tool-h{display:flex;align-items:center;gap:10px;width:100%;height:32px;padding:0 12px 0 8px;font-size:12.5px;transition:background .12s}
 .tool-h:hover{background:var(--fill-1)}
 .st{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;flex:none}
 .st .i{width:11px;height:11px;stroke-width:2.6}
@@ -291,13 +322,26 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px color
 .enter{animation:blockIn .3s cubic-bezier(.2,.8,.2,1)}
 
 /* ---------- hero ---------- */
-.hero{position:absolute;left:0;right:0;top:0;bottom:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;user-select:none}
+.hero{position:absolute;left:0;right:0;top:0;bottom:150px;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;user-select:none;padding:0 24px}
 .hero[hidden]{display:none}
-.hero svg{width:60px;height:60px;overflow:visible}
-.hero h1{margin:22px 0 0;font-size:32px;font-weight:600;letter-spacing:.02em}
+.hero>svg{width:56px;height:56px;overflow:visible;filter:drop-shadow(0 6px 18px rgba(0,0,0,.35))}
+.hero h1{margin:22px 0 0;font-size:30px;font-weight:600;letter-spacing:.01em;text-shadow:0 2px 18px rgba(0,0,0,.35)}
+[data-theme="light"] .hero h1{text-shadow:none}
+.hero-sub{margin:10px 0 0;font:12px var(--font-mono);color:var(--text-2);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hero-sub:empty{display:none}
+.starters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;width:min(620px,100%);margin-top:34px;pointer-events:auto}
+.starter{display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:12px 14px 13px;border-radius:14px;--ga:max(.2,calc(var(--glass-a) - .06));font-size:13px;font-weight:550;color:var(--text);cursor:pointer;transition:transform .18s cubic-bezier(.2,.8,.2,1),border-color .18s,--ga .18s}
+.starter .i{width:15px;height:15px;margin-bottom:7px;color:var(--accent)}
+.starter small{font-size:12px;font-weight:400;color:var(--text-2)}
+.starter:hover{transform:translateY(-2px);border-color:var(--stroke-2);--ga:min(.95,calc(var(--glass-a) + .08))}
+.starter:active{transform:translateY(0) scale(.99)}
 .hero.play .mk-a{animation:joinA .8s cubic-bezier(.2,.8,.2,1) both}
 .hero.play .mk-b{animation:joinB .8s cubic-bezier(.2,.8,.2,1) both}
 .hero.play h1{animation:blockIn .6s .12s cubic-bezier(.2,.8,.2,1) both}
+.hero.play .hero-sub{animation:blockIn .6s .18s cubic-bezier(.2,.8,.2,1) both}
+.hero.play .starter{animation:blockIn .55s cubic-bezier(.2,.8,.2,1) backwards}
+.hero.play .starter:nth-child(1){animation-delay:.22s}.hero.play .starter:nth-child(2){animation-delay:.28s}.hero.play .starter:nth-child(3){animation-delay:.34s}
+@media (max-width:860px){.starters{grid-template-columns:1fr}}
 
 /* ---------- composer ---------- */
 .composer{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);width:min(720px,calc(100% - 48px));border-radius:18px;--ga:min(.95,calc(var(--glass-a) + .18));border-color:var(--stroke-2);box-shadow:inset 0 1px 0 var(--hi),var(--sh-float);z-index:6}
@@ -338,6 +382,8 @@ button.tb:hover,.tb.pressed{background:var(--fill-2);color:var(--text)}
 .df-big{display:flex;align-items:center;gap:10px;margin-top:14px}
 .df-big .i{width:22px;height:22px;color:var(--accent);stroke-width:1.6;fill:color-mix(in srgb,var(--accent) 20%,transparent)}
 .df-big .v{font:500 38px/1 var(--font-mono);letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.df-big .v.idle{color:var(--text-3)}
+.empty-row{padding:14px 0 4px;font-size:12px;color:var(--text-3)}
 .df-sub{margin-top:8px;font:11.5px var(--font-mono);color:var(--text-2)}
 .bar{margin-top:12px;height:4px;border-radius:99px;background:var(--fill-3);overflow:hidden}
 .bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent),color-mix(in oklab,var(--accent),#fff 48%));transition:width .8s cubic-bezier(.2,.8,.2,1)}
@@ -569,7 +615,7 @@ button.tb:hover,.tb.pressed{background:var(--fill-2);color:var(--text)}
     <div class="capsule glass" role="toolbar" aria-label="全局">
       <button class="ib" data-act="palette" data-tip="命令面板|Ctrl K" aria-label="命令面板"><svg class="i"><use href="#i-search"/></svg></button>
       <button class="ib" data-act="events" data-tip="事件日志" aria-label="事件日志"><svg class="i"><use href="#i-history"/></svg></button>
-      <button class="ib on" data-act="dock" id="dock-btn" data-tip="dataflow 面板|Ctrl \" aria-label="dataflow 面板"><svg class="i"><use href="#i-panel-r"/></svg></button>
+      <button class="ib on" data-act="dock" id="dock-btn" data-tip="数据面板|Ctrl \" aria-label="数据面板"><svg class="i"><use href="#i-panel-r"/></svg></button>
     </div>
     <div class="caption">
       <button class="cap" data-act="win-min" data-tip="最小化" aria-label="最小化"><svg><use href="#c-min"/></svg></button>
@@ -589,7 +635,6 @@ button.tb:hover,.tb.pressed{background:var(--fill-2);color:var(--text)}
         <button class="nav-i" data-act="new-chat"><svg class="i"><use href="#i-pen"/></svg><span>新对话</span><kbd>Ctrl N</kbd></button>
       </nav>
       <div class="lists scroll">
-        <div class="grp"><span>最近会话</span></div>
         <div id="sessions"></div>
       </div>
       <div class="rail-foot">
@@ -613,6 +658,12 @@ button.tb:hover,.tb.pressed{background:var(--fill-2);color:var(--text)}
           <path class="mk-b" d="M24.5 8H42V40H24.5V29L33.5 33V15L24.5 19Z" stroke="var(--accent)" fill="color-mix(in srgb,var(--accent) 16%,transparent)"/>
         </svg>
         <h1>我们该构建什么？</h1>
+        <p class="hero-sub" id="hero-sub"></p>
+        <div class="starters" role="list">
+          <button class="starter glass" role="listitem" data-starter="梳理这个项目的结构，告诉我从哪里读起"><svg class="i" aria-hidden="true"><use href="#i-blocks"/></svg><span>梳理项目结构</span><small>从哪里读起</small></button>
+          <button class="starter glass" role="listitem" data-starter="运行测试，找出失败的用例并修复"><svg class="i" aria-hidden="true"><use href="#i-terminal"/></svg><span>跑测试并修复</span><small>找出失败的用例</small></button>
+          <button class="starter glass" role="listitem" data-starter="审查最近的改动，找出真实的 bug"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><span>审查最近改动</span><small>只报真实问题</small></button>
+        </div>
       </div>
       <div class="scroller scroll" id="scroller">
         <div class="tx" id="tx"></div>
@@ -702,18 +753,18 @@ button.tb:hover,.tb.pressed{background:var(--fill-2);color:var(--text)}
     <div id="toasts"></div>
   </main>
 
-  <aside class="dock" id="dock" aria-label="dataflow">
+  <aside class="dock" id="dock" aria-label="数据面板">
     <section class="df glass">
-      <div class="df-h"><span>dataflow</span><span class="live" id="df-live"><i></i>实时</span></div>
+      <div class="df-h"><span>缓存命中</span><span class="live" id="df-live"><i></i>实时</span></div>
       <div class="df-big"><svg class="i"><use href="#i-zap"/></svg><span class="v" id="df-hit">–</span></div>
       <div class="df-sub" id="df-sub">等待事件流…</div>
       <div class="bar"><i id="df-bar" style="width:0%"></i></div>
       <dl class="kv">
-        <div><dt>prompt tokens</dt><dd id="df-prompt">0</dd></div>
-        <div><dt>completion</dt><dd id="df-comp">0</dd></div>
-        <div><dt>tool calls</dt><dd id="df-tools">0</dd></div>
-        <div><dt>tool failures</dt><dd id="df-fails">0</dd></div>
-        <div><dt>compactions</dt><dd id="df-compact">0</dd></div>
+        <div><dt>输入 tokens</dt><dd id="df-prompt">0</dd></div>
+        <div><dt>输出 tokens</dt><dd id="df-comp">0</dd></div>
+        <div><dt>工具调用</dt><dd id="df-tools">0</dd></div>
+        <div><dt>工具失败</dt><dd id="df-fails">0</dd></div>
+        <div><dt>上下文压缩</dt><dd id="df-compact">0</dd></div>
       </dl>
     </section>
     <section class="df glass" id="df-flow"></section>
@@ -758,9 +809,20 @@ if (TAURI) {
   document.body.classList.add('shell');
   // frameless drag — the titlebar is the drag surface; interactive
   // controls (buttons) opt out so clicks still reach them.
+  // Double-press toggles maximize (the Windows caption convention) — it is
+  // read off the second mousedown's `detail`, because the first press's
+  // native drag loop swallows the dblclick event.
   $('.titlebar').addEventListener('mousedown', e => {
-    if (e.button === 0 && !e.target.closest('button,input,a,[contenteditable]')) TAURI.drag();
+    if (e.button !== 0 || e.target.closest('button,input,a,[contenteditable]')) return;
+    e.preventDefault();
+    if (e.detail === 2) TAURI.win('max'); else TAURI.drag();
   });
+  // the titlebar now catches pointer input — hand wheel scrolls through
+  // to whatever scroll surface sits under it
+  $('.titlebar').addEventListener('wheel', e => {
+    const sc = view === 'settings' ? $('#set-scroll') : $('#scroller');
+    sc.scrollBy({ top: e.deltaY, left: 0 });
+  }, { passive: true });
 }
 
 /* ================= state ================= */
@@ -778,7 +840,7 @@ function setApprovalMode(m) {
   $('#cmp-mode').textContent = MODE_LABELS[m] || m;
   $('#mode-ic').setAttribute('href', '#i-' + (MODE_ICONS[m] || 'shield'));
 }
-let SESSION_IDS = [];
+let SESSION_IDS = [], SESSION_META = {};
 const EVLOG = [];
 
 const DEFAULTS = { mode: 'dark', accent: '#339CFF', background: '#16181F', foreground: '#E8E9F0', wallpaper: 'graphite', dim: 0.16, panelOpacity: 0.72, blur: 24, translucentSidebar: false, contrast: 50, fonts: { ui: 'Segoe UI', code: 'JetBrains Mono' } };
@@ -1021,14 +1083,84 @@ function mdRender(src) {
 const stIcon = st => `<span class="st ${st}">${ic(st === 'ok' ? 'check' : st === 'err' ? 'x' : 'rotate')}</span>`;
 function toolHTML([st, nm, sm, tm, out], o = {}) {
   const time = st === 'run' ? `<span class="tm live" data-start="${o.start ?? performance.now()}">0.0s</span>` : st === 'wait' ? '<span class="tm w">等待批准</span>' : `<span class="tm${st === 'err' && tm && !/\d/.test(tm) ? ' e' : ''}">${tm || ''}</span>`;
-  return `<div class="tool glass${o.cls ? ' ' + o.cls : ''}"><button class="tool-h">${stIcon(st)}<span class="nm">${esc(nm)}</span><span class="sum">${esc(sm)}</span>${time}${out ? ic('chev-r', 'i xs chev') : ''}</button>${out ? `<div class="tool-o"><pre>${esc(out)}</pre></div>` : ''}</div>`;
+  return `<div class="tool${st === 'err' ? ' bad' : ''}${o.cls ? ' ' + o.cls : ''}"><button class="tool-h">${stIcon(st)}<span class="nm">${esc(nm)}</span><span class="sum">${esc(sm)}</span>${time}${out ? ic('chev-r', 'i xs chev') : ''}</button>${out ? `<div class="tool-o"><pre>${esc(out)}</pre></div>` : ''}</div>`;
 }
-const youHTML = (text, anim) => `<div class="msg you"><div class="msg-h${anim ? ' enter' : ''}"><i class="dot"></i><span>YOU</span><time>${clock()}</time></div><div class="bubble glass${anim ? ' enter' : ''}">${esc(text)}</div></div>`;
-const botHead = anim => `<div class="msg-h${anim ? ' enter' : ''}"><i class="dot"></i><span>SUNMAO</span>${modelLabel ? `<span class="model">${esc(modelLabel)}</span>` : ''}</div>`;
+// replayed prompts carry no timestamp in the log — only a live send shows
+// the wall clock, rather than stamping history with "now"
+const youHTML = (text, anim, at) => `<div class="msg you"><div class="msg-h${anim ? ' enter' : ''}"><i class="dot"></i><span>你</span>${at ? `<time>${at}</time>` : ''}</div><div class="bubble glass${anim ? ' enter' : ''}">${esc(text)}</div></div>`;
+const botHead = anim => `<div class="msg-h${anim ? ' enter' : ''}"><i class="dot"></i><span>sunmao</span>${modelLabel ? `<span class="model">${esc(modelLabel.replace(/^global:/, ''))}</span>` : ''}</div>`;
 const TX = $('#tx');
 function append(parent, html) { const t = document.createElement('template'); t.innerHTML = html.trim(); const first = t.content.firstElementChild; parent.appendChild(t.content); keepBottom(true); return first; }
 function keepBottom(force) { const sc = $('#scroller'); if (force || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 240) sc.scrollTop = sc.scrollHeight; }
+/* ---- work cards: a run of tool calls (+ the short narration between
+   them) shares one card; 3+ calls earn a summary header and fold once
+   the run settles. Failed calls stay visible through the fold. ---- */
+const TG_MANY = 3, STEP_MAX = 400;
+function toolGroup(host) {
+  const last = host.lastElementChild;
+  if (last && last.classList.contains('tools')) return last;
+  return append(host, `<div class="tools glass"><button class="tg-h" data-act="tg" aria-expanded="true">${ic('chev-r', 'i xs chev')}<span class="tg-s"></span><span class="tg-bad"></span><span class="tg-n"></span></button></div>`);
+}
+const TG_VERBS = [
+  [/^(Read)$/, n => `读取 ${n} 个文件`],
+  [/^(Grep|Glob)$/, n => `搜索 ${n} 次`],
+  [/^(Bash|shell|!)$/, n => `运行 ${n} 条命令`],
+  [/^(Edit|Write)$/, n => `修改 ${n} 个文件`],
+  [/^(WebFetch)$/, n => `抓取 ${n} 个网页`],
+  [/^(Task)$/, n => `派出 ${n} 个子代理`],
+  [/^(TodoWrite)$/, () => '更新待办'],
+  [/^(HtmlArtifact)$/, n => `生成 ${n} 个工件`],
+];
+// A short assistant line sitting right before a tool call is narration
+// ("I'll read both files.") — pull it into the card as a step so the run
+// reads as one unit. Remove-then-append (never a bare move) keeps the
+// node order the replay-parity op log observes identical to the DOM's.
+function absorbStep(host) {
+  const b = host.lastElementChild;
+  if (!b || !b.classList.contains('bubble') || b.textContent.length > STEP_MAX || $('pre', b)) return;
+  b.remove();
+  const g = toolGroup(host); // the previous card if the bubble followed one
+  b.classList.remove('glass', 'enter'); b.classList.add('step');
+  g.appendChild(b);
+}
+function refreshGroup(g) {
+  if (!g || !g.classList.contains('tools')) return;
+  const tools = [...g.children].filter(el => el.classList.contains('tool'));
+  const counts = new Map(); let bad = 0, live = false;
+  for (const t of tools) {
+    const nm = ($('.nm', t) || {}).textContent || '';
+    const name = nm.replace(/^↳ /, '');
+    const hit = TG_VERBS.find(([re]) => re.test(name));
+    const key = hit ? hit[0].source : name;
+    const c = counts.get(key) || { n: 0, fmt: hit ? hit[1] : n => `${name} ×${n}` };
+    c.n++; counts.set(key, c);
+    const st = $('.st', t);
+    if (st && st.classList.contains('err')) bad++;
+    if (st && (st.classList.contains('run') || st.classList.contains('wait'))) live = true;
+  }
+  const many = tools.length >= TG_MANY;
+  g.classList.toggle('many', many);
+  // folded, a card previews only its last few failures; the badge has the count
+  const fails = tools.filter(t => t.classList.contains('bad'));
+  fails.forEach((t, i) => t.classList.toggle('xs', i < fails.length - TG_MANY));
+  if (!many) return;
+  $('.tg-s', g).textContent = [...counts.values()].map(c => c.fmt(c.n)).join(' · ');
+  $('.tg-bad', g).textContent = bad ? `${bad} 失败` : '';
+  $('.tg-n', g).textContent = live ? '进行中' : `${tools.length} 步`;
+}
+function foldGroup(g, on) {
+  g.classList.toggle('fold', on);
+  const h = $('.tg-h', g); if (h) h.setAttribute('aria-expanded', String(!on));
+}
+// settle every live card that the user hasn't opened/closed by hand
+function foldSettled(root, except) {
+  for (const g of $$('.tools', root)) {
+    refreshGroup(g);
+    if (g !== except && g.classList.contains('many') && !g.dataset.user && !$('.st.run', g) && !$('.st.wait', g)) foldGroup(g, true);
+  }
+}
 function setTool(el, st, tm, out) {
+  el.classList.toggle('bad', st === 'err');
   const h = $('.tool-h', el);
   $('.st', h).outerHTML = stIcon(st);
   const t = $('.tm', h);
@@ -1078,9 +1210,12 @@ function reasoningDelta(t) {
 const capOut = s => s.length > 12000 ? s.slice(0, 12000) + `\n…(${s.length - 12000} chars truncated)` : s;
 function toolStart(ev) {
   const host = msgHost();
-  const g = host.lastElementChild && host.lastElementChild.classList.contains('tools') ? host.lastElementChild : append(host, '<div class="tools"></div>');
+  absorbStep(host);
+  const g = toolGroup(host);
+  foldSettled(host, g); // an earlier card in this reply is done — tuck it away
   const name = (ev.depth ? '↳ ' : '') + (ev.name || '?');
   const el = append(g, toolHTML(['run', name, ev.summary || '', '', ''], { cls: 'enter', start: performance.now() }));
+  refreshGroup(g);
   runningTools.push({ el, name: ev.name, lane: ev.lane || 0, depth: ev.depth || 0, call_id: ev.call_id || null, t0: performance.now() });
   curBubble = null; // text after a tool call starts a new bubble
 }
@@ -1094,7 +1229,7 @@ function toolDone(ev) {
   const t = runningTools[i];
   if (!t) {
     const host = msgHost();
-    let g = host.lastElementChild && host.lastElementChild.classList.contains('tools') ? host.lastElementChild : append(host, '<div class="tools"></div>');
+    let g = toolGroup(host);
     append(g, toolHTML([ev.ok ? 'ok' : 'err', ev.name || '?', '', '', capOut(ev.output || '')]));
     return;
   }
@@ -1102,6 +1237,7 @@ function toolDone(ev) {
   // kernel's elapsed_ms is authoritative; local t0 is the replay/orphan fallback
   const secs = (typeof ev.elapsed_ms === 'number' ? ev.elapsed_ms / 1000 : (performance.now() - t.t0) / 1000).toFixed(1) + 's';
   setTool(t.el, ev.ok ? 'ok' : 'err', secs, capOut(ev.output || ''));
+  refreshGroup(t.el.parentElement);
 }
 function islandHTML(ev) {
   const nm = ev.name || '';
@@ -1439,8 +1575,9 @@ function renderReplay(events, anim) {
     if (t === 'started') {
       modelLabel = ev.model || modelLabel;
       $('#cmp-model').textContent = modelLabel || '…';
-      addNote(`session started · ${ev.model || '?'} · ${ev.cwd || ''}`);
-      logEv('started', `cwd=${ev.cwd || ''}`);
+      // chrome, not transcript — model + cwd already live in the composer;
+      // the event log keeps the fact. An empty session shows the hero.
+      logEv('started', `${ev.model || '?'} · cwd=${String(ev.cwd || '').replace(/^\\\\\?\\/, '')}`);
     } else if (t === 'message') {
       const m = ev.message || {};
       if (m.role === 'system') { logEv('message', 'system · (identity, hidden)'); continue; }
@@ -1472,7 +1609,8 @@ function renderReplay(events, anim) {
       let sum = '';
       try { const a = JSON.parse(fn.arguments || '{}'); sum = a.command || a.path || a.pattern || a.name || a.prompt || fn.arguments.slice(0, 120); } catch { sum = String(fn.arguments || '').slice(0, 120); }
       const host = msgHost();
-      let g = host.lastElementChild && host.lastElementChild.classList.contains('tools') ? host.lastElementChild : append(host, '<div class="tools"></div>');
+      absorbStep(host);
+      let g = toolGroup(host);
       const el = append(g, toolHTML(['run', (ev.depth ? '↳ ' : '') + (fn.name || '?'), sum, '', ''], {}));
       // key on (call.id, depth, lane) — relayed sub-agent calls can share a
       // call id namespace across lanes; missing id falls back to a unique key
@@ -1512,7 +1650,7 @@ function renderReplay(events, anim) {
       logEv('hook', `${ev.event} · ${ev.detail}`);
     } else if (t === 'local_shell') {
       const host = msgHost();
-      let g = host.lastElementChild && host.lastElementChild.classList.contains('tools') ? host.lastElementChild : append(host, '<div class="tools"></div>');
+      let g = toolGroup(host);
       append(g, toolHTML([ev.exit_code === 0 ? 'ok' : 'err', 'shell', '$ ' + (ev.command || ''), 'exit ' + ev.exit_code, capOut(ev.output || '')]));
       logEv('tool_call', '! ' + (ev.command || ''));
     } else if (t === 'mode_change') {
@@ -1536,6 +1674,7 @@ function renderReplay(events, anim) {
   }
   // orphans: tool calls with no result = interrupted
   for (const p of pendingCalls.values()) setTool(p.el, 'err', '已中断');
+  foldSettled(TX);
   updateHero();
   refreshDataflow();
   requestAnimationFrame(() => { $('#scroller').scrollTop = $('#scroller').scrollHeight; });
@@ -1566,6 +1705,7 @@ function liveEvent(raw) {
   else if (t === 'hook') { logEv('hook', `${ev.event} · ${ev.detail}`); }
   else if (t === 'turn_end') {
     abortTurn();
+    foldSettled(TX);
     $$('.think.live').forEach(t => t.classList.remove('live'));
     refreshDataflowSoon();
     if (ev.outcome && ev.outcome !== 'completed') logEv('note', `turn_end ${ev.outcome}`);
@@ -1629,6 +1769,7 @@ function route(v) {
       $('#cmp-cwd').parentElement.dataset.tip = cwd;
       $('#ws-name').textContent = cwd.split(/[\\/]/).filter(Boolean).pop() || 'sunmao';
       $('#ws-btn').dataset.tip = cwd;
+      $('#hero-sub').textContent = cwd;
       if (!models.length) $('#model-btn').style.display = 'none';
       setApprovalMode(v.mode);
       sandboxPort = v.sandbox_port || 0;
@@ -1743,6 +1884,7 @@ async function refreshSessions() {
   try {
     const v = await api('/sessions');
     SESSION_IDS = Array.isArray(v.sessions) ? v.sessions : [];
+    SESSION_META = v.meta && typeof v.meta === 'object' ? v.meta : {};
     renderRail(); renderCrumb();
   } catch {}
 }
@@ -1756,8 +1898,11 @@ async function refreshDataflow() {
 /* ================= dock ================= */
 function renderDock(d) {
   const tok = d.tokens || {}, hit = tok.cache_hit_pct || 0;
-  $('#df-hit').textContent = hit + '%';
-  $('#df-sub').textContent = `cache hit · ${nf(tok.cache_read || 0)} read`;
+  // no model call yet → a dash, not a loud "0%" that reads as a failure
+  const idle = !(tok.prompt || tok.completion);
+  $('#df-hit').textContent = idle ? '–' : hit + '%';
+  $('#df-hit').classList.toggle('idle', idle);
+  $('#df-sub').textContent = idle ? '尚无模型调用' : `缓存读取 ${nf(tok.cache_read || 0)} tokens`;
   $('#df-bar').style.width = Math.min(100, hit) + '%';
   $('#df-prompt').textContent = nf(tok.prompt || 0);
   $('#df-comp').textContent = nf(tok.completion || 0);
@@ -1772,15 +1917,42 @@ function renderDock(d) {
 }
 
 /* ================= rail / crumb / views ================= */
+// title = first typed prompt (GET /sessions meta); a session that has no
+// prompt yet reads as 新对话 rather than leaking its raw id
+const sessTitle = id => (SESSION_META[id] && SESSION_META[id].title) || '';
+const dayStart = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+function sessWhen(ms) {
+  if (!ms) return '';
+  const d = new Date(ms), today = dayStart(Date.now());
+  if (ms >= today) return pad(d.getHours()) + ':' + pad(d.getMinutes());
+  if (ms >= today - 6 * 864e5) return '周' + '日一二三四五六'[d.getDay()];
+  return (d.getMonth() + 1) + '/' + d.getDate();
+}
+function sessBucket(ms) {
+  const today = dayStart(Date.now());
+  if (!ms || ms >= today) return '今天';
+  if (ms >= today - 864e5) return '昨天';
+  if (ms >= today - 6 * 864e5) return '近 7 天';
+  return '更早';
+}
 const sessRow = id => {
-  const on = id === sessionId, run = busySessions.has(id), wait = waitingSessions.has(id);
-  const tip = on ? (busy ? '当前会话 · 运行中' : '当前会话') : (run ? '运行中 · 点击查看' : wait ? '等待批准 · 点击查看' : '点击 resume');
-  return `<button class="row sess${on ? ' on' : ''}" data-sess="${esc(id)}" data-tip="${tip}"><span class="t">${esc(id)}</span><i class="sd ${wait ? 'wait' : run ? 'run' : 'done'}"></i></button>`;
+  const on = id === sessionId, run = busySessions.has(id) || (on && busy), wait = waitingSessions.has(id);
+  const title = sessTitle(id), m = SESSION_META[id] || {};
+  const state = wait ? '<i class="sd wait" aria-label="等待批准"></i>' : run ? '<i class="sd run" aria-label="运行中"></i>' : `<span class="when">${sessWhen(m.mtime)}</span>`;
+  return `<button class="row sess${on ? ' on' : ''}" data-sess="${esc(id)}" data-tip="${esc(title ? title + '|' + id : id)}" data-tip-side="right"><span class="t${title ? '' : ' untitled'}">${esc(title || '新对话')}</span>${state}</button>`;
 };
 function renderRail() {
-  $('#sessions').innerHTML = SESSION_IDS.length
-    ? SESSION_IDS.map(sessRow).join('')
-    : '<div class="empty-hint">暂无会话记录</div>';
+  let html = '', last = '';
+  // a session nobody typed into is just an opened-and-left window: keep it
+  // out of the rail (the palette still lists every id) unless it's the
+  // current one or has something running / waiting
+  const shown = SESSION_IDS.filter(id => sessTitle(id) || id === sessionId || busySessions.has(id) || waitingSessions.has(id));
+  for (const id of shown) {
+    const b = sessBucket((SESSION_META[id] || {}).mtime);
+    if (b !== last) { html += `<div class="grp"><span>${b}</span></div>`; last = b; }
+    html += sessRow(id);
+  }
+  $('#sessions').innerHTML = html || '<div class="empty-hint">暂无会话记录</div>';
   $$('.nav-i[data-go]').forEach(b => b.classList.toggle('on', b.dataset.go === view));
 }
 const SET_NAV = [['appearance', '外观', 'palette'], ['keys', '快捷键', 'keyboard'], ['about', '关于', 'info']];
@@ -1788,7 +1960,8 @@ function renderCrumb() {
   const c = $('#crumb');
   let h;
   if (view === 'settings') h = `<span class="c1">设置</span><span class="cs">/</span><span class="c2">${SET_NAV.find(x => x[0] === setPage)[1]}</span>`;
-  else h = `<span class="c1">${esc(cwd.split(/[\\/]/).filter(Boolean).pop() || 'sunmao')}</span><span class="cs">/</span><span class="c2">${esc(sessionId || '…')}</span>${ic('chev-d', 'i sm')}`;
+  else h = `<span class="c1">${esc(cwd.split(/[\\/]/).filter(Boolean).pop() || 'sunmao')}</span><span class="cs">/</span><span class="c2">${esc(sessTitle(sessionId) || (sessionId ? '新对话' : '…'))}</span>${ic('chev-d', 'i sm')}`;
+  c.dataset.tip = view === 'settings' ? '' : sessionId;
   c.innerHTML = h;
 }
 function show(v) {
@@ -1821,7 +1994,10 @@ function send() {
   const ta = $('#input'), text = ta.value.trim();
   if (!text) return ta.focus();
   if (!wsSend({ type: 'prompt', text })) return toast('未连接到内核，无法发送', 'alert', 'warn');
-  append(TX, youHTML(text, true));
+  append(TX, youHTML(text, true, clock()));
+  // first prompt names the session right away — same rule the host applies
+  const m = SESSION_META[sessionId] || (SESSION_META[sessionId] = { mtime: Date.now() });
+  if (!m.title) { m.title = text.split('\n').map(s => s.trim()).find(Boolean).slice(0, 80); renderRail(); renderCrumb(); }
   updateHero();
   ta.value = ''; autoGrow(); slashCheck(true);
   logEv('message', 'user · ' + text.slice(0, 60));
@@ -1926,8 +2102,15 @@ document.addEventListener('mouseover', e => {
     const [t, k] = el.dataset.tip.split('|');
     tip.innerHTML = esc(t) + (k ? `<kbd>${esc(k)}</kbd>` : '');
     const r = el.getBoundingClientRect(), tr = tip.getBoundingClientRect();
-    let top = r.bottom + 8; if (top + tr.height > innerHeight - 6) top = r.top - tr.height - 8;
-    const left = Math.max(6, Math.min(r.left + r.width / 2 - tr.width / 2, innerWidth - tr.width - 6));
+    let top, left;
+    if (el.dataset.tipSide === 'right') {
+      // list rows: sit beside the rail, never on top of the next row
+      const rail = $('#rail').getBoundingClientRect();
+      left = rail.right + 8; top = Math.max(6, Math.min(r.top + r.height / 2 - tr.height / 2, innerHeight - tr.height - 6));
+    } else {
+      top = r.bottom + 8; if (top + tr.height > innerHeight - 6) top = r.top - tr.height - 8;
+      left = Math.max(6, Math.min(r.left + r.width / 2 - tr.width / 2, innerWidth - tr.width - 6));
+    }
     tip.style.transform = `translate(${Math.round(left)}px,${Math.round(top)}px)`; tip.classList.add('show');
   }, 450);
 });
@@ -1946,7 +2129,7 @@ function palSource() {
   return [
     { g: '操作', t: '新对话', i: 'pen', k: 'Ctrl N', run: newChat },
     { g: '操作', t: '打开设置', i: 'settings', k: 'Ctrl ,', run: () => go('settings') },
-    { g: '操作', t: dockOn ? '隐藏 dataflow 面板' : '显示 dataflow 面板', i: 'panel-r', k: 'Ctrl \\', run: toggleDock },
+    { g: '操作', t: dockOn ? '隐藏数据面板' : '显示数据面板', i: 'panel-r', k: 'Ctrl \\', run: toggleDock },
     { g: '操作', t: '事件日志', i: 'history', run: () => pop($('[data-act="events"]'), eventsHTML(), { align: 'end', cls: 'events' }) },
     { g: '操作', t: '刷新会话列表', i: 'reset', run: refreshSessions },
     { g: '外观', t: '主题：深色', i: 'moon', run: () => { S.mode = 'dark'; commit(); } },
@@ -1954,7 +2137,7 @@ function palSource() {
     { g: '外观', t: '主题：跟随系统', i: 'monitor', run: () => { S.mode = 'system'; commit(); } },
     ...WALLS.map(w => ({ g: '外观', t: '壁纸：' + w.name, i: 'image', run: () => { S.wallpaper = w.id; commit(); } })),
     ...slashList.map(c => ({ g: '命令', t: '/' + c, i: 'terminal', run: () => { show('session'); $('#input').value = '/' + c + ' '; autoGrow(); $('#input').focus(); } })),
-    ...SESSION_IDS.map(id => ({ g: '会话', t: id, i: 'note', run: () => { show('session'); resumeSession(id); } })),
+    ...SESSION_IDS.map(id => ({ g: '会话', t: sessTitle(id) || '新对话', d: id, i: 'note', run: () => { show('session'); resumeSession(id); } })),
   ];
 }
 function renderPal() {
@@ -2055,7 +2238,7 @@ const card = rows => `<div class="card glass cfg">${rows.join('')}</div>`;
 const sec = (h, p, body) => `<div class="sec">${h ? `<div class="sec-h"><h2>${h}</h2>${p ? `<p>${p}</p>` : ''}</div>` : ''}${body}</div>`;
 const head = (t, d) => `<h1>${t}</h1>${d ? `<p class="lead">${d}</p>` : ''}`;
 const PAGES = {
-  keys: () => head('快捷键', '焦点不在输入框时，审批快捷键直接裁决最早的待审批卡。') + sec('', '', card([['新对话', 'Ctrl N'], ['命令面板', 'Ctrl K'], ['打开设置', 'Ctrl ,'], ['显示或隐藏 dataflow 面板', 'Ctrl \\'], ['Allow / Deny / Always', 'Y N A'], ['发送', 'Enter'], ['换行', 'Shift Enter'], ['关闭弹层或返回', 'Esc']].map(([a, k]) => row(a, '', `<span class="keys">${k.split(' ').map(x => `<kbd>${esc(x)}</kbd>`).join('')}</span>`)))),
+  keys: () => head('快捷键', '焦点不在输入框时，审批快捷键直接裁决最早的待审批卡。') + sec('', '', card([['新对话', 'Ctrl N'], ['命令面板', 'Ctrl K'], ['打开设置', 'Ctrl ,'], ['显示或隐藏数据面板', 'Ctrl \\'], ['Allow / Deny / Always', 'Y N A'], ['发送', 'Enter'], ['换行', 'Shift Enter'], ['关闭弹层或返回', 'Esc']].map(([a, k]) => row(a, '', `<span class="keys">${k.split(' ').map(x => `<kbd>${esc(x)}</kbd>`).join('')}</span>`)))),
   about: () => head('关于', '') + `<div class="card glass cfg"><div class="ab-top">${$('#hero svg').outerHTML}<div><b>sunmao</b><span>Rust 编写的 agent 运行时内核</span></div></div>${row('会话', '', mono(sessionId || '—'))}${row('工作目录', '', mono(cwd || '—'))}${row('本地服务', TAURI ? '内嵌内核 · 自定义协议（无 TCP 监听）' : 'sunmao serve 只绑定本机', mono(location.host))}${row('内核', '', mono('sunmao-core'))}${row('许可', '', mono('MIT OR Apache-2.0'))}</div>`,
 };
 function settingsPage(p) {
@@ -2117,6 +2300,7 @@ function act(name, el) {
       return open('/artifacts/' + encodeURIComponent(isl.dataset.artifact) + q, '_blank');
     }
     case 'think': return el.classList.toggle('open');
+    case 'tg': { const g = el.closest('.tools'); g.dataset.user = '1'; return foldGroup(g, !g.classList.contains('fold')); }
     case 'pick-mode': {
       // same four stances the kernel gates on — labels mirror the TUI's /mode
       const MODES = [
@@ -2148,6 +2332,7 @@ function act(name, el) {
 document.addEventListener('click', e => {
   const t = e.target;
   if (t.closest('.pop') && !t.closest('[data-act]')) return;
+  const st = t.closest('[data-starter]'); if (st) { const ta = $('#input'); ta.value = st.dataset.starter; autoGrow(); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); return; }
   const apb = t.closest('[data-ap]'); if (apb) { const cd = apb.closest('.approve'); return decide(apb.dataset.ap, cd ? +cd.dataset.apid : null); }
   const th = t.closest('.tool-h'); if (th) { if ($('.tool-o', th.parentElement)) th.parentElement.classList.toggle('open'); return; }
   const swb = t.closest('.sw'); if (swb && !swb.dataset.act) return swb.setAttribute('aria-checked', String(swb.getAttribute('aria-checked') !== 'true'));

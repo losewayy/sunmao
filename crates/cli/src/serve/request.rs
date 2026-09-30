@@ -169,10 +169,57 @@ async fn sessions_list(s: &Arc<Shared>) -> HostResponse {
             ids.insert(0, id);
         }
     }
+    let dir = s.cwd.join(".sunmao/sessions");
+    let meta: serde_json::Map<String, serde_json::Value> = ids
+        .iter()
+        .map(|id| (id.clone(), session_meta(&dir.join(format!("{id}.jsonl")))))
+        .collect();
     HostResponse::json(serde_json::json!({
         "sessions": ids,
         "live": s.live_ids(),
+        "meta": meta,
     }))
+}
+
+/// Rail metadata for one log: `title` = the first prompt the user typed
+/// (folded hook/local-shell evidence skipped, first line, ≤ 80 chars;
+/// `null` for a log with no prompt yet) and `mtime` in epoch ms. Reads
+/// only up to the first user message — logs are append-only, so the
+/// title never changes once it exists.
+fn session_meta(path: &std::path::Path) -> serde_json::Value {
+    use std::io::BufRead;
+    let mtime = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64);
+    let mut title: Option<String> = None;
+    if let Ok(f) = std::fs::File::open(path) {
+        for line in std::io::BufReader::new(f).lines().map_while(Result::ok) {
+            // cheap pre-filter: only message lines can carry a prompt
+            if !line.contains(r#""role":"user""#) {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            if v.pointer("/message/role").and_then(|r| r.as_str()) != Some("user") {
+                continue;
+            }
+            let Some(c) = v.pointer("/message/content").and_then(|c| c.as_str()) else {
+                continue;
+            };
+            if c.starts_with("[hook context]") || c.starts_with("<local-shell>") {
+                continue;
+            }
+            let first = c.lines().map(str::trim).find(|l| !l.is_empty());
+            if let Some(first) = first {
+                title = Some(first.chars().take(80).collect());
+                break;
+            }
+        }
+    }
+    serde_json::json!({ "title": title, "mtime": mtime })
 }
 
 /// `GET /session[?id=…]` — the viewed host's id + live set + cwd.
@@ -215,5 +262,41 @@ async fn dataflow_by_id(s: &Arc<Shared>, id: &str) -> HostResponse {
             Err(e) => HostResponse::err(500, format!("{e:#}")),
         },
         None => HostResponse::err(404, "no such session".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::session_meta;
+    use crate::serve::host::display_path;
+
+    #[test]
+    fn title_is_first_typed_prompt() {
+        let dir = std::env::temp_dir().join(format!("sunmao-meta-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("s-1.jsonl");
+        let log = [
+            r#"{"type":"started","model":"m","cwd":"x"}"#,
+            r#"{"type":"message","message":{"role":"system","content":"identity"}}"#,
+            r#"{"type":"message","message":{"role":"user","content":"[hook context] injected"}}"#,
+            r#"{"type":"message","message":{"role":"user","content":"\n  fix the drag bug  \nsecond line"}}"#,
+            r#"{"type":"message","message":{"role":"user","content":"later prompt"}}"#,
+        ];
+        std::fs::write(&p, log.join("\n")).unwrap();
+        let m = session_meta(&p);
+        assert_eq!(m["title"], "fix the drag bug");
+        assert!(m["mtime"].as_u64().is_some());
+
+        std::fs::write(&p, log[..3].join("\n")).unwrap();
+        assert!(session_meta(&p)["title"].is_null());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn display_path_strips_verbatim_prefix() {
+        let p = |s: &str| display_path(std::path::Path::new(s));
+        assert_eq!(p(r"\\?\C:\work\x"), r"C:\work\x");
+        assert_eq!(p(r"\\?\UNC\srv\share\x"), r"\\srv\share\x");
+        assert_eq!(p("/home/u/x"), "/home/u/x");
     }
 }

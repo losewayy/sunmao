@@ -315,23 +315,9 @@ fn looks_like_wire(lit: &str) -> bool {
 /// Mirrored files — a bundled copy that must stay byte-identical to its
 /// canonical source (self-contained plugin bundles can't reach outside
 /// their dir, so the copy exists on purpose; the guard exists so it can't
-/// silently drift).
-fn check_mirrors(root: &Path, violations: &mut Vec<String>) {
-    // one block per mirrored pair; more bundles may join later
-    let (canon, mirror) = (
-        "tools/extension-host.mjs",
-        "examples/js-extension/extension-host.mjs",
-    );
-    let (a, b) = (root.join(canon), root.join(mirror));
-    match (std::fs::read(&a), std::fs::read(&b)) {
-        (Ok(x), Ok(y)) if x == y => {}
-        (Err(_), _) => violations.push(format!("mirror: {canon} missing")),
-        (_, Err(_)) => violations.push(format!("mirror: {mirror} missing")),
-        _ => violations.push(format!(
-            "mirror drift: {mirror} differs from {canon} — re-copy the canonical file"
-        )),
-    }
-}
+/// silently drift). No mirrored pairs today — re-add blocks as bundles
+/// need them.
+fn check_mirrors(_root: &Path, _violations: &mut Vec<String>) {}
 
 fn rel(p: &Path, root: &Path) -> String {
     p.strip_prefix(root)

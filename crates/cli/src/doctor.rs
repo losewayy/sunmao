@@ -144,10 +144,9 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
         }
     }
 
-    // 7. extensions: plugin manifests must parse; node presence matters only
-    //    when a manifest references the JS sidecar (binary extensions don't)
+    // 7. extensions: plugin manifests must parse (binary/script children
+    //    are the manifest's own responsibility — `--doctor` only counts)
     let mut ext_specs = 0usize;
-    let mut uses_js_host = false;
     let mut manifests = vec![cli.cwd.join(".sunmao/plugin.json")];
     for base in [
         cli.cwd.join(".sunmao/plugins"),
@@ -174,20 +173,6 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
             Some(v) => {
                 if let Some(exts) = v["extensions"].as_array() {
                     ext_specs += exts.len();
-                    for e in exts {
-                        let cmd = e["command"].as_str().unwrap_or("");
-                        let args: Vec<String> = e["args"]
-                            .as_array()
-                            .map(|a| {
-                                a.iter()
-                                    .filter_map(|x| x.as_str().map(String::from))
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        if cmd == "node" || args.iter().any(|a| a.contains("extension-host.mjs")) {
-                            uses_js_host = true;
-                        }
-                    }
                 }
             }
             None => {
@@ -201,16 +186,6 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
     }
     if ext_specs > 0 {
         println!("extensions: {ext_specs} spec(s) across plugin manifests");
-    }
-    if uses_js_host {
-        print!("node (JS extension host) ... ");
-        match which_node() {
-            Some(p) => println!("OK ({p})"),
-            None => {
-                ok = false;
-                println!("FAIL — a manifest spawns extension-host.mjs but node isn't on PATH");
-            }
-        }
     }
 
     println!();
@@ -227,18 +202,6 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
 
 fn which_rg() -> Option<String> {
     for cand in ["rg", "rg.exe"] {
-        if let Ok(p) = std::process::Command::new(cand).arg("--version").output() {
-            if p.status.success() {
-                let v = String::from_utf8_lossy(&p.stdout);
-                return Some(v.lines().next().unwrap_or("?").trim().to_string());
-            }
-        }
-    }
-    None
-}
-
-fn which_node() -> Option<String> {
-    for cand in ["node", "node.exe"] {
         if let Ok(p) = std::process::Command::new(cand).arg("--version").output() {
             if p.status.success() {
                 let v = String::from_utf8_lossy(&p.stdout);

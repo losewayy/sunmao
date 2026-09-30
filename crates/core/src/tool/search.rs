@@ -97,7 +97,12 @@ impl ToolImpl for GrepTool {
         }
         let a: Args = serde_json::from_value(args)?;
 
-        let mut cmd = tokio::process::Command::new("rg");
+        // managed binary — an injected path wins over PATH so a bundled
+        // ripgrep works where none is installed (RG_BIN_PATH convention)
+        let rg = std::env::var("SUNMAO_RG")
+            .or_else(|_| std::env::var("RG_BIN_PATH"))
+            .unwrap_or_else(|_| "rg".into());
+        let mut cmd = tokio::process::Command::new(rg);
         cmd.arg("--line-number")
             .arg("--no-heading")
             .arg("--color=never")

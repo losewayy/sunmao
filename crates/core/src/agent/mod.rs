@@ -244,6 +244,8 @@ fn specifier_for(tool: &str, args: &serde_json::Value) -> String {
         "Glob" | "Grep" => "pattern",
         "WebFetch" => "url",
         "Task" => "prompt",
+        "HtmlArtifact" => "name",
+        "JobOutput" => "id",
         _ => "",
     };
     args.get(key)

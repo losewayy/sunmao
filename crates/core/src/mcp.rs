@@ -246,3 +246,102 @@ async fn connect_one(name: &str, spec: &ServerSpec) -> anyhow::Result<Vec<Box<dy
 fn json_object() -> Value {
     serde_json::json!({"type": "object"})
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Compile `tests/fixtures/mcp_server.rs` once; live tests reuse the
+    /// binary (`--die` selects the mid-session crash path). None when
+    /// rustc is absent — the test degrades to a skip.
+    fn fixture_bin() -> Option<std::path::PathBuf> {
+        static BIN: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+        BIN.get_or_init(|| crate::compile_fixture("mcp_server.rs", "sunmao-mcp-echo"))
+            .clone()
+    }
+
+    /// A bad server entry must not brick the session — `connect_all`
+    /// warns and returns the working tools only.
+    #[tokio::test]
+    async fn connect_all_degrades_a_dead_server() {
+        let dir = crate::fresh_test_dir("mcp-bad");
+        std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+        std::fs::write(
+            dir.join(".sunmao/mcp.json"),
+            r#"{"mcpServers":{"ghost":{"command":"sunmao-no-such-binary-zz","args":[]}}}"#,
+        )
+        .unwrap();
+        let tools = connect_all(&dir, &[]).await;
+        assert!(tools.is_empty(), "dead server contributes no tools");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Live roundtrip + crash tolerance: a real stdio server lists `ping`,
+    /// the call echoes back — then the `--die` variant exits right after
+    /// `tools/list`, and the next `tools/call` must degrade to a failed
+    /// ToolResult, never abort the loop (v0.2 acceptance: 子进程崩溃不炸
+    /// agent — this is the MCP half of that bar).
+    #[tokio::test]
+    async fn mcp_call_survives_then_fails_after_child_death() {
+        let Some(bin) = fixture_bin() else {
+            eprintln!("rustc not found — skipping live MCP test");
+            return;
+        };
+        let ctx = crate::context::Context::new(
+            std::sync::Arc::new(StubLlm),
+            crate::session::SessionLog::ephemeral(),
+            crate::tool::ToolRegistry::new(),
+            std::env::temp_dir(),
+        );
+
+        // healthy path: real initialize → tools/list → tools/call
+        let spec = ServerSpec {
+            command: Some(bin.to_string_lossy().to_string()),
+            args: vec![],
+            env: Default::default(),
+            url: None,
+        };
+        let tools = connect_one("echo", &spec).await.unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name(), "mcp__echo__ping");
+        let res = tools[0].call(json!({"msg": "hi"}), &ctx).await.unwrap();
+        assert!(res.ok);
+        assert!(res.output.contains("pong: hi"), "{}", res.output);
+
+        // crash path: server exits after tools/list — connect succeeds,
+        // the first call must error out, not hang or panic
+        let dying = ServerSpec {
+            command: Some(bin.to_string_lossy().to_string()),
+            args: vec!["--die".into()],
+            env: Default::default(),
+            url: None,
+        };
+        let tools = connect_one("die", &dying).await.unwrap();
+        assert_eq!(tools.len(), 1, "listed before death");
+        // the call must resolve to an error — never hang, never panic
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            tools[0].call(json!({"msg": "x"}), &ctx),
+        )
+        .await
+        {
+            Err(_) => panic!("call against a dead child hung"),
+            Ok(Err(e)) => {
+                assert!(format!("{e:#}").contains("fail"), "{e:#}")
+            }
+            Ok(Ok(res)) => assert!(!res.ok, "dead server must not report ok"),
+        }
+    }
+
+    struct StubLlm;
+    #[async_trait::async_trait]
+    impl sunmao_llm::ProviderAdapter for StubLlm {
+        async fn stream(
+            &self,
+            _req: sunmao_llm::ChatRequest<'_>,
+        ) -> anyhow::Result<sunmao_llm::DeltaStream> {
+            Ok(Box::pin(futures_util::stream::empty()))
+        }
+    }
+}

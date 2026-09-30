@@ -208,11 +208,7 @@ pub async fn run(
             }
             match crate::tui::slash::command_body(cwd, preset_roots, name) {
                 Some(body) => {
-                    let prompt = if rest.is_empty() {
-                        body
-                    } else {
-                        format!("{body}\n\n{rest}")
-                    };
+                    let prompt = crate::tui::slash::expand_command(&body, rest);
                     if let Err(e) = agent.run_turn(&prompt, &*observer.0).await {
                         eprintln!("[error] {e:#}");
                     }

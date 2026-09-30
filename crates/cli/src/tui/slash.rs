@@ -60,6 +60,30 @@ pub fn command_body(cwd: &Path, extra_roots: &[PathBuf], name: &str) -> Option<S
     None
 }
 
+/// Expand a command body with the typed tail — the ecosystem's
+/// `$ARGUMENTS` / `$1`..$9 substitution (Claude Code convention). A body
+/// mentioning none of the placeholders gets the args appended after a
+/// blank line, same as before — zero-config commands just work.
+pub fn expand_command(body: &str, args: &str) -> String {
+    if args.is_empty() {
+        return body.to_string();
+    }
+    let mut out = body.replace("$ARGUMENTS", args);
+    for (i, word) in args.split_whitespace().enumerate().take(9) {
+        out = out.replace(&format!("${}", i + 1), word);
+    }
+    if out == *body {
+        format!("{body}\n\n{args}")
+    } else {
+        // substituted at least once; any leftover $N for missing words
+        // collapses to the empty string rather than leaking the marker
+        for i in 1..=9 {
+            out = out.replace(&format!("${i}"), "");
+        }
+        out
+    }
+}
+
 /// All dirs slash commands may live in — project, claude-compat, plugin
 /// dirs, then enabled presets (appended last in layering order; lookup is
 /// first-hit so a preset command only fills a name nobody else claims).
@@ -192,4 +216,44 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expand_command;
+
+    /// `$ARGUMENTS` substitutes inline where the command author put it —
+    /// not appended at the end. The ecosystem contract (Claude Code
+    /// command files) sunmao claims compatibility with.
+    #[test]
+    fn arguments_placeholder_substitutes_inline() {
+        let body = "Summarize $ARGUMENTS in three bullets.";
+        assert_eq!(
+            expand_command(body, "the diff below"),
+            "Summarize the diff below in three bullets."
+        );
+    }
+
+    /// Positional $1..$9 resolve per whitespace-split word; missing
+    /// positions collapse to empty rather than leaking the marker.
+    #[test]
+    fn positional_placeholders_fill_then_clear() {
+        assert_eq!(
+            expand_command("compare $1 with $2", "foo bar"),
+            "compare foo with bar"
+        );
+        assert_eq!(expand_command("hello $1 you $2", "foo"), "hello foo you ");
+    }
+
+    /// A body with no placeholder still gets the args appended — the
+    /// zero-config convention that predates the placeholders.
+    #[test]
+    fn no_placeholder_appends_args() {
+        assert_eq!(
+            expand_command("Review the most recent commit.", "extra notes"),
+            "Review the most recent commit.\n\nextra notes"
+        );
+        // empty args never append
+        assert_eq!(expand_command("body", ""), "body");
+    }
 }

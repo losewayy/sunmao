@@ -73,10 +73,12 @@ crates/core    the kernel. Owns state, dispatch, policy. May not know
                │   ├── registry.rs child spawn, request/reply correlation,
                │   │             ExtTool, ExtRegistry + shutdown/Drop
                │   ├── proto.rs  JSON-RPC frame vocabulary (line-delimited)
-               │   └── tests.rs  unit + node-gated live fixtures
+               │   └── tests.rs  unit + rustc-fixture live tests
+               │               (tests/fixtures/ext_echo.rs compiled at test time)
                ├── agents.rs     named sub-agent definitions loader
                ├── task.rs       Task tool — nested AgentLoop, depth cap
-               │   task/         nested-loop fixtures (tests.rs)
+               │   task/         spawn.rs (child ctx, detached completion),
+               │               tests.rs — nested-loop fixtures
                ├── preflight.rs  shell/preflight — spawnfate advisory pass
                ├── prompt.rs     PromptAssembler — sectioned prompt layering
                ├── assets/       kernel-owned data files (prompt/*.md,
@@ -96,11 +98,16 @@ crates/cli     every frontend + flag plumbing. Thin by design — heavy logic
                ├── main.rs       flags, dispatch, REPL, Observer/Approver impls
                ├── tui/          ratatui TUI (CJK-native)
                │   ├── mod.rs    event loop, driver task, focus machine
-               │   ├── app.rs    App state — blocks, composer, approval, menu
+               │   ├── app.rs    App state — blocks, composer, approval
+               │   ├── menu.rs   completion popups — commands/model
+               │   │             selectors/@ file mentions + path pool
                │   ├── input.rs  composer/key input handling
-               │   ├── replay.rs session replay → transcript blocks
-               │   ├── blocks.rs transcript blocks (band/panel/fold/copy)
-               │   ├── render.rs draw — transcript/menu/card/input/status
+               │   ├── replay.rs session replay → transcript blocks +
+               │   │             turn fold-by-cap
+               │   ├── blocks.rs transcript blocks (band/panel/fold/copy,
+               │   │             StepSummary)
+               │   ├── render.rs draw — virtualized transcript, menu, card,
+               │   │             input, status
                │   ├── md.rs     pulldown-cmark → styled lines
                │   ├── theme.rs  semantic palette + legacy-glyph fallbacks
                │   ├── slash.rs  command discovery/resolution

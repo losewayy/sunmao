@@ -7,7 +7,7 @@ has (or should gain) a live pass against the real provider stack.
 ## Unit tests
 
 ```bash
-cargo test --workspace    # ~146 tests
+cargo test --workspace    # ~152 tests
 cargo run -p xtask -- arch # shape gate — god files, layer direction, prose-in-code
 ```
 
@@ -31,7 +31,7 @@ Current coverage:
 | `core::ext` | frame parse, reply fold into HookOutcome, parked-id correlation, live Node fixture roundtrip (handshake → `ext__*` tool call → ext/event merge), dead-child fast-fail, **pi dialect live**: `api.on("tool_call")` veto + pi-spec registerTool |
 | `core::preflight` | AST extraction (pipelines, booleans, dynamic-skip), fatal-note advisory (spawnfate), `shell_segments` boundary/pipeline/subshell shapes |
 | `cli::eval` | case-file parsing (object/array/JSONL), assertion checks against session facts |
-| `cli::tui` | keymap dispatch, slash-menu completion (`@route`, `provider/`), render-cache wrap invariants, turn fold-by-cap (StepSummary compress/expand + selection remap) |
+| `cli::tui` | keymap dispatch, slash-menu completion (`@route`, `provider/`), `@` file-mention pool/descent, render-cache wrap invariants, turn fold-by-cap (StepSummary compress/expand + selection remap), viewport virtualization via TestBackend, paste-stash/expand |
 
 The `MockProvider` in `agent::tests` is the pattern to reuse: `ProviderAdapter`
 is a trait, so scripted `Vec<StreamDelta>` queues drive the whole agent loop

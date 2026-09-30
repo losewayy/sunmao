@@ -13,6 +13,11 @@ pub enum Cmd {
     Plugin(PluginArgs),
     /// Run eval cases against the real loop and report pass/fail.
     Eval(crate::eval::EvalArgs),
+    Serve {
+        /// Port to bind on 127.0.0.1.
+        #[arg(long, default_value = "7474")]
+        port: u16,
+    },
 }
 
 #[derive(clap::Args)]

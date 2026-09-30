@@ -43,7 +43,7 @@ pub struct SlashMenu {
 /// `.jsonl` stems only, capped at `limit`. Shared by the `/resume`
 /// picker (menu.rs) and the bare `/resume` list (mod.rs) — one truth
 /// for "what sessions exist".
-pub(super) fn recent_sessions(cwd: &std::path::Path, limit: usize) -> Vec<String> {
+pub(crate) fn recent_sessions(cwd: &std::path::Path, limit: usize) -> Vec<String> {
     let dir = cwd.join(".sunmao").join("sessions");
     let mut entries: Vec<_> = std::fs::read_dir(&dir)
         .map(|rd| {

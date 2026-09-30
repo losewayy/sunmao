@@ -33,11 +33,11 @@ impl AcpObserver {
 impl Observer for AcpObserver {
     fn on_event(&self, ev: &LiveEvent) {
         match ev {
-            LiveEvent::Content(c) => self.send(v2::SessionUpdate::AgentMessageChunk(
-                v2::ContentChunk::new(c.clone().into(), self.next_id("msg")),
+            LiveEvent::Content { text } => self.send(v2::SessionUpdate::AgentMessageChunk(
+                v2::ContentChunk::new(text.clone().into(), self.next_id("msg")),
             )),
-            LiveEvent::Reasoning(r) => self.send(v2::SessionUpdate::AgentThoughtChunk(
-                v2::ContentChunk::new(r.clone().into(), self.next_id("thought")),
+            LiveEvent::Reasoning { text } => self.send(v2::SessionUpdate::AgentThoughtChunk(
+                v2::ContentChunk::new(text.clone().into(), self.next_id("thought")),
             )),
             LiveEvent::ToolStart {
                 name,

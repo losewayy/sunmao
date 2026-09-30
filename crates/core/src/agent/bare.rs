@@ -71,11 +71,11 @@ impl AgentLoop {
             while let Some(delta) = stream.next().await {
                 match delta? {
                     StreamDelta::Content(c) => {
-                        observer.on_event(&LiveEvent::Content(c.clone()));
+                        observer.on_event(&LiveEvent::Content { text: c.clone() });
                         content.push_str(&c);
                     }
                     StreamDelta::Reasoning(r) => {
-                        observer.on_event(&LiveEvent::Reasoning(r));
+                        observer.on_event(&LiveEvent::Reasoning { text: r });
                     }
                     StreamDelta::ToolCalls(frags) => {
                         for f in &frags {

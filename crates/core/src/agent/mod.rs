@@ -23,11 +23,21 @@ mod turn;
 #[cfg(test)]
 mod tests;
 
-/// Live events the frontend can observe (stdout printer, later TUI/ACP).
-#[derive(Debug, Clone)]
+/// Live events the frontend can observe (stdout printer, TUI, ACP, web).
+/// `Serialize` is the `sunmao serve` wire shape — tagged snake_case, the
+/// only JSON dialect the GUI speaks (GUI.md §7).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum LiveEvent {
-    Content(String),
-    Reasoning(String),
+    /// A streamed text delta — `text` because serde's tagged-enum wire shape
+    /// can't carry a bare tuple payload (GUI.md §7 serves this verbatim).
+    Content {
+        text: String,
+    },
+    /// Reasoning/thinking channel delta.
+    Reasoning {
+        text: String,
+    },
     /// Tool call began. `summary` is a one-line digest of the interesting
     /// argument (path/command/pattern/…) for frontends to render. `depth`
     /// is the agent's nesting level — 0 for the interactive agent, 1+ for
@@ -71,7 +81,8 @@ pub enum LiveEvent {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TurnOutcome {
     Completed,
     LengthLimited,
@@ -413,6 +424,18 @@ impl AgentLoop {
     /// (`--resume`, `--dataflow`, `--fork` all take it).
     pub async fn session_path(&self) -> std::path::PathBuf {
         self.ctx.sessions.lock().await.path().to_path_buf()
+    }
+
+    /// Durable events of the active session — frontends replay them to
+    /// rebuild the transcript (web `serve` hello, TUI --resume).
+    pub async fn session_events(&self) -> Vec<SessionEvent> {
+        self.ctx
+            .sessions
+            .lock()
+            .await
+            .events()
+            .await
+            .unwrap_or_default()
     }
 
     pub fn with_compact_threshold(mut self, n: usize) -> Self {

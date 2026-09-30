@@ -48,6 +48,54 @@ impl Observer for NullObserver {
     fn on_event(&self, _ev: &LiveEvent) {}
 }
 
+/// The `sunmao serve` ws protocol ships `LiveEvent` verbatim (GUI.md §7) —
+/// a variant that can't serialize under the tagged-enum shape would arrive
+/// as `null` at the browser. Lock the wire contract: every variant
+/// serializes to an object carrying its snake_case `type`.
+#[test]
+fn live_event_wire_shape_is_stable() {
+    let evs = vec![
+        LiveEvent::Content { text: "hi".into() },
+        LiveEvent::Reasoning { text: "th".into() },
+        LiveEvent::ToolStart {
+            name: "Bash".into(),
+            summary: "ls".into(),
+            depth: 1,
+            lane: 2,
+        },
+        LiveEvent::ToolDone {
+            name: "Bash".into(),
+            ok: true,
+            output: "out".into(),
+            depth: 0,
+            lane: 0,
+        },
+        LiveEvent::Hook {
+            event: "SessionStart".into(),
+            detail: "startup".into(),
+        },
+        LiveEvent::Artifact {
+            name: "plan".into(),
+            path: ".sunmao/artifacts/plan.html".into(),
+            bytes: 42,
+        },
+        LiveEvent::Usage(Usage::default()),
+        LiveEvent::TurnEnd {
+            outcome: TurnOutcome::Completed,
+        },
+    ];
+    for ev in &evs {
+        let v = serde_json::to_value(ev).unwrap();
+        assert!(
+            v.get("type").and_then(|t| t.as_str()).is_some(),
+            "every LiveEvent variant needs a `type` tag on the wire: {v}"
+        );
+    }
+    let v = serde_json::to_value(&evs[0]).unwrap();
+    assert_eq!(v["type"], "content");
+    assert_eq!(v["text"], "hi");
+}
+
 /// Records every LiveEvent — used to assert TurnEnd fires on the error
 /// path (frontends unwind busy/spinner state from it; a missing TurnEnd
 /// leaves the TUI stuck).
@@ -56,8 +104,8 @@ impl Observer for RecObserver {
     fn on_event(&self, ev: &LiveEvent) {
         let tag = match ev {
             LiveEvent::TurnEnd { outcome } => format!("TurnEnd:{outcome:?}"),
-            LiveEvent::Content(_) => "Content".into(),
-            LiveEvent::Reasoning(_) => "Reasoning".into(),
+            LiveEvent::Content { .. } => "Content".into(),
+            LiveEvent::Reasoning { .. } => "Reasoning".into(),
             LiveEvent::ToolStart { .. } => "ToolStart".into(),
             LiveEvent::ToolDone { .. } => "ToolDone".into(),
             LiveEvent::Hook { .. } => "Hook".into(),

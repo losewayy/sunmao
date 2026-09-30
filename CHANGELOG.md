@@ -10,6 +10,19 @@ ACP v2 server, event-sourced sessions with resume/fork/dataflow, CJK-native
 TUI.
 
 **post-0.2 additions**
+- `sunmao serve` — GUI phase 1 (GUI.md): the web frontend on
+  127.0.0.1 HTTP+WebSocket. One ws channel carries `LiveEvent` verbatim
+  (hello/replay/approval/note/session/model/busy wrappers); REST serves
+  sessions, artifacts (sandboxed iframe islands + annotate writeback),
+  and the dataflow report. Approval cards ride the same Approver seam
+  as the TUI
+- `/fork` mid-session in the TUI and REPL; `swap_session` retargets
+  hook `session_id`/`transcript_path` so resume doesn't report the
+  abandoned session's identity
+- session fold fixes: auto-compaction runs before the prompt lands in
+  the log (it used to summarize the question away), `Compacted` keeps
+  the system message (sub-agent identity survived no longer depends on
+  luck), `open_path` seals a crash-truncated tail line
 - `sunmao plugin install|list|remove` — bundle management for
   `.sunmao/plugins/<name>/` (the dir all five consumers already scan);
   name sanitization keeps `plugins/` an airtight root

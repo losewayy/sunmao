@@ -28,7 +28,7 @@ pub(super) struct RelayObserver {
 impl Observer for RelayObserver {
     fn on_event(&self, ev: &LiveEvent) {
         match ev {
-            LiveEvent::Content(c) => self.text.lock().unwrap().push_str(c),
+            LiveEvent::Content { text } => self.text.lock().unwrap().push_str(text),
             // sub-agent lifecycle is the parent's business, not the UI's —
             // forwarding TurnEnd would close the outer transcript early.
             LiveEvent::TurnEnd { .. } => {}

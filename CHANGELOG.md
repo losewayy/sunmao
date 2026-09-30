@@ -25,6 +25,15 @@ TUI.
   `--report` writes the result array
 - `xtask arch` — the shape rules got teeth: god-file budget (600),
   layer direction (cli→core→llm only), prose-in-code — runs in CI
+- **extension host** (`crates/core/src/ext/`) — plugin.json `extensions`
+  specs spawn one JSON-RPC child per session (the `sunmao` dialect in
+  PROTOCOLS.md): `ext__{plugin}__{tool}` namespaced tools share the
+  `tools:` whitelist; `ext/event` runs inside HookEngine after command
+  hooks, folding `block`/`extra_context`/`updatedInput` into the same
+  HookOutcome; dead children degrade to failed calls, never aborts.
+  The v0.5 seam landed early — JS sidecar compat stays v0.5+
+- cold-plug reach: `.sunmao/risky-patterns.txt` replaces the shipped
+  approval table outright; preset dirs' same-named file merges additively
 - model routing: `.sunmao/models.json` names providers + routes; agent
   defs' `model:` frontmatter resolves through it; `/model` switches
   mid-session (TUI + REPL + ACP)

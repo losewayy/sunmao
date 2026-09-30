@@ -61,6 +61,22 @@ impl AgentLoop {
         why: &str,
         observer: &dyn Observer,
     ) -> Result<(), String> {
+        // Notification: the loop is about to idle on a human — hooks can
+        // relay that (desktop toast, bell). Advisory only; outcome ignored.
+        let _ = self
+            .ctx
+            .hooks
+            .fire(
+                HookEvent::Notification,
+                &self.ctx.cwd,
+                &crate::hooks::HookInput {
+                    prompt: Some(why),
+                    tool_name: Some(tool),
+                    tool_input: Some(&serde_json::json!({ "specifier": specifier })),
+                    ..Default::default()
+                },
+            )
+            .await;
         match self.ctx.approval.approve(tool, specifier, why).await {
             crate::approval::Approval::Session => {
                 self.ctx.grant_session(tool, specifier);
@@ -187,8 +203,33 @@ impl AgentLoop {
         observer: &dyn Observer,
     ) -> anyhow::Result<TurnOutcome> {
         match self.run_turn_inner(input, observer).await {
-            Ok(o) => Ok(o),
+            Ok(o) => {
+                // a non-clean outcome fires StopFailure — Stop itself is
+                // emitted inside run_turn_inner regardless; the union event
+                // marks that the stop wasn't a normal completion
+                if matches!(o, TurnOutcome::Other(_)) {
+                    let _ = self
+                        .ctx
+                        .hooks
+                        .fire(
+                            HookEvent::StopFailure,
+                            &self.ctx.cwd,
+                            &crate::hooks::HookInput::default(),
+                        )
+                        .await;
+                }
+                Ok(o)
+            }
             Err(e) => {
+                let _ = self
+                    .ctx
+                    .hooks
+                    .fire(
+                        HookEvent::StopFailure,
+                        &self.ctx.cwd,
+                        &crate::hooks::HookInput::default(),
+                    )
+                    .await;
                 observer.on_event(&LiveEvent::TurnEnd {
                     outcome: TurnOutcome::Other(format!("error: {e:#}")),
                 });
@@ -487,6 +528,25 @@ impl AgentLoop {
                         },
                     )
                     .await;
+                // the union event — failure listeners only run on settled
+                // bad results (deny, error, crash), after the general hook
+                if !result.ok {
+                    let _ = self
+                        .ctx
+                        .hooks
+                        .fire(
+                            HookEvent::PostToolUseFailure,
+                            &self.ctx.cwd,
+                            &crate::hooks::HookInput {
+                                tool_name: Some(&call.function.name),
+                                tool_use_id: Some(&call.id),
+                                tool_input: Some(&args_value),
+                                tool_response: Some(&result.output),
+                                ..Default::default()
+                            },
+                        )
+                        .await;
+                }
 
                 let mut log = self.ctx.sessions.lock().await;
                 log.append(&SessionEvent::ToolResult {

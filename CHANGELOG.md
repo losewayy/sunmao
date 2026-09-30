@@ -71,6 +71,11 @@ TUI.
   iteration ceiling, no hooks/dispatch-gate/auto-compaction. Sub-agent
   contexts inherit the parent's driver; eval honors the same resolution.
   Third drivers plug into the same `run_turn` dispatch
+- **hook event union complete** — `PostToolUseFailure` fires on settled
+  bad results (deny/error/crash, after PostToolUse), `StopFailure` on
+  non-clean outcomes or the Err path, `Notification` when the gate opens
+  an approval prompt (advisory — hooks can relay to desktop bells). The
+  SPEC §4.4 surface is now literal, not aspirational
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

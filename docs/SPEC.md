@@ -110,6 +110,9 @@ hook engine（核心）
 ├── 事件面（各方言并集）: PreToolUse / PostToolUse / PostToolUseFailure /
 │   UserPromptSubmit / SessionStart / SessionEnd / PreCompact / PostCompact /
 │   Stop / StopFailure / SubagentStart / SubagentStop / Notification
+│   ✅ 并集已齐：PostToolUseFailure 只在落定失败结果后触发（deny/崩溃/错误，
+│   PostToolUse 之后）；StopFailure 在非正常 TurnOutcome 或 Err 路径触发；
+│   Notification 在审批征询发出时触发（advisory——hooks 可接桌面通知）
 ├── 方言注册表（缝: hooks/dialect/*）
 │   └── claude-dialect（默认出厂）: Claude JSON-stdio 契约
 │       ├── 注册源: hooks.json / settings.json hooks 键 / .claude-plugin/plugin.json
@@ -187,7 +190,7 @@ hook engine（核心）
 |---|---|---|---|---|
 | v0.1 | kernel walks | OAI 适配 + SSE + sessions + tools(3个) + agentLoop + TUI REPL | 跑通真实任务 | ✅ 超预期完成（tools 到 10、TUI 也落了） |
 | v0.2 | trustworthy | 审批缝 + transcript 工件 + 上下文窗口管理 + 错误恢复/中断续跑 + 审计流 | 子进程崩溃不炸 agent | ✅ 大部分落地——审批闸三前端、compaction、resume/fork、审计事件流；进程崩溃容忍只验过 hook veto |
-| v0.3 | ecosystem citizen | MCP client + hooks 引擎 + claude-dialect + 格式加载器 + ACP server | rtk/context-mode 实测 | ✅ 落地（MCP 双 transport、hooks 8 事件、agents/commands/skills/plugin.json、ACP v2）；rtk/context-mode 实测通过 |
+| v0.3 | ecosystem citizen | MCP client + hooks 引擎 + claude-dialect + 格式加载器 + ACP server | rtk/context-mode 实测 | ✅ 落地（MCP 双 transport、hooks 13 事件全并集——含 PostToolUseFailure/StopFailure/Notification、agents/commands/skills/plugin.json、ACP v2）；rtk/context-mode 实测通过 |
 | v0.4 | distributed | plugin.json 安装 + 扩展协议宿主 + presets + eval + HTML 工件 | 发布 | ✅ 全部落地——plugin.json 安装（`sunmao plugin`，git URL/`owner/repo` 源）、presets（`--preset` 层叠）、eval（`sunmao eval` 断言会话事实）、HTML 工件（HtmlArtifact）、扩展协议宿主（`ext/` 提前落地）；发布待放行 |
 | v0.5+ | open frontier | JS 扩展宿主、第二 provider 方言、GUI、subagents | — | 🟡 Anthropic 方言提前落地（v0.2）、Task 子代理已上线（`spawns:`/`tools:` 白名单 + `run_in_background` 异步扇出 + `model:` 路由）、**扩展宿主双侧落地**（Rust `ext/` crate + `tools/extension-host.mjs` JS 侧车——`.mjs` 模块注册工具/订阅事件，回复按 hooks 语义合并）——pi-compat adapter/GUI 未动 |
 

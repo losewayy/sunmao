@@ -94,6 +94,10 @@ TUI.
 - **doctor covers extensions** — plugin manifests must parse, extension
   specs counted, node required only when a manifest actually spawns
   `extension-host.mjs`; `--loop` now reaches `sunmao eval` too
+- **transcript integrity fix** — a duplicated `Message::tool_result`
+  append (bare loop every call; full loop's malformed-args branch)
+  double-reported results and providers hard-rejected the transcript;
+  `ToolResult` event is the single source the fold derives from
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

@@ -281,25 +281,10 @@ async fn run_inner(
                         match arg {
                             None => {
                                 // list recent sessions, newest first
-                                let dir = driver_cwd.join(".sunmao/sessions");
-                                let mut entries: Vec<_> = std::fs::read_dir(&dir)
-                                    .map(|rd| {
-                                        rd.flatten()
-                                            .filter_map(|e| {
-                                                let p = e.path();
-                                                let stem =
-                                                    p.file_stem()?.to_string_lossy().to_string();
-                                                let m = e.metadata().ok()?.modified().ok()?;
-                                                Some((m, stem))
-                                            })
-                                            .collect()
-                                    })
-                                    .unwrap_or_default();
-                                entries.sort_by_key(|b| std::cmp::Reverse(b.0));
+                                let entries = menu::recent_sessions(&driver_cwd, 8);
                                 let list = entries
                                     .iter()
-                                    .take(8)
-                                    .map(|(_, s)| format!("  /resume {s}"))
+                                    .map(|s| format!("  /resume {s}"))
                                     .collect::<Vec<_>>()
                                     .join("\n");
                                 let _ = tx_msg.send(Msg::Note(if list.is_empty() {

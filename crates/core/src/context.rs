@@ -95,6 +95,11 @@ pub struct Context {
     /// sync ctor can't spawn. `Arc` because hook dispatch reads through it
     /// while the registry owns teardown.
     pub ext: Arc<ExtRegistry>,
+    /// Which loop driver runs turns — SPEC §4.5's replaceable `agentLoop`.
+    /// Manifest `loop` keys resolve at build (presets win); `--loop` on
+    /// the CLI overrides after the fact. `Bare` turns skip hooks, the
+    /// dispatch gate and compaction but keep the session log and observer.
+    pub loop_driver: crate::agent::LoopDriver,
 }
 
 impl Context {
@@ -108,6 +113,9 @@ impl Context {
         let risk_table = std::fs::read_to_string(cwd.join(".sunmao/risky-patterns.txt"))
             .map(|t| crate::approval::parse_table(&t))
             .unwrap_or_else(|_| crate::approval::builtin_table());
+        // project/plugin manifests may name a loop driver — resolve before
+        // `cwd` moves into the struct below.
+        let loop_driver = crate::agent::LoopDriver::resolve(&cwd, &[]);
         Self {
             llm,
             llm_override: std::sync::RwLock::new(None),
@@ -132,6 +140,7 @@ impl Context {
             agent_name: None,
             extra_plugin_roots: Vec::new(),
             ext: Arc::new(ExtRegistry::new()),
+            loop_driver,
         }
     }
 
@@ -179,6 +188,9 @@ impl Context {
                 self.risk_table.extend(crate::approval::parse_table(&text));
             }
         }
+        // presets re-resolve the loop driver — a preset's `loop:` key is
+        // the last layer scanned, so it wins over project/plugin choices.
+        self.loop_driver = crate::agent::LoopDriver::resolve(&self.cwd, &self.extra_plugin_roots);
         self
     }
 

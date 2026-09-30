@@ -6,6 +6,7 @@ use sunmao_llm::types::Usage;
 use sunmao_llm::{ChatRequest, DeltaStream, ProviderAdapter, StreamDelta, ToolCallFragment};
 
 mod approvals;
+mod driver;
 mod hooks;
 mod models;
 mod subagents;

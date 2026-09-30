@@ -63,6 +63,14 @@ TUI.
 - test hygiene: pid-keyed scratch dirs recycled under Windows PID wrap —
   every suite now carves unique dirs via `fresh_test_dir` (flakes it
   caused: write-allows-new-file, bg-task delivery, batch lanes)
+- **replaceable agentLoop** (SPEC §4.5) — `Context.loop_driver` resolves
+  the `loop:` key from project/plugin manifests, then preset manifests
+  (later layers win), then `--loop full|bare` on the CLI wins overall.
+  `full` is the contract loop as before; `bare` (`agent/bare.rs`) is the
+  straight circuit — same session log, observer stream, cancel flag and
+  iteration ceiling, no hooks/dispatch-gate/auto-compaction. Sub-agent
+  contexts inherit the parent's driver; eval honors the same resolution.
+  Third drivers plug into the same `run_turn` dispatch
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

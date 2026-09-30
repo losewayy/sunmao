@@ -56,14 +56,19 @@ crates/llm     the wire. protocols in, StreamDelta out. Nothing here may
 crates/core    the kernel. Owns state, dispatch, policy. May not know
                any frontend exists.
                ├── context.rs    Context — the seam assembly struct
-               ├── agent.rs      AgentLoop — the one concrete loop
+               ├── agent/        AgentLoop — the one concrete loop
+               │   ├── mod.rs    orchestration + Context wiring
+               │   ├── turn.rs   per-turn loop (LLM call, tool dispatch, events)
+               │   └── tests/    loop fixtures (mock providers, session replays)
                ├── session.rs    SessionEvent + SessionLog fold
                ├── hooks.rs      lifecycle hook dispatcher (Claude contract)
+               │   hooks/        contract fixtures (tests.rs, live_tests.rs)
                ├── permissions.rs deny/ask/allow rule engine
                ├── approval.rs   Approver trait + risk classifier
                ├── mcp.rs        MCP client (stdio + streamable-HTTP)
                ├── agents.rs     named sub-agent definitions loader
                ├── task.rs       Task tool — nested AgentLoop, depth cap
+               │   task/         nested-loop fixtures (tests.rs)
                ├── preflight.rs  shell/preflight — spawnfate advisory pass
                ├── prompt.rs     PromptAssembler — sectioned prompt layering
                ├── assets/       kernel-owned data files (prompt/*.md,
@@ -83,11 +88,14 @@ crates/cli     every frontend + flag plumbing. Thin by design — heavy logic
                ├── tui/          ratatui TUI (CJK-native)
                │   ├── mod.rs    event loop, driver task, focus machine
                │   ├── app.rs    App state — blocks, composer, approval, menu
+               │   ├── input.rs  composer/key input handling
+               │   ├── replay.rs session replay → transcript blocks
                │   ├── blocks.rs transcript blocks (band/panel/fold/copy)
                │   ├── render.rs draw — transcript/menu/card/input/status
                │   ├── md.rs     pulldown-cmark → styled lines
                │   ├── theme.rs  semantic palette + legacy-glyph fallbacks
-               │   └── slash.rs  command discovery/resolution
+               │   ├── slash.rs  command discovery/resolution
+               │   └── *_tests.rs / tests.rs — state + render fixtures
                ├── acp.rs        ACP v2 server
                ├── dataflow.rs   session-log → audit report
                └── doctor.rs     env self-check
@@ -97,7 +105,7 @@ crates/cli     every frontend + flag plumbing. Thin by design — heavy logic
 
 | Adding a… | Goes in | Not allowed to |
 |---|---|---|
-| provider dialect | `llm/` new file | touch agent.rs's loop |
+| provider dialect | `llm/` new file | touch `agent/turn.rs`'s loop |
 | native tool | `core/src/tool/<family>.rs` | know about sessions directly (use `ctx`) |
 | hook event | `HookEvent` variant + fire site | bypass the matcher/dispatch path |
 | config file | documented in `docs/CONFIG.md` | read files outside the documented set |

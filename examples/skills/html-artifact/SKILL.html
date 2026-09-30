@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Produce reviewable HTML artifacts (plans, reports, dashboards) with the HtmlArtifact tool, and collect human annotations via a state.json sidecar">
+<title>html-artifact</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 52rem; margin: 2rem auto;
+         padding: 0 1rem; line-height: 1.6; }
+  h1 { font-size: 1.35rem; }
+  h2 { font-size: 1rem; border-bottom: 1px solid #8884; padding-bottom: .25rem; }
+  code, pre { font-family: ui-monospace, Consolas, monospace; font-size: .9em; }
+  pre { background: #8881; padding: .8rem 1rem; border-radius: .5rem; overflow-x: auto; }
+  table { border-collapse: collapse; }
+  td, th { text-align: left; padding: .3rem .8rem .3rem 0; }
+  .rule { background: #8881; border-left: 3px solid #9ece6a; padding: .6rem 1rem;
+          border-radius: .3rem; margin: 1rem 0; }
+</style>
+</head>
+<body>
+<h1>HTML artifacts</h1>
+
+<p>Use the <code>HtmlArtifact</code> tool for anything meant for a human to
+<em>look at</em> — plans, reports, checklists, design drafts, dashboards.
+Do not emit a <code>plan.md</code> when the deliverable is the document
+itself.</p>
+
+<section>
+<h2>Producing</h2>
+<ol>
+  <li>Call <code>HtmlArtifact</code> with a <code>[a-z0-9_-]</code> slug and
+      a complete HTML document. It writes
+      <code>.sunmao/artifacts/{name}.html</code> and logs an
+      <code>Artifact</code> event.</li>
+  <li>Keep artifacts self-contained: inline CSS, no external network
+      resources — renderers sandbox them (no outbound net, no storage,
+      no parent DOM).</li>
+  <li><code>template.html</code> beside this skill is a minimal
+      reviewable-plan layout: title, sections, and an annotation block at
+      the bottom. Copy and adapt it.</li>
+</ol>
+</section>
+
+<section>
+<h2>Annotation round-trip (state.json)</h2>
+<p>An artifact is a two-way surface. When the human should review it:</p>
+<ol>
+  <li>Emit the artifact from <code>template.html</code> (or include an
+      equivalent <code>&lt;section id="annotations"&gt;</code> block).</li>
+  <li>Tell the human the state path:
+      <code>.sunmao/artifacts/{name}.state.json</code>.</li>
+  <li>Annotations arrive as JSON — from the GUI island, the
+      <code>/annotate</code> command, or a hand edit:</li>
+</ol>
+<pre>{
+  "annotations": [
+    {"section": "rollout", "note": "stage 2 first", "at": "2026-09-30"}
+  ]
+}</pre>
+<ol start="4">
+  <li>On the next turn, <code>Read</code> the state file if it exists and
+      fold the notes into the revision. Re-emit the artifact with another
+      <code>HtmlArtifact</code> call (same name overwrites → a new
+      version). Mark handled notes <code>"resolved": true</code> — never
+      delete them.</li>
+</ol>
+</section>
+
+<section>
+<h2>Rules</h2>
+<table>
+  <tr><th>Do</th><th>Never</th></tr>
+  <tr><td>plain files only</td><td>external CDNs, fonts, images</td></tr>
+  <tr><td>self-contained HTML</td><td>scripts that reach out of the sandbox</td></tr>
+  <tr><td>append annotations</td><td>delete or rewrite note history</td></tr>
+</table>
+<div class="rule">The artifact is the shared document; state.json is the
+margin. Both stay plain files — no server, no database.</div>
+</section>
+
+</body>
+</html>

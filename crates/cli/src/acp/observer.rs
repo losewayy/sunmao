@@ -144,7 +144,12 @@ impl sunmao_core::approval::Approver for AcpApprover {
                 ),
             ],
         )
-        .description(detail.to_string());
+        // the client sees what gets granted: "Allow for this session"
+        // covers this exact tool+specifier for the rest of the session —
+        // without it the user can't tell what they just approved.
+        .description(format!(
+            "{detail}\n\nsession grant would cover: {tool}: {detail}"
+        ));
         match self.cx.send_request(req).block_task().await {
             Ok(resp) => match resp.outcome {
                 v2::RequestPermissionOutcome::Selected(ref s)

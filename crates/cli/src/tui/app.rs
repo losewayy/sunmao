@@ -450,6 +450,22 @@ impl App {
 
     pub fn toggle_fold(&mut self) {
         self.ensure_selection();
+        if self
+            .blocks
+            .get(self.selected)
+            .is_some_and(|b| b.kind == BlockKind::StepSummary)
+        {
+            // expanding a step summary splices its folded blocks back where
+            // it sat — one-way by design, close_turn refolds if still over
+            // the cap.
+            let mut summary = self.blocks.remove(self.selected);
+            let mut tail = self.blocks.split_off(self.selected);
+            self.blocks.append(&mut summary.folded);
+            self.blocks.append(&mut tail);
+            self.render_cache.clear();
+            self.ensure_selection();
+            return;
+        }
         if let Some(b) = self.blocks.get_mut(self.selected) {
             b.collapsed = !b.collapsed;
             b.gen += 1;

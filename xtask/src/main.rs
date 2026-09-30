@@ -1,10 +1,12 @@
 //! xtask arch — the architecture gate. `CODE-ARCHITECTURE.md` is prose; this
-//! binary is what actually stops a violation from landing. Three checks:
+//! binary is what actually stops a violation from landing. Four checks:
 //!
 //!   god files   — a source file past the line budget gets split
 //!   layers      — llm may not know core/cli; core may not know the cli exists
 //!   prose       — long prose-ish string literals belong in assets/*.md|txt,
 //!                 not `.rs` code (cold-plug rule 6)
+//!   tokens      — serve/assets/app.css + index.html consume design tokens;
+//!                 raw colors/durations/radii live in tokens.css only
 //!
 //! `#[cfg(test)]` modules are exempt — tests carry fixtures and diagnostics
 //! that would trip every rule by design.
@@ -40,6 +42,7 @@ fn main() {
         check_prose(file, &root, &mut violations);
     }
     check_mirrors(&root, &mut violations);
+    check_design_tokens(&root, &mut violations);
 
     if violations.is_empty() {
         println!("arch gate: clean ({} files checked)", rs_files.len());
@@ -318,6 +321,162 @@ fn looks_like_wire(lit: &str) -> bool {
 /// silently drift). No mirrored pairs today — re-add blocks as bundles
 /// need them.
 fn check_mirrors(_root: &Path, _violations: &mut Vec<String>) {}
+
+/// Rule: design tokens (DESIGN-SYSTEM.md §10). `tokens.css` is the only file
+/// allowed to carry raw values; `app.css` and `index.html` consume `var(--*)`
+/// tokens, and every referenced token must resolve. Lines carrying a
+/// `/* token-exempt: … */` trailer opt out individually.
+fn check_design_tokens(root: &Path, violations: &mut Vec<String>) {
+    use regex::Regex;
+    let dir = root.join("crates/cli/src/serve/assets");
+    let Ok(app_css) = std::fs::read_to_string(dir.join("app.css")) else {
+        violations.push("design token: app.css missing".to_string());
+        return;
+    };
+    let Ok(index_html) = std::fs::read_to_string(dir.join("index.html")) else {
+        violations.push("design token: index.html missing".to_string());
+        return;
+    };
+    let tokens_css = std::fs::read_to_string(dir.join("tokens.css")).unwrap_or_default();
+
+    // ---- app.css: banned raw values -------------------------------------
+    let comment = Regex::new(r"(?s)/\*.*?\*/").unwrap();
+    // strip comments file-wide but keep newlines so line numbers survive
+    let strip = |text: &str| -> String {
+        comment
+            .replace_all(text, |m: &regex::Captures| {
+                m[0].chars()
+                    .map(|c| if c == '\n' { '\n' } else { ' ' })
+                    .collect::<String>()
+            })
+            .into_owned()
+    };
+    let app_clean = strip(&app_css);
+    let checks: &[(&str, &str)] = &[
+        (r"#[0-9a-fA-F]{3,8}\b", "raw color; use a --c-* token"),
+        (
+            r"\brgba?\(\s*\d|\bhsla?\(",
+            "raw color fn; use a --c-* token",
+        ),
+        (r"cubic-bezier\(", "raw curve; use an --ease-* token"),
+        (
+            r"font(-size)?:[^;]*\b\d+(\.\d+)?px",
+            "raw font size/height px; use --fs-* and --lh-*",
+        ),
+        (
+            r"border-radius:[^;]*\b[1-9]\d*(\.\d+)?px|border-radius:\s*50%",
+            "raw radius; use an --r-* token",
+        ),
+        (r"z-index:\s*-?\d", "raw z-index; use a --z-* token"),
+        (
+            r"\[data-theme=",
+            "theme fork; values belong in tokens.css [data-theme]",
+        ),
+        (r"@keyframes", "keyframes live in tokens.css only"),
+    ];
+    let duration = Regex::new(r"\b\d*\.?\d+m?s\b").unwrap();
+    let ease_kw = Regex::new(r"\b(ease|ease-in|ease-out|ease-in-out)\b").unwrap();
+    let var_ref = Regex::new(r"var\(\s*--[a-zA-Z0-9_-]+").unwrap();
+    for (line_no, line) in app_css.lines().enumerate() {
+        if line.contains("token-exempt") {
+            continue;
+        }
+        let clean = app_clean.lines().nth(line_no).unwrap_or("");
+        for (pat, msg) in checks {
+            if Regex::new(pat).unwrap().is_match(clean) {
+                violations.push(format!("design token: app.css:{} — {msg}", line_no + 1));
+            }
+        }
+        // durations + ease keywords can hide inside var() args; blank them first
+        let novar = var_ref.replace_all(clean, "");
+        for m in duration.find_iter(&novar) {
+            if m.as_str() != "0s" {
+                violations.push(format!(
+                    "design token: app.css:{} — raw duration {}; use a --dur-*/--loop-*/--hold-* token",
+                    line_no + 1,
+                    m.as_str()
+                ));
+            }
+        }
+        for m in ease_kw.find_iter(&novar) {
+            violations.push(format!(
+                "design token: app.css:{} — raw easing keyword {}; use an --ease-* token",
+                line_no + 1,
+                m.as_str()
+            ));
+        }
+    }
+
+    // ---- index.html: no <style>, no style="…color/ms", no JS literals ----
+    if index_html.contains("<style") {
+        violations.push(
+            "design token: index.html — <style> block; styles live in tokens.css/app.css"
+                .to_string(),
+        );
+    }
+    let style_attr = Regex::new(r#"style="([^"]*)""#).unwrap();
+    let attr_bad = Regex::new(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(|\d*\.?\d+m?s\b").unwrap();
+    for (line_no, line) in index_html.lines().enumerate() {
+        for m in style_attr.captures_iter(line) {
+            let val = &m[1];
+            if val.trim_start().starts_with("--") {
+                continue; // local custom property (--_c etc.) is not a raw value
+            }
+            if attr_bad.is_match(val) {
+                violations.push(format!(
+                    "design token: index.html:{} — style= attribute carries color/duration; use tokens",
+                    line_no + 1
+                ));
+            }
+        }
+    }
+    let script_lit =
+        Regex::new(r"cubic-bezier\(|duration\s*:\s*\d|setTimeout\([^)]*,\s*\d{3,}\)").unwrap();
+    for (line_no, line) in index_html.lines().enumerate() {
+        for m in script_lit.find_iter(line) {
+            violations.push(format!(
+                "design token: index.html:{} — raw timing {} in script; go through the motion bridge",
+                line_no + 1,
+                m.as_str()
+            ));
+        }
+    }
+
+    // ---- var() resolution: every reference must be defined ---------------
+    let def_re = Regex::new(r"(--[a-zA-Z0-9_-]+)\s*:").unwrap();
+    let ref_re = Regex::new(r"var\(\s*(--[a-zA-Z0-9_-]+)").unwrap();
+    let setprop_re = Regex::new(r#"setProperty\(\s*['"](--[a-zA-Z0-9_-]+)"#).unwrap();
+    let defined: std::collections::HashSet<String> = def_re
+        .captures_iter(&tokens_css)
+        .map(|c| c[1].to_string())
+        .chain(
+            setprop_re
+                .captures_iter(&index_html)
+                .map(|c| c[1].to_string()),
+        )
+        .collect();
+    let defined_app: std::collections::HashSet<String> = def_re
+        .captures_iter(&app_css)
+        .map(|c| c[1].to_string())
+        .collect();
+    for (name, text) in [("tokens.css", &tokens_css), ("app.css", &app_css)] {
+        let stripped = strip(text);
+        for (line_no, line) in stripped.lines().enumerate() {
+            for m in ref_re.captures_iter(line) {
+                let tok = &m[1];
+                if tok.starts_with("--_") {
+                    continue; // component-local custom property
+                }
+                if !defined.contains(tok) && !(name == "app.css" && defined_app.contains(tok)) {
+                    violations.push(format!(
+                        "design token: {name}:{} — var({tok}) has no definition in tokens.css or apply()",
+                        line_no + 1
+                    ));
+                }
+            }
+        }
+    }
+}
 
 fn rel(p: &Path, root: &Path) -> String {
     p.strip_prefix(root)

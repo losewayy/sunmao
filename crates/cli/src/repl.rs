@@ -108,7 +108,7 @@ pub async fn run(
                 }
                 "help" | "h" | "?" => {
                     println!(
-                        "commands — /compact · /model [sel] · /resume [id] · /sessions · /tasks · /help · /quit\n\
+                        "commands — /compact · /model [sel] · /resume [id] · /sessions · /tasks · /artifacts · /help · /quit\n\
                          `!cmd` runs locally; /name resolves .sunmao/commands + .claude/commands"
                     );
                     continue;
@@ -158,6 +158,10 @@ pub async fn run(
                             println!("  {status:<7} {}{} — {}", t.id, agent_name, t.prompt);
                         }
                     }
+                    continue;
+                }
+                "artifacts" => {
+                    println!("{}", crate::tui::slash::artifacts_text(cwd));
                     continue;
                 }
                 "resume" => {

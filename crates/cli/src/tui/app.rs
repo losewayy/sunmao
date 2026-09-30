@@ -132,7 +132,7 @@ pub struct Viewer {
 const HELP_TEXT: &str = "keys — Tab browse blocks · Enter expand · e fold · y copy · \
 g/G ends · ! bash · / commands · Esc×2 stash draft · Ctrl+S restore · \
 Ctrl+A/E/U/W line edit · Ctrl-C cancel, ×2 quits
-commands — /compact · /model · /multiline · /clear · /resume [id] · /tasks · /help · /quit · \
+commands — /compact · /model · /multiline · /clear · /resume [id] · /tasks · /artifacts · /help · /quit · \
 + every *.md in .sunmao/commands, .claude/commands, plugins/*/commands";
 
 /// One cached transcript entry: the block's `gen` and the width/selection
@@ -161,6 +161,8 @@ pub enum Submit {
     Model(Option<String>),
     /// /tasks — the live sub-agent roster
     Tasks,
+    /// /artifacts — the .sunmao/artifacts listing
+    Artifacts,
 }
 
 impl App {
@@ -403,6 +405,8 @@ impl App {
                     }
                     // /tasks — the live sub-agent roster, driver-side too
                     "tasks" => Submit::Tasks,
+                    // /artifacts — .sunmao/artifacts listing, driver-side
+                    "artifacts" => Submit::Artifacts,
                     // file commands resolve in the driver (needs cwd)
                     _ => Submit::Turn(format!("/{cmd_line}")),
                 }

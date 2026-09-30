@@ -16,7 +16,7 @@ async fn error_path_still_emits_turn_end() {
         builtin_registry(),
         std::env::temp_dir(),
     ));
-    let agent = AgentLoop::new(ctx);
+    let agent = AgentLoop::new(ctx.clone());
     let rec = RecObserver(std::sync::Mutex::new(Vec::new()));
     let res = agent.run_turn("hi", &rec).await;
     assert!(res.is_err(), "stream failure must propagate");
@@ -25,6 +25,64 @@ async fn error_path_still_emits_turn_end() {
         events.iter().any(|t| t.starts_with("TurnEnd:Other")),
         "frontends need TurnEnd even on error — got {events:?}"
     );
+    // the flag can't strand the next turn either — reset happens at
+    // run_turn's tail, not the driver's success tail
+    assert!(
+        !ctx.cancelled.load(std::sync::atomic::Ordering::Relaxed),
+        "cancelled must reset on every exit"
+    );
+}
+
+/// A UserPromptSubmit veto returns early from run_turn_inner — it must
+/// still emit TurnEnd (frontends unwind busy state from it) and reset
+/// cancelled, or the TUI hangs with the queue permanently off by one.
+#[tokio::test]
+async fn hook_veto_still_emits_turn_end() {
+    let dir = crate::fresh_test_dir("veto");
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    std::fs::write(
+        dir.join("reply.json"),
+        r#"{"continue":false,"stopReason":"vetoed"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join(".sunmao/hooks.json"),
+        r#"{"hooks":{"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat reply.json"}]}]}}"#,
+    )
+    .unwrap();
+    let provider = Arc::new(MockProvider {
+        responses: std::sync::Mutex::new(std::collections::VecDeque::new()),
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let ctx = Arc::new(Context::new(
+        provider.clone(),
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        dir.clone(),
+    ));
+    let agent = AgentLoop::new(ctx.clone());
+    let rec = RecObserver(std::sync::Mutex::new(Vec::new()));
+    let outcome = agent.run_turn("hi", &rec).await.unwrap();
+    assert!(
+        matches!(outcome, TurnOutcome::Other(ref s) if s.contains("vetoed")),
+        "expected veto, got {outcome:?}"
+    );
+    let events = rec.0.lock().unwrap();
+    assert_eq!(
+        events.iter().filter(|t| t.starts_with("TurnEnd")).count(),
+        1,
+        "exactly one TurnEnd — got {events:?}"
+    );
+    assert!(
+        !ctx.cancelled.load(std::sync::atomic::Ordering::Relaxed),
+        "cancelled must reset even on the veto early-return"
+    );
+    assert_eq!(
+        provider.calls.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "vetoed turn never reaches the provider"
+    );
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[tokio::test]
@@ -146,8 +204,24 @@ async fn malformed_tool_args_become_failed_result() {
         std::env::temp_dir(),
     ));
     let agent = AgentLoop::new(ctx.clone());
-    let outcome = agent.run_turn("list", &NullObserver).await.unwrap();
+    let rec = RecObserver(std::sync::Mutex::new(Vec::new()));
+    let outcome = agent.run_turn("list", &rec).await.unwrap();
     assert!(matches!(outcome, TurnOutcome::Completed));
+    // the malformed call still surfaces on the live stream — transcript
+    // parity with replay (which renders it from the ToolCall/ToolResult pair)
+    {
+        let events = rec.0.lock().unwrap();
+        assert_eq!(
+            events.iter().filter(|t| *t == "ToolStart").count(),
+            1,
+            "malformed call must emit ToolStart — got {events:?}"
+        );
+        assert_eq!(
+            events.iter().filter(|t| *t == "ToolDone").count(),
+            1,
+            "malformed call must emit ToolDone — got {events:?}"
+        );
+    }
     // two provider calls: the model got the failure fed back
     assert_eq!(provider.calls.load(std::sync::atomic::Ordering::Relaxed), 2);
     let msgs = ctx.sessions.lock().await.messages().await.unwrap();

@@ -71,7 +71,9 @@ impl App {
     }
 
     /// Turn ended: close open streaming blocks; a tool still marked running
-    /// never got its ToolDone — call it interrupted.
+    /// never got its ToolDone — call it interrupted. Then fold-by-cap: a
+    /// long turn's earlier steps compress into one StepSummary row so the
+    /// tail stays readable (`e` on it splices the steps back).
     pub fn close_turn(&mut self) {
         for b in &mut self.blocks {
             if b.open {
@@ -84,6 +86,76 @@ impl App {
         }
         self.busy = false;
         self.busy_since = None;
+        self.fold_turn();
+    }
+
+    /// Keep the last TURN_CAP steps of the current turn visible; older ones
+    /// move into a StepSummary block where the first folded step sat.
+    /// Audit/note rows interleaved in the range stay — spine, not steps.
+    fn fold_turn(&mut self) {
+        /// Steps are the turn's working blocks — a user band ends the turn,
+        /// notes/audits/summaries aren't counted or collected.
+        fn is_step(b: &Block) -> bool {
+            matches!(
+                b.kind,
+                BlockKind::Assistant | BlockKind::Thinking | BlockKind::Tool
+            )
+        }
+        const TURN_CAP: usize = 12;
+
+        let turn_start = self
+            .blocks
+            .iter()
+            .rposition(|b| b.kind == BlockKind::User)
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let foldable: Vec<usize> = (turn_start..self.blocks.len())
+            .filter(|&i| is_step(&self.blocks[i]))
+            .collect();
+        if foldable.len() <= TURN_CAP {
+            return;
+        }
+        let fold_set: std::collections::HashSet<usize> = foldable[..foldable.len() - TURN_CAP]
+            .iter()
+            .copied()
+            .collect();
+
+        // keep the scrollback selection pointing at the same content:
+        // a folded block selects the summary, a kept one shifts down.
+        let sel = self.selected;
+        let sel_folded = fold_set.contains(&sel);
+        let removed_before = fold_set.iter().filter(|i| **i < sel).count();
+
+        let old = std::mem::take(&mut self.blocks);
+        let mut new_blocks = Vec::with_capacity(old.len() + 1);
+        let mut folded = Vec::with_capacity(fold_set.len());
+        let mut pos = None;
+        for (i, b) in old.into_iter().enumerate() {
+            if fold_set.contains(&i) {
+                if pos.is_none() {
+                    pos = Some(new_blocks.len());
+                }
+                folded.push(b);
+            } else {
+                new_blocks.push(b);
+            }
+        }
+        let pos = pos.expect("fold_set is non-empty");
+        let mut summary = Block::new(BlockKind::StepSummary);
+        summary.text = Self::fold_summary(&folded);
+        summary.folded = folded;
+        new_blocks.insert(pos, summary);
+        self.blocks = new_blocks;
+        self.render_cache.clear();
+        self.selected = if sel_folded {
+            pos
+        } else if sel > pos {
+            // the inserted summary restores one slot before sel
+            sel - removed_before + 1
+        } else {
+            sel
+        };
+        self.ensure_selection();
     }
 
     pub fn push_note(&mut self, note: &str) {
@@ -206,6 +278,31 @@ impl App {
             }
         }
         self.close_turn(); // dangling tools → interrupted; busy=false
+    }
+
+    /// Summary line for a folded run: "N tool calls · M thinking folded".
+    fn fold_summary(folded: &[Block]) -> String {
+        let mut tools = 0usize;
+        let mut thinking = 0usize;
+        let mut msgs = 0usize;
+        for b in folded {
+            match b.kind {
+                BlockKind::Tool => tools += 1,
+                BlockKind::Thinking => thinking += 1,
+                _ => msgs += 1,
+            }
+        }
+        let mut parts = Vec::new();
+        if tools > 0 {
+            parts.push(format!("{tools} tool calls"));
+        }
+        if thinking > 0 {
+            parts.push(format!("{thinking} thinking"));
+        }
+        if msgs > 0 {
+            parts.push(format!("{msgs} messages"));
+        }
+        format!("{} folded", parts.join(" · "))
     }
 
     // ── scroll helpers ───────────────────────────────────────────────────

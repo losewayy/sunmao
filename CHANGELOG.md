@@ -189,6 +189,13 @@ TUI.
   gain the reverse-RPC rule: `Approve for session` auto-resolves queued
   identical (tool, specifier) requests instead of re-asking what the
   user just answered
+- **turn fold-by-cap** — a turn's working steps over `TURN_CAP` (12)
+  compress into a `StepSummary` row ("5 tool calls folded — e to expand")
+  at the position the fold began; audit/note lines interleaved in the
+  range stay in place (spine, not steps), the scrollback selection remaps
+  onto the summary or its shifted block, and `e` splices the folded
+  steps back one-way — `close_turn` refolds on the next over-cap turn.
+  Long `--resume` transcripts get the same treatment on replay
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

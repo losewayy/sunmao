@@ -231,3 +231,101 @@ fn session_grant_auto_resolves_identical_queued_cards() {
     assert_eq!(app.approval.as_ref().unwrap().tool, "Write");
     let _ = tx;
 }
+
+/// A turn over the cap folds earlier steps into one StepSummary row —
+/// audit/note lines interleaved in the folded range stay in place, and
+/// `e` (toggle_fold) splices the steps back where they were.
+#[test]
+fn fold_by_cap_compresses_old_steps_and_e_restores() {
+    use super::blocks::BlockKind;
+    let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+    let banner_len = app.blocks.len(); // startup note
+    app.echo_user("do the thing");
+    // alternate names so verb-grouping doesn't merge them into one block
+    for i in 0..15 {
+        let name = if i % 2 == 0 { "Read" } else { "Bash" };
+        app.tool_start(name, &format!("f{i}.rs"), 0, 0);
+        app.tool_done(name, true, "ok", 0, 0);
+        if i == 7 {
+            app.push_audit("grant — Bash session");
+        }
+    }
+    app.stream(BlockKind::Assistant, "done");
+    app.stream(BlockKind::Thinking, "hmm");
+    let unfolded = app.blocks.len();
+    app.close_turn();
+
+    // 17 steps > CAP 12 → 5 earliest tools folded into a StepSummary;
+    // the audit row sat between folded steps and survives in place.
+    let summaries: Vec<usize> = app
+        .blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| (b.kind == BlockKind::StepSummary).then_some(i))
+        .collect();
+    assert_eq!(summaries.len(), 1);
+    let pos = summaries[0];
+    assert_eq!(pos, banner_len + 1, "summary sits where the fold began");
+    assert_eq!(app.blocks[pos].folded.len(), 5);
+    assert_eq!(app.blocks[pos].text, "5 tool calls folded");
+    assert_eq!(
+        app.blocks
+            .iter()
+            .filter(|b| b.kind == BlockKind::Tool)
+            .count(),
+        10
+    );
+    assert!(app.blocks.iter().any(|b| b.kind == BlockKind::Audit));
+    assert_eq!(app.blocks.len(), unfolded - 5 + 1);
+
+    // e expands: summary is replaced by its folded steps in order.
+    app.selected = pos;
+    app.toggle_fold();
+    assert!(app.blocks.iter().all(|b| b.kind != BlockKind::StepSummary));
+    assert_eq!(app.blocks.len(), unfolded);
+    assert_eq!(app.blocks[pos].kind, BlockKind::Tool);
+    let t = app.blocks[pos].tool.as_ref().unwrap();
+    assert_eq!(t.summary, "f0.rs");
+}
+
+/// Scrolling while a turn folds keeps the selection on the same block —
+/// a folded-away selection lands on the summary, a kept one shifts by
+/// (removed − 1 for the summary row itself).
+#[test]
+fn fold_by_cap_remaps_selection() {
+    use super::blocks::BlockKind;
+    let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+    app.echo_user("q");
+    for i in 0..20 {
+        let name = if i % 2 == 0 { "Read" } else { "Bash" };
+        app.tool_start(name, &format!("f{i}.rs"), 0, 0);
+        app.tool_done(name, true, "ok", 0, 0);
+    }
+    // last tool block stays selected through the fold
+    app.selected = app.blocks.len() - 1;
+    app.close_turn();
+    // 20 steps, 8 folded + summary at index 2; old tail index was 21,
+    // → 21 - 8 + 1 = 14 and it must still be f19
+    assert_eq!(app.blocks[app.selected].kind, BlockKind::Tool);
+    assert_eq!(
+        app.blocks[app.selected].tool.as_ref().unwrap().summary,
+        "f19.rs"
+    );
+}
+
+/// A short turn folds nothing — cap is strictly "more than TURN_CAP".
+#[test]
+fn fold_by_cap_leaves_short_turns_alone() {
+    use super::blocks::BlockKind;
+    let mut app = App::new("m", std::path::PathBuf::from("."), "s-test");
+    app.echo_user("q");
+    for i in 0..5 {
+        let name = if i % 2 == 0 { "Read" } else { "Bash" };
+        app.tool_start(name, &format!("f{i}.rs"), 0, 0);
+        app.tool_done(name, true, "ok", 0, 0);
+    }
+    let len = app.blocks.len();
+    app.close_turn();
+    assert_eq!(app.blocks.len(), len);
+    assert!(app.blocks.iter().all(|b| b.kind != BlockKind::StepSummary));
+}

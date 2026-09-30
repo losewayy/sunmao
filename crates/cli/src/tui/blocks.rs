@@ -21,6 +21,10 @@ pub enum BlockKind {
     Thinking,
     /// One tool invocation: header + arg digest + output preview panel
     Tool,
+    /// A turn's earlier steps compressed into one count summary —
+    /// fold-by-cap keeps the last N content blocks visible, the rest land
+    /// here (`folded` holds them for `e` expansion).
+    StepSummary,
     /// Audit fact — hook rewrite/veto/injection, session grant. The
     /// audit-native spine made visible (⚙ line, warn-colored).
     Audit,
@@ -63,6 +67,9 @@ pub struct Block {
     pub tool: Option<ToolBlock>,
     /// Collapsed shows the first line + a fold hint.
     pub collapsed: bool,
+    /// StepSummary blocks store the compressed steps here — `e` splices
+    /// them back into the transcript (App-level, positions shift).
+    pub folded: Vec<Block>,
     /// A streaming block accepts appended chunks until the turn ends.
     pub open: bool,
     /// bumped on every content mutation — the transcript render cache keys
@@ -83,6 +90,7 @@ impl Block {
             text: String::new(),
             tool: None,
             collapsed: matches!(kind, BlockKind::Thinking),
+            folded: Vec::new(),
             open: matches!(kind, BlockKind::Assistant | BlockKind::Thinking),
             gen: 0,
         }
@@ -161,6 +169,7 @@ impl Block {
                 BlockKind::Assistant => self.render_assistant(),
                 BlockKind::Thinking => self.render_plain("◌ ", Style::default().fg(THEME.thinking)),
                 BlockKind::Tool => self.render_tool(width),
+                BlockKind::StepSummary => self.render_step_summary(),
                 BlockKind::Audit => {
                     self.render_plain(theme::audit_glyph(), Style::default().fg(THEME.warn))
                 }
@@ -285,6 +294,22 @@ impl Block {
         out
     }
 
+    /// Folded-steps summary: one dim line counting what got compressed.
+    /// Expanded state is handled at the App level (blocks spliced back), so
+    /// this render only ever shows the collapsed summary line.
+    fn render_step_summary(&self) -> Vec<Line<'static>> {
+        vec![Line::from(vec![
+            Span::styled("▶ ", Style::default().fg(THEME.faint)),
+            Span::styled(self.text.clone(), Style::default().fg(THEME.faint)),
+            Span::styled(
+                "  — e to expand",
+                Style::default()
+                    .fg(THEME.faint)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+        ])]
+    }
+
     /// Tool block: `✓ Name digest` header (verb-grouped runs show `×N`),
     /// then a dim output panel capped at PREVIEW_LINES.
     fn render_tool(&self, width: usize) -> Vec<Line<'static>> {
@@ -360,8 +385,17 @@ impl Block {
         out
     }
 
-    /// Plain text for OSC52 copy — tool blocks copy header + full output.
+    /// Plain text for OSC52 copy — tool blocks copy header + full output,
+    /// a StepSummary copies everything it folded away.
     pub fn copy_text(&self) -> String {
+        if self.kind == BlockKind::StepSummary && !self.folded.is_empty() {
+            return self
+                .folded
+                .iter()
+                .map(|b| b.copy_text())
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
         match &self.tool {
             Some(t) => format!("{} {}\n{}", t.name, t.summary, t.output),
             None => self.text.clone(),

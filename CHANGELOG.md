@@ -146,6 +146,14 @@ TUI.
   the roster). Drift fixes: jobs dir files, `--dataflow` spelling,
   §7/§8 stale text, test counts, ARCHITECTURE's merge claim, stale
   file-header comments
+- **audit gaps closed, dead seam cut** — deny verdicts and hook blocks
+  now write `SessionEvent::Hook` facts (`approval.deny`,
+  `PreToolUse.block`) like grants and rewrites always did; `Stop` only
+  fires on `Completed` while `StopFailure` covers every other outcome
+  (they used to double-fire). `ctx.audit`'s never-called `AuditLog`
+  deleted — the session log is the audit ledger; a parallel in-memory
+  one was speculative duplication. `turn.rs` split at its seam: the
+  dispatch gate (rules → grants → classifier → ask) is `agent/gate.rs`
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

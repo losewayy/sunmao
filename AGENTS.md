@@ -124,7 +124,7 @@ live in [`docs/CODE-ARCHITECTURE.md`](docs/CODE-ARCHITECTURE.md). Follow them.
 
 | Looking for | File |
 |---|---|
-| tool-call dispatch loop | `crates/core/src/agent.rs` |
+| tool-call dispatch loop | `crates/core/src/agent/` — `mod.rs` orchestration, `turn.rs` per-turn loop, `tests/` fixtures |
 | session event fold | `crates/core/src/session.rs` |
 | permission rules | `crates/core/src/permissions.rs` |
 | approval seam | `crates/core/src/approval.rs` |

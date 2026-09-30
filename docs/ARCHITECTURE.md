@@ -16,7 +16,7 @@ sunmao       crates/cli/   every user-facing surface
 
 ```text
 stdin/TUI/ACP
-  └─ AgentLoop::run_turn(prompt, observer)            core/agent.rs
+  └─ AgentLoop::run_turn(prompt, observer)            core/agent/turn.rs
        ├─ ctx.hooks.fire(UserPromptSubmit)            core/hooks.rs
        ├─ ctx.sessions.messages()                     core/session.rs
        │     └─ fold SessionEvent[] → Message[]       (file or in-mem)
@@ -62,7 +62,7 @@ shell.rs   Bash (deno_task_shell — POSIX on Windows) + JobOutput (jobs are
 search.rs  Glob (200-entry cap) + Grep (managed rg child, no shell)
 artifact.rs HtmlArtifact — emits durable Artifact session facts
 webmod.rs  WebFetch — naive tag-strip → readable text, ~24KB cap
-task.rs    Task — nested AgentLoop, depth-capped at 2, own session log,
+task.rs     Task — nested AgentLoop, depth-capped at 2, own session log,
            subagent_type selects .claude/agents/*.md definitions; defs carry
            model:/tools:/spawns: frontmatter (route the adapter, trim the
            registry, whitelist what the child may itself spawn);

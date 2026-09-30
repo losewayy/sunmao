@@ -212,8 +212,8 @@
       end-to-end, then maps the subsystem seams that make it swappable.
     </p>
     <div class="meta">
-      <span class="pill">source · <b>docs/ARCHITECTURE.md</b>, <b>crates/core/src/agent.rs</b></span>
-      <span class="pill">kernel · <b>~3.6k LOC</b> in crates/core · <b>~8.2k</b> workspace</span>
+      <span class="pill">source · <b>docs/ARCHITECTURE.md</b>, <b>crates/core/src/agent/</b></span>
+      <span class="pill">kernel · <b>~6.3k LOC</b> in crates/core · <b>~10k</b> workspace</span>
       <span class="pill">status · <b>v0.2 in-tree</b></span>
       <span class="pill">loop ceiling · <b>64 iterations / turn</b></span>
       <span class="pill">compaction · <b>bytes/4 &gt; 180_000</b></span>
@@ -465,7 +465,7 @@
             <td class="name">hooks<span>兼容宣称的全部根据</span></td>
             <td>Lifecycle event bus over the 10 <code>HookEvent</code> variants (SessionStart, UserPromptSubmit, Pre/PostToolUse, Pre/PostCompact, Stop, SessionEnd, SubagentStart/Stop) with a matcher registry. Hooks are <em>external processes</em>: JSON payload on stdin, JSON decision on stdout, exit-2 veto.</td>
             <td><span class="tag proc">process boundary</span><br><span class="tag conc">concrete</span></td>
-            <td class="paths">core/src/hooks.rs · 622 LOC<br>Loads <code>.sunmao/hooks.json</code> + <code>.claude/settings*.json</code> + plugin bundles unmodified; verified against real rtk / context-mode hook sets — <b>in-tree</b></td>
+            <td class="paths">core/src/hooks.rs · 485 LOC<br>Loads <code>.sunmao/hooks.json</code> + <code>.claude/settings*.json</code> + plugin bundles unmodified; verified against real rtk / context-mode hook sets — <b>in-tree</b></td>
           </tr>
           <tr>
             <td class="name">audit<span>地基层</span></td>
@@ -544,7 +544,7 @@
         <code>Context</code>; a minimal loop, a code-mode loop, or a strict-audit loop are all
         <em>presets</em> — plugin stacking (<code>base → +tui → +acp → +strict-audit</code>),
         not <code>--flag</code> branching.</p>
-        <div class="verdict">file: core/src/agent.rs · 949 LOC · "swap the loop, swap the product"</div>
+        <div class="verdict">file: core/src/agent/ · mod 315 + turn 511 LOC · "swap the loop, swap the product"</div>
       </div>
 
       <div class="seam s-data">
@@ -555,7 +555,7 @@
         arguments before they are logged, <code>permissionDecision</code> hands the gate a verdict.
         Both ends are public to <code>ctx.audit</code> and <code>ctx.hooks</code>, so policy and
         telemetry attach without the tool layer knowing they exist.</p>
-        <div class="verdict">file: core/src/agent.rs steps 10–13 · the wiring is in the loop, not the tools</div>
+        <div class="verdict">file: core/src/agent/turn.rs steps 10–13 · the wiring is in the loop, not the tools</div>
       </div>
     </div>
 

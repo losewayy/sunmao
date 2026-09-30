@@ -153,11 +153,13 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
         cli.cwd.join(".sunmao/plugins"),
         cli.cwd.join(".claude/plugins"),
     ] {
-        if let Ok(entries) = std::fs::read_dir(&base) {
-            for e in entries.flatten() {
-                if e.path().is_dir() {
-                    manifests.push(e.path().join("plugin.json"));
-                }
+        let mut plugins: Vec<_> = std::fs::read_dir(&base)
+            .map(|rd| rd.flatten().map(|p| p.path()).collect())
+            .unwrap_or_default();
+        plugins.sort();
+        for p in plugins {
+            if p.is_dir() {
+                manifests.push(p.join("plugin.json"));
             }
         }
     }

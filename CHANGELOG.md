@@ -112,6 +112,15 @@ TUI.
   `.sunmao/artifacts` on both local frontends, `+notes` flagging state
   sidecars. `acp.rs` split on the seam — `acp/mod.rs` is the wire,
   `acp/observer.rs` the outbound adapters
+- **cache-hit invariants enforced** — the determinism half of prompt
+  caching (the other half — Anthropic breakpoints, normalized
+  `cache_read/creation` usage, the TUI footer's ⚡% dial — landed
+  earlier): `sorted_entries` puts every wire-facing `read_dir` in path
+  order — skills index, agent defs, hook/plugin/extension/command
+  manifests, loop-driver resolution. `read_dir` order is
+  filesystem-dependent; unsorted, it rewrites the serialized prefix and
+  silently kills provider cache hits. Regression test pins the skills
+  index to path order
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

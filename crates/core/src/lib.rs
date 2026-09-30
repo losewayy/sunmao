@@ -27,6 +27,20 @@ pub use context::Context;
 pub use session::{SessionEvent, SessionLog};
 pub use tool::{ToolRegistry, ToolResult};
 
+/// Directory enumeration in **sorted path order** — `read_dir` order is
+/// filesystem-dependent, and every scan that feeds the serialized request
+/// (skills index, agent defs, hook/plugin/extension manifests, command
+/// files) would otherwise churn the prompt/tools prefix and defeat
+/// provider-side prompt caching. Deterministic enumeration is a
+/// cache-hit invariant: apply it anywhere the order reaches the wire.
+pub(crate) fn sorted_entries(dir: &std::path::Path) -> Vec<std::fs::DirEntry> {
+    let mut v: Vec<_> = std::fs::read_dir(dir)
+        .map(|rd| rd.flatten().collect())
+        .unwrap_or_default();
+    v.sort_by_key(|e| e.path());
+    v
+}
+
 /// pid-keyed temp dirs recycle (Windows PIDs wrap fast) — a second test run
 /// landing on a recycled pid inherited leftover files and flaked. Nanos makes
 /// each caller's scratch dir unique. Test-only; production code keeps its own

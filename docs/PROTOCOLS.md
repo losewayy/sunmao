@@ -42,6 +42,29 @@ SSE events:
 | `content_block_delta` (input_json_delta) | `ToolCallFragment{arguments}` |
 | `message_delta` (stop_reason) | `Finish` |
 
+## Prompt caching (every dialect)
+
+Cache hits are a **wire contract**: providers cache a request's leading
+prefix, so any byte that moves breaks the hit downstream of it.
+
+- **Anthropic** — explicit breakpoints (`cache_control: ephemeral`) on
+  three seams: the `system` block, the last `tools` entry (caches
+  system+tools as one prefix), and the last message's last block (rolling
+  breakpoint — next turn pays only for new messages). `Usage` reads
+  `cache_read_input_tokens` / `cache_creation_input_tokens` from
+  `message_start`.
+- **OpenAI-compatible** — automatic server-side prefix caching (OpenAI,
+  DeepSeek `prompt_cache_hit_tokens`, DashScope `cached_tokens`); nothing
+  to send, everything to keep stable. `Usage::deserialize` normalizes all
+  three counter spellings into `cache_read_input_tokens` /
+  `cache_creation_input_tokens`, logged as `SessionEvent::Usage`.
+- **Prefix determinism is ours to keep** — `ToolRegistry` is a `BTreeMap`
+  (declarations serialize in name order) and every `read_dir` that feeds
+  the wire (skills index, agent defs, hook/plugin/extension/command
+  manifests) goes through `sorted_entries` — `read_dir` order is
+  filesystem-dependent and would churn the prefix across runs. New scans
+  that reach the request body must sort too.
+
 ## MCP client (`crates/core/src/mcp.rs`, rmcp 3.5)
 
 Two transports from one `ServerSpec`:

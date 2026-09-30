@@ -78,13 +78,11 @@ pub(crate) fn plugin_manifests(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<(Path
         cwd.join(".sunmao").join("plugins"),
         cwd.join(".claude").join("plugins"),
     ] {
-        if let Ok(entries) = std::fs::read_dir(&base) {
-            for entry in entries.flatten() {
-                let root = entry.path();
-                let manifest = root.join("plugin.json");
-                if root.is_dir() && manifest.exists() {
-                    manifests.push((manifest, root));
-                }
+        for entry in crate::sorted_entries(&base) {
+            let root = entry.path();
+            let manifest = root.join("plugin.json");
+            if root.is_dir() && manifest.exists() {
+                manifests.push((manifest, root));
             }
         }
     }

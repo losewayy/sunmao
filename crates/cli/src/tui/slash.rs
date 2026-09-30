@@ -68,10 +68,14 @@ fn command_dirs(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<PathBuf> {
         cwd.join(".sunmao/plugin/commands"),
     ];
     for base in [cwd.join(".sunmao/plugins"), cwd.join(".claude/plugins")] {
-        if let Ok(plugins) = std::fs::read_dir(&base) {
-            for p in plugins.flatten() {
-                dirs.push(p.path().join("commands"));
-            }
+        // deterministic enumeration — same rule as core's sorted_entries:
+        // first-hit resolution must not depend on filesystem order
+        let mut plugins: Vec<_> = std::fs::read_dir(&base)
+            .map(|rd| rd.flatten().map(|p| p.path()).collect())
+            .unwrap_or_default();
+        plugins.sort();
+        for p in plugins {
+            dirs.push(p.join("commands"));
         }
     }
     for root in extra_roots {

@@ -238,10 +238,8 @@ fn project_context(cwd: &Path, extra_roots: &[PathBuf]) -> String {
         cwd.join(".sunmao").join("plugins"),
         cwd.join(".claude").join("plugins"),
     ] {
-        if let Ok(plugins) = std::fs::read_dir(&base) {
-            for p in plugins.flatten() {
-                skills_dirs.push(p.path().join("skills"));
-            }
+        for p in crate::sorted_entries(&base) {
+            skills_dirs.push(p.path().join("skills"));
         }
     }
     // ecosystem scan — skills authored for other harnesses load unmodified
@@ -256,10 +254,7 @@ fn project_context(cwd: &Path, extra_roots: &[PathBuf]) -> String {
     }
     let mut lines = Vec::new();
     for skills_dir in skills_dirs {
-        let Ok(entries) = std::fs::read_dir(&skills_dir) else {
-            continue;
-        };
-        for e in entries.flatten() {
+        for e in crate::sorted_entries(&skills_dir) {
             // a skill dir may speak either doc language — SKILL.md (the
             // ecosystem contract) or SKILL.html (the first-class payload:
             // a page for the human, structured text for the agent)
@@ -283,18 +278,14 @@ fn project_context(cwd: &Path, extra_roots: &[PathBuf]) -> String {
                 };
                 // bundled .html resources surface in the index — a template
                 // the agent can copy/Read is discoverable, not invisible
-                let resources = std::fs::read_dir(e.path())
-                    .map(|rd| {
-                        rd.flatten()
-                            .filter(|f| {
-                                let n = f.file_name();
-                                let s = n.to_string_lossy();
-                                s.ends_with(".html") && s != "SKILL.html"
-                            })
-                            .map(|f| f.file_name().to_string_lossy().to_string())
-                            .collect::<Vec<_>>()
+                let resources: Vec<String> = crate::sorted_entries(&e.path())
+                    .into_iter()
+                    .filter(|f| {
+                        let s = f.file_name().to_string_lossy().to_string();
+                        s.ends_with(".html") && s != "SKILL.html"
                     })
-                    .unwrap_or_default();
+                    .map(|f| f.file_name().to_string_lossy().to_string())
+                    .collect();
                 let res_note = if resources.is_empty() {
                     String::new()
                 } else {
@@ -529,5 +520,22 @@ mod tests {
              <title>T</title></head></html>",
         );
         assert_eq!((name.as_str(), desc.as_str()), ("T", "ordered differently"));
+    }
+
+    #[test]
+    fn skills_index_is_path_sorted() {
+        // prompt caching invariant: index order must not follow filesystem
+        // enumeration — create z first so an unsorted scan would list it first
+        let dir = scratch();
+        for name in ["zed", "alpha"] {
+            let sd = dir.join(format!(".sunmao/skills/{name}"));
+            std::fs::create_dir_all(&sd).unwrap();
+            std::fs::write(sd.join("SKILL.md"), format!("name: {name}\ndescription: d")).unwrap();
+        }
+        let s = PromptAssembler::new(&dir).assemble(None);
+        let a = s.find("- alpha").unwrap();
+        let z = s.find("- zed").unwrap();
+        assert!(a < z, "skills index must sort by path");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -243,19 +243,17 @@ impl HookEngine {
             cwd.join(".sunmao").join("plugins"),
             cwd.join(".claude").join("plugins"),
         ] {
-            if let Ok(entries) = std::fs::read_dir(&base) {
-                for entry in entries.flatten() {
-                    let root = entry.path();
-                    if !root.is_dir() {
-                        continue;
-                    }
-                    merge_plugin_manifest(&mut groups, &root.join("plugin.json"), &root);
-                    merge_hooks_file(
-                        &mut groups,
-                        &root.join("hooks").join("hooks.json"),
-                        Some(&root),
-                    );
+            for entry in crate::sorted_entries(&base) {
+                let root = entry.path();
+                if !root.is_dir() {
+                    continue;
                 }
+                merge_plugin_manifest(&mut groups, &root.join("plugin.json"), &root);
+                merge_hooks_file(
+                    &mut groups,
+                    &root.join("hooks").join("hooks.json"),
+                    Some(&root),
+                );
             }
         }
         // preset dirs are plugin bundles too — appended last in CLI layering

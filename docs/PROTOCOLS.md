@@ -208,3 +208,29 @@ export default function (api) {
   never takes the bridge down. Frames are handled serially, so replies
   keep request order and `ext/shutdown` can't exit ahead of a pending
   reply.
+
+#### pi dialect (oh-my-pi / pi-mono compat)
+
+Modules written against pi's `ExtensionAPI` run against a **documented
+subset** — the sidecar normalizes both directions rather than asking
+plugins to learn our names:
+
+- `api.on(pi_name, handler)` accepts pi's snake_case events:
+  `session_start`/`session_shutdown`, `session_before_compact`/
+  `session_compact`, `tool_call`, `tool_result`, `input`,
+  `agent_start`/`agent_end`, `turn_end` → the canonical events.
+  Handlers get **pi-shaped payloads** (`tool_call` sees
+  `{toolName, toolCallId, input, cwd, sessionId}`; `tool_result` adds
+  `result`; `input` sees `{prompt, cwd, sessionId}`); other events get
+  the canonical payload (pi ignores the extra fields).
+- `tool_call` replies: `{block: true, reason}` → our `block` reason;
+  `extra_context`/`additionalContext` and `updatedInput` pass through.
+- `api.registerTool` accepts pi's spec shape `{name, description,
+  parameters, execute}` — `parameters` must be a real JSON schema; a
+  **zod object is warn-and-skip** (call `z.toJSONSchema()` first —
+  pi's zero-dep schema shim is not this host's job). `execute`'s
+  `{content:[{type:"text",text}]}` reply folds to our `{content}`.
+- **Not this host's surface**: `sendMessage`, `registerCommand`,
+  `ui`/renderers, providers, settings, `registerProvider`, timers —
+  a module that needs them is a pi-native plugin, not a sunmao one.
+  Unknown pi event names simply never fire (the honest skip).

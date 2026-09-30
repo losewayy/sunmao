@@ -76,6 +76,14 @@ TUI.
   non-clean outcomes or the Err path, `Notification` when the gate opens
   an approval prompt (advisory — hooks can relay to desktop bells). The
   SPEC §4.4 surface is now literal, not aspirational
+- **pi dialect in the JS host** — modules written for oh-my-pi/pi-mono's
+  `ExtensionAPI` run against a documented subset: `api.on` accepts pi's
+  snake_case event names with pi-shaped payloads (`tool_call` →
+  `{toolName, toolCallId, input}`), `{block:true, reason}` replies veto,
+  `registerTool` accepts pi's `{parameters, execute}` spec (a zod object
+  is warn-and-skip — `z.toJSONSchema()` is the conversion). sendMessage/
+  ui/providers stay out of the contract — a module needing them is
+  pi-native, not ours
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

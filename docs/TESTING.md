@@ -28,6 +28,7 @@ Current coverage:
 | `core::prompt` | section layering: built-ins order, `--system` complete, `prompt.d` replace-by-name, AGENTS.md merge, subagent default/override |
 | `core::plugin` | install/list/remove roundtrip, name sanitization, overwrite-then-force, self-install refusal |
 | `core::presets` | name resolution (`+` strip), CLI order layering, unknown-name error lists searched dirs, preset hook actually fires |
+| `core::ext` | frame parse, reply fold into HookOutcome, parked-id correlation, live Node fixture roundtrip (handshake → `ext__*` tool call → ext/event merge), dead-child fast-fail, **pi dialect live**: `api.on("tool_call")` veto + pi-spec registerTool |
 | `core::preflight` | AST extraction (pipelines, booleans, dynamic-skip), fatal-note advisory (spawnfate) |
 | `cli::eval` | case-file parsing (object/array/JSONL), assertion checks against session facts |
 | `cli::tui` | keymap dispatch, slash-menu completion (`@route`, `provider/`), render-cache wrap invariants |

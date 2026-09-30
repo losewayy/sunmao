@@ -181,7 +181,7 @@ hook engine（核心）
 | ACP（被别人驱动） | acp-server | v0.3 |
 | MCP Apps / UI resources（渲染别家 UI） | sandboxed iframe 渲染层 | v0.5+ |
 | Codex/Cursor hook 方言 | 归一化层 | ✅ 已落地（`hooks/cursor.rs`：Codex 走 Claude 路径零改即用，Cursor flat entries + snake replies 归一进 HookOutcome；`hooks/live_tests.rs` 实测。Gemini 未验过真实 bundle，暂不归一） |
-| OpenCode/pi TS 扩展 | JS extension host 侧车 | ✅ JS 侧车已落地（`tools/extension-host.mjs` — 契约 + 模块 api 面 + 打包示例；TS 原生文件 warn-and-skip，pi-compat adapter 仍属后续） |
+| OpenCode/pi TS 扩展 | JS extension host 侧车 | ✅ 双侧落地：`tools/extension-host.mjs` 契约 + 模块 api 面 + 打包示例 + **pi 方言归一**（`api.on` 接 pi snake_case 事件名，payload 双向翻译，`{block,reason}`/pi-spec registerTool 归一；zod schema warn-and-skip）。sendMessage/ui/providers 不在本契约面——需要它们的仍是 pi-only |
 | 自身扩展协议 | `sunmao` JSON-RPC | ✅ 契约 + first-party 宿主（`crates/core/src/ext/`） |
 
 ## 6. 里程碑
@@ -192,7 +192,7 @@ hook engine（核心）
 | v0.2 | trustworthy | 审批缝 + transcript 工件 + 上下文窗口管理 + 错误恢复/中断续跑 + 审计流 | 子进程崩溃不炸 agent | ✅ 大部分落地——审批闸三前端、compaction、resume/fork、审计事件流；进程崩溃容忍只验过 hook veto |
 | v0.3 | ecosystem citizen | MCP client + hooks 引擎 + claude-dialect + 格式加载器 + ACP server | rtk/context-mode 实测 | ✅ 落地（MCP 双 transport、hooks 13 事件全并集——含 PostToolUseFailure/StopFailure/Notification、agents/commands/skills/plugin.json、ACP v2）；rtk/context-mode 实测通过 |
 | v0.4 | distributed | plugin.json 安装 + 扩展协议宿主 + presets + eval + HTML 工件 | 发布 | ✅ 全部落地——plugin.json 安装（`sunmao plugin`，git URL/`owner/repo` 源）、presets（`--preset` 层叠）、eval（`sunmao eval` 断言会话事实）、HTML 工件（HtmlArtifact）、扩展协议宿主（`ext/` 提前落地）；发布待放行 |
-| v0.5+ | open frontier | JS 扩展宿主、第二 provider 方言、GUI、subagents | — | 🟡 Anthropic 方言提前落地（v0.2）、Task 子代理已上线（`spawns:`/`tools:` 白名单 + `run_in_background` 异步扇出 + `model:` 路由）、**扩展宿主双侧落地**（Rust `ext/` crate + `tools/extension-host.mjs` JS 侧车——`.mjs` 模块注册工具/订阅事件，回复按 hooks 语义合并）——pi-compat adapter/GUI 未动 |
+| v0.5+ | open frontier | JS 扩展宿主、第二 provider 方言、GUI、subagents | — | 🟡 Anthropic 方言提前落地（v0.2）、Task 子代理已上线（`spawns:`/`tools:` 白名单 + `run_in_background` 异步扇出 + `model:` 路由）、**扩展宿主双侧落地**（Rust `ext/` crate + `tools/extension-host.mjs` JS 侧车——`.mjs` 模块注册工具/订阅事件，回复按 hooks 语义合并，**pi ExtensionAPI 子集归一**）、**loop 可替换**（manifest `loop:` + `--loop`，full/bare 双驱动）、hook 事件并集已齐（13 事件）——GUI 未动 |
 
 ## 7. 非目标（v1 明确不做）
 

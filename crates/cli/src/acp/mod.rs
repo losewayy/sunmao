@@ -12,8 +12,8 @@ use agent_client_protocol::{Agent, Client, Error, Responder, Result, Stdio, V2Co
 use sunmao_core::agent::{AgentLoop, TurnOutcome};
 use sunmao_core::tool::builtin_registry;
 use sunmao_core::{Context, SessionEvent, SessionLog};
-use sunmao_llm::types::Message;
 use sunmao_llm::OaiClient;
+use sunmao_llm::types::Message;
 
 mod observer;
 use observer::{AcpApprover, AcpObserver};
@@ -140,7 +140,7 @@ pub async fn run(
                         Ok(l) => l,
                         Err(e) => {
                             return responder
-                                .respond_with_error(invalid_params(format!("session log: {e:#}")))
+                                .respond_with_error(invalid_params(format!("session log: {e:#}")));
                         }
                     };
                     let mut registry = builtin_registry();
@@ -306,7 +306,7 @@ pub async fn run(
                         Ok(l) => l,
                         Err(e) => {
                             return responder
-                                .respond_with_error(invalid_params(format!("open log: {e:#}")))
+                                .respond_with_error(invalid_params(format!("open log: {e:#}")));
                         }
                     };
                     let mut registry = builtin_registry();

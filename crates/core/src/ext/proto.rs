@@ -3,7 +3,7 @@
 //! the payload. No Content-Length headers — that is deliberately not the
 //! contract (see PROTOCOLS.md "Frames").
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// A request frame — `"id"` present means the peer must answer.
 pub(crate) fn request_frame(id: u64, method: &str, params: Value) -> Value {

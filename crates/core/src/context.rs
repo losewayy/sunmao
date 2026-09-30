@@ -332,9 +332,9 @@ fn seed_todos(path: &std::path::Path) -> Vec<crate::tool::TodoItem> {
         if line.starts_with(crate::tool::TODOS_LINE_PREFIX)
             && let Ok(crate::session::SessionEvent::Todos { items }) =
                 serde_json::from_str::<crate::session::SessionEvent>(line)
-            {
-                return items;
-            }
+        {
+            return items;
+        }
     }
     Vec::new()
 }

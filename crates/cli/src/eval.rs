@@ -8,8 +8,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{bail, Context as _};
-use serde_json::{json, Value};
+use anyhow::{Context as _, bail};
+use serde_json::{Value, json};
 
 use sunmao_core::agent::{AgentLoop, LiveEvent, Observer, TurnOutcome};
 use sunmao_core::tool::builtin_registry;
@@ -272,9 +272,10 @@ async fn run_case_inner(
 fn check(expect: &Expect, tools: &[&str], final_text: &str) -> Vec<String> {
     let mut fails = Vec::new();
     if let Some(want) = &expect.final_contains
-        && !final_text.contains(want.as_str()) {
-            fails.push(format!("final_contains {want:?} missing"));
-        }
+        && !final_text.contains(want.as_str())
+    {
+        fails.push(format!("final_contains {want:?} missing"));
+    }
     for t in &expect.tool_called {
         if !tools.contains(&t.as_str()) {
             fails.push(format!("tool {t} never called"));
@@ -286,12 +287,13 @@ fn check(expect: &Expect, tools: &[&str], final_text: &str) -> Vec<String> {
         }
     }
     if let Some(max) = expect.max_tool_calls
-        && tools.len() as u64 > max {
-            fails.push(format!(
-                "{} tool calls exceeds max_tool_calls {max}",
-                tools.len()
-            ));
-        }
+        && tools.len() as u64 > max
+    {
+        fails.push(format!(
+            "{} tool calls exceeds max_tool_calls {max}",
+            tools.len()
+        ));
+    }
     match expect.turns {
         Some(1) | None => {}
         Some(t) => fails.push(format!("turns {t} not supported (v1 runs 1 turn)")),

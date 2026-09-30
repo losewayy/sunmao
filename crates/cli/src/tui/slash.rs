@@ -31,9 +31,10 @@ pub fn candidates(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<String> {
             for e in entries.flatten() {
                 let p = e.path();
                 if p.extension().map(|x| x == "md").unwrap_or(false)
-                    && let Some(stem) = p.file_stem() {
-                        names.push(stem.to_string_lossy().to_string());
-                    }
+                    && let Some(stem) = p.file_stem()
+                {
+                    names.push(stem.to_string_lossy().to_string());
+                }
             }
         }
     }

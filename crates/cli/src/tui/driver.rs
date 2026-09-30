@@ -9,7 +9,7 @@ use sunmao_core::agent::{AgentLoop, LiveEvent};
 use tokio::sync::mpsc;
 
 use super::app::Submit;
-use super::{menu, slash, ChanObserver, Msg};
+use super::{ChanObserver, Msg, menu, slash};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn(

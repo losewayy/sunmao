@@ -45,9 +45,10 @@ pub fn load_all(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<AgentDef> {
             let p = e.path();
             if p.extension().map(|x| x == "md").unwrap_or(false)
                 && let Ok(text) = std::fs::read_to_string(&p)
-                    && let Some(def) = parse(&text, &p) {
-                        out.push(def);
-                    }
+                && let Some(def) = parse(&text, &p)
+            {
+                out.push(def);
+            }
         }
     }
     out
@@ -63,32 +64,33 @@ fn parse(text: &str, path: &Path) -> Option<AgentDef> {
 
     // YAML-lite frontmatter: --- name: x description: y model: @route ---
     if let Some(rest) = text.strip_prefix("---")
-        && let Some(end) = rest.find("\n---") {
-            for line in rest[..end].lines() {
-                if let Some(v) = line.strip_prefix("name:") {
-                    name = v.trim().to_string();
-                }
-                if let Some(v) = line.strip_prefix("description:") {
-                    desc = v.trim().to_string();
-                }
-                if let Some(v) = line.strip_prefix("model:") {
-                    let v = v.trim();
-                    if !v.is_empty() {
-                        model = Some(v.to_string());
-                    }
-                }
-                if let Some(v) = line.strip_prefix("tools:") {
-                    tools = Some(parse_list(v));
-                }
-                if let Some(v) = line.strip_prefix("spawns:") {
-                    let v = v.trim();
-                    // `*` (and the missing field) means unrestricted; an
-                    // empty value means "can't spawn at all".
-                    spawns = if v == "*" { None } else { Some(parse_list(v)) };
+        && let Some(end) = rest.find("\n---")
+    {
+        for line in rest[..end].lines() {
+            if let Some(v) = line.strip_prefix("name:") {
+                name = v.trim().to_string();
+            }
+            if let Some(v) = line.strip_prefix("description:") {
+                desc = v.trim().to_string();
+            }
+            if let Some(v) = line.strip_prefix("model:") {
+                let v = v.trim();
+                if !v.is_empty() {
+                    model = Some(v.to_string());
                 }
             }
-            body = &rest[end + 4..];
+            if let Some(v) = line.strip_prefix("tools:") {
+                tools = Some(parse_list(v));
+            }
+            if let Some(v) = line.strip_prefix("spawns:") {
+                let v = v.trim();
+                // `*` (and the missing field) means unrestricted; an
+                // empty value means "can't spawn at all".
+                spawns = if v == "*" { None } else { Some(parse_list(v)) };
+            }
         }
+        body = &rest[end + 4..];
+    }
     Some(AgentDef {
         name,
         description: desc,

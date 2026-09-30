@@ -7,10 +7,10 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 
-use crate::types::{FunctionCall, ToolCall};
 use crate::ToolCallFragment;
+use crate::types::{FunctionCall, ToolCall};
 
 #[derive(Default)]
 struct PartialCall {

@@ -63,11 +63,12 @@ impl Permissions {
         let mut merged = Perms::default();
         for p in paths {
             if let Ok(text) = std::fs::read_to_string(&p)
-                && let Ok(f) = serde_json::from_str::<PermsFile>(&text) {
-                    merged.allow.extend(f.permissions.allow);
-                    merged.ask.extend(f.permissions.ask);
-                    merged.deny.extend(f.permissions.deny);
-                }
+                && let Ok(f) = serde_json::from_str::<PermsFile>(&text)
+            {
+                merged.allow.extend(f.permissions.allow);
+                merged.ask.extend(f.permissions.ask);
+                merged.deny.extend(f.permissions.deny);
+            }
         }
         Self::from_rules(merged)
     }

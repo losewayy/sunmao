@@ -1,6 +1,6 @@
 use crate::tool::*;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // ---------- Read ----------
 
@@ -67,31 +67,32 @@ impl ToolImpl for ReadTool {
         {
             let state = path.with_extension("state.json");
             if let Ok(notes) = std::fs::read_to_string(&state)
-                && let Ok(v) = serde_json::from_str::<serde_json::Value>(&notes) {
-                    let open: Vec<&serde_json::Value> = v
-                        .get("annotations")
-                        .and_then(|a| a.as_array())
-                        .map(|a| {
-                            a.iter()
-                                .filter(|n| n.get("resolved") != Some(&serde_json::json!(true)))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    if !open.is_empty() {
-                        out.push_str("\n\n[annotations — unresolved reviewer notes:");
-                        for n in &open {
-                            let note = n.get("note").and_then(|x| x.as_str()).unwrap_or("");
-                            let at = n.get("at").and_then(|x| x.as_str()).unwrap_or("");
-                            let sec = n.get("section").and_then(|x| x.as_str()).unwrap_or("");
-                            out.push_str(&format!("\n  ({at}) {note}"));
-                            if !sec.is_empty() {
-                                out.push_str(&format!(" §{sec}"));
-                            }
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(&notes)
+            {
+                let open: Vec<&serde_json::Value> = v
+                    .get("annotations")
+                    .and_then(|a| a.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter(|n| n.get("resolved") != Some(&serde_json::json!(true)))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !open.is_empty() {
+                    out.push_str("\n\n[annotations — unresolved reviewer notes:");
+                    for n in &open {
+                        let note = n.get("note").and_then(|x| x.as_str()).unwrap_or("");
+                        let at = n.get("at").and_then(|x| x.as_str()).unwrap_or("");
+                        let sec = n.get("section").and_then(|x| x.as_str()).unwrap_or("");
+                        out.push_str(&format!("\n  ({at}) {note}"));
+                        if !sec.is_empty() {
+                            out.push_str(&format!(" §{sec}"));
                         }
-                        out.push_str("\n  fold into the next revision;");
-                        out.push_str(" mark each \"resolved\": true]");
                     }
+                    out.push_str("\n  fold into the next revision;");
+                    out.push_str(" mark each \"resolved\": true]");
                 }
+            }
         }
         Ok(ToolResult {
             output: out,

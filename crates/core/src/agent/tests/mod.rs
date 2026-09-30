@@ -69,6 +69,7 @@ fn live_event_wire_shape_is_stable() {
             output: "out".into(),
             depth: 0,
             lane: 0,
+            elapsed_ms: 12,
         },
         LiveEvent::Hook {
             event: "SessionStart".into(),

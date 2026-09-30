@@ -136,6 +136,7 @@ impl AgentLoop {
                     output: String::new(),
                     depth: self.ctx.depth,
                     lane: self.ctx.lane,
+                    elapsed_ms: 0,
                 });
             }
         }
@@ -181,6 +182,7 @@ impl AgentLoop {
                         output: String::new(),
                         depth: self.ctx.depth,
                         lane: self.ctx.lane,
+                        elapsed_ms: 0,
                     });
                 }
             }
@@ -288,6 +290,7 @@ impl AgentLoop {
                         output: result.output.clone(),
                         depth: self.ctx.depth,
                         lane: self.ctx.lane,
+                        elapsed_ms: 0,
                     });
                     let _ = self
                         .ctx
@@ -389,6 +392,7 @@ impl AgentLoop {
                     depth: self.ctx.depth,
                     lane: self.ctx.lane,
                 });
+                let t0 = std::time::Instant::now();
 
                 let result = if let Some(reason) = pre.block_reason {
                     // a hook veto is an audit fact too — the transcript's
@@ -443,6 +447,7 @@ impl AgentLoop {
                     output: truncate_output(&result.output),
                     depth: self.ctx.depth,
                     lane: self.ctx.lane,
+                    elapsed_ms: t0.elapsed().as_millis() as u64,
                 });
 
                 // PostToolUse: hooks may inject context for the next turn.

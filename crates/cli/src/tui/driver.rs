@@ -206,6 +206,7 @@ pub(super) fn spawn(
                         lane: 0,
                     }));
                     let shell_cwd = cwd.clone();
+                    let t0 = std::time::Instant::now();
                     let (ok, output, code) =
                         match sunmao_core::tool::run_foreground(&cmd, shell_cwd, 120).await {
                             Ok(run) => {
@@ -221,6 +222,7 @@ pub(super) fn spawn(
                         output,
                         depth: 0,
                         lane: 0,
+                        elapsed_ms: t0.elapsed().as_millis() as u64,
                     }));
                     continue;
                 }

@@ -1043,7 +1043,8 @@ function toolDone(ev) {
     return;
   }
   runningTools.splice(i, 1);
-  const secs = ((performance.now() - t.t0) / 1000).toFixed(1) + 's';
+  // kernel's elapsed_ms is authoritative; local t0 is the replay/orphan fallback
+  const secs = (typeof ev.elapsed_ms === 'number' ? ev.elapsed_ms / 1000 : (performance.now() - t.t0) / 1000).toFixed(1) + 's';
   setTool(t.el, ev.ok ? 'ok' : 'err', secs, capOut(ev.output || ''));
 }
 function islandHTML(ev) {

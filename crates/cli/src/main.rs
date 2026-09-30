@@ -17,6 +17,7 @@ mod dataflow;
 mod doctor;
 mod eval;
 mod plugin;
+mod repl;
 mod tui;
 
 #[derive(Parser)]
@@ -199,7 +200,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if cli.sessions {
-        return list_sessions(&cli.session_dir);
+        return repl::list_sessions(&cli.session_dir);
     }
 
     if cli.doctor {
@@ -352,6 +353,16 @@ async fn main() -> anyhow::Result<()> {
             in_reasoning: std::sync::Mutex::new(false),
         };
         let outcome = agent.run_turn(prompt, &obs).await?;
+        // SessionEnd hooks run in every frontend — a one-shot exit is
+        // still a session ending (context-mode-style state capture hooks
+        // depend on this event, not on which surface drove it).
+        ctx.hooks
+            .fire(
+                sunmao_core::hooks::HookEvent::SessionEnd,
+                &ctx.cwd,
+                &sunmao_core::hooks::HookInput::default(),
+            )
+            .await;
         // process::exit skips destructors — extension children need the
         // graceful shutdown (ext/shutdown → EOF → kill) run explicitly.
         ctx.ext.shutdown().await;
@@ -372,6 +383,13 @@ async fn main() -> anyhow::Result<()> {
             preset_roots,
         )
         .await;
+        ctx.hooks
+            .fire(
+                sunmao_core::hooks::HookEvent::SessionEnd,
+                &ctx.cwd,
+                &sunmao_core::hooks::HookInput::default(),
+            )
+            .await;
         ctx.ext.shutdown().await;
         return res;
     }
@@ -379,138 +397,15 @@ async fn main() -> anyhow::Result<()> {
     let observer = Arc::new(StdoutObserver {
         in_reasoning: std::sync::Mutex::new(false),
     });
-    // sub-agent tool lifecycle relays through the same output channel
-    agent.set_live_sink(observer.clone() as Arc<dyn Observer>);
-
-    // Resumed sessions announce themselves — a silent resume reads as a
-    // fresh session and the fold-in context is invisible to the user.
-    if resumed {
-        let n_msgs = ctx
-            .sessions
-            .lock()
-            .await
-            .messages()
-            .await
-            .map(|m| m.len())
-            .unwrap_or(0);
-        println!("[resumed — {n_msgs} messages folded in]");
-    }
-    println!("sunmao — agent kernel v0.1 (ctrl-c / empty line to exit)");
-    let stdin = std::io::stdin();
-    loop {
-        print!("\n\x1b[1m>\x1b[0m ");
-        std::io::stdout().flush()?;
-        let mut line = String::new();
-        if stdin.read_line(&mut line)? == 0 {
-            break;
-        }
-        let line = line.trim();
-        if line.is_empty() {
-            break;
-        }
-        // `!cmd` — local shell, same engine as the TUI's bash mode. Output
-        // prints here and folds into the session as SessionEvent::LocalShell.
-        if let Some(cmd) = line.strip_prefix('!') {
-            let cmd = cmd.trim();
-            if cmd.is_empty() {
-                continue;
-            }
-            match sunmao_core::tool::run_foreground(cmd, cwd.clone(), 120).await {
-                Ok(run) => {
-                    let out = sunmao_core::tool::render_run(&run);
-                    println!("{out}");
-                    agent.record_local_shell(cmd, run.exit_code, &out).await;
-                }
-                Err(msg) => println!("{msg}"),
-            }
-            continue;
-        }
-        if let Some(cmd_line) = line.strip_prefix('/') {
-            let name = cmd_line.split_whitespace().next().unwrap_or("");
-            let rest = cmd_line[name.len()..].trim();
-            match name {
-                "quit" | "exit" | "q" => break,
-                "compact" => {
-                    match agent.compact(&*observer, "manual").await {
-                        Ok(s) if s.is_empty() => println!("[compacted: nothing to fold]"),
-                        Ok(s) => println!("[compacted]\n{s}"),
-                        Err(e) => eprintln!("[compact failed] {e:#}"),
-                    }
-                    continue;
-                }
-                "help" | "h" | "?" => {
-                    println!(
-                        "commands — /compact · /model [sel] · /resume [id] · /sessions · /help · /quit\n\
-                         `!cmd` runs locally; /name resolves .sunmao/commands + .claude/commands"
-                    );
-                    continue;
-                }
-                "model" => {
-                    if rest.is_empty() {
-                        let choices = agent.model_choices();
-                        if choices.is_empty() {
-                            println!("[no models.json — session model only]");
-                        } else {
-                            println!("available models:\n{}", choices.join("\n"));
-                        }
-                    } else {
-                        match agent.swap_model(rest) {
-                            Some(label) => {
-                                agent.record_model_change(rest, &label).await;
-                                println!("[model → {label}]");
-                            }
-                            None => {
-                                println!("[unknown selector: {rest} — try /model for the list]")
-                            }
-                        }
-                    }
-                    continue;
-                }
-                "sessions" => {
-                    list_sessions(&cwd.join(".sunmao").join("sessions"))?;
-                    continue;
-                }
-                "resume" => {
-                    if rest.is_empty() {
-                        list_sessions(&cwd.join(".sunmao").join("sessions"))?;
-                    } else {
-                        let p = std::path::PathBuf::from(rest);
-                        let path = if p.exists() {
-                            p
-                        } else {
-                            cwd.join(".sunmao/sessions").join(format!("{rest}.jsonl"))
-                        };
-                        match sunmao_core::SessionLog::open_path(&path).await {
-                            Ok(log) => {
-                                let events = agent.swap_session(log).await;
-                                println!("[resumed {rest} — {} events folded in]", events.len());
-                            }
-                            Err(e) => eprintln!("[resume failed] {e:#}"),
-                        }
-                    }
-                    continue;
-                }
-                _ => {}
-            }
-            match tui::slash::command_body(&cwd, &preset_roots, name) {
-                Some(body) => {
-                    let prompt = if rest.is_empty() {
-                        body
-                    } else {
-                        format!("{body}\n\n{rest}")
-                    };
-                    if let Err(e) = agent.run_turn(&prompt, &*observer).await {
-                        eprintln!("[error] {e:#}");
-                    }
-                }
-                None => println!("[unknown command: /{name}]"),
-            }
-            continue;
-        }
-        if let Err(e) = agent.run_turn(line, &*observer).await {
-            eprintln!("[error] {e:#}");
-        }
-    }
+    repl::run(
+        &agent,
+        &ctx,
+        &repl::StdoutLoop(observer.clone() as Arc<dyn Observer>),
+        &cwd,
+        &preset_roots,
+        resumed,
+    )
+    .await?;
     ctx.hooks
         .fire(
             sunmao_core::hooks::HookEvent::SessionEnd,
@@ -557,32 +452,4 @@ impl Approver for StdinApprover {
         .flatten()
         .unwrap_or(Approval::Deny)
     }
-}
-
-/// `sunmao sessions` — list local session logs.
-fn list_sessions(dir: &std::path::Path) -> anyhow::Result<()> {
-    let mut rows = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for e in entries.flatten() {
-            let p = e.path();
-            if p.extension().map(|x| x == "jsonl").unwrap_or(false) {
-                let meta = std::fs::metadata(&p).ok();
-                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                let name = p
-                    .file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                rows.push((name, size));
-            }
-        }
-    }
-    rows.sort();
-    for (name, size) in &rows {
-        println!("{name}\t{size} B");
-    }
-    if rows.is_empty() {
-        println!("[no sessions in {}]", dir.display());
-    }
-    Ok(())
 }

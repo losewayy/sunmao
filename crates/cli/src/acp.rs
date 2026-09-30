@@ -324,6 +324,19 @@ pub async fn run(
                             })
                             .await;
                     }
+                    // SessionStart is a session fact, not a frontend
+                    // courtesy — fire after extensions are up so they can
+                    // answer it, same ordering every frontend keeps.
+                    ctx.hooks
+                        .fire(
+                            sunmao_core::hooks::HookEvent::SessionStart,
+                            &ctx.cwd,
+                            &sunmao_core::hooks::HookInput {
+                                source: Some("startup"),
+                                ..Default::default()
+                            },
+                        )
+                        .await;
                     agent.sessions.lock().unwrap().insert(
                         id,
                         Arc::new(Mutex::new(SessionState {
@@ -420,6 +433,18 @@ pub async fn run(
                         session_id: req.session_id.clone(),
                         msg_counter: std::sync::atomic::AtomicU64::new(0),
                     }));
+                    // SessionStart(source=resume) — same fact a --resume
+                    // startup would record; extensions must be up first.
+                    ctx.hooks
+                        .fire(
+                            sunmao_core::hooks::HookEvent::SessionStart,
+                            &ctx.cwd,
+                            &sunmao_core::hooks::HookInput {
+                                source: Some("resume"),
+                                ..Default::default()
+                            },
+                        )
+                        .await;
                     agent.sessions.lock().unwrap().insert(
                         id,
                         Arc::new(Mutex::new(SessionState {
@@ -449,6 +474,16 @@ pub async fn run(
                     // Clone the ctx out of the lock: guards never cross await.
                     let ctx = session.map(|s| s.lock().unwrap().ctx.clone());
                     if let Some(ctx) = ctx {
+                        // SessionEnd is a session fact, not a frontend
+                        // courtesy — fire before the children die so they
+                        // can still answer it.
+                        ctx.hooks
+                            .fire(
+                                sunmao_core::hooks::HookEvent::SessionEnd,
+                                &ctx.cwd,
+                                &sunmao_core::hooks::HookInput::default(),
+                            )
+                            .await;
                         ctx.ext.shutdown().await;
                     }
                     responder.respond(v2::CloseSessionResponse::new())

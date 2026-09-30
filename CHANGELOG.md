@@ -128,6 +128,24 @@ TUI.
   revision → marks entries resolved. `/artifacts` flags the sidecar
   with `+notes`; a hand-written civil-from-days helper stamps dates,
   no chrono dependency for a label
+- **audit-driven gap fixes** — a spec-vs-code sweep caught real dead
+  seams, all fixed: `.sunmao/mcp.json` was documented but never read
+  (the shipped example was dead config); hook payloads carried a
+  literal `"session"` id + a nonexistent `transcript_path` for the main
+  session (now the log's real file stem, `ctx.session_id`); the
+  documented `{"matcher","command"}` flat hook shape silently loaded
+  zero hooks (fixed example + CONFIG + a load-time warning for the
+  mis-shape); `.sunmao/plugin/` "project is a plugin" manifest + hooks
+  never merged; project `.claude/skills` never indexed; ACP
+  `session/list` returned only in-memory sessions (now scans the
+  request cwd's log dir); sub-agent sessions never fired
+  SessionStart/SessionEnd (now do, `source:"subagent"`); `/tasks`
+  roster covers foreground spawns too, and `TaskEntry.lane` makes
+  lane-distinctness a durable assertion instead of a live-event race
+  (the batch test's lane check was schedule-dependent — now asserts
+  the roster). Drift fixes: jobs dir files, `--dataflow` spelling,
+  §7/§8 stale text, test counts, ARCHITECTURE's merge claim, stale
+  file-header comments
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

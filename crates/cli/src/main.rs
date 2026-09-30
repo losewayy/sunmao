@@ -1,4 +1,5 @@
-//! `sunmao` — stdin/stdout REPL over the kernel. TUI lands in v0.2.
+//! `sunmao` — the binary: stdin/stdout REPL, -p one-shot, --tui, --acp,
+//! eval, doctor, plugin management.
 
 use std::io::Write as _;
 use std::path::PathBuf;

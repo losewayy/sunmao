@@ -1,6 +1,6 @@
 //! Event-sourced session log — the kernel's single source of truth.
 //!
-//! One `events.jsonl` per session; every fact is an appended line. The live
+//! One `<id>.jsonl` per session; every fact is an appended line. The live
 //! message list is a *fold* over the log, so replay/rebuild/audit are free.
 
 use std::path::{Path, PathBuf};

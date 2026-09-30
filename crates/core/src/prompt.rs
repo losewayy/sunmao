@@ -231,6 +231,7 @@ fn project_context(cwd: &Path, extra_roots: &[PathBuf]) -> String {
     }
     let mut skills_dirs = vec![
         cwd.join(".sunmao").join("skills"),
+        cwd.join(".claude").join("skills"),
         cwd.join(".sunmao").join("plugin").join("skills"),
     ];
     // plugin bundles: .sunmao/plugins/<name>/skills/, .claude/plugins/<name>/skills/

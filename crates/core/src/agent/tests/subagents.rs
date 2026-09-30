@@ -128,14 +128,6 @@ async fn batch_tasks_fan_out_on_distinct_lanes() {
     // `tasks[]` runs children concurrently — each claims its own lane so
     // the frontend can tell parallel siblings apart. The turn must also
     // complete with the merged per-task output.
-    struct LaneRec(std::sync::Mutex<Vec<u8>>);
-    impl Observer for LaneRec {
-        fn on_event(&self, ev: &LiveEvent) {
-            if let LiveEvent::ToolStart { lane, .. } = ev {
-                self.0.lock().unwrap().push(*lane);
-            }
-        }
-    }
 
     let task_args = r#"{"context":"both answers","tasks":[{"prompt":"say A"},{"prompt":"say B"}]}"#;
     let glob_call = |id: &str| {
@@ -194,9 +186,7 @@ async fn batch_tasks_fan_out_on_distinct_lanes() {
         builtin_registry(),
         dir.clone(),
     ));
-    let sink = Arc::new(LaneRec(std::sync::Mutex::new(Vec::new())));
     let agent = AgentLoop::new(ctx.clone());
-    agent.set_live_sink(sink.clone() as Arc<dyn Observer>);
     let outcome = agent.run_turn("go", &NullObserver).await.unwrap();
     assert!(matches!(outcome, TurnOutcome::Completed));
     // parent: Task call + continuation; both children ran on this shared
@@ -218,11 +208,25 @@ async fn batch_tasks_fan_out_on_distinct_lanes() {
         .as_deref()
         .unwrap_or("")
         .contains("## task 2 ✓"));
-    // two children → two distinct non-zero lanes
-    let mut lanes = sink.0.lock().unwrap().clone();
-    lanes.sort_unstable();
-    lanes.dedup();
-    assert_eq!(lanes.len(), 2, "parallel children need distinct lanes");
+    // two children → two distinct lanes. The roster is the durable fact —
+    // relayed ToolStarts only appear if a child happens to call a tool
+    // (response-queue scheduling decides that, not lane assignment).
+    let lanes: Vec<u8> = ctx
+        .live_tasks
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|t| t.lane)
+        .collect();
+    assert_eq!(lanes.len(), 2, "both spawns must register in the roster");
+    assert_ne!(lanes[0], lanes[1], "parallel children need distinct lanes");
     assert!(lanes.iter().all(|l| *l > 0));
+    // both finished → roster flipped to done
+    assert!(ctx
+        .live_tasks
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|t| t.done == Some(true)));
     std::fs::remove_dir_all(&dir).ok();
 }

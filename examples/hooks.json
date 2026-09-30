@@ -3,7 +3,12 @@
     "PreToolUse": [
       {
         "matcher": "Bash",
-        "command": "echo '{\"continue\": true}'"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"continue\": true}'"
+          }
+        ]
       }
     ]
   }

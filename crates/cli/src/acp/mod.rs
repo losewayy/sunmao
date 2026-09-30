@@ -220,11 +220,14 @@ pub async fn run(
         .on_receive_request(
             {
                 let agent = agent.clone();
-                async move |_req: v2::ListSessionsRequest,
+                async move |req: v2::ListSessionsRequest,
                             responder: Responder<v2::ListSessionsResponse>,
                             _cx: V2ConnectionTo<Client>| {
+                    // live sessions first; a fresh server's map is empty, so
+                    // also scan the request cwd's session dir — resumable
+                    // logs are sessions too
                     let map = agent.sessions.lock().unwrap();
-                    let infos: Vec<_> = map
+                    let mut infos: Vec<_> = map
                         .keys()
                         .map(|id| {
                             v2::SessionInfo::new(
@@ -233,6 +236,37 @@ pub async fn run(
                             )
                         })
                         .collect();
+                    drop(map);
+                    if let Some(cwd) = req.cwd {
+                        let base = cwd.into_inner().clone();
+                        let dir = base.join(".sunmao").join("sessions");
+                        let mut disk: Vec<_> = std::fs::read_dir(&dir)
+                            .map(|rd| {
+                                rd.flatten()
+                                    .filter_map(|e| {
+                                        let p = e.path();
+                                        if p.extension().map(|x| x == "jsonl").unwrap_or(false) {
+                                            let m = e.metadata().ok()?.modified().ok()?;
+                                            Some((m, p.file_stem()?.to_string_lossy().to_string()))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        disk.sort_by_key(|b| std::cmp::Reverse(b.0));
+                        let live: std::collections::HashSet<String> =
+                            infos.iter().map(|i| i.session_id.to_string()).collect();
+                        for (_, id) in disk.into_iter().take(50) {
+                            if !live.contains(&id) {
+                                infos.push(v2::SessionInfo::new(
+                                    v2::SessionId::new(id),
+                                    v2::AbsolutePath::new(base.clone()),
+                                ));
+                            }
+                        }
+                    }
                     responder.respond(v2::ListSessionsResponse::new(infos))
                 }
             },

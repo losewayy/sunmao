@@ -1,8 +1,9 @@
-//! Tool registry + the four builtin capabilities.
+//! Tool registry + the builtin capabilities.
 //!
 //! Three execution classes (see SPEC §4.3):
-//!   native       — in-process Rust (Read/Write/Edit): structured, auditable
-//!   managed      — spawned binaries without a shell (not yet wired)
+//!   native       — in-process Rust (Read/Write/Edit/Grep/Glob/WebFetch…)
+//!   managed      — spawned binaries without a shell (Grep's rg, JobOutput's
+//!                  log-dir reader)
 //!   shell        — `Bash`: model writes a command string; routed through
 //!                  deno_task_shell so bash syntax is identical on Windows.
 

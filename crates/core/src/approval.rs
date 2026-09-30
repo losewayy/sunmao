@@ -2,7 +2,8 @@
 //!
 //! Risky tool calls (destructive shell patterns today) pause here for a
 //! verdict. `AllowAll` is the non-interactive default; the REPL installs a
-//! stdin prompter, and future ACP frontends map to `session/request_permission`.
+//! stdin prompter, the TUI its approval card, ACP maps to
+//! `session/request_permission`.
 
 /// Shell command risk patterns → why we ask. The built-in table lives in
 /// `assets/risky-patterns.txt`; a project file `.sunmao/risky-patterns.txt`

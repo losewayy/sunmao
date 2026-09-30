@@ -60,6 +60,7 @@ impl SunmaoAgent {
                 api_key_env: None,
                 api_key: Some(self.api_key.clone()),
                 dialect: self.provider.clone(),
+                catalog: Vec::new(),
             },
             "default",
         ))

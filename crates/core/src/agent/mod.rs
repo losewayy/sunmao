@@ -365,6 +365,27 @@ impl AgentLoop {
         });
     }
 
+    /// Hot-swap the models file after a GUI edit — every session re-reads
+    /// `.sunmao/models.json` and clears its adapter cache so edited keys
+    /// and catalogs take effect without a restart.
+    pub fn reload_models(&self) {
+        if let Some(m) = self.ctx.models.as_ref() {
+            m.reload();
+        }
+    }
+
+    /// The project dir this session runs in — a resume/fork across
+    /// projects keeps its own root (tools, sessions dir, models.json).
+    pub fn session_cwd(&self) -> std::path::PathBuf {
+        self.ctx.cwd.clone()
+    }
+
+    /// The session's model resolver — the settings surface reads the
+    /// merged provider table through it.
+    pub fn models_resolver(&self) -> Option<Arc<crate::models::ModelResolver>> {
+        self.ctx.models.clone()
+    }
+
     /// List what `/model` can switch to — route names + provider names.
     pub fn model_choices(&self) -> Vec<String> {
         self.ctx

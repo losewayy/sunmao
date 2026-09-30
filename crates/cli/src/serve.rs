@@ -28,6 +28,7 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Json;
 use sunmao_core::agent::{AgentLoop, LiveEvent, Observer};
+use sunmao_core::SessionEvent;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::tui;
@@ -42,6 +43,10 @@ struct Shared {
     /// The FIFO submission queue a dedicated driver task drains — same
     /// shape as tui/driver.rs.
     input: mpsc::UnboundedSender<String>,
+    /// assembled system prompt — `session/new` re-seeds it, same as startup
+    system_prompt: String,
+    /// model label recorded in the new session's Started event
+    model_label: String,
     /// pending approval cards by id (reply oneshots)
     approvals: Arc<Pending>,
     /// submissions currently running (drives the busy badge + cancel affordance)
@@ -168,6 +173,38 @@ fn log_path(s: &Shared, id: &str) -> Option<std::path::PathBuf> {
         s.cwd.join(".sunmao/sessions").join(format!("{id}.jsonl"))
     };
     cand.exists().then_some(cand)
+}
+
+/// `POST /session/new` — a fresh log with the same Started+system seeding
+/// `main.rs` gives startup sessions. Without this the GUI's "new chat"
+/// would inherit a session with no identity block.
+async fn new_session(State(s): State<Arc<Shared>>) -> Response {
+    match new_session_inner(&s).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")).into_response(),
+    }
+}
+
+async fn new_session_inner(s: &Arc<Shared>) -> Result<serde_json::Value> {
+    let id = crate::session_id();
+    let dir = s.cwd.join(".sunmao/sessions");
+    let mut log = sunmao_core::SessionLog::open(&dir, &id).await?;
+    log.append(&SessionEvent::Started {
+        model: s.model_label.clone(),
+        cwd: display_path(&s.cwd),
+    })
+    .await?;
+    log.append(&SessionEvent::Message {
+        message: sunmao_llm::types::Message::system(s.system_prompt.clone()),
+    })
+    .await?;
+    let events = s.agent.swap_session(log).await;
+    let _ = s.live.send(serde_json::json!({
+        "type": "replay",
+        "events": events,
+        "session": id,
+    }));
+    Ok(serde_json::json!({"session": id}))
 }
 
 async fn resume_session(State(s): State<Arc<Shared>>, AxPath(id): AxPath<String>) -> Response {
@@ -356,6 +393,15 @@ async fn ws_client(s: Arc<Shared>, socket: axum::extract::ws::WebSocket) {
                 };
                 if let Some(tx) = s.approvals.map.lock().unwrap().remove(&id) {
                     let _ = tx.send(verdict);
+                }
+            }
+            "new" => {
+                if let Err(e) = new_session_inner(&s).await {
+                    let _ = ws_send(
+                        &out_tx,
+                        serde_json::json!({"type":"note","text":format!("[new session failed] {e:#}")}),
+                    )
+                    .await;
                 }
             }
             "resume" | "fork" => {
@@ -564,12 +610,16 @@ pub async fn run(
     roots: Vec<std::path::PathBuf>,
     port: u16,
     approvals: Arc<Pending>,
+    system_prompt: String,
+    model_label: String,
 ) -> Result<()> {
     let (input_tx, input_rx) = mpsc::unbounded_channel::<String>();
     let shared = Arc::new(Shared {
         agent,
         cwd,
         roots,
+        system_prompt,
+        model_label,
         live: approvals.live.clone(),
         input: input_tx,
         approvals,
@@ -581,6 +631,7 @@ pub async fn run(
         .route("/ws", get(ws_upgrade))
         .route("/sessions", get(sessions_list))
         .route("/session", get(session_info))
+        .route("/session/new", post(new_session))
         .route("/session/{id}/resume", post(resume_session))
         .route("/session/{id}/fork", post(fork_session))
         .route("/artifacts/{name}", get(artifact_get))

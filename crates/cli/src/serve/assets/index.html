@@ -560,6 +560,9 @@ button.tb:hover,.tb.pressed{background:var(--fill-2);color:var(--text)}
         <span class="ws-name" id="ws-name">sunmao</span>
         <span class="sd off" id="conn-dot" data-tip="未连接"></span>
       </button>
+      <nav class="nav">
+        <button class="nav-i" data-act="new-chat"><svg class="i"><use href="#i-pen"/></svg><span>新对话</span><kbd>Ctrl N</kbd></button>
+      </nav>
       <div class="lists scroll">
         <div class="grp"><span>最近会话</span></div>
         <div id="sessions"></div>
@@ -1323,6 +1326,14 @@ async function forkSession(id) {
   try { await api(`/session/${encodeURIComponent(id)}/fork`, { method: 'POST' }); toast(`已分叉 ${id}`, 'fork'); }
   catch (e) { toast(`fork 失败：${e.message}`, 'alert', 'warn'); }
 }
+async function newChat() {
+  if (view !== 'session') show('session');
+  try {
+    const r = await api('/session/new', { method: 'POST' });
+    if (r && r.session) sessionId = r.session; // replay broadcast repaints; this just keeps crumb/list ahead of it
+    renderCrumb(); refreshSessions();
+  } catch (e) { toast(`新会话失败：${e.message}`, 'alert', 'warn'); }
+}
 async function refreshSessions() {
   try {
     const v = await api('/sessions');
@@ -1525,6 +1536,7 @@ function openPalette() { closePop(); $('#palette').hidden = false; const i = $('
 function closePalette() { $('#palette').hidden = true; }
 function palSource() {
   return [
+    { g: '操作', t: '新对话', i: 'pen', k: 'Ctrl N', run: newChat },
     { g: '操作', t: '打开设置', i: 'settings', k: 'Ctrl ,', run: () => go('settings') },
     { g: '操作', t: dockOn ? '隐藏 dataflow 面板' : '显示 dataflow 面板', i: 'panel-r', k: 'Ctrl \\', run: toggleDock },
     { g: '操作', t: '事件日志', i: 'history', run: () => pop($('[data-act="events"]'), eventsHTML(), { align: 'end', cls: 'events' }) },
@@ -1635,7 +1647,7 @@ const card = rows => `<div class="card glass cfg">${rows.join('')}</div>`;
 const sec = (h, p, body) => `<div class="sec">${h ? `<div class="sec-h"><h2>${h}</h2>${p ? `<p>${p}</p>` : ''}</div>` : ''}${body}</div>`;
 const head = (t, d) => `<h1>${t}</h1>${d ? `<p class="lead">${d}</p>` : ''}`;
 const PAGES = {
-  keys: () => head('快捷键', '焦点不在输入框时，审批快捷键直接裁决最早的待审批卡。') + sec('', '', card([['命令面板', 'Ctrl K'], ['打开设置', 'Ctrl ,'], ['显示或隐藏 dataflow 面板', 'Ctrl \\'], ['Allow / Deny / Always', 'Y N A'], ['发送', 'Enter'], ['换行', 'Shift Enter'], ['关闭弹层或返回', 'Esc']].map(([a, k]) => row(a, '', `<span class="keys">${k.split(' ').map(x => `<kbd>${esc(x)}</kbd>`).join('')}</span>`)))),
+  keys: () => head('快捷键', '焦点不在输入框时，审批快捷键直接裁决最早的待审批卡。') + sec('', '', card([['新对话', 'Ctrl N'], ['命令面板', 'Ctrl K'], ['打开设置', 'Ctrl ,'], ['显示或隐藏 dataflow 面板', 'Ctrl \\'], ['Allow / Deny / Always', 'Y N A'], ['发送', 'Enter'], ['换行', 'Shift Enter'], ['关闭弹层或返回', 'Esc']].map(([a, k]) => row(a, '', `<span class="keys">${k.split(' ').map(x => `<kbd>${esc(x)}</kbd>`).join('')}</span>`)))),
   about: () => head('关于', '') + `<div class="card glass cfg"><div class="ab-top">${$('#hero svg').outerHTML}<div><b>sunmao</b><span>Rust 编写的 agent 运行时内核</span></div></div>${row('会话', '', mono(sessionId || '—'))}${row('工作目录', '', mono(cwd || '—'))}${row('本地服务', 'sunmao serve 只绑定本机', mono(location.host))}${row('内核', '', mono('sunmao-core'))}${row('许可', '', mono('MIT OR Apache-2.0'))}</div>`,
 };
 function settingsPage(p) {
@@ -1688,6 +1700,7 @@ function act(name, el) {
       return menuPop(el, [{ label: '模型' }, ...models.map(m => ({ v: m, t: m, mono: true }))], v => { wsSend({ type: 'model', sel: v }); }, { place: 'top', align: 'end' });
     }
     case 'send': return send();
+    case 'new-chat': return newChat();
     case 'upload-wall': return $('#file-wall').click();
     case 'color': return colorPop(el, el.dataset.key);
     case 'font': return fontPop(el, el.dataset.key);
@@ -1715,6 +1728,7 @@ document.addEventListener('keydown', e => {
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
   if (e.key === 'Escape') { if (!$('#palette').hidden) return closePalette(); if (popEl) return closePop(); if (view === 'settings') return go('back'); if (typing) e.target.blur(); return; }
   if (mod && k === 'k') { e.preventDefault(); return openPalette(); }
+  if (mod && k === 'n') { e.preventDefault(); return newChat(); }
   if (mod && e.key === ',') { e.preventDefault(); return go('settings'); }
   if (mod && e.key === '\\') { e.preventDefault(); return toggleDock(); }
   if (e.target.classList && e.target.classList.contains('note-add') === false && e.target.closest && e.target.closest('.note-add') && e.target.matches('input') && e.key === 'Enter') return submitNote(e.target.dataset.name, e.target);

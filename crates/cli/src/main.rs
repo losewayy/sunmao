@@ -359,7 +359,7 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
         log.append(&sunmao_core::SessionEvent::Message {
-            message: sunmao_llm::types::Message::system(default_system),
+            message: sunmao_llm::types::Message::system(default_system.clone()),
         })
         .await?;
     }
@@ -376,6 +376,8 @@ async fn main() -> anyhow::Result<()> {
             preset_roots,
             port,
             serve_pending.unwrap(),
+            default_system,
+            cli.model.clone(),
         )
         .await;
         ctx.hooks

@@ -203,6 +203,42 @@ fn provider_adapter(cli: &Cli) -> Arc<dyn sunmao_llm::ProviderAdapter> {
     }
 }
 
+/// Resolve `--resume`/`--fork` into the log the session should open —
+/// `fork` copies the source to a fresh id first. `None` = fresh session.
+/// Shared by the interactive path and `serve` (each session the GUI host
+/// adopts gets its own Context; only the log resolution is shared).
+async fn open_first_log(cli: &Cli) -> anyhow::Result<Option<(SessionLog, &'static str)>> {
+    let mut resume_target = cli.resume.clone();
+    let mut source = "resume";
+    if let Some(src) = &cli.fork {
+        let p = PathBuf::from(src);
+        let src_path = if p.exists() {
+            p
+        } else {
+            cli.session_dir.join(format!("{src}.jsonl"))
+        };
+        let new_id = session_id();
+        let dst = cli.session_dir.join(format!("{new_id}.jsonl"));
+        std::fs::copy(&src_path, &dst)
+            .map_err(|e| anyhow::anyhow!("fork {}: {e}", src_path.display()))?;
+        eprintln!("forked {src} -> {new_id}");
+        resume_target = Some(dst.to_string_lossy().to_string());
+        source = "fork";
+    }
+    match &resume_target {
+        Some(r) => {
+            let p = PathBuf::from(r);
+            let path = if p.exists() {
+                p
+            } else {
+                cli.session_dir.join(format!("{r}.jsonl"))
+            };
+            Ok(Some((SessionLog::open_path(&path).await?, source)))
+        }
+        None => Ok(None),
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -260,34 +296,77 @@ async fn main() -> anyhow::Result<()> {
         return eval::run(args, &cli, &cwd, &preset_roots).await;
     }
 
+    // ── serve: the GUI is a multi-session host ──
+    // Every session tab gets its own Context/AgentLoop (built by the
+    // factory below) — no shared Context swapping mid-tab. The MCP
+    // connections are process-wide; each Context registers fresh tool
+    // handles sharing them.
+    if let Some(plugin::Cmd::Serve { port }) = cli.command {
+        let llm = provider_adapter(&cli);
+        let mcp = sunmao_core::mcp::connect_all(&cwd, &preset_roots).await;
+        let first_log = open_first_log(&cli).await?;
+        let system_prompt = sunmao_core::prompt::PromptAssembler::new(&cwd)
+            .with_extra_roots(&preset_roots)
+            .assemble(cli.system.as_deref());
+        let default_provider = sunmao_core::models::ProviderDef {
+            base_url: cli.base_url.clone(),
+            api_key_env: None,
+            api_key: Some(cli.api_key.clone()),
+            dialect: cli.provider.clone(),
+        };
+        let model_label = cli.model.clone();
+        let serve_roots = preset_roots.clone();
+        let serve_cwd = cwd.clone();
+        let factory = serve::SessionFactory {
+            make: Box::new(move |log, approver| {
+                let llm = llm.clone();
+                let mcp_servers = mcp.servers.clone();
+                let preset_roots = preset_roots.clone();
+                let cwd2 = serve_cwd.clone();
+                let driver = cli.driver;
+                let default_provider = default_provider.clone();
+                Box::pin(async move {
+                    let mut registry = builtin_registry();
+                    for h in &mcp_servers {
+                        for t in h.tool_impls() {
+                            registry.register_boxed(t);
+                        }
+                    }
+                    let ctx_cwd = cwd2.clone();
+                    let mut ctx_raw = Context::new(llm, log, registry, cwd2)
+                        .with_extra_plugin_roots(preset_roots);
+                    ctx_raw.mcp_servers = mcp_servers;
+                    if let Some(d) = driver {
+                        ctx_raw.loop_driver = d;
+                    }
+                    ctx_raw.connect_extensions().await;
+                    ctx_raw.approval = approver;
+                    ctx_raw.models = Some(Arc::new(sunmao_core::models::ModelResolver::load(
+                        &ctx_cwd,
+                        default_provider,
+                        "default",
+                    )));
+                    Ok(ctx_raw)
+                })
+            }),
+        };
+        let res = serve::run(
+            factory,
+            cwd.clone(),
+            serve_roots,
+            port,
+            system_prompt,
+            model_label,
+            first_log,
+        )
+        .await;
+        return res;
+    }
+
     let llm = provider_adapter(&cli);
     // --fork: copy the source log to a fresh id, then resume the copy
-    let mut resume_target = cli.resume.clone();
-    if let Some(src) = &cli.fork {
-        let p = PathBuf::from(src);
-        let src_path = if p.exists() {
-            p
-        } else {
-            cli.session_dir.join(format!("{src}.jsonl"))
-        };
-        let new_id = session_id();
-        let dst = cli.session_dir.join(format!("{new_id}.jsonl"));
-        std::fs::copy(&src_path, &dst)
-            .map_err(|e| anyhow::anyhow!("fork {}: {e}", src_path.display()))?;
-        eprintln!("forked {src} -> {new_id}");
-        resume_target = Some(dst.to_string_lossy().to_string());
-    }
-    let (sessions, resumed) = match &resume_target {
-        Some(r) => {
-            let p = PathBuf::from(r);
-            let path = if p.exists() {
-                p
-            } else {
-                cli.session_dir.join(format!("{r}.jsonl"))
-            };
-            let log = SessionLog::open_path(&path).await?;
-            (log, true)
-        }
+    let (sessions, resumed) = match open_first_log(&cli).await? {
+        Some((log, _)) => (log, true),
         None => (
             SessionLog::open(&cli.session_dir, &session_id()).await?,
             false,
@@ -305,15 +384,8 @@ async fn main() -> anyhow::Result<()> {
     } else {
         Vec::new()
     };
-    let serving = matches!(cli.command, Some(plugin::Cmd::Serve { .. }));
-    let interactive = cli.print.is_none() && !cli.acp && !serving;
+    let interactive = cli.print.is_none() && !cli.acp;
     let (tx_approval, rx_approval) = tokio::sync::mpsc::unbounded_channel();
-    // serve's approval channel is the ws broadcast — built before Context so
-    // the seam can be installed while it still takes `mut`.
-    let serve_pending = serving.then(|| {
-        let (live, _) = tokio::sync::broadcast::channel::<serde_json::Value>(512);
-        Arc::new(serve::Pending::new(live))
-    });
     let mut ctx_raw = Context::new(llm, sessions, registry, cwd.clone())
         .with_extra_plugin_roots(preset_roots.clone());
     ctx_raw.mcp_servers = mcp.servers;
@@ -325,8 +397,6 @@ async fn main() -> anyhow::Result<()> {
     ctx_raw.connect_extensions().await;
     if cli.tui {
         ctx_raw.approval = Arc::new(tui::TuiApprover { tx: tx_approval });
-    } else if let Some(p) = &serve_pending {
-        ctx_raw.approval = Arc::new(serve::ServeApprover { pending: p.clone() });
     } else if interactive {
         ctx_raw.approval = Arc::new(StdinApprover { interactive: true });
     }
@@ -384,31 +454,6 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let agent = AgentLoop::new(ctx.clone());
-
-    if let Some(plugin::Cmd::Serve { port }) = cli.command {
-        agent.set_live_sink(Arc::new(serve::WsObserver::new(
-            serve_pending.as_ref().unwrap().live.clone(),
-        )));
-        let res = serve::run(
-            agent,
-            cwd.clone(),
-            preset_roots,
-            port,
-            serve_pending.unwrap(),
-            default_system,
-            cli.model.clone(),
-        )
-        .await;
-        ctx.hooks
-            .fire(
-                sunmao_core::hooks::HookEvent::SessionEnd,
-                &ctx.cwd,
-                &sunmao_core::hooks::HookInput::default(),
-            )
-            .await;
-        ctx.ext.shutdown().await;
-        return res;
-    }
 
     if let Some(prompt) = &cli.print {
         let obs = StdoutObserver {

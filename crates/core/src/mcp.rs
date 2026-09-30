@@ -129,6 +129,10 @@ pub struct McpToolInfo {
     pub name: String,
     /// the bare tool name the server knows
     pub server_tool: String,
+    pub description: String,
+    /// declared input schema, verbatim (the registry rebuilds tools from
+    /// this — one connection can front several session Contexts)
+    pub schema: Value,
     pub ui: Option<UiToolMeta>,
     /// `_meta.ui.visibility` allows app-initiated calls (default true)
     pub app_visible: bool,
@@ -436,6 +440,8 @@ async fn connect_one(
             McpToolInfo {
                 name: format!("mcp__{name}__{}", t.name),
                 server_tool: t.name.to_string(),
+                description: t.description.as_deref().unwrap_or_default().to_string(),
+                schema: serde_json::to_value(&t.input_schema).unwrap_or_else(|_| json_object()),
                 app_visible: ui.as_ref().map(|u| u.app_visible()).unwrap_or(true),
                 ui,
             }
@@ -443,28 +449,7 @@ async fn connect_one(
         .collect();
     // visibility: ["app"] hides the tool from the MODEL — it still enters
     // the catalog so the island can call it.
-    let tools: Vec<Box<dyn ToolImpl>> = listed
-        .into_iter()
-        .zip(&catalog)
-        .filter(|(t, _)| {
-            ui_meta(t)
-                .map(|u| u.visibility.is_empty() || u.visibility.iter().any(|v| v == "model"))
-                .unwrap_or(true)
-        })
-        .map(|(t, info)| {
-            Box::new(McpTool {
-                server: name.to_string(),
-                tool_name: t.name.to_string(),
-                description: t
-                    .description
-                    .map(|d| d.to_string())
-                    .unwrap_or_else(|| format!("mcp tool {}:{}", name, t.name)),
-                schema: serde_json::to_value(&t.input_schema).unwrap_or(json_object()),
-                client: client.clone(),
-                ui: info.ui.clone(),
-            }) as Box<dyn ToolImpl>
-        })
-        .collect();
+    let tools = handle_tools(name, &client, &catalog);
     Ok((
         McpServerHandle {
             name: name.to_string(),
@@ -473,6 +458,47 @@ async fn connect_one(
         },
         tools,
     ))
+}
+
+/// Rebuild a handle's model-facing tool set — one MCP connection can front
+/// several session Contexts (the `serve` multi-session host), each needs
+/// its own `McpTool` instances because `Box<dyn ToolImpl>` isn't Clone.
+fn handle_tools(
+    name: &str,
+    client: &ClientHandle,
+    catalog: &[McpToolInfo],
+) -> Vec<Box<dyn ToolImpl>> {
+    catalog
+        .iter()
+        .filter(|info| {
+            info.ui
+                .as_ref()
+                .map(|u| u.visibility.is_empty() || u.visibility.iter().any(|v| v == "model"))
+                .unwrap_or(true)
+        })
+        .map(|info| {
+            Box::new(McpTool {
+                server: name.to_string(),
+                tool_name: info.server_tool.clone(),
+                description: if info.description.is_empty() {
+                    format!("mcp tool {name}:{}", info.server_tool)
+                } else {
+                    info.description.clone()
+                },
+                schema: info.schema.clone(),
+                client: client.clone(),
+                ui: info.ui.clone(),
+            }) as Box<dyn ToolImpl>
+        })
+        .collect()
+}
+
+impl McpServerHandle {
+    /// Fresh tool instances for another Context sharing this connection —
+    /// the island bridge and the model registry stay per-session.
+    pub fn tool_impls(&self) -> Vec<Box<dyn ToolImpl>> {
+        handle_tools(&self.name, &self.client, &self.tools)
+    }
 }
 
 fn json_object() -> Value {

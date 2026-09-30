@@ -178,6 +178,10 @@ async fn run_case_inner(
     }
     let mut ctx_raw = Context::new(llm.clone(), sessions, registry, case_cwd.clone())
         .with_extra_plugin_roots(preset_roots.to_vec());
+    // --loop outranks every manifest declaration, same as the main session
+    if let Some(d) = cli.driver {
+        ctx_raw.loop_driver = d;
+    }
     ctx_raw.connect_extensions().await;
     // same models.json seam as the main session — the session provider
     // registers as "default" so bare model ids resolve

@@ -52,9 +52,9 @@ impl AgentLoop {
             {
                 let items = self.ctx.todos.lock().unwrap().clone();
                 if !items.is_empty() {
-                    // same head-of-request injection as the full loop —
+                    // same tail-of-request injection as the full loop —
                     // bare skips hooks and the gate, not the task list.
-                    messages.insert(0, Message::user(crate::tool::todos_inject_text(&items)));
+                    messages.push(Message::user(crate::tool::todos_inject_text(&items)));
                 }
             }
             let decls = self.ctx.tools.declarations();

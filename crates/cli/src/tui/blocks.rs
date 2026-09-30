@@ -50,6 +50,9 @@ pub struct ToolBlock {
     /// which concurrent child this came from — parallel batch children
     /// share depth but must never alias each other's blocks.
     pub lane: u8,
+    /// the provider's tool_call id — the exact start↔done join key; None on
+    /// replayed calls and synthetic rows (local `!` shell).
+    pub call_id: Option<String>,
     /// consecutive calls of the same name folded into this block
     pub group_count: usize,
     /// when this call started — the header shows wall time once done
@@ -96,7 +99,13 @@ impl Block {
         }
     }
 
-    pub fn new_tool(name: &str, summary: &str, depth: u8, lane: u8) -> Self {
+    pub fn new_tool(
+        name: &str,
+        summary: &str,
+        depth: u8,
+        lane: u8,
+        call_id: Option<String>,
+    ) -> Self {
         let mut b = Self::new(BlockKind::Tool);
         b.tool = Some(ToolBlock {
             name: name.to_string(),
@@ -105,6 +114,7 @@ impl Block {
             done: None,
             depth,
             lane,
+            call_id,
             group_count: 1,
             started: Instant::now(),
             elapsed: None,
@@ -123,14 +133,27 @@ impl Block {
             })
     }
 
+    /// Exact-join variant: a live ToolDone carries the call's wire id — match
+    /// that running block even when another same-name call is still open.
+    pub fn is_running_call(&self, call_id: &str) -> bool {
+        self.kind == BlockKind::Tool
+            && self
+                .tool
+                .as_ref()
+                .is_some_and(|t| t.done.is_none() && t.call_id.as_deref() == Some(call_id))
+    }
+
     /// Verb-grouping: a finished tool block for `name` gets re-armed by the
     /// next same-name call — visually folding a run of identical tools.
     /// Prior outputs stay in the panel; the newest digest leads the header.
-    pub fn rearm_tool(&mut self, summary: &str) {
+    /// The re-armed run carries the *new* call's id — a stale id would
+    /// cross-wire a later ToolDone to this row.
+    pub fn rearm_tool(&mut self, summary: &str, call_id: Option<String>) {
         self.generation += 1;
         if let Some(t) = &mut self.tool {
             t.done = None;
             t.summary = summary.to_string();
+            t.call_id = call_id;
             t.group_count += 1;
             t.started = Instant::now();
             t.elapsed = None;

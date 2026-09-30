@@ -35,30 +35,59 @@ impl App {
     /// same tool at the same depth+lane finished, re-arm it (one `Read ×3`
     /// row instead of three). `depth > 0` marks sub-agent calls; `lane`
     /// keeps parallel batch children distinct (same depth, same tool name
-    /// would otherwise alias).
-    pub fn tool_start(&mut self, name: &str, summary: &str, depth: u8, lane: u8) {
+    /// would otherwise alias). `call_id` is the wire-identity join key.
+    pub fn tool_start(
+        &mut self,
+        name: &str,
+        summary: &str,
+        depth: u8,
+        lane: u8,
+        call_id: Option<String>,
+    ) {
         if let Some(prev) = self.blocks.last_mut()
             && prev.kind == BlockKind::Tool
             && prev.tool.as_ref().is_some_and(|t| {
                 t.name == name && t.depth == depth && t.lane == lane && t.done.is_some()
             })
         {
-            prev.rearm_tool(summary);
+            prev.rearm_tool(summary, call_id);
             return;
         }
         self.blocks
-            .push(Block::new_tool(name, summary, depth, lane));
+            .push(Block::new_tool(name, summary, depth, lane, call_id));
         self.follow_tail();
     }
 
-    /// A tool call finished — backfills the matching running block.
-    pub fn tool_done(&mut self, name: &str, ok: bool, output: &str, depth: u8, lane: u8) {
-        if let Some(b) = self
-            .blocks
-            .iter_mut()
-            .rev()
-            .find(|b| b.is_running_tool(name, depth, lane))
-        {
+    /// A tool call finished — backfills the matching running block. A
+    /// `call_id` joins exactly; id-less events fall back to the running
+    /// (name, depth, lane) row.
+    pub fn tool_done(
+        &mut self,
+        name: &str,
+        ok: bool,
+        output: &str,
+        depth: u8,
+        lane: u8,
+        call_id: Option<&str>,
+    ) {
+        // find the slot first (immutable), then mutate — two-phase keeps the
+        // borrow checker happy through the or-chain
+        let idx = match call_id {
+            Some(id) => self
+                .blocks
+                .iter()
+                .rposition(|b| b.is_running_call(id))
+                .or_else(|| {
+                    self.blocks
+                        .iter()
+                        .rposition(|b| b.is_running_tool(name, depth, lane))
+                }),
+            None => self
+                .blocks
+                .iter()
+                .rposition(|b| b.is_running_tool(name, depth, lane)),
+        };
+        if let Some(b) = idx.map(|i| &mut self.blocks[i]) {
             b.finish_tool(ok, output);
         } else {
             // ToolDone without a start (shouldn't happen) — note it.
@@ -235,6 +264,7 @@ impl App {
                         &sunmao_core::agent::call_summary(&call.function.name, &args),
                         *depth,
                         *lane,
+                        Some(call.id.clone()),
                     );
                 }
                 E::ToolResult {
@@ -243,8 +273,8 @@ impl App {
                     output,
                     depth,
                     lane,
-                    ..
-                } => self.tool_done(name, *ok, output, *depth, *lane),
+                    call_id,
+                } => self.tool_done(name, *ok, output, *depth, *lane, Some(call_id)),
                 E::Hook { event, detail } => {
                     self.push_audit(&format!("{event} — {detail}"));
                 }
@@ -261,8 +291,8 @@ impl App {
                     exit_code,
                     output,
                 } => {
-                    self.tool_start("!", &format!("$ {command}"), 0, 0);
-                    self.tool_done("!", *exit_code == 0, output, 0, 0);
+                    self.tool_start("!", &format!("$ {command}"), 0, 0, None);
+                    self.tool_done("!", *exit_code == 0, output, 0, 0, None);
                 }
                 E::Compacted { summary } => {
                     self.blocks.clear();

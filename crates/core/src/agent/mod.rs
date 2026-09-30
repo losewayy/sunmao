@@ -42,21 +42,27 @@ pub enum LiveEvent {
     /// argument (path/command/pattern/…) for frontends to render. `depth`
     /// is the agent's nesting level — 0 for the interactive agent, 1+ for
     /// `Task` sub-agents relayed through `ctx.live_sink`; `lane` tells
-    /// parallel siblings apart (each spawn claims its own).
+    /// parallel siblings apart (each spawn claims its own). `call_id` is the
+    /// provider's tool_call id — the exact start↔done join key; `None` on
+    /// synthetic events (compact, local shell) that have no wire call.
     ToolStart {
         name: String,
         summary: String,
         depth: u8,
         lane: u8,
+        call_id: Option<String>,
     },
     /// Tool call finished. `output` carries the raw result so rich frontends
-    /// can preview it; simple frontends ignore it.
+    /// can preview it; simple frontends ignore it. `call_id` joins back to
+    /// its ToolStart — pairing by name alone mispairs when the same tool
+    /// runs twice in one turn.
     ToolDone {
         name: String,
         ok: bool,
         output: String,
         depth: u8,
         lane: u8,
+        call_id: Option<String>,
         /// Wall time from ToolStart to done — frontends render it; replayed
         /// transcripts (SessionEvent::ToolResult) can't carry it, so frontends
         /// that replay fall back to nothing rather than recompute.

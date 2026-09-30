@@ -204,6 +204,7 @@ pub(super) fn spawn(
                         summary: format!("$ {cmd}"),
                         depth: 0,
                         lane: 0,
+                        call_id: None,
                     }));
                     let shell_cwd = cwd.clone();
                     let t0 = std::time::Instant::now();
@@ -222,6 +223,7 @@ pub(super) fn spawn(
                         output,
                         depth: 0,
                         lane: 0,
+                        call_id: None,
                         elapsed_ms: t0.elapsed().as_millis() as u64,
                     }));
                     continue;

@@ -62,6 +62,7 @@ fn live_event_wire_shape_is_stable() {
             summary: "ls".into(),
             depth: 1,
             lane: 2,
+            call_id: Some("call_1".into()),
         },
         LiveEvent::ToolDone {
             name: "Bash".into(),
@@ -69,6 +70,7 @@ fn live_event_wire_shape_is_stable() {
             output: "out".into(),
             depth: 0,
             lane: 0,
+            call_id: Some("call_1".into()),
             elapsed_ms: 12,
         },
         LiveEvent::Hook {

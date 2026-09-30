@@ -244,8 +244,8 @@ fn fold_by_cap_compresses_old_steps_and_e_restores() {
     // alternate names so verb-grouping doesn't merge them into one block
     for i in 0..15 {
         let name = if i % 2 == 0 { "Read" } else { "Bash" };
-        app.tool_start(name, &format!("f{i}.rs"), 0, 0);
-        app.tool_done(name, true, "ok", 0, 0);
+        app.tool_start(name, &format!("f{i}.rs"), 0, 0, None);
+        app.tool_done(name, true, "ok", 0, 0, None);
         if i == 7 {
             app.push_audit("grant — Bash session");
         }
@@ -298,8 +298,8 @@ fn fold_by_cap_remaps_selection() {
     app.echo_user("q");
     for i in 0..20 {
         let name = if i % 2 == 0 { "Read" } else { "Bash" };
-        app.tool_start(name, &format!("f{i}.rs"), 0, 0);
-        app.tool_done(name, true, "ok", 0, 0);
+        app.tool_start(name, &format!("f{i}.rs"), 0, 0, None);
+        app.tool_done(name, true, "ok", 0, 0, None);
     }
     // last tool block stays selected through the fold
     app.selected = app.blocks.len() - 1;
@@ -321,8 +321,8 @@ fn fold_by_cap_leaves_short_turns_alone() {
     app.echo_user("q");
     for i in 0..5 {
         let name = if i % 2 == 0 { "Read" } else { "Bash" };
-        app.tool_start(name, &format!("f{i}.rs"), 0, 0);
-        app.tool_done(name, true, "ok", 0, 0);
+        app.tool_start(name, &format!("f{i}.rs"), 0, 0, None);
+        app.tool_done(name, true, "ok", 0, 0, None);
     }
     let len = app.blocks.len();
     app.close_turn();

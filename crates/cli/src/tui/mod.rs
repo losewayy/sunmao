@@ -304,15 +304,17 @@ async fn run_inner(
                     summary,
                     depth,
                     lane,
-                } => app.tool_start(&name, &summary, depth, lane),
+                    call_id,
+                } => app.tool_start(&name, &summary, depth, lane, call_id),
                 LiveEvent::ToolDone {
                     name,
                     ok,
                     output,
                     depth,
                     lane,
+                    call_id,
                     ..
-                } => app.tool_done(&name, ok, &output, depth, lane),
+                } => app.tool_done(&name, ok, &output, depth, lane, call_id.as_deref()),
                 LiveEvent::Hook { event, detail } => {
                     app.push_audit(&format!("{event} — {detail}"));
                 }

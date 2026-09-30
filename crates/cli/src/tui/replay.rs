@@ -226,10 +226,20 @@ impl App {
                     self.last_usage = Some(usage.clone());
                 }
                 E::Started { .. } => {}
-                E::Artifact { name, path, bytes } => {
+                E::Artifact {
+                    name,
+                    path,
+                    bytes,
+                    rev,
+                } => {
                     // same note the live sink pushes — a resumed session
                     // shouldn't hide a deliverable it produced.
-                    self.push_note(&format!("[artifact '{name}' → {path} ({bytes} B)]"));
+                    let v = if *rev > 1 {
+                        format!(" · rev {rev}")
+                    } else {
+                        String::new()
+                    };
+                    self.push_note(&format!("[artifact '{name}' → {path} ({bytes} B{v})]"));
                 }
                 E::ModeChange { mode } => {
                     // the stance flip is audit-visible, same as hook events

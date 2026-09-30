@@ -163,6 +163,7 @@ fn fixture() -> Vec<E> {
             name: "report".into(),
             path: ".sunmao/artifacts/report.html".into(),
             bytes: 2048,
+            rev: 2,
         },
         // a second same-name pair — post-compaction so the verb-grouping
         // case survives into the canonical transcript

@@ -123,11 +123,25 @@ pub fn artifacts_text(cwd: &Path) -> String {
                     let p = e.path();
                     if p.extension().map(|x| x == "html").unwrap_or(false) {
                         let name = p.file_stem()?.to_string_lossy().to_string();
+                        // `{name}.v{N}.html` files are archived revisions,
+                        // not artifacts — the rev chain hangs off the live
+                        // `{name}.html` row.
+                        if let Some((_, suffix)) = name.rsplit_once(".v")
+                            && suffix.parse::<usize>().is_ok()
+                        {
+                            return None;
+                        }
                         let bytes = e.metadata().ok()?.len();
                         let notes = p.with_extension("state.json").exists();
+                        let revs = sunmao_core::tool::artifact_rev(&dir, &name);
                         Some(format!(
-                            "  {name:<24} {bytes:>7} B{}",
-                            if notes { "  +notes" } else { "" }
+                            "  {name:<24} {bytes:>7} B{}{}",
+                            if notes { "  +notes" } else { "" },
+                            if revs > 1 {
+                                format!("  ·{revs} revs")
+                            } else {
+                                String::new()
+                            },
                         ))
                     } else {
                         None

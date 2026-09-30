@@ -313,6 +313,16 @@ TUI.
   tool_results stole pending rows, `<local-shell>` leaked as user
   bubbles — all fixed to mirror the TUI's audit-row semantics
 
+- **artifact version chains** (GUI.md §3) — a same-name `HtmlArtifact`
+  rewrite archives the old file as `{name}.v{rev-1}.html` instead of
+  losing it; `Artifact` session+live events carry `rev`, the log sequence
+  is the authoritative version list. `GET /artifacts/{name}?rev=k`
+  serves history (rev 0 or latest → the live file), `/revs` reports the
+  count; GUI islands get ◀ ▶ nav (`v{cur}/{max}` chip, open-in-browser
+  honors the pinned rev), TUI/REPL notes show `· rev N`, `/artifacts`
+  lists `·N revs` and hides the archives. ACP resource titles say
+  `name.html (rev N)`. Legacy events deserialize with `rev: 0`
+
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine
   (`Producer::WinSpawn` — the which-resolve + CreateProcess path

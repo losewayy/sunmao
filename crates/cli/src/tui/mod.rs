@@ -325,8 +325,18 @@ async fn run_inner(
                 LiveEvent::Hook { event, detail } => {
                     app.push_audit(&format!("{event} — {detail}"));
                 }
-                LiveEvent::Artifact { name, path, bytes } => {
-                    app.push_note(&format!("[artifact '{name}' → {path} ({bytes} B)]"));
+                LiveEvent::Artifact {
+                    name,
+                    path,
+                    bytes,
+                    rev,
+                } => {
+                    let v = if rev > 1 {
+                        format!(" · rev {rev}")
+                    } else {
+                        String::new()
+                    };
+                    app.push_note(&format!("[artifact '{name}' → {path} ({bytes} B{v})]"));
                 }
                 LiveEvent::Usage(u) => app.last_usage = Some(u),
                 LiveEvent::TurnEnd { outcome } => {

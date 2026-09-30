@@ -42,11 +42,15 @@ pub enum SessionEvent {
     /// Compaction boundary: earlier events are summarized away.
     Compacted { summary: String },
     /// An HTML artifact was produced — human-facing deliverable registered
-    /// as a durable fact (SPEC §4.10).
+    /// as a durable fact (SPEC §4.10). `rev` is the version number (1-based;
+    /// 0 = unversioned legacy event): rewrites archive the previous file as
+    /// `{name}.v{rev-1}.html`, so the event sequence IS the version chain.
     Artifact {
         name: String,
         path: String,
         bytes: usize,
+        #[serde(default)]
+        rev: usize,
     },
     /// Token usage for one LLM request — the accounting side of audit.
     Usage { usage: sunmao_llm::types::Usage },

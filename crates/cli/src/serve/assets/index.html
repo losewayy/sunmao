@@ -235,6 +235,9 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px color
 .island-h .meta{font:11.5px var(--font-mono);color:var(--text-3);margin-right:4px}
 .island-h .ib{width:28px;height:28px}
 .island-h .ib .i{width:15px;height:15px}
+.island-h .revs{display:flex;align-items:center;gap:2px;margin-left:2px}
+.island-h .revs .ib{width:22px;height:22px}
+.island-h .revs .rev-n{font:11px var(--font-mono);color:var(--text-3);min-width:34px;text-align:center}
 .notes-pill{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:99px;font:500 11.5px var(--font-mono);color:color-mix(in srgb,var(--accent) 72%,var(--text));background:color-mix(in srgb,var(--accent) 16%,transparent);transition:background .12s}
 .notes-pill:hover,.island.show-notes .notes-pill{background:color-mix(in srgb,var(--accent) 26%,transparent)}
 .island iframe{display:block;width:calc(100% - 12px);height:206px;margin:0 6px 6px;border:0;border-radius:9px;background:#fbfaf7;transition:height .32s cubic-bezier(.2,.8,.2,1)}
@@ -495,6 +498,7 @@ button.tb:hover,.tb.pressed{background:var(--fill-2);color:var(--text)}
 <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l-.15-.09a2 2 0 0 0-.73 2.73l-.22-.38a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
 <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></symbol>
 <symbol id="i-chev-d" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="i-chev-l" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
 <symbol id="i-chev-r" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
 <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
 <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></symbol>
@@ -1068,6 +1072,11 @@ function islandHTML(ev) {
       <span class="nm">HtmlArtifact</span>
       <span class="fn">${esc(nm)}.html</span>
       <button class="notes-pill" data-act="notes" data-tip="批注">${ic('note', 'i xs')}<span>批注</span></button>
+      <span class="revs" hidden>
+        <button class="ib" data-act="rev-prev" data-tip="上一版本" aria-label="上一版本">${ic('chev-l')}</button>
+        <span class="rev-n">v1/1</span>
+        <button class="ib" data-act="rev-next" data-tip="下一版本" aria-label="下一版本">${ic('chev-r')}</button>
+      </span>
       <span class="sp"></span>
       <span class="meta">${fmtBytes(ev.bytes || 0)}</span>
       <button class="ib" data-act="sandbox" data-tip="沙箱：禁网 · 无同源 · 无脚本桥出" aria-label="沙箱">${ic('lock')}</button>
@@ -1084,6 +1093,29 @@ function addArtifact(ev) {
   el.classList.add('enter');
   curBubble = null;
   refreshNotes(el, ev.name);
+  refreshRevs(el, ev.name, ev.rev || 0);
+}
+async function refreshRevs(el, name, known) {
+  let max = known | 0;
+  try {
+    const r = await fetch('/artifacts/' + encodeURIComponent(name) + '/revs');
+    const v = await r.json();
+    if (v && v.rev) max = v.rev;
+  } catch {}
+  el.dataset.revMax = max;
+  el.dataset.revCur = Math.min(Math.max(known | 0, 1), Math.max(max, 1)) || 1;
+  if (!known) el.dataset.revCur = max || 1;
+  const revs = $('.revs', el);
+  revs.hidden = max < 2;
+  setIslandRev(el);
+}
+function setIslandRev(isl) {
+  const name = isl.dataset.artifact;
+  const cur = +isl.dataset.revCur || 1, max = +isl.dataset.revMax || 1;
+  $('.rev-n', isl).textContent = `v${cur}/${max}`;
+  $('iframe', isl).src = cur === max
+    ? `/artifacts/${encodeURIComponent(name)}`
+    : `/artifacts/${encodeURIComponent(name)}?rev=${cur}`;
 }
 async function refreshNotes(el, name) {
   let anns = [];
@@ -1744,7 +1776,18 @@ function act(name, el) {
     case 'note-add': return submitNote(el.dataset.name, el);
     case 'sandbox': return toast('沙箱：禁止网络、无同源访问、脚本无法调用宿主', 'lock');
     case 'island-tall': { const isl = el.closest('.island'), on = isl.classList.toggle('tall'); el.innerHTML = ic(on ? 'shrink' : 'expand'); el.dataset.tip = on ? '收起' : '展开'; return; }
-    case 'island-open': { const isl = el.closest('.island'); return open('/artifacts/' + encodeURIComponent(isl.dataset.artifact), '_blank'); }
+    case 'rev-prev': case 'rev-next': {
+      const isl = el.closest('.island');
+      const cur = +isl.dataset.revCur || 1, max = +isl.dataset.revMax || 1;
+      isl.dataset.revCur = Math.min(Math.max(cur + (name === 'rev-prev' ? -1 : 1), 1), max);
+      return setIslandRev(isl);
+    }
+    case 'island-open': {
+      const isl = el.closest('.island');
+      const cur = +isl.dataset.revCur || 1, max = +isl.dataset.revMax || 1;
+      const q = cur === max ? '' : `?rev=${cur}`;
+      return open('/artifacts/' + encodeURIComponent(isl.dataset.artifact) + q, '_blank');
+    }
     case 'think': return el.classList.toggle('open');
     case 'pick-mode': {
       // same four stances the kernel gates on — labels mirror the TUI's /mode

@@ -94,10 +94,20 @@ impl Observer for AcpObserver {
             LiveEvent::Usage(_) => {}
             // SPEC §4.10 — artifacts ride the ACP channel as resource links;
             // the client decides how to render (sandboxed webview or not)
-            LiveEvent::Artifact { name, path, bytes } => {
+            LiveEvent::Artifact {
+                name,
+                path,
+                bytes,
+                rev,
+            } => {
                 let uri = format!("file:///{}", path.replace('\\', "/"));
+                let title = if *rev > 1 {
+                    format!("{name}.html (rev {rev})")
+                } else {
+                    format!("{name}.html")
+                };
                 let link = v2::ResourceLink::new(name.clone(), uri)
-                    .title(format!("{name}.html"))
+                    .title(title)
                     .mime_type("text/html".to_string())
                     .size(*bytes as i64);
                 self.send(v2::SessionUpdate::AgentMessageChunk(v2::ContentChunk::new(

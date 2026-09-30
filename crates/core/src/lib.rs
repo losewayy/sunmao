@@ -52,3 +52,50 @@ pub(crate) fn fresh_test_dir(tag: &str) -> std::path::PathBuf {
         .as_nanos();
     std::env::temp_dir().join(format!("sunmao-test-{tag}-{}-{nanos}", std::process::id()))
 }
+
+/// Compile a `tests/fixtures/*.rs` child-process binary once per test run
+/// (each fixture gets its own `OnceLock` cache). `rustc` rides with the
+/// toolchain cargo came from — PATH first, CARGO's sibling as fallback.
+/// Returns None when rustc isn't on this box — live tests degrade to a
+/// skip, the contract fixtures have always carried.
+#[cfg(test)]
+pub(crate) fn compile_fixture(name: &str, stem: &str) -> Option<std::path::PathBuf> {
+    let rustc = std::env::var_os("PATH")
+        .and_then(|path| {
+            std::env::split_paths(&path).find_map(|dir| {
+                ["rustc", "rustc.exe"]
+                    .iter()
+                    .map(|n| dir.join(n))
+                    .find(|c| c.is_file())
+            })
+        })
+        .or_else(|| {
+            let sib = std::path::Path::new(env!("CARGO"))
+                .parent()?
+                .join(if cfg!(windows) { "rustc.exe" } else { "rustc" });
+            sib.is_file().then_some(sib)
+        })?;
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
+    let out = std::env::temp_dir().join(if cfg!(windows) {
+        format!("{stem}.exe")
+    } else {
+        stem.to_string()
+    });
+    let tmp = out.with_extension("tmp");
+    let status = std::process::Command::new(&rustc)
+        .args(["--edition", "2021", "-O"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&tmp)
+        .status()
+        .ok()?;
+    if !status.success() {
+        return None;
+    }
+    // another test may have finished first — either way `out` ends up
+    // whole (rename over an existing dest replaces it on both OSes).
+    let _ = std::fs::rename(&tmp, &out);
+    out.is_file().then_some(out)
+}

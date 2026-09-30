@@ -90,58 +90,14 @@ async fn dispatch_resolves_parked_id() {
 
 // — live, gated on `rustc` (the fixture is a local .rs child) —
 
-/// The extension child for live tests: `tests/fixtures/ext_echo.rs`
-/// compiled once per test run. `rustc` rides with the toolchain cargo
-/// came from — PATH first, CARGO's sibling as fallback.
-fn rustc() -> Option<std::path::PathBuf> {
-    if let Some(path) = std::env::var_os("PATH") {
-        if let Some(hit) = std::env::split_paths(&path).find_map(|dir| {
-            ["rustc", "rustc.exe"]
-                .iter()
-                .map(|name| dir.join(name))
-                .find(|c| c.is_file())
-        }) {
-            return Some(hit);
-        }
-    }
-    let sibling = std::path::Path::new(env!("CARGO"))
-        .parent()?
-        .join(if cfg!(windows) { "rustc.exe" } else { "rustc" });
-    sibling.is_file().then_some(sibling)
-}
-
 /// Compile `tests/fixtures/ext_echo.rs` once; every live test reuses the
 /// binary (fixture flags select behavior: `--die` for the dead-child
 /// case). Returns None when rustc isn't on this box — tests degrade to
 /// a skip, same contract the old node fixture had.
 fn fixture_bin() -> Option<std::path::PathBuf> {
     static BIN: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
-    BIN.get_or_init(|| {
-        let rustc = rustc()?;
-        let src =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ext_echo.rs");
-        let out = std::env::temp_dir().join(if cfg!(windows) {
-            "sunmao-ext-echo.exe"
-        } else {
-            "sunmao-ext-echo"
-        });
-        let tmp = out.with_extension("tmp");
-        let status = std::process::Command::new(&rustc)
-            .args(["--edition", "2021", "-O"])
-            .arg(&src)
-            .arg("-o")
-            .arg(&tmp)
-            .status()
-            .ok()?;
-        if !status.success() {
-            return None;
-        }
-        // another test may have finished first — either way `out` ends up
-        // whole (rename over an existing dest replaces it on both OSes).
-        let _ = std::fs::rename(&tmp, &out);
-        out.is_file().then_some(out)
-    })
-    .clone()
+    BIN.get_or_init(|| crate::compile_fixture("ext_echo.rs", "sunmao-ext-echo"))
+        .clone()
 }
 
 fn init(dir: &std::path::Path) -> registry::ExtInit {

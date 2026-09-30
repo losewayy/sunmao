@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 
 use crate::tui;
 
-use super::{Host, Shared, WsObserver, slash_candidates};
+use super::host::{Host, Shared, WsObserver, slash_candidates};
 
 /// Ask the host's mgmt lane to adopt a session — drivers can't call
 /// `adopt`/`fork_or_resume` directly: adopt spawns drivers, so an awaited
@@ -19,7 +19,7 @@ use super::{Host, Shared, WsObserver, slash_candidates};
 async fn adopt_via_mgmt(s: &Arc<Shared>, id: &str, fork: bool) -> Result<String, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     s.mgmt
-        .send(super::SessionOp::Adopt {
+        .send(super::host::SessionOp::Adopt {
             id: id.to_string(),
             fork,
             reply: tx,

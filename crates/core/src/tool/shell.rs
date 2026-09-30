@@ -71,7 +71,7 @@ impl ToolImpl for BashTool {
         }
 
         // permission rules + approval gate live in the dispatch pipeline
-        // (agent.rs::gate_call) — the hook's permissionDecision can only
+        // (agent/turn.rs::gate_call) — the hook's permissionDecision can only
         // interpose there; the tool itself just executes.
 
         let run = match run_parsed(list, ctx.cwd.clone(), a.timeout_secs.unwrap_or(120)).await {

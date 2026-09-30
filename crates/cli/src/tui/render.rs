@@ -445,7 +445,8 @@ fn draw_status(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
                 } else if app.bash_mode {
                     "local shell — output joins context · Esc/⌫ exits mode".to_string()
                 } else {
-                    "Tab blocks · / commands · ! bash · Esc×2 clear · Ctrl-C quit".to_string()
+                    "Tab blocks · / commands · @ files · ! bash · Esc×2 clear · Ctrl-C quit"
+                        .to_string()
                 }
             }
         };

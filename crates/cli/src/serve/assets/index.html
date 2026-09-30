@@ -312,6 +312,7 @@ if (TAURI) {
 /* ================= state ================= */
 let view = 'session', lastMain = 'session', dockOn = true, setPage = 'appearance';
 let sessionId = '', cwd = '', slashList = [], models = [], modelLabel = '', busy = false, connected = false;
+let clientId = 0; // hello assigns this tab's id — directed frames name it
 // per-session rail state — every host frame carries `sess`; the transcript
 // only renders the viewed session, the rail tracks them all
 const busySessions = new Set(), waitingSessions = new Set();
@@ -1256,6 +1257,7 @@ function route(v) {
   switch (v.type) {
     case 'hello':
       sessionId = v.session || '';
+      clientId = v.client || 0;
       cwd = String(v.cwd || '').replace(/^\\\\\?\\/, '');
       slashList = v.slash || [];
       models = v.models || [];
@@ -1307,10 +1309,9 @@ function route(v) {
       if (sess === sessionId) { addNote(v.text); logEv('note', v.text); }
       break;
     case 'session': {
-      // another tab switched away (from) or the host adopted a session —
-      // a tab follows the switch only if it was viewing the source
-      const from = v.from;
-      if (!from || from === sessionId) {
+      // a directed switch names the issuing client — only that tab moves;
+      // untagged frames (older kernels) fall back to the from-match
+      if (v.client != null ? v.client === clientId : (!v.from || v.from === sessionId)) {
         sessionId = v.id || sessionId;
         renderCrumb();
       }
@@ -1577,9 +1578,23 @@ function toggleDock() {
 /* ================= composer ================= */
 function autoGrow() { const ta = $('#input'); ta.style.height = '34px'; ta.style.height = Math.min(168, ta.scrollHeight) + 'px'; slashCheck(); }
 function send() {
-  if (busy) { wsSend({ type: 'cancel' }); return; }
   const ta = $('#input'), text = ta.value.trim();
-  if (!text) return ta.focus();
+  if (!text) { if (busy) { wsSend({ type: 'cancel' }); return; } return ta.focus(); }
+  // frontend-local commands — they never reach the kernel (the kernel's
+  // slash list filters them; this is the same rule kept on the send path)
+  const lc = text.match(/^\/(\S+)(?:\s|$)/);
+  if (lc && ['clear', 'quit', 'exit', 'multiline'].includes(lc[1])) {
+    ta.value = ''; autoGrow(); slashCheck(true);
+    if (lc[1] === 'clear') { TX.innerHTML = ''; updateHero(); return; }
+    if (lc[1] === 'quit' || lc[1] === 'exit') {
+      const w = shellWin();
+      if (w) w.win('close'); else toast('serve 模式：直接关闭此标签页即可退出', 'info');
+      return;
+    }
+    toast('多行输入：Shift+Enter 换行，Enter 发送', 'info');
+    return;
+  }
+  if (busy) { wsSend({ type: 'cancel' }); return; }
   if (!wsSend({ type: 'prompt', text })) return toast('未连接到内核，无法发送', 'alert', 'warn');
   append(TX, youHTML(text, true, clock()));
   // first prompt names the session right away — same rule the host applies
@@ -1634,7 +1649,7 @@ function renderSlash() {
 }
 function pickSlash(cmd) {
   const ta = $('#input');
-  const needsArg = ['resume', 'fork', 'model', 'annotate'].includes(cmd);
+  const needsArg = ['resume', 'fork', 'model', 'annotate', 'mode'].includes(cmd);
   ta.value = '/' + cmd + (needsArg ? ' ' : '');
   slashCheck(true);
   ta.focus(); autoGrow();
@@ -1994,8 +2009,11 @@ function act(name, el) {
       const cur = +isl.dataset.revCur || 1, max = +isl.dataset.revMax || 1;
       const q = cur === max ? '' : `?rev=${cur}`;
       // under the shell the artifact URL is a WebView2-internal scheme —
-      // an external browser can't resolve it, so surface the file path
-      if (TAURI) return toast(`本机工件文件：${cwd}/.sunmao/artifacts/${isl.dataset.artifact}.html`, 'external');
+      // an external browser can't resolve it; open the real file path
+      if (TAURI) {
+        const p = `${cwd}/.sunmao/artifacts/${isl.dataset.artifact}.html`;
+        return Promise.resolve(TAURI.openExternal(p)).catch(e => toast(`打开失败：${e}`, 'alert', 'warn'));
+      }
       return open('/artifacts/' + encodeURIComponent(isl.dataset.artifact) + q, '_blank');
     }
     case 'think': return el.classList.toggle('open');

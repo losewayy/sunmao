@@ -10,14 +10,18 @@
 //! 事件，busy/approval 帧更新侧栏每个会话的状态点。
 
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::host::{
-    Host, Shared, WsObserver, display_path, fork_or_resume, new_session, slash_candidates,
+    Host, Input, Shared, WsObserver, display_path, fork_or_resume, new_session, slash_candidates,
 };
+
+/// Process-global client ids — a `session` switch frame names its issuer
+/// so only that tab follows (`0` = the caller opted out of the tag).
+static CLIENT_IDS: AtomicU64 = AtomicU64::new(0);
 
 /// One viewer client (one tab / one IPC peer): subscribes to the global
 /// bus — every frame carries `sess`, this tab only renders the session
@@ -31,6 +35,8 @@ pub struct Client {
     /// this tab's viewed session — prompts/cancels/mode switches route
     /// here; the newest live host is the default view
     viewing: String,
+    /// stable id for this viewer — echoes into `client`-tagged frames
+    id: u64,
     /// live-bus forwarder — aborted when the client drops
     forward: JoinHandle<()>,
 }
@@ -68,10 +74,12 @@ impl Client {
             s,
             out,
             viewing,
+            id: CLIENT_IDS.fetch_add(1, Ordering::Relaxed) + 1,
             forward,
         };
         client.emit(serde_json::json!({
             "type": "hello",
+            "client": client.id,
             "session": client.viewing,
             // cwd is the *viewed session's* project — a session adopted
             // from elsewhere reports its own root
@@ -125,7 +133,10 @@ impl Client {
                 if !text.trim().is_empty()
                     && let Some(h) = self.viewing_host()
                 {
-                    let _ = h.input.send(text);
+                    let _ = h.input.send(Input {
+                        client: self.id,
+                        text,
+                    });
                 }
             }
             "cancel" => {
@@ -330,7 +341,10 @@ impl Client {
                             &WsObserver::new(self.s.live.clone(), h.id.clone()),
                         )
                         .await;
-                    let _ = h.input.send(text);
+                    let _ = h.input.send(Input {
+                        client: self.id,
+                        text,
+                    });
                 }
                 self.emit(serde_json::json!({"type":"ui_result","id":v["id"],"result":{}}));
             }

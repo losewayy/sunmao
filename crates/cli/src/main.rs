@@ -74,6 +74,11 @@ struct Cli {
     /// One-shot mode: run a single prompt and exit (scriptable).
     #[arg(long, short = 'p')]
     print: Option<String>,
+    /// Enable a preset — a plugin-bundle dir under `.sunmao/presets/<name>/`
+    /// (project) or `~/.sunmao/presets/<name>/` (user). Repeatable; later
+    /// presets layer after earlier ones. A leading `+` is decorative.
+    #[arg(long)]
+    preset: Vec<String>,
     #[command(subcommand)]
     command: Option<plugin::Cmd>,
 }
@@ -180,9 +185,15 @@ async fn main() -> anyhow::Result<()> {
         return doctor::run(&cli).await;
     }
     if cli.acp {
-        return acp::run(&cli.base_url, &cli.api_key, &cli.model, &cli.provider)
-            .await
-            .map_err(|e| anyhow::anyhow!("acp: {e}"));
+        return acp::run(
+            &cli.base_url,
+            &cli.api_key,
+            &cli.model,
+            &cli.provider,
+            &cli.preset,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("acp: {e}"));
     }
 
     if let Some(path) = &cli.dataflow {
@@ -192,6 +203,14 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let cwd = cli.cwd.canonicalize().context("bad --cwd")?;
+
+    // presets resolve once here — unknown names fail fast before any
+    // session state exists. The resolved dirs become extra plugin roots
+    // every consumer layers after its convention dirs.
+    let preset_roots = sunmao_core::presets::resolve(&cwd, &cli.preset)?;
+    if !preset_roots.is_empty() {
+        eprintln!("presets enabled: {}", cli.preset.join(", "));
+    }
 
     let llm: Arc<dyn sunmao_llm::ProviderAdapter> = match cli.provider.as_str() {
         "anthropic" => Arc::new(sunmao_llm::AnthropicClient::new(
@@ -234,7 +253,7 @@ async fn main() -> anyhow::Result<()> {
         ),
     };
     let mut registry = builtin_registry();
-    for tool in sunmao_core::mcp::connect_all(&cwd).await {
+    for tool in sunmao_core::mcp::connect_all(&cwd, &preset_roots).await {
         registry.register_boxed(tool);
     }
     // For --tui --resume: snapshot the durable events before the log moves
@@ -246,7 +265,8 @@ async fn main() -> anyhow::Result<()> {
     };
     let interactive = cli.print.is_none() && !cli.acp;
     let (tx_approval, rx_approval) = tokio::sync::mpsc::unbounded_channel();
-    let mut ctx_raw = Context::new(llm, sessions, registry, cwd.clone());
+    let mut ctx_raw = Context::new(llm, sessions, registry, cwd.clone())
+        .with_extra_plugin_roots(preset_roots.clone());
     if cli.tui {
         ctx_raw.approval = Arc::new(tui::TuiApprover { tx: tx_approval });
     } else if interactive {
@@ -281,8 +301,9 @@ async fn main() -> anyhow::Result<()> {
     // The system prompt is assembled, not constant: built-in section files →
     // ~/.sunmao/prompt{,.d} → .sunmao/prompt{,.d} → project context →
     // --system as the complete override. All frontends share this path.
-    let default_system =
-        sunmao_core::prompt::PromptAssembler::new(&cwd).assemble(cli.system.as_deref());
+    let default_system = sunmao_core::prompt::PromptAssembler::new(&cwd)
+        .with_extra_roots(&preset_roots)
+        .assemble(cli.system.as_deref());
 
     if !resumed {
         let mut log = ctx.sessions.lock().await;
@@ -312,7 +333,15 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if cli.tui {
-        return tui::run(agent, &cli.model, cwd.clone(), rx_approval, replay_events).await;
+        return tui::run(
+            agent,
+            &cli.model,
+            cwd.clone(),
+            rx_approval,
+            replay_events,
+            preset_roots,
+        )
+        .await;
     }
 
     let observer = Arc::new(StdoutObserver {
@@ -431,7 +460,7 @@ async fn main() -> anyhow::Result<()> {
                 }
                 _ => {}
             }
-            match tui::slash::command_body(&cwd, name) {
+            match tui::slash::command_body(&cwd, &preset_roots, name) {
                 Some(body) => {
                     let prompt = if rest.is_empty() {
                         body

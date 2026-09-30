@@ -27,6 +27,9 @@ struct SunmaoAgent {
     api_key: String,
     model: String,
     provider: String,
+    /// `--preset` args, resolved per session — the client's cwd arrives in
+    /// the request, not on our CLI.
+    preset_names: Vec<String>,
 }
 
 struct AcpObserver {
@@ -201,19 +204,37 @@ impl SunmaoAgent {
             "default",
         ))
     }
+
+    /// Resolve this session's presets against the request cwd. An unknown
+    /// name must fail the session — running looser than requested is worse
+    /// than refusing.
+    fn presets(
+        &self,
+        cwd: &std::path::Path,
+    ) -> std::result::Result<Vec<std::path::PathBuf>, Error> {
+        sunmao_core::presets::resolve(cwd, &self.preset_names)
+            .map_err(|e| invalid_params(format!("presets: {e:#}")))
+    }
 }
 
 fn invalid_params(msg: impl ToString) -> Error {
     Error::invalid_params().data(msg.to_string())
 }
 
-pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> Result<()> {
+pub async fn run(
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    provider: &str,
+    preset_names: &[String],
+) -> Result<()> {
     let agent = Arc::new(SunmaoAgent {
         sessions: Mutex::new(HashMap::new()),
         base_url: base_url.to_string(),
         api_key: api_key.to_string(),
         model: model.to_string(),
         provider: provider.to_string(),
+        preset_names: preset_names.to_vec(),
     });
 
     Agent
@@ -249,6 +270,10 @@ pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> 
                             .as_millis()
                     );
                     let cwd = req.cwd.clone().into_inner();
+                    let preset_roots = match agent.presets(&cwd) {
+                        Ok(r) => r,
+                        Err(e) => return responder.respond_with_error(e),
+                    };
                     let llm = agent.new_llm();
                     let sessions_dir = cwd.join(".sunmao").join("sessions");
                     let log = match SessionLog::open(&sessions_dir, &id).await {
@@ -259,11 +284,12 @@ pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> 
                         }
                     };
                     let mut registry = builtin_registry();
-                    for t in sunmao_core::mcp::connect_all(&cwd).await {
+                    for t in sunmao_core::mcp::connect_all(&cwd, &preset_roots).await {
                         registry.register_boxed(t);
                     }
                     let session_id = v2::SessionId::new(id.clone());
-                    let mut ctx_raw = Context::new(llm, log, registry, cwd.clone());
+                    let mut ctx_raw = Context::new(llm, log, registry, cwd.clone())
+                        .with_extra_plugin_roots(preset_roots.clone());
                     ctx_raw.approval = Arc::new(AcpApprover {
                         cx: cx.clone(),
                         session_id: session_id.clone(),
@@ -290,7 +316,9 @@ pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> 
                         let _ = l
                             .append(&SessionEvent::Message {
                                 message: Message::system(
-                                    sunmao_core::prompt::PromptAssembler::new(&cwd).assemble(None),
+                                    sunmao_core::prompt::PromptAssembler::new(&cwd)
+                                        .with_extra_roots(&preset_roots)
+                                        .assemble(None),
                                 ),
                             })
                             .await;
@@ -361,6 +389,10 @@ pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> 
                         )));
                     }
                     let cwd = req.cwd.clone().into_inner();
+                    let preset_roots = match agent.presets(&cwd) {
+                        Ok(r) => r,
+                        Err(e) => return responder.respond_with_error(e),
+                    };
                     let llm = agent.new_llm();
                     let log = match SessionLog::open_path(&log_path).await {
                         Ok(l) => l,
@@ -370,10 +402,11 @@ pub async fn run(base_url: &str, api_key: &str, model: &str, provider: &str) -> 
                         }
                     };
                     let mut registry = builtin_registry();
-                    for t in sunmao_core::mcp::connect_all(&cwd).await {
+                    for t in sunmao_core::mcp::connect_all(&cwd, &preset_roots).await {
                         registry.register_boxed(t);
                     }
-                    let mut ctx_raw = Context::new(llm, log, registry, cwd);
+                    let mut ctx_raw =
+                        Context::new(llm, log, registry, cwd).with_extra_plugin_roots(preset_roots);
                     ctx_raw.approval = Arc::new(AcpApprover {
                         cx: cx.clone(),
                         session_id: req.session_id.clone(),

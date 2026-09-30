@@ -152,7 +152,9 @@ impl HookEngine {
     /// `<cwd>/.claude/settings.local.json`, `~/.claude/settings.json`.
     /// All share the same `{"hooks": {Event: [{matcher, hooks:[{type,command}]}]}}`
     /// dialect — native contract, ecosystem configs work unmodified.
-    pub fn load(cwd: &Path, session_id: &str) -> Self {
+    /// `extra_roots` are preset plugin dirs — they merge last so an enabled
+    /// preset's hooks run after everything the project itself declared.
+    pub fn load(cwd: &Path, session_id: &str, extra_roots: &[PathBuf]) -> Self {
         let transcript_path = crate::session::session_log_path(cwd, session_id);
         let mut groups: HashMap<String, Vec<MatcherGroup>> = HashMap::new();
         let mut paths = vec![
@@ -197,6 +199,16 @@ impl HookEngine {
                     );
                 }
             }
+        }
+        // preset dirs are plugin bundles too — appended last in CLI layering
+        // order so `--preset a --preset b` runs b's hooks after a's.
+        for root in extra_roots {
+            merge_plugin_manifest(&mut groups, &root.join("plugin.json"), root);
+            merge_hooks_file(
+                &mut groups,
+                &root.join("hooks").join("hooks.json"),
+                Some(root),
+            );
         }
         if !groups.is_empty() {
             let total: usize = groups.values().map(|g| g.len()).sum();

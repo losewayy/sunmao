@@ -14,6 +14,7 @@ pub mod models;
 pub mod permissions;
 pub mod plugin;
 pub mod preflight;
+pub mod presets;
 pub mod prompt;
 pub mod session;
 pub mod task;

@@ -132,6 +132,7 @@ live in [`docs/CODE-ARCHITECTURE.md`](docs/CODE-ARCHITECTURE.md). Follow them.
 | shell preflight | `crates/core/src/preflight.rs` (spawnfate) |
 | risk pattern table | `crates/core/assets/risky-patterns.txt` |
 | Claude-contract hooks | `crates/core/src/hooks.rs` |
+| `--preset` resolution | `crates/core/src/presets.rs` (layers onto `ctx.extra_plugin_roots`) |
 | MCP client (stdio + HTTP) | `crates/core/src/mcp.rs` |
 | tools | `crates/core/src/tool/{mod,fs,shell,search,artifact,webmod}.rs` |
 | sub-agents | `crates/core/src/task.rs` + `agents.rs` |

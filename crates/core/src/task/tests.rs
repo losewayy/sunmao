@@ -154,7 +154,7 @@ async fn tools_whitelist_and_depth_cap_trim_registry() {
         builtin_registry(),
         dir.clone(),
     );
-    let defs: Vec<_> = crate::agents::load_all(&dir);
+    let defs: Vec<_> = crate::agents::load_all(&dir, &[]);
     let reader = defs.iter().find(|d| d.name == "reader").unwrap();
     let (_, reader_ctx) = spawn_parts(&ctx, Some(reader)).await;
     let names: Vec<_> = reader_ctx

@@ -111,7 +111,9 @@ impl ToolImpl for McpTool {
 
 /// Connect to every configured server, collect tools. Failures degrade to a
 /// warning — one bad server must not brick the session.
-pub async fn connect_all(cwd: &Path) -> Vec<Box<dyn ToolImpl>> {
+/// `extra_roots` are enabled preset dirs, layered after the installed
+/// plugins — a same-named preset server overrides an installed one.
+pub async fn connect_all(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<Box<dyn ToolImpl>> {
     // merge mcpServers from .sunmao/mcp.json + plugin manifests — the
     // plugin.json bundle format contributes MCP servers the same way.
     // `${CLAUDE_PLUGIN_ROOT}` inside a manifest's command/args/env expands
@@ -139,6 +141,16 @@ pub async fn connect_all(cwd: &Path) -> Vec<Box<dyn ToolImpl>> {
                 }
             }
         }
+    }
+    // presets: plugin.json is the bundle manifest; a bare mcp.json covers
+    // presets that ship only servers and no manifest.
+    for root in extra_roots {
+        let manifest = if root.join("plugin.json").exists() {
+            root.join("plugin.json")
+        } else {
+            root.join("mcp.json")
+        };
+        manifests.push((manifest, root.clone()));
     }
     for (p, root) in manifests {
         let Ok(text) = std::fs::read_to_string(&p) else {

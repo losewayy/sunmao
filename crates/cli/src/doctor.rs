@@ -76,10 +76,29 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
     }
 
     // 5. prompt assembly preview — the same PromptAssembler every frontend
-    // runs; --system shows up as the complete override.
+    // runs; --system shows up as the complete override. Enabled presets
+    // contribute to the skills index, so the preview sees them too.
+    let preset_roots = match sunmao_core::presets::resolve(&cli.cwd, &cli.preset) {
+        Ok(roots) => {
+            for r in &roots {
+                println!("preset active: {}", r.display());
+            }
+            roots
+        }
+        Err(e) => {
+            ok = false;
+            println!("presets: FAIL ({e:#})");
+            Vec::new()
+        }
+    };
+    let names = sunmao_core::presets::list_names(&cli.cwd);
+    if !names.is_empty() {
+        println!("presets available: {}", names.join(", "));
+    }
     {
-        let assembled =
-            sunmao_core::prompt::PromptAssembler::new(&cli.cwd).assemble(cli.system.as_deref());
+        let assembled = sunmao_core::prompt::PromptAssembler::new(&cli.cwd)
+            .with_extra_roots(&preset_roots)
+            .assemble(cli.system.as_deref());
         let first = assembled.lines().next().unwrap_or("");
         println!(
             "system prompt: {} bytes — first line: {}",

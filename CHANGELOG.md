@@ -181,6 +181,14 @@ TUI.
   reentrant). SPEC §4.5 calibrated: the `agent/*` event domain = typed
   `LiveEvent` over `Observer`/`live_sink`; deliver/cancel/intercept =
   `run_turn`/`cancel()`/gate — compile-time contract, not a string bus
+- **slash-menu Enter semantics, kimi-shaped** — Enter accepts the
+  highlighted candidate (never the raw fragment); bare `/` and arg-taking
+  builtins (`model`/`resume`/`annotate`) fill `/name ` and reopen
+  completion instead of firing blindly — the `/<partial>`+Enter=run rule
+  now only applies to no-arg commands and file commands. Approval cards
+  gain the reverse-RPC rule: `Approve for session` auto-resolves queued
+  identical (tool, specifier) requests instead of re-asking what the
+  user just answered
 
 **core (latest)**
 - `shell/preflight`: Bash commands are predicted by the `spawnfate` engine

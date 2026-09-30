@@ -4834,6 +4834,7 @@ name = "sunmao-gui"
 version = "0.2.0"
 dependencies = [
  "clap",
+ "serde_json",
  "sunmao",
  "tauri",
  "tauri-build",

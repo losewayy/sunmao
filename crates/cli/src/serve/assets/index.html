@@ -1147,8 +1147,12 @@ let sandboxPort = 0; // from hello — 0 means "no sandbox listener" (older kern
 const pendingUi = new Map(); // `${artifact}#${id}` → island state
 const islandApps = new WeakMap(); // island el → { meta, html, inited }
 
+/* Under the shell there is no sandbox listener — the proxy page rides its
+   own scheme (`http://sunmao-sandbox.localhost/`), still a distinct origin.
+   hello.sandbox_port stays the browser path's hint (0 under the shell). */
+const SANDBOX_URL = TAURI ? 'http://sunmao-sandbox.localhost/sandbox.html' : null;
 async function probeApp(el, name) {
-  if (!sandboxPort) return;
+  if (!TAURI && !sandboxPort) return;
   let meta;
   try {
     const r = await fetch(`/artifacts/${encodeURIComponent(name)}/ui`);
@@ -1159,7 +1163,7 @@ async function probeApp(el, name) {
   try { html = await (await fetch(`/artifacts/${encodeURIComponent(name)}`)).text(); } catch {}
   const sb = document.createElement('iframe');
   sb.setAttribute('sandbox', 'allow-scripts allow-same-origin');
-  sb.src = `http://127.0.0.1:${sandboxPort}/sandbox.html`;
+  sb.src = SANDBOX_URL || `http://127.0.0.1:${sandboxPort}/sandbox.html`;
   sb.title = name;
   const old = $('iframe', el);
   if (old) { teardownIsland(el); old.replaceWith(sb); } else el.appendChild(sb);
@@ -1568,9 +1572,20 @@ function liveEvent(raw) {
   }
 }
 
-/* ================= websocket ================= */
+/* ================= websocket / IPC channel ================= */
 let ws = null, wsDelay = 800, wsTimer = 0;
-function wsSend(v) { if (ws && ws.readyState === 1) { ws.send(JSON.stringify(v)); return true; } return false; }
+/* Under the Tauri shell the ws degrades to an IPC pair (GUI.md §8):
+   session_events carries a JS Channel for host→page frames (parsed JSON
+   objects on onmessage) and host_call carries page→host frames. */
+function wsSend(v) {
+  if (TAURI) {
+    if (!connected) return false;
+    window.__TAURI_INTERNALS__.invoke('host_call', { msg: v }).catch(() => setConn(false));
+    return true;
+  }
+  if (ws && ws.readyState === 1) { ws.send(JSON.stringify(v)); return true; }
+  return false;
+}
 function setConn(on) {
   connected = on;
   const d = $('#conn-dot');
@@ -1580,6 +1595,14 @@ function setConn(on) {
 }
 function connect() {
   clearTimeout(wsTimer);
+  if (TAURI) {
+    const ch = new TAURI.Channel();
+    ch.onmessage = v => route(v); // Channel delivers parsed objects
+    window.__TAURI_INTERNALS__.invoke('session_events', { events: ch })
+      .then(() => { const was = !connected; setConn(true); wsDelay = 800; if (was) toast('已连接 ' + location.host, 'check'); })
+      .catch(() => { setConn(false); wsTimer = setTimeout(connect, wsDelay); wsDelay = Math.min(8000, wsDelay * 1.8); });
+    return;
+  }
   try { ws && ws.close(); } catch {}
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onopen = () => { const was = !connected; setConn(true); wsDelay = 800; if (was) toast('已连接 ' + location.host, 'check'); };
@@ -2033,7 +2056,7 @@ const sec = (h, p, body) => `<div class="sec">${h ? `<div class="sec-h"><h2>${h}
 const head = (t, d) => `<h1>${t}</h1>${d ? `<p class="lead">${d}</p>` : ''}`;
 const PAGES = {
   keys: () => head('快捷键', '焦点不在输入框时，审批快捷键直接裁决最早的待审批卡。') + sec('', '', card([['新对话', 'Ctrl N'], ['命令面板', 'Ctrl K'], ['打开设置', 'Ctrl ,'], ['显示或隐藏 dataflow 面板', 'Ctrl \\'], ['Allow / Deny / Always', 'Y N A'], ['发送', 'Enter'], ['换行', 'Shift Enter'], ['关闭弹层或返回', 'Esc']].map(([a, k]) => row(a, '', `<span class="keys">${k.split(' ').map(x => `<kbd>${esc(x)}</kbd>`).join('')}</span>`)))),
-  about: () => head('关于', '') + `<div class="card glass cfg"><div class="ab-top">${$('#hero svg').outerHTML}<div><b>sunmao</b><span>Rust 编写的 agent 运行时内核</span></div></div>${row('会话', '', mono(sessionId || '—'))}${row('工作目录', '', mono(cwd || '—'))}${row('本地服务', 'sunmao serve 只绑定本机', mono(location.host))}${row('内核', '', mono('sunmao-core'))}${row('许可', '', mono('MIT OR Apache-2.0'))}</div>`,
+  about: () => head('关于', '') + `<div class="card glass cfg"><div class="ab-top">${$('#hero svg').outerHTML}<div><b>sunmao</b><span>Rust 编写的 agent 运行时内核</span></div></div>${row('会话', '', mono(sessionId || '—'))}${row('工作目录', '', mono(cwd || '—'))}${row('本地服务', TAURI ? '内嵌内核 · 自定义协议（无 TCP 监听）' : 'sunmao serve 只绑定本机', mono(location.host))}${row('内核', '', mono('sunmao-core'))}${row('许可', '', mono('MIT OR Apache-2.0'))}</div>`,
 };
 function settingsPage(p) {
   setPage = p;
@@ -2088,6 +2111,9 @@ function act(name, el) {
       const isl = el.closest('.island');
       const cur = +isl.dataset.revCur || 1, max = +isl.dataset.revMax || 1;
       const q = cur === max ? '' : `?rev=${cur}`;
+      // under the shell the artifact URL is a WebView2-internal scheme —
+      // an external browser can't resolve it, so surface the file path
+      if (TAURI) return toast(`本机工件文件：${cwd}/.sunmao/artifacts/${isl.dataset.artifact}.html`, 'external');
       return open('/artifacts/' + encodeURIComponent(isl.dataset.artifact) + q, '_blank');
     }
     case 'think': return el.classList.toggle('open');

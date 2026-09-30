@@ -7,11 +7,12 @@ license.workspace = true
 repository.workspace = true
 
 [build-dependencies]
-tauri-build = "2"
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
 clap = { workspace = true, features = ["env"] }
+serde_json.workspace = true
 sunmao = { path = "../cli" }
-tauri = "2"
+tauri = { version = "2", features = [] }
 tokio.workspace = true
 tracing.workspace = true

@@ -572,7 +572,7 @@ fn register_project(launch_cwd: &std::path::Path, project: &std::path::Path) {
 /// Slash-command list for the composer menu — same candidates the TUI
 /// shows (builtins + file commands), minus pure-TUI affordances.
 pub(crate) fn slash_candidates(s: &Shared) -> Vec<String> {
-    crate::tui::slash::candidates(&s.cwd, &s.roots)
+    crate::commands::candidates(&s.cwd, &s.roots)
         .into_iter()
         .filter(|n| *n != "multiline" && *n != "clear" && *n != "quit")
         .collect()

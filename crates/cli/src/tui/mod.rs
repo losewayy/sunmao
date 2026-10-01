@@ -9,12 +9,11 @@ mod blocks;
 mod driver;
 mod input;
 mod md;
-pub(crate) mod menu;
+mod menu;
 mod render;
 mod replay;
 #[cfg(test)]
 mod replay_parity;
-pub mod slash;
 #[cfg(test)]
 mod tests;
 mod theme;

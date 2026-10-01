@@ -94,195 +94,134 @@ pub async fn run(
             continue;
         }
         if let Some(cmd_line) = line.strip_prefix('/') {
-            let name = cmd_line.split_whitespace().next().unwrap_or("");
-            let rest = cmd_line[name.len()..].trim();
-            match name {
-                "quit" | "exit" | "q" => break,
-                "compact" => {
-                    match agent.compact(&*observer.0, "manual").await {
-                        Ok(s) if s.is_empty() => println!("[compacted: nothing to fold]"),
-                        Ok(s) => println!("[compacted]\n{s}"),
-                        Err(e) => eprintln!("[compact failed] {e:#}"),
-                    }
-                    continue;
-                }
-                "help" | "h" | "?" => {
+            match crate::commands::parse(cmd_line) {
+                crate::commands::Command::Quit => break,
+                crate::commands::Command::Compact => {
                     println!(
-                        "commands — /compact · /model [sel] · /mode [stance] · /resume [id] · /rewind [n] [session|code|both] · /sessions · /tasks · /todos · /artifacts · /annotate <name> <note> · /help · /quit\n\
-                         `!cmd` runs locally; /name resolves .sunmao/commands + .claude/commands"
+                        "{}",
+                        crate::commands::compact_note(agent.compact(&*observer.0, "manual").await)
                     );
                     continue;
                 }
-                "model" => {
-                    if rest.is_empty() {
-                        let choices = agent.model_choices();
-                        if choices.is_empty() {
-                            println!("[no models.json — session model only]");
-                        } else {
-                            println!("available models:\n{}", choices.join("\n"));
+                crate::commands::Command::Help => {
+                    println!("{}\n`!cmd` runs locally", crate::commands::help_text(""));
+                    continue;
+                }
+                crate::commands::Command::Model(sel) => {
+                    match sel {
+                        None => {
+                            println!("{}", crate::commands::models_text(&agent.model_choices()))
                         }
-                    } else {
-                        match agent.swap_model(rest) {
+                        Some(sel) => match agent.swap_model(&sel) {
                             Some(label) => {
-                                agent.record_model_change(rest, &label).await;
+                                agent.record_model_change(&sel, &label).await;
                                 println!("[model → {label}]");
                             }
-                            None => {
-                                println!("[unknown selector: {rest} — try /model for the list]")
-                            }
-                        }
+                            None => println!("{}", crate::commands::model_unknown(&sel)),
+                        },
                     }
                     continue;
                 }
-                "mode" => {
-                    use sunmao_core::agent::ApprovalMode;
-                    if rest.is_empty() {
-                        let cur = agent.approval_mode();
-                        println!("approval mode: {}", cur.as_str());
-                        for m in ApprovalMode::ALL {
-                            println!("  {} {}", if m == cur { "→" } else { " " }, m.as_str());
+                crate::commands::Command::Mode(arg) => {
+                    match arg {
+                        None => {
+                            println!("{}", crate::commands::mode_list_text(agent.approval_mode()))
                         }
-                    } else {
-                        match ApprovalMode::parse(rest) {
+                        Some(name) => match sunmao_core::agent::ApprovalMode::parse(&name) {
                             Some(m) => {
                                 agent.set_approval_mode(m, &*observer.0).await;
                                 println!("[approval mode → {}]", m.as_str());
                             }
-                            None => println!(
-                                "[unknown mode: {rest} — always_ask · auto · read_only · full_access]"
-                            ),
+                            None => println!("{}", crate::commands::mode_unknown(&name)),
+                        },
+                    }
+                    continue;
+                }
+                crate::commands::Command::Sessions(_) | crate::commands::Command::Resume(None) => {
+                    println!("{}", crate::sessions::recent_sessions_text(cwd, 8));
+                    continue;
+                }
+                crate::commands::Command::Tasks => {
+                    println!("{}", crate::commands::tasks_text(&agent.task_roster()));
+                    continue;
+                }
+                crate::commands::Command::Todos => {
+                    println!("{}", crate::commands::todos_text(&agent.todos()));
+                    continue;
+                }
+                crate::commands::Command::Artifacts => {
+                    println!("{}", crate::commands::artifacts_text(cwd));
+                    continue;
+                }
+                crate::commands::Command::Annotate(name, note) => {
+                    println!("{}", crate::commands::annotate(cwd, &name, &note));
+                    continue;
+                }
+                crate::commands::Command::Note(n) => {
+                    println!("{n}");
+                    continue;
+                }
+                crate::commands::Command::Resume(Some(id)) => {
+                    let path = crate::sessions::resolve_log_path(cwd, &id);
+                    match sunmao_core::SessionLog::open_path(&path).await {
+                        Ok(log) => {
+                            let events = agent.swap_session(log).await;
+                            println!("[resumed {id} — {} events folded in]", events.len());
                         }
+                        Err(e) => println!("[resume failed] {e:#}"),
                     }
                     continue;
                 }
-                "sessions" => {
-                    list_sessions(&cwd.join(".sunmao").join("sessions"))?;
-                    continue;
-                }
-                "tasks" => {
-                    let tasks = agent.task_roster();
-                    if tasks.is_empty() {
-                        println!("[no sub-agents this session]");
-                    } else {
-                        println!("sub-agents:");
-                        for t in &tasks {
-                            let status = match t.done {
-                                None => "running",
-                                Some(true) => "done",
-                                Some(false) => "failed",
-                            };
-                            let agent_name = t
-                                .agent
-                                .as_deref()
-                                .map(|a| format!(" @{a}"))
-                                .unwrap_or_default();
-                            println!("  {status:<7} {}{} — {}", t.id, agent_name, t.prompt);
-                        }
-                    }
-                    continue;
-                }
-                "todos" => {
-                    let items = agent.todos();
-                    if items.is_empty() {
-                        println!("[no task list — TodoWrite creates it]");
-                    } else {
-                        println!("task list:\n{}", sunmao_core::tool::render_todos(&items));
-                    }
-                    continue;
-                }
-                "artifacts" => {
-                    println!("{}", crate::tui::slash::artifacts_text(cwd));
-                    continue;
-                }
-                "annotate" => {
-                    let mut it = cmd_line.splitn(3, char::is_whitespace);
-                    let _ = it.next();
-                    match (it.next(), it.next()) {
-                        (Some(name), Some(note)) => {
-                            println!("{}", crate::tui::slash::annotate(cwd, name, note.trim()));
-                        }
-                        _ => println!("[usage: /annotate <name> <note>]"),
-                    }
-                    continue;
-                }
-                "resume" => {
-                    if rest.is_empty() {
-                        list_sessions(&cwd.join(".sunmao").join("sessions"))?;
-                    } else {
-                        let p = std::path::PathBuf::from(rest);
-                        let path = if p.exists() {
-                            p
-                        } else {
-                            cwd.join(".sunmao/sessions").join(format!("{rest}.jsonl"))
-                        };
-                        match sunmao_core::SessionLog::open_path(&path).await {
-                            Ok(log) => {
-                                let events = agent.swap_session(log).await;
-                                println!("[resumed {rest} — {} events folded in]", events.len());
-                            }
-                            Err(e) => eprintln!("[resume failed] {e:#}"),
-                        }
-                    }
-                    continue;
-                }
-                "fork" => {
-                    if rest.is_empty() {
-                        println!("[usage: /fork <id>]");
-                        continue;
-                    }
-                    let p = std::path::PathBuf::from(rest);
-                    let src_path = if p.exists() {
-                        p
-                    } else {
-                        cwd.join(".sunmao/sessions").join(format!("{rest}.jsonl"))
-                    };
-                    let ms = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis();
-                    let new_id = format!("s-{ms}-fork");
-                    let dst = cwd.join(".sunmao/sessions").join(format!("{new_id}.jsonl"));
-                    match std::fs::copy(&src_path, &dst) {
-                        Ok(_) => match sunmao_core::SessionLog::open_path(&dst).await {
+                crate::commands::Command::Fork(id) => {
+                    match crate::sessions::fork_copy(cwd, &id) {
+                        Ok((new_id, dst)) => match sunmao_core::SessionLog::open_path(&dst).await {
                             Ok(log) => {
                                 let events = agent.swap_session(log).await;
                                 println!(
-                                    "[forked {rest} → {new_id} — {} events folded in]",
+                                    "[forked {id} → {new_id} — {} events folded in]",
                                     events.len()
                                 );
                             }
-                            Err(e) => eprintln!("[fork failed] {e:#}"),
+                            Err(e) => println!("[fork failed] {e:#}"),
                         },
-                        Err(e) => eprintln!("[fork {rest} failed] {e}"),
+                        Err(e) => println!("{e}"),
                     }
                     continue;
                 }
-                "rewind" => {
-                    if rest.is_empty() {
-                        println!("{}", crate::rewind::list(agent).await);
-                    } else {
-                        match crate::rewind::run(agent, cwd, rest).await {
-                            Ok(crate::rewind::Outcome::Forked { note, events }) => {
-                                println!("{note} — {} events folded in", events.len());
+                crate::commands::Command::Rewind(spec) => {
+                    match spec {
+                        None => println!("{}", crate::rewind::list(agent).await),
+                        Some(spec) => {
+                            match crate::rewind::run(agent, cwd, spec.turn, spec.mode).await {
+                                Ok(crate::rewind::Outcome::Forked { note, events }) => {
+                                    println!("{note} — {} events folded in", events.len());
+                                }
+                                Ok(crate::rewind::Outcome::CodeOnly(note)) => println!("{note}"),
+                                Err(e) => println!("{e}"),
                             }
-                            Ok(crate::rewind::Outcome::CodeOnly(note)) => println!("{note}"),
-                            Err(e) => println!("{e}"),
                         }
                     }
                     continue;
                 }
-                _ => {}
-            }
-            match crate::tui::slash::command_body(cwd, preset_roots, name) {
-                Some(body) => {
-                    let prompt = crate::tui::slash::expand_command(&body, rest);
-                    if let Err(e) = agent.run_turn(&prompt, &*observer.0).await {
-                        eprintln!("[error] {e:#}");
+                // local-only builtins and unknown names — try a command file
+                // first, else report unknown.
+                crate::commands::Command::Clear
+                | crate::commands::Command::Multiline
+                | crate::commands::Command::Other => {
+                    let name = cmd_line.split_whitespace().next().unwrap_or("");
+                    match crate::commands::command_body(cwd, preset_roots, name) {
+                        Some(body) => {
+                            let rest = cmd_line[name.len()..].trim();
+                            let prompt = crate::commands::expand_command(&body, rest);
+                            if let Err(e) = agent.run_turn(&prompt, &*observer.0).await {
+                                eprintln!("[error] {e:#}");
+                            }
+                        }
+                        None => println!("[unknown command: /{name}]"),
                     }
+                    continue;
                 }
-                None => println!("[unknown command: /{name}]"),
             }
-            continue;
         }
         if let Err(e) = agent.run_turn(line, &*observer.0).await {
             eprintln!("[error] {e:#}");

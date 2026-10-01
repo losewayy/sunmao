@@ -128,13 +128,19 @@ pub struct Viewer {
     pub scroll: u16,
 }
 
-/// `/help` body — the keymap cheat-sheet. Short on purpose: the footer
-/// already narrates the active focus's keys.
-const HELP_TEXT: &str = "keys — Tab browse blocks · Enter expand · e fold · y copy · \
+/// `/help` body — the keymap cheat-sheet over the shared command line
+/// (`commands::help_text` owns the command half; REPL composes at its
+/// call site). Short on purpose: the footer already narrates the active
+/// focus's keys.
+fn help_text() -> String {
+    format!(
+        "keys — Tab browse blocks · Enter expand · e fold · y copy · \
 g/G ends · ! bash · / commands · Esc×2 stash draft · Ctrl+S restore · \
-Ctrl+A/E/U/W line edit · Ctrl-C cancel, ×2 quits
-commands — /compact · /model · /mode · /multiline · /clear · /resume [id] · /rewind [n] · /tasks · /todos · /artifacts · /annotate · /help · /quit · \
-+ every *.md in .sunmao/commands, .claude/commands, plugins/*/commands";
+Ctrl+A/E/U/W line edit · Ctrl-C cancel, ×2 quits\n\
+{}",
+        crate::commands::help_text("/multiline · /clear · ")
+    )
+}
 
 /// Pastes at or above this many bytes stash into `paste_stash` and insert
 /// a `[paste #N]` marker instead of raw text — the composer stays small
@@ -155,9 +161,10 @@ pub enum Submit {
     /// /resume [id|path] — swap the session log; bare = list recent
     Resume(Option<String>),
     /// /fork <id|path> — copy the log to a fresh id, resume the copy
-    Fork(Option<String>),
-    /// /rewind [n] [session|code|both] — boundary fork + checkpoint restore
-    Rewind(Option<String>),
+    Fork(String),
+    /// /rewind [n] [session|code|both] — boundary fork + checkpoint
+    /// restore; None lists the turn boundaries
+    Rewind(Option<crate::commands::RewindSpec>),
     /// /compact
     Compact,
     /// command name didn't resolve — show a note, no turn
@@ -377,73 +384,42 @@ impl App {
         let trimmed = text.trim();
         match trimmed.strip_prefix('/') {
             Some(cmd_line) => {
-                let name = cmd_line.split_whitespace().next().unwrap_or("");
-                match name {
-                    "quit" | "exit" => Submit::Quit,
-                    "compact" => Submit::Compact,
-                    "multiline" | "ml" => {
+                // the vocabulary + arg grammar live in commands::parse —
+                // this match only maps a Command to its Submit
+                match crate::commands::parse(cmd_line) {
+                    crate::commands::Command::Quit => Submit::Quit,
+                    crate::commands::Command::Compact => Submit::Compact,
+                    crate::commands::Command::Multiline => {
                         self.multiline = !self.multiline;
                         Submit::Note(format!(
                             "[multiline {}]",
                             if self.multiline { "on" } else { "off" }
                         ))
                     }
-                    "help" | "h" | "?" => Submit::Note(HELP_TEXT.to_string()),
-                    "clear" => {
+                    crate::commands::Command::Help => Submit::Note(help_text()),
+                    crate::commands::Command::Clear => {
                         self.blocks.clear();
                         self.paste_stash.clear();
                         self.selected = 0;
                         self.scroll_back = 0;
                         Submit::Note("[transcript cleared — session log untouched]".into())
                     }
-                    // /resume needs the session dir + agent — driver-side
-                    "resume" | "sessions" => {
-                        let arg = cmd_line.split_whitespace().nth(1).map(|s| s.to_string());
-                        Submit::Resume(arg)
-                    }
-                    // /fork copies the log to a fresh id, resumes the copy
-                    "fork" => {
-                        let arg = cmd_line.split_whitespace().nth(1).map(|s| s.to_string());
-                        Submit::Fork(arg)
-                    }
-                    // /rewind — boundary fork + checkpoint restore need the
-                    // agent's session state; driver-side like /resume
-                    "rewind" => {
-                        let arg = cmd_line[name.len()..].trim().to_string();
-                        Submit::Rewind((!arg.is_empty()).then_some(arg))
-                    }
-                    // /model resolves through the session's ModelResolver —
-                    // only the driver holds the agent.
-                    "model" => {
-                        let arg = cmd_line.split_whitespace().nth(1).map(|s| s.to_string());
-                        Submit::Model(arg)
-                    }
-                    // /mode switches the approval stance — kernel-side via
-                    // the agent's session state, audited into the log
-                    "mode" => {
-                        let arg = cmd_line.split_whitespace().nth(1).map(|s| s.to_string());
-                        Submit::Mode(arg)
-                    }
-                    // /tasks — the live sub-agent roster, driver-side too
-                    "tasks" => Submit::Tasks,
-                    // /todos — the model's task list, driver-side too
-                    "todos" => Submit::Todos,
-                    // /artifacts — .sunmao/artifacts listing, driver-side
-                    "artifacts" => Submit::Artifacts,
-                    // /annotate <name> <note> — margin notes for the agent
-                    "annotate" => {
-                        let mut it = cmd_line.splitn(3, char::is_whitespace);
-                        let _ = it.next(); // command name
-                        match (it.next(), it.next()) {
-                            (Some(name), Some(note)) => {
-                                Submit::Annotate(name.to_string(), note.trim().to_string())
-                            }
-                            _ => Submit::Note("[usage: /annotate <name> <note>]".into()),
-                        }
-                    }
+                    crate::commands::Command::Resume(arg)
+                    | crate::commands::Command::Sessions(arg) => Submit::Resume(arg),
+                    crate::commands::Command::Fork(id) => Submit::Fork(id),
+                    crate::commands::Command::Rewind(spec) => Submit::Rewind(spec),
+                    crate::commands::Command::Model(arg) => Submit::Model(arg),
+                    crate::commands::Command::Mode(arg) => Submit::Mode(arg),
+                    crate::commands::Command::Tasks => Submit::Tasks,
+                    crate::commands::Command::Todos => Submit::Todos,
+                    crate::commands::Command::Artifacts => Submit::Artifacts,
+                    crate::commands::Command::Annotate(name, note) => Submit::Annotate(name, note),
+                    crate::commands::Command::Note(n) => Submit::Note(n),
                     // file commands resolve in the driver (needs cwd) —
                     // paste markers expand too, $ARGUMENTS flows through
-                    _ => Submit::Turn(self.expand_pastes(&format!("/{cmd_line}"))),
+                    crate::commands::Command::Other => {
+                        Submit::Turn(self.expand_pastes(&format!("/{cmd_line}")))
+                    }
                 }
             }
             None => Submit::Turn(self.expand_pastes(&text)),

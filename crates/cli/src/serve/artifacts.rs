@@ -175,7 +175,7 @@ pub(super) async fn artifact_annotate(
     };
     let note = v["note"].as_str().unwrap_or("");
     HostResponse::json(serde_json::json!({
-        "result": crate::tui::slash::annotate(&sess_dir(s, sess.as_deref()), name, note)
+        "result": crate::commands::annotate(&sess_dir(s, sess.as_deref()), name, note)
     }))
 }
 

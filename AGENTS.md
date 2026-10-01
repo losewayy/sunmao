@@ -147,7 +147,10 @@ live in [`docs/CODE-ARCHITECTURE.md`](docs/CODE-ARCHITECTURE.md). Follow them.
 | Anthropic dialect | `crates/llm/src/anthropic.rs` |
 | fragment reassembly | `crates/llm/src/assemble.rs` |
 | REPL/flags | `crates/cli/src/main.rs` |
-| TUI (CJK-native) | `crates/cli/src/tui/` — `mod` event loop + focus, `app` state, `blocks` transcript, `render` draw, `md` markdown, `theme` palette, `slash` commands |
+| TUI (CJK-native) | `crates/cli/src/tui/` — `mod` event loop + focus, `app` state, `blocks` transcript, `render` draw, `md` markdown, `theme` palette, `menu` completion popups |
+| slash-command vocabulary (`/name` → `Command`, file-command lookup, shared note text) | `crates/cli/src/commands.rs` — parsed once, each frontend executes against its own handle |
+| session-log helpers (`recent_sessions`, `/resume` path, fork copy) | `crates/cli/src/sessions.rs` |
+| `/rewind` execution (local frontends) | `crates/cli/src/rewind.rs`; serve variant: `serve/host.rs::rewind_session` |
 | ACP server | `crates/cli/src/acp/` — `mod` wire + `observer` outbound adapters |
 | dataflow report | `crates/cli/src/dataflow.rs` |
 | env self-check | `crates/cli/src/doctor.rs` |

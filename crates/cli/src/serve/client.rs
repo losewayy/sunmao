@@ -290,7 +290,7 @@ impl Client {
                     .viewing_host()
                     .map(|h| h.agent.session_cwd())
                     .unwrap_or_else(|| self.s.cwd.clone());
-                let r = crate::tui::slash::annotate(&dir, name, note);
+                let r = crate::commands::annotate(&dir, name, note);
                 self.emit(serde_json::json!({"type":"note","sess":self.viewing,"text":r}));
             }
             "model" => {

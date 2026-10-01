@@ -61,23 +61,12 @@ pub async fn list(agent: &AgentLoop) -> String {
     }
 }
 
-/// `/rewind n [mode]` — resolve the boundary, restore code if the mode
-/// asks, and fork the log at the boundary line if the mode has a session
-/// side. The fork's checkpoint ledger inherits the prefix's snapshots
-/// (truncated to < n) so rewinds inside the fork stay honest.
-pub async fn run(agent: &AgentLoop, project: &Path, arg: &str) -> Result<Outcome, String> {
-    let mut it = arg.split_whitespace();
-    let n: u64 = it
-        .next()
-        .and_then(|t| t.parse().ok())
-        .filter(|&n| n >= 1)
-        .ok_or_else(|| "[usage: /rewind <n> [session|code|both]]".to_string())?;
-    let mode =
-        Mode::parse(it.next()).ok_or_else(|| "[unknown mode — session|code|both]".to_string())?;
-    if it.next().is_some() {
-        return Err("[usage: /rewind <n> [session|code|both]]".to_string());
-    }
-
+/// `/rewind n [mode]` — `n`/`mode` arrive already parsed (`commands::parse`
+/// owns the grammar). Resolve the boundary, restore code if the mode asks,
+/// and fork the log at the boundary line if the mode has a session side.
+/// The fork's checkpoint ledger inherits the prefix's snapshots (truncated
+/// to < n) so rewinds inside the fork stay honest.
+pub async fn run(agent: &AgentLoop, project: &Path, n: u64, mode: Mode) -> Result<Outcome, String> {
     let src = agent.session_path().await;
     let src_id = src
         .file_stem()

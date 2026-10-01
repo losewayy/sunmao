@@ -15,6 +15,7 @@ use sunmao_core::{Context, SessionLog};
 use sunmao_llm::OaiClient;
 
 mod acp;
+mod commands;
 mod dataflow;
 mod doctor;
 mod eval;
@@ -22,6 +23,7 @@ mod plugin;
 mod repl;
 mod rewind;
 mod serve;
+mod sessions;
 mod tui;
 
 pub use serve::{Client, HostHandle, HostResponse, SANDBOX_PAGE};

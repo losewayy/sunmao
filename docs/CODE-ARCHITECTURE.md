@@ -96,6 +96,13 @@ crates/core    the kernel. Owns state, dispatch, policy. May not know
 crates/cli     every frontend + flag plumbing. Thin by design — heavy logic
                belongs in core.
                ├── main.rs       flags, dispatch, REPL, Observer/Approver impls
+               ├── commands.rs   slash-command vocabulary — parse + arg
+               │                 grammar, BUILTINS, file-command lookup
+               │                 ($ARGUMENTS), artifact helpers, note text
+               ├── sessions.rs   session-log helpers — sessions dir, recent
+               │                 list, /resume path resolution, fork copy
+               ├── rewind.rs     /rewind execution (local frontends) —
+               │                 boundary fork + checkpoint restore
                ├── tui/          ratatui TUI (CJK-native)
                │   ├── mod.rs    event loop, driver task, focus machine
                │   ├── app.rs    App state — blocks, composer, approval
@@ -111,7 +118,6 @@ crates/cli     every frontend + flag plumbing. Thin by design — heavy logic
                │   │             input, status
                │   ├── md.rs     pulldown-cmark → styled lines
                │   ├── theme.rs  semantic palette + legacy-glyph fallbacks
-               │   ├── slash.rs  command discovery/resolution
                │   └── *_tests.rs / tests.rs — state + render fixtures
                ├── acp/         ACP v2 server — mod.rs wire, observer.rs outbound adapters
                ├── dataflow.rs   session-log → audit report

@@ -1,10 +1,13 @@
 //! Completion popups — the slash-command menu's three kinds (command
 //! names, `/model` selectors, `@` file mentions) and the path pool that
 //! backs mention completion. State lives on `App`; this file owns the
-//! *what completes and how a candidate is applied* half.
+//! *what completes and how a candidate is applied* half. The pools
+//! themselves are shared logic: `commands::{candidates, scan_files}`,
+//! `sessions::recent_sessions`.
 
 use super::app::{App, char_to_byte};
-use super::slash;
+use crate::commands;
+use crate::sessions;
 
 /// What the completion popup is serving — drives its title, hint, and
 /// the accept action (a path candidate rewrites the `@` fragment in
@@ -22,7 +25,7 @@ pub enum MenuKind {
 }
 
 /// Completion popup state. Open while the composer is exactly a `/…`
-/// fragment with no whitespace; walks `slash::candidates`. In `Args`
+/// fragment with no whitespace; walks `commands::candidates`. In `Args`
 /// mode it completes the *argument* of an already-chosen builtin (today
 /// only `/model <selector>`) — the menu rows are selectors, not commands.
 /// In `Path` mode the trigger is `@` and rows are repo-relative paths.
@@ -37,32 +40,6 @@ pub struct SlashMenu {
     /// `fork`, or `sessions` (alias of resume). Decides what Enter
     /// submits; the session row is the arg, not the command.
     pub cmd: Option<String>,
-}
-
-/// Session ids under `<cwd>/.sunmao/sessions`, newest first (mtime),
-/// `.jsonl` stems only, capped at `limit`. Shared by the `/resume`
-/// picker (menu.rs) and the bare `/resume` list (mod.rs) — one truth
-/// for "what sessions exist".
-pub(crate) fn recent_sessions(cwd: &std::path::Path, limit: usize) -> Vec<String> {
-    let dir = cwd.join(".sunmao").join("sessions");
-    let mut entries: Vec<_> = std::fs::read_dir(&dir)
-        .map(|rd| {
-            rd.flatten()
-                .filter_map(|e| {
-                    let p = e.path();
-                    if p.extension().map(|x| x == "jsonl").unwrap_or(false) {
-                        let stem = p.file_stem()?.to_string_lossy().to_string();
-                        let m = e.metadata().ok()?.modified().ok()?;
-                        Some((m, stem))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    entries.sort_by_key(|b| std::cmp::Reverse(b.0));
-    entries.into_iter().take(limit).map(|(_, s)| s).collect()
 }
 
 impl App {
@@ -141,64 +118,10 @@ impl App {
         true
     }
 
-    /// Repo-relative path pool for `@` completion — depth-bounded walk
-    /// that skips VCS/build/dependency dirs (they'd drown the menu in
-    /// generated paths; the model can still reach them by name).
-    /// Directories carry a `/` suffix: that's both the descent marker
-    /// and how `accept_path_candidate` knows not to terminate.
-    fn scan_files(&self) -> Vec<String> {
-        const SKIP: &[&str] = &[
-            ".git",
-            "target",
-            "node_modules",
-            "__pycache__",
-            ".venv",
-            "dist",
-            "build",
-            ".dart_tool",
-            ".idea",
-            ".vscode",
-        ];
-        const MAX_DEPTH: usize = 6;
-        const MAX_ENTRIES: usize = 3000;
-        let mut out = Vec::new();
-        let mut stack = vec![(self.cwd.clone(), 0usize, String::new())];
-        while let Some((dir, depth, prefix)) = stack.pop() {
-            if out.len() >= MAX_ENTRIES {
-                break;
-            }
-            let Ok(rd) = std::fs::read_dir(&dir) else {
-                continue;
-            };
-            let mut entries: Vec<_> = rd.flatten().collect();
-            entries.sort_by_key(|e| e.file_name());
-            for e in entries {
-                if out.len() >= MAX_ENTRIES {
-                    break;
-                }
-                let name = e.file_name().to_string_lossy().to_string();
-                let rel = format!("{prefix}{name}");
-                if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    if SKIP.contains(&name.as_str()) {
-                        continue;
-                    }
-                    out.push(format!("{rel}/"));
-                    if depth < MAX_DEPTH {
-                        stack.push((e.path(), depth + 1, format!("{rel}/")));
-                    }
-                } else {
-                    out.push(rel);
-                }
-            }
-        }
-        out.sort();
-        out
-    }
-
     /// Session ids for `/resume` completion — rescanned when the menu
     /// opens so sessions the model spawned mid-turn show up too.
     fn scan_sessions(&self) -> Vec<String> {
-        recent_sessions(&self.cwd, 50)
+        sessions::recent_sessions(&self.cwd, 50)
     }
 
     /// Re-evaluate which completion popup (if any) the composer shows —
@@ -213,7 +136,7 @@ impl App {
                 .as_ref()
                 .is_none_or(|m| m.kind != MenuKind::Path)
             {
-                self.file_pool = self.scan_files();
+                self.file_pool = commands::scan_files(&self.cwd);
             }
             let matches: Vec<String> = self
                 .file_pool
@@ -284,7 +207,7 @@ impl App {
             Some((kind, frag)) => {
                 let pool = match kind {
                     MenuKind::Args => self.model_selectors.clone(),
-                    _ => slash::candidates(&self.cwd, &self.extra_roots),
+                    _ => commands::candidates(&self.cwd, &self.extra_roots),
                 };
                 let matches: Vec<String> = pool
                     .into_iter()

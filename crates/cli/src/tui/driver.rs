@@ -9,7 +9,8 @@ use sunmao_core::agent::{AgentLoop, LiveEvent};
 use tokio::sync::mpsc;
 
 use super::app::Submit;
-use super::{ChanObserver, Msg, menu, slash};
+use super::{ChanObserver, Msg};
+use crate::{commands, sessions};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn(
@@ -35,11 +36,7 @@ pub(super) fn spawn(
                 }
                 Submit::Compact => {
                     let obs = ChanObserver(tx_msg.clone());
-                    let note = match agent.compact(&obs, "manual").await {
-                        Ok(s) if s.is_empty() => "[compacted: nothing to fold]".to_string(),
-                        Ok(s) => format!("[compacted]\n{s}"),
-                        Err(e) => format!("[compact failed] {e:#}"),
-                    };
+                    let note = commands::compact_note(agent.compact(&obs, "manual").await);
                     let _ = tx_msg.send(Msg::Note(note));
                     continue;
                 }
@@ -52,12 +49,8 @@ pub(super) fn spawn(
                 Submit::Model(sel) => {
                     match sel {
                         None => {
-                            let choices = agent.model_choices();
-                            let _ = tx_msg.send(Msg::Note(if choices.is_empty() {
-                                "[no models.json — session model only]".into()
-                            } else {
-                                format!("available models:\n{}", choices.join("\n"))
-                            }));
+                            let _ = tx_msg
+                                .send(Msg::Note(commands::models_text(&agent.model_choices())));
                         }
                         Some(sel) => match agent.swap_model(&sel) {
                             Some(label) => {
@@ -66,33 +59,19 @@ pub(super) fn spawn(
                                 let _ = tx_msg.send(Msg::Note(format!("[model → {label}]")));
                             }
                             None => {
-                                let _ = tx_msg.send(Msg::Note(format!(
-                                    "[unknown selector: {sel} — try /model for the list]"
-                                )));
+                                let _ = tx_msg.send(Msg::Note(commands::model_unknown(&sel)));
                             }
                         },
                     }
                     continue;
                 }
                 Submit::Mode(arg) => {
-                    use sunmao_core::agent::ApprovalMode;
                     match arg {
                         None => {
-                            let cur = agent.approval_mode();
-                            let list = ApprovalMode::ALL
-                                .iter()
-                                .map(|m| {
-                                    let mark = if *m == cur { "→" } else { " " };
-                                    format!("  {mark} {}", m.as_str())
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            let _ = tx_msg.send(Msg::Note(format!(
-                                "approval mode: {}\n{list}",
-                                cur.as_str()
-                            )));
+                            let _ = tx_msg
+                                .send(Msg::Note(commands::mode_list_text(agent.approval_mode())));
                         }
-                        Some(name) => match ApprovalMode::parse(&name) {
+                        Some(name) => match sunmao_core::agent::ApprovalMode::parse(&name) {
                             Some(m) => {
                                 agent
                                     .set_approval_mode(m, &ChanObserver(tx_msg.clone()))
@@ -102,9 +81,7 @@ pub(super) fn spawn(
                                     .send(Msg::Note(format!("[approval mode → {}]", m.as_str())));
                             }
                             None => {
-                                let _ = tx_msg.send(Msg::Note(format!(
-                                    "[unknown mode: {name} — always_ask · auto · read_only · full_access]"
-                                )));
+                                let _ = tx_msg.send(Msg::Note(commands::mode_unknown(&name)));
                             }
                         },
                     }
@@ -112,73 +89,28 @@ pub(super) fn spawn(
                 }
                 Submit::Tasks => {
                     // the live roster — detached spawns until done
-                    let tasks = agent.task_roster();
-                    let text = if tasks.is_empty() {
-                        "[no sub-agents this session]".to_string()
-                    } else {
-                        let rows = tasks
-                            .iter()
-                            .map(|t| {
-                                let status = match t.done {
-                                    None => "running",
-                                    Some(true) => "done",
-                                    Some(false) => "failed",
-                                };
-                                let agent = t
-                                    .agent
-                                    .as_deref()
-                                    .map(|a| format!(" @{a}"))
-                                    .unwrap_or_default();
-                                format!("  {status:<7} {}{} — {}", t.id, agent, t.prompt)
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        format!("sub-agents:\n{rows}")
-                    };
-                    let _ = tx_msg.send(Msg::Note(text));
+                    let _ = tx_msg.send(Msg::Note(commands::tasks_text(&agent.task_roster())));
                     continue;
                 }
                 Submit::Artifacts => {
-                    let _ = tx_msg.send(Msg::Note(slash::artifacts_text(&cwd)));
+                    let _ = tx_msg.send(Msg::Note(commands::artifacts_text(&cwd)));
                     continue;
                 }
                 Submit::Todos => {
-                    let items = agent.todos();
-                    let text = if items.is_empty() {
-                        "[no task list — TodoWrite creates it]".to_string()
-                    } else {
-                        format!("task list:\n{}", sunmao_core::tool::render_todos(&items))
-                    };
-                    let _ = tx_msg.send(Msg::Note(text));
+                    let _ = tx_msg.send(Msg::Note(commands::todos_text(&agent.todos())));
                     continue;
                 }
                 Submit::Annotate(name, note) => {
-                    let _ = tx_msg.send(Msg::Note(slash::annotate(&cwd, &name, &note)));
+                    let _ = tx_msg.send(Msg::Note(commands::annotate(&cwd, &name, &note)));
                     continue;
                 }
                 Submit::Resume(arg) => {
                     match arg {
                         None => {
-                            // list recent sessions, newest first
-                            let entries = menu::recent_sessions(&cwd, 8);
-                            let list = entries
-                                .iter()
-                                .map(|s| format!("  /resume {s}"))
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            let _ = tx_msg.send(Msg::Note(if list.is_empty() {
-                                "[no sessions]".into()
-                            } else {
-                                format!("recent sessions:\n{list}")
-                            }));
+                            let _ = tx_msg.send(Msg::Note(sessions::recent_sessions_text(&cwd, 8)));
                         }
                         Some(id) => {
-                            let p = std::path::PathBuf::from(&id);
-                            let path = if p.exists() {
-                                p
-                            } else {
-                                cwd.join(".sunmao/sessions").join(format!("{id}.jsonl"))
-                            };
+                            let path = sessions::resolve_log_path(&cwd, &id);
                             match sunmao_core::SessionLog::open_path(&path).await {
                                 Ok(log) => {
                                     let events = agent.swap_session(log).await;
@@ -193,27 +125,11 @@ pub(super) fn spawn(
                     }
                     continue;
                 }
-                Submit::Fork(arg) => {
+                Submit::Fork(src) => {
                     // /fork <id>: copy the source log to a fresh id, then
                     // resume the copy — same flow as `--fork`.
-                    let Some(src) = arg else {
-                        let _ = tx_msg.send(Msg::Note("[usage: /fork <id>]".into()));
-                        continue;
-                    };
-                    let p = std::path::PathBuf::from(&src);
-                    let src_path = if p.exists() {
-                        p
-                    } else {
-                        cwd.join(".sunmao/sessions").join(format!("{src}.jsonl"))
-                    };
-                    let ms = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis();
-                    let new_id = format!("s-{ms}-fork");
-                    let dst = cwd.join(".sunmao/sessions").join(format!("{new_id}.jsonl"));
-                    match std::fs::copy(&src_path, &dst) {
-                        Ok(_) => match sunmao_core::SessionLog::open_path(&dst).await {
+                    match sessions::fork_copy(&cwd, &src) {
+                        Ok((new_id, dst)) => match sunmao_core::SessionLog::open_path(&dst).await {
                             Ok(log) => {
                                 let events = agent.swap_session(log).await;
                                 let _ =
@@ -225,28 +141,30 @@ pub(super) fn spawn(
                             }
                         },
                         Err(e) => {
-                            let _ = tx_msg.send(Msg::Note(format!("[fork {src} failed] {e}")));
+                            let _ = tx_msg.send(Msg::Note(e));
                         }
                     }
                     continue;
                 }
-                Submit::Rewind(arg) => {
-                    match arg {
+                Submit::Rewind(spec) => {
+                    match spec {
                         None => {
                             let _ = tx_msg.send(Msg::Note(crate::rewind::list(&agent).await));
                         }
-                        Some(spec) => match crate::rewind::run(&agent, &cwd, &spec).await {
-                            Ok(crate::rewind::Outcome::Forked { note, events }) => {
-                                let _ = tx_msg.send(Msg::Note(note));
-                                let _ = tx_msg.send(Msg::Replay(events));
+                        Some(spec) => {
+                            match crate::rewind::run(&agent, &cwd, spec.turn, spec.mode).await {
+                                Ok(crate::rewind::Outcome::Forked { note, events }) => {
+                                    let _ = tx_msg.send(Msg::Note(note));
+                                    let _ = tx_msg.send(Msg::Replay(events));
+                                }
+                                Ok(crate::rewind::Outcome::CodeOnly(note)) => {
+                                    let _ = tx_msg.send(Msg::Note(note));
+                                }
+                                Err(e) => {
+                                    let _ = tx_msg.send(Msg::Note(e));
+                                }
                             }
-                            Ok(crate::rewind::Outcome::CodeOnly(note)) => {
-                                let _ = tx_msg.send(Msg::Note(note));
-                            }
-                            Err(e) => {
-                                let _ = tx_msg.send(Msg::Note(e));
-                            }
-                        },
+                        }
                     }
                     continue;
                 }
@@ -288,8 +206,8 @@ pub(super) fn spawn(
                     let prompt = if let Some(cmd_line) = input.trim().strip_prefix('/') {
                         let name = cmd_line.split_whitespace().next().unwrap_or("");
                         let rest = cmd_line[name.len()..].trim();
-                        match slash::command_body(&cwd, &extra_roots, name) {
-                            Some(body) => slash::expand_command(&body, rest),
+                        match commands::command_body(&cwd, &extra_roots, name) {
+                            Some(body) => commands::expand_command(&body, rest),
                             None => {
                                 let _ =
                                     tx_msg.send(Msg::Note(format!("[unknown command: /{name}]")));

@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 
 use sunmao_core::agent::{LiveEvent, Observer as _};
 
-use crate::tui;
+use crate::{commands, sessions};
 
 use super::host::{Host, Input, Shared, WsObserver, slash_candidates};
 
@@ -93,19 +93,21 @@ async fn dispatch_input(s: &Arc<Shared>, host: &Arc<Host>, client: u64, input: S
     host.busy.fetch_add(1, Ordering::Relaxed);
     emit(serde_json::json!({"type":"busy","sess":sess,"busy":true}));
     if let Some(cmd_line) = input.trim().strip_prefix('/') {
-        let name = cmd_line.split_whitespace().next().unwrap_or("");
-        let rest = cmd_line[name.len()..].trim();
-        if dispatch_builtin(s, host, name, rest, client).await {
+        if dispatch_builtin(s, host, cmd_line, client).await {
             // handled locally — no model turn
-        } else if let Some(body) = crate::tui::slash::command_body(&s.cwd, &s.roots, name) {
-            let prompt = crate::tui::slash::expand_command(&body, rest);
-            let obs = WsObserver::new(s.live.clone(), sess.clone());
-            let _ = host.agent.run_turn(&prompt, &obs).await;
         } else {
-            emit(serde_json::json!({
-                "type": "note", "sess": sess,
-                "text": format!("[unknown command: /{name}]"),
-            }));
+            let name = cmd_line.split_whitespace().next().unwrap_or("");
+            let rest = cmd_line[name.len()..].trim();
+            if let Some(body) = commands::command_body(&s.cwd, &s.roots, name) {
+                let prompt = commands::expand_command(&body, rest);
+                let obs = WsObserver::new(s.live.clone(), sess.clone());
+                let _ = host.agent.run_turn(&prompt, &obs).await;
+            } else {
+                emit(serde_json::json!({
+                    "type": "note", "sess": sess,
+                    "text": format!("[unknown command: /{name}]"),
+                }));
+            }
         }
     } else {
         let obs = WsObserver::new(s.live.clone(), sess.clone());
@@ -115,17 +117,16 @@ async fn dispatch_input(s: &Arc<Shared>, host: &Arc<Host>, client: u64, input: S
     emit(serde_json::json!({"type":"busy","sess":sess,"busy":false}));
 }
 
-/// TUI-parity builtins — true when handled. Replies go out over the global
-/// bus tagged with THIS session (`sess`), so only tabs viewing it render
-/// the note. A `session` switch frame carries the issuing client's id so
-/// only that tab follows — other tabs viewing the same session stay put.
-async fn dispatch_builtin(
-    s: &Arc<Shared>,
-    host: &Arc<Host>,
-    name: &str,
-    rest: &str,
-    client: u64,
-) -> bool {
+/// Builtin slash commands — `commands::parse` owns the vocabulary and
+/// arg grammar; the arms here are only the serve-side execution (mgmt
+/// oneshots + broadcast frames; REPL/TUI call the same core APIs
+/// directly). Replies go out over the global bus tagged with THIS
+/// session (`sess`), so only tabs viewing it render the note. A
+/// `session` switch frame carries the issuing client's id so only that
+/// tab follows — other tabs viewing the same session stay put. True when
+/// handled; `Other` and frontend-local commands fall through to the
+/// file-command path.
+async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, cmd_line: &str, client: u64) -> bool {
     let sess = host.id.clone();
     let note = |t: String| {
         let _ = s
@@ -138,24 +139,18 @@ async fn dispatch_builtin(
             "client": client,
         }));
     };
-    match name {
-        "compact" => {
+    match commands::parse(cmd_line) {
+        commands::Command::Compact => {
             let obs = WsObserver::new(s.live.clone(), host.id.clone());
-            match host.agent.compact(&obs, "manual").await {
-                Ok(sum) if sum.is_empty() => note("[compacted: nothing to fold]".into()),
-                Ok(sum) => note(format!("[compacted]\n{sum}")),
-                Err(e) => note(format!("[compact failed] {e:#}")),
-            }
+            note(commands::compact_note(
+                host.agent.compact(&obs, "manual").await,
+            ));
             true
         }
-        "mode" => {
-            if rest.is_empty() {
-                note(format!(
-                    "approval mode: {}",
-                    host.agent.approval_mode().as_str()
-                ));
-            } else {
-                match sunmao_core::agent::ApprovalMode::parse(rest) {
+        commands::Command::Mode(arg) => {
+            match arg {
+                None => note(commands::mode_list_text(host.agent.approval_mode())),
+                Some(name) => match sunmao_core::agent::ApprovalMode::parse(&name) {
                     Some(m) => {
                         host.agent
                             .set_approval_mode(m, &WsObserver::new(s.live.clone(), sess.clone()))
@@ -164,179 +159,117 @@ async fn dispatch_builtin(
                             "type":"mode","sess":sess,"mode":m.as_str(),
                         }));
                     }
-                    None => note(format!("[unknown mode: {rest}]")),
-                }
+                    None => note(commands::mode_unknown(&name)),
+                },
             }
             true
         }
-        "resume" => {
-            if rest.is_empty() {
-                let list = tui::menu::recent_sessions(&host.agent.session_cwd(), 8)
-                    .iter()
-                    .map(|i| format!("  {i}"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                note(if list.is_empty() {
-                    "[no sessions]".into()
-                } else {
-                    format!("recent sessions:\n{list}")
-                });
-            } else {
-                match adopt_via_mgmt(s, rest, false).await {
+        commands::Command::Resume(arg) | commands::Command::Sessions(arg) => {
+            match arg {
+                None => {
+                    note(sessions::recent_sessions_text(&host.agent.session_cwd(), 8));
+                }
+                Some(id) => match adopt_via_mgmt(s, &id, false).await {
                     Ok(id) => switch(id),
                     Err(e) => note(format!("[resume failed] {e}")),
+                },
+            }
+            true
+        }
+        commands::Command::Fork(id) => {
+            match adopt_via_mgmt(s, &id, true).await {
+                Ok(new_id) => {
+                    note(format!("[forked {id} → {new_id}]"));
+                    switch(new_id);
                 }
+                Err(e) => note(format!("[fork failed] {e}")),
             }
             true
         }
-        "sessions" => {
-            let list = tui::menu::recent_sessions(&host.agent.session_cwd(), 8).join("\n");
-            note(if list.is_empty() {
-                "[no sessions]".into()
-            } else {
-                format!("recent sessions:\n{list}")
-            });
-            true
-        }
-        "fork" => {
-            if rest.is_empty() {
-                note("[usage: /fork <id>]".into());
-            } else {
-                match adopt_via_mgmt(s, rest, true).await {
-                    Ok(id) => {
-                        note(format!("[forked {rest} → {id}]"));
-                        switch(id);
-                    }
-                    Err(e) => note(format!("[fork failed] {e}")),
-                }
-            }
-            true
-        }
-        "rewind" => {
-            if rest.is_empty() {
-                let bounds =
-                    sunmao_core::checkpoints::turn_boundaries(&host.agent.session_path().await);
-                note(if bounds.is_empty() {
-                    "[no turns to rewind to]".into()
-                } else {
-                    let rows = bounds
-                        .iter()
-                        .map(|b| format!("  {}  {}", b.n, b.preview))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    format!("turn boundaries — /rewind <n> [session|code|both]:\n{rows}")
-                });
-                return true;
-            }
-            let mut it = rest.split_whitespace();
-            let n: Option<u64> = it.next().and_then(|t| t.parse().ok()).filter(|n| *n >= 1);
-            let mode = crate::rewind::Mode::parse(it.next());
-            let (Some(n), Some(mode)) = (n, mode) else {
-                note("[usage: /rewind <n> [session|code|both]]".into());
-                return true;
-            };
-            if it.next().is_some() {
-                note("[usage: /rewind <n> [session|code|both]]".into());
-                return true;
-            }
-            let rewind_mode = match mode {
-                crate::rewind::Mode::Both => super::host::RewindMode::Both,
-                crate::rewind::Mode::Session => super::host::RewindMode::Session,
-                crate::rewind::Mode::Code => super::host::RewindMode::Code,
-            };
-            match rewind_via_mgmt(s, &host.id, n, rewind_mode).await {
-                Ok(body) => {
-                    let v: serde_json::Value =
-                        serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
-                    let restored = v["restored"].as_array().map(|a| a.len()).unwrap_or(0);
-                    let new_id = v["session"].as_str().map(|s| s.to_string());
-                    let files = if restored == 0 {
-                        "no files to restore".to_string()
-                    } else {
-                        format!("{restored} file(s) restored")
+        commands::Command::Rewind(spec) => {
+            match spec {
+                None => note(crate::rewind::list(&host.agent).await),
+                Some(spec) => {
+                    let mode = match spec.mode {
+                        crate::rewind::Mode::Both => super::host::RewindMode::Both,
+                        crate::rewind::Mode::Session => super::host::RewindMode::Session,
+                        crate::rewind::Mode::Code => super::host::RewindMode::Code,
                     };
-                    match new_id {
-                        Some(id) => {
-                            note(format!("[rewound to turn {n} — {files}, session → {id}]"));
-                            switch(id);
+                    match rewind_via_mgmt(s, &host.id, spec.turn, mode).await {
+                        Ok(body) => {
+                            let v: serde_json::Value =
+                                serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+                            let restored = v["restored"].as_array().map(|a| a.len()).unwrap_or(0);
+                            let new_id = v["session"].as_str().map(|s| s.to_string());
+                            let files = if restored == 0 {
+                                "no files to restore".to_string()
+                            } else {
+                                format!("{restored} file(s) restored")
+                            };
+                            match new_id {
+                                Some(id) => {
+                                    note(format!(
+                                        "[rewound to turn {} — {files}, session → {id}]",
+                                        spec.turn
+                                    ));
+                                    switch(id);
+                                }
+                                None => note(format!("[rewound to turn {} — {files}]", spec.turn)),
+                            }
                         }
-                        None => note(format!("[rewound to turn {n} — {files}]")),
+                        Err(e) => note(format!("[rewind failed] {e}")),
                     }
                 }
-                Err(e) => note(format!("[rewind failed] {e}")),
             }
             true
         }
-        "model" => {
-            if rest.is_empty() {
-                let c = host.agent.model_choices();
-                note(if c.is_empty() {
-                    "[no models.json — session model only]".into()
-                } else {
-                    format!("available models:\n{}", c.join("\n"))
-                });
-            } else {
-                match host.agent.swap_model(rest) {
+        commands::Command::Model(arg) => {
+            match arg {
+                None => note(commands::models_text(&host.agent.model_choices())),
+                Some(sel) => match host.agent.swap_model(&sel) {
                     Some(label) => {
-                        host.agent.record_model_change(rest, &label).await;
+                        host.agent.record_model_change(&sel, &label).await;
                         let _ = s.live.send(serde_json::json!({
                             "type":"model","sess":sess,"label":label,
                         }));
                     }
-                    None => note(format!("[unknown selector: {rest}]")),
-                }
+                    None => note(commands::model_unknown(&sel)),
+                },
             }
             true
         }
-        "tasks" => {
-            let tasks = host.agent.task_roster();
-            note(if tasks.is_empty() {
-                "[no sub-agents this session]".into()
-            } else {
-                let rows = tasks
-                    .iter()
-                    .map(|t| {
-                        let st = match t.done {
-                            None => "running",
-                            Some(true) => "done",
-                            Some(false) => "failed",
-                        };
-                        format!("  {st:<7} {} — {}", t.id, t.prompt)
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                format!("sub-agents:\n{rows}")
-            });
+        commands::Command::Tasks => {
+            note(commands::tasks_text(&host.agent.task_roster()));
             true
         }
-        "todos" => {
-            let items = host.agent.todos();
-            note(if items.is_empty() {
-                "[no task list — TodoWrite creates it]".into()
-            } else {
-                format!("task list:\n{}", sunmao_core::tool::render_todos(&items))
-            });
+        commands::Command::Todos => {
+            note(commands::todos_text(&host.agent.todos()));
             true
         }
-        "artifacts" => {
-            note(crate::tui::slash::artifacts_text(&s.cwd));
+        commands::Command::Artifacts => {
+            note(commands::artifacts_text(&host.agent.session_cwd()));
             true
         }
-        "annotate" => {
-            let mut it = rest.splitn(2, char::is_whitespace);
-            match (it.next(), it.next()) {
-                (Some(n), Some(t)) => note(crate::tui::slash::annotate(&s.cwd, n, t.trim())),
-                _ => note("[usage: /annotate <name> <note>]".into()),
-            }
+        commands::Command::Annotate(name, text) => {
+            note(commands::annotate(&host.agent.session_cwd(), &name, &text));
             true
         }
-        "help" => {
+        commands::Command::Help => {
             note(format!(
                 "slash commands: {}",
                 slash_candidates(s).join("  ")
             ));
             true
         }
-        _ => false,
+        commands::Command::Note(n) => {
+            note(n);
+            true
+        }
+        // frontend-local (quit/clear/multiline) and unknown names fall
+        // through to the file-command path
+        commands::Command::Quit
+        | commands::Command::Clear
+        | commands::Command::Multiline
+        | commands::Command::Other => false,
     }
 }

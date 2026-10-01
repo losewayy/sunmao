@@ -1,8 +1,10 @@
-//! `sunmao eval <file>` — case-driven regression runner. Each case sends a
-//! real prompt through the real `AgentLoop` and asserts against the recorded
-//! session facts (`SessionLog::events` + the folded transcript), producing a
-//! per-case pass/fail report. One fresh session + context per case so cases
-//! can't bleed into each other (permissions, read-before-write ledger, hooks
+//! `sunmao eval <file>` — case-driven regression runner. Each case sends
+//! real prompts through the real `AgentLoop` (one turn per `steps[]`
+//! entry on a continuing session; the flat `prompt`/`expect` shape is a
+//! one-step case) and asserts against the recorded session facts
+//! (`SessionLog::events` + the folded transcript), producing a per-case
+//! pass/fail report. One fresh session + context per case so cases can't
+//! bleed into each other (permissions, read-before-write ledger, hooks
 //! all resolve against the case's own cwd).
 
 use std::path::{Path, PathBuf};
@@ -17,6 +19,9 @@ use sunmao_core::{Context, SessionEvent, SessionLog};
 
 use crate::Cli;
 
+mod cases;
+use cases::{Case, Expect, parse_cases};
+
 #[derive(clap::Args)]
 pub struct EvalArgs {
     /// Case file: a JSON object/array, or JSONL — one case object per line.
@@ -24,26 +29,6 @@ pub struct EvalArgs {
     /// Write the per-case results as a JSON array to this path.
     #[arg(long)]
     pub report: Option<PathBuf>,
-}
-
-/// One eval case — `expect` vocabulary stays deliberately small (see
-/// docs/CONFIG.md): final_contains / tool_called / tool_not_called /
-/// max_tool_calls / turns.
-#[derive(Debug)]
-struct Case {
-    name: String,
-    prompt: String,
-    cwd: Option<String>,
-    expect: Expect,
-}
-
-#[derive(Default, Debug)]
-struct Expect {
-    final_contains: Option<String>,
-    tool_called: Vec<String>,
-    tool_not_called: Vec<String>,
-    max_tool_calls: Option<u64>,
-    turns: Option<u64>,
 }
 
 struct CaseResult {
@@ -228,9 +213,59 @@ async fn run_case_inner(
 
     let agent = AgentLoop::new(ctx.clone());
     let obs = QuietObserver::default();
-    let outcome = agent.run_turn(&case.prompt, &obs).await?;
-    if !matches!(outcome, TurnOutcome::Completed) {
-        result.failures.push(format!("turn ended: {outcome:?}"));
+    let multi = case.steps.len() > 1;
+    result.turns = case.steps.len() as u32;
+    for (i, step) in case.steps.iter().enumerate() {
+        // per-step assertions scope to THIS turn — mark the log so prior
+        // steps' ToolCalls don't count again, and the observer's buffer so
+        // the reply text is just this step's.
+        let ev_mark = ctx
+            .sessions
+            .lock()
+            .await
+            .events()
+            .await
+            .map(|e| e.len())
+            .unwrap_or(0);
+        let obs_mark = obs.content.lock().unwrap().len();
+
+        let outcome = agent.run_turn(&step.prompt, &obs).await?;
+        if !matches!(outcome, TurnOutcome::Completed) {
+            result
+                .failures
+                .push(step_fail(multi, i, &format!("turn ended: {outcome:?}")));
+        }
+
+        // assertions read the recorded facts, not the live stream
+        let tool_names: Vec<String> = {
+            let log = ctx.sessions.lock().await;
+            log.events()
+                .await?
+                .iter()
+                .skip(ev_mark)
+                .filter_map(|ev| match ev {
+                    SessionEvent::ToolCall { call, .. } => Some(call.function.name.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        result.tool_calls += tool_names.len();
+        let transcript = ctx.sessions.lock().await.messages().await?;
+        let mut final_text = transcript
+            .iter()
+            .rev()
+            .find(|m| m.role == sunmao_llm::types::Role::Assistant)
+            .and_then(|m| m.content_text())
+            .unwrap_or_default();
+        if final_text.is_empty() {
+            final_text = obs.content.lock().unwrap()[obs_mark..].to_string();
+        }
+        let names: Vec<&str> = tool_names.iter().map(String::as_str).collect();
+        result.failures.extend(
+            check(&step.expect, &names, &final_text)
+                .into_iter()
+                .map(|f| step_fail(multi, i, &f)),
+        );
     }
     ctx.hooks
         .fire(
@@ -241,34 +276,17 @@ async fn run_case_inner(
         .await;
     // each case is its own session — its extension children end with it
     ctx.ext.shutdown().await;
-
-    // assertions read the recorded facts, not the live stream
-    let log = ctx.sessions.lock().await;
-    let events = log.events().await?;
-    let tool_names: Vec<String> = events
-        .iter()
-        .filter_map(|ev| match ev {
-            SessionEvent::ToolCall { call, .. } => Some(call.function.name.clone()),
-            _ => None,
-        })
-        .collect();
-    result.tool_calls = tool_names.len();
-    let transcript = log.messages().await?;
-    drop(log);
-    let mut final_text = transcript
-        .iter()
-        .rev()
-        .find(|m| m.role == sunmao_llm::types::Role::Assistant)
-        .and_then(|m| m.content_text())
-        .unwrap_or_default();
-    if final_text.is_empty() {
-        final_text = obs.content.lock().unwrap().clone();
-    }
-    let names: Vec<&str> = tool_names.iter().map(String::as_str).collect();
-    result
-        .failures
-        .extend(check(&case.expect, &names, &final_text));
     Ok(())
+}
+
+/// A step-scoped failure reads `step N: <failure>`; single-step cases
+/// keep the bare wording (the step index would be noise).
+fn step_fail(multi: bool, i: usize, f: &str) -> String {
+    if multi {
+        format!("step {}: {f}", i + 1)
+    } else {
+        f.to_string()
+    }
 }
 
 /// Pure assertion pass — every `expect` key → a failure string or nothing.
@@ -323,159 +341,13 @@ fn result_json(r: &CaseResult) -> Value {
     })
 }
 
-/// Case file = one JSON object, a JSON array of objects, or JSONL (one
-/// object per line; blank lines and `#`/`//` comments skipped). Whole-file
-/// JSON wins so a single-line file still parses as one case.
-fn parse_cases(text: &str) -> anyhow::Result<Vec<Case>> {
-    match serde_json::from_str::<Value>(text) {
-        Ok(Value::Array(items)) => items
-            .iter()
-            .enumerate()
-            .map(|(i, v)| case_from_value(v, &format!("case[{i}]")))
-            .collect(),
-        Ok(v) => Ok(vec![case_from_value(&v, "case")?]),
-        Err(_) => {
-            let mut out = Vec::new();
-            for (i, line) in text.lines().enumerate() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
-                    continue;
-                }
-                let v: Value = serde_json::from_str(line)
-                    .with_context(|| format!("line {}: not a JSON object", i + 1))?;
-                out.push(case_from_value(&v, &format!("line {}", i + 1))?);
-            }
-            Ok(out)
-        }
-    }
-}
-
-fn case_from_value(v: &Value, at: &str) -> anyhow::Result<Case> {
-    let obj = v
-        .as_object()
-        .with_context(|| format!("{at}: not an object"))?;
-    let name = obj
-        .get("name")
-        .and_then(Value::as_str)
-        .with_context(|| format!("{at}: missing \"name\""))?
-        .to_string();
-    let prompt = obj
-        .get("prompt")
-        .and_then(Value::as_str)
-        .with_context(|| format!("{at}: missing \"prompt\""))?
-        .to_string();
-    let cwd = obj.get("cwd").and_then(Value::as_str).map(str::to_string);
-    let expect = match obj.get("expect") {
-        None => Expect::default(),
-        Some(e) => expect_from_value(e, at)?,
-    };
-    Ok(Case {
-        name,
-        prompt,
-        cwd,
-        expect,
-    })
-}
-
-fn expect_from_value(v: &Value, at: &str) -> anyhow::Result<Expect> {
-    let obj = v
-        .as_object()
-        .with_context(|| format!("{at}: \"expect\" is not an object"))?;
-    let str_list = |key: &str| -> anyhow::Result<Vec<String>> {
-        match obj.get(key) {
-            None => Ok(Vec::new()),
-            Some(v) => v
-                .as_array()
-                .with_context(|| format!("{at}: \"{key}\" is not an array"))?
-                .iter()
-                .map(|x| {
-                    x.as_str()
-                        .map(str::to_string)
-                        .with_context(|| format!("{at}: \"{key}\" entry is not a string"))
-                })
-                .collect(),
-        }
-    };
-    Ok(Expect {
-        final_contains: obj
-            .get("final_contains")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        tool_called: str_list("tool_called")?,
-        tool_not_called: str_list("tool_not_called")?,
-        max_tool_calls: obj.get("max_tool_calls").and_then(Value::as_u64),
-        turns: obj.get("turns").and_then(Value::as_u64),
-    })
-}
-
 #[cfg(test)]
 mod tests {
+    use super::cases::Step;
     use super::*;
 
     fn names(tools: &[&str]) -> Vec<String> {
         tools.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn parses_single_object() {
-        let cases = parse_cases(r#"{"name":"a","prompt":"do x"}"#).unwrap();
-        assert_eq!(cases.len(), 1);
-        assert_eq!(cases[0].name, "a");
-        assert_eq!(cases[0].prompt, "do x");
-        assert!(cases[0].cwd.is_none());
-    }
-
-    #[test]
-    fn parses_array() {
-        let cases =
-            parse_cases(r#"[{"name":"a","prompt":"x"},{"name":"b","prompt":"y","cwd":"f"}]"#)
-                .unwrap();
-        assert_eq!(cases.len(), 2);
-        assert_eq!(cases[1].cwd.as_deref(), Some("f"));
-    }
-
-    #[test]
-    fn parses_jsonl_skipping_blanks_and_comments() {
-        let text = "# heading\n\n{\"name\":\"a\",\"prompt\":\"x\"}\n// c++ style\n{\"name\":\"b\",\"prompt\":\"y\"}\n";
-        let cases = parse_cases(text).unwrap();
-        assert_eq!(cases.len(), 2);
-        assert_eq!(cases[1].name, "b");
-    }
-
-    #[test]
-    fn malformed_jsonl_names_the_line() {
-        let err = parse_cases("{\"name\":\"a\",\"prompt\":\"x\"}\n{oops}\n").unwrap_err();
-        assert!(err.to_string().contains("line 2"), "{err}");
-    }
-
-    #[test]
-    fn malformed_array_element_names_the_index() {
-        let err = parse_cases(r#"[{"name":"a","prompt":"x"},{"prompt":"y"}]"#).unwrap_err();
-        assert!(err.to_string().contains("case[1]"), "{err}");
-        assert!(err.to_string().contains("name"), "{err}");
-    }
-
-    #[test]
-    fn full_case_shape_parses() {
-        let text = r#"{
-            "name": "uses-read-before-write",
-            "prompt": "fix the typo in note.txt then tell me DONE",
-            "cwd": "fixtures/case1",
-            "expect": {
-                "final_contains": "DONE",
-                "tool_called": ["Read", "Write"],
-                "tool_not_called": ["Bash"],
-                "max_tool_calls": 10,
-                "turns": 1
-            }
-        }"#;
-        let cases = parse_cases(text).unwrap();
-        let e = &cases[0].expect;
-        assert_eq!(e.final_contains.as_deref(), Some("DONE"));
-        assert_eq!(e.tool_called, ["Read", "Write"]);
-        assert_eq!(e.tool_not_called, ["Bash"]);
-        assert_eq!(e.max_tool_calls, Some(10));
-        assert_eq!(e.turns, Some(1));
     }
 
     #[test]
@@ -548,5 +420,138 @@ mod tests {
             report_line(&fail),
             "FAIL b — final_contains \"DONE\" missing; tool Write never called"
         );
+    }
+
+    /// Scripted provider: each queued response replays its deltas in order.
+    /// The same shape as core's MockProvider, local so cli tests don't
+    /// reach into core's private fixtures.
+    struct StubProvider {
+        responses: std::sync::Mutex<std::collections::VecDeque<Vec<sunmao_llm::StreamDelta>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl sunmao_llm::ProviderAdapter for StubProvider {
+        async fn stream(
+            &self,
+            _req: sunmao_llm::ChatRequest<'_>,
+        ) -> anyhow::Result<sunmao_llm::DeltaStream> {
+            let deltas = self
+                .responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| {
+                    vec![
+                        sunmao_llm::StreamDelta::Content("done".into()),
+                        sunmao_llm::StreamDelta::Finish {
+                            reason: Some("stop".into()),
+                            usage: None,
+                        },
+                    ]
+                });
+            Ok(Box::pin(futures_util::stream::iter(
+                deltas.into_iter().map(Ok),
+            )))
+        }
+    }
+
+    /// End-to-end: a two-step case runs two turns on one session, and each
+    /// step's expect sees only its own turn's tool calls — step 2's
+    /// `tool_not_called`/`max_tool_calls` pass even though step 1 called
+    /// Glob earlier in the same log.
+    #[tokio::test]
+    async fn multi_step_case_scopes_expectations_per_step() {
+        use clap::Parser;
+        use sunmao_llm::{StreamDelta, ToolCallFragment};
+
+        let dir = std::env::temp_dir().join(format!(
+            "sunmao-eval-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let session_dir = dir.join("sessions");
+        let cli = Cli::parse_from(["sunmao", "--session-dir", session_dir.to_str().unwrap()]);
+        let llm: Arc<dyn sunmao_llm::ProviderAdapter> = Arc::new(StubProvider {
+            responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                vec![
+                    StreamDelta::ToolCalls(vec![
+                        ToolCallFragment {
+                            index: 0,
+                            id: Some("call_1".into()),
+                            name: Some("Glob".into()),
+                            arguments: None,
+                        },
+                        ToolCallFragment {
+                            index: 0,
+                            arguments: Some("{\"pattern\":\"**/*\"}".into()),
+                            ..Default::default()
+                        },
+                    ]),
+                    StreamDelta::Finish {
+                        reason: Some("tool_calls".into()),
+                        usage: None,
+                    },
+                ],
+                vec![
+                    StreamDelta::Content("listed".into()),
+                    StreamDelta::Finish {
+                        reason: Some("stop".into()),
+                        usage: None,
+                    },
+                ],
+                vec![
+                    StreamDelta::Content("SECOND OK".into()),
+                    StreamDelta::Finish {
+                        reason: Some("stop".into()),
+                        usage: None,
+                    },
+                ],
+            ])),
+        });
+        let case = Case {
+            name: "two-step".into(),
+            cwd: None,
+            steps: vec![
+                Step {
+                    prompt: "glob".into(),
+                    expect: Expect {
+                        tool_called: vec!["Glob".into()],
+                        ..Default::default()
+                    },
+                },
+                Step {
+                    prompt: "reply".into(),
+                    expect: Expect {
+                        final_contains: Some("SECOND OK".into()),
+                        tool_not_called: vec!["Glob".into()],
+                        max_tool_calls: Some(0),
+                        ..Default::default()
+                    },
+                },
+            ],
+        };
+        let mut result = CaseResult {
+            name: case.name.clone(),
+            ok: false,
+            failures: Vec::new(),
+            tool_calls: 0,
+            turns: 0,
+            session: "s-test-c0".into(),
+        };
+        run_case_inner(&case, &cli, &llm, &dir, &dir, &[], "s-test-c0", &mut result)
+            .await
+            .unwrap();
+        assert_eq!(result.turns, 2);
+        assert_eq!(result.tool_calls, 1);
+        assert!(result.failures.is_empty(), "{:?}", result.failures);
+        // both step prompts landed in ONE session log — steps share the
+        // session, they don't each get a fresh one
+        let log = std::fs::read_to_string(session_dir.join("s-test-c0.jsonl")).unwrap();
+        assert_eq!(log.matches("\"role\":\"user\"").count(), 2);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

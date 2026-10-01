@@ -73,6 +73,7 @@
 - 首发方言：**OpenAI Chat Completions 兼容**（DeepSeek/Kimi/国产端点一套通吃）
 - 手写 SSE 解析 + delta 累积 + `tool_calls` 碎片重组（本项目立身之本：裸写协议栈）
 - 缝定义：`trait ProviderAdapter { stream(req) -> Stream<Chunk> }`——第二 provider（Anthropic）是 v0.4+ 的另一个方言插件
+- **已定方向：OpenAI Responses API 方言**（`models.json` 的 `dialect` 预留 `"openai-responses"` 值位）——o 系/gpt-5 系的 reasoning effort 与内置工具只在 Responses 面开放，直连官方端点时必需；排队在现有面收敛之后做（v0.6 级），需要新增 `response.output_item.delta` / `reasoning_summary` 事件映射与 `previous_response_id` 链式状态
 - 宽容序列化：第三方端点的脏 payload（`tool_calls` 收 null、`finish_reason` 未知值兜底）——实测教训沉淀
 
 ### 4.3 `tools` — 作用域注册表 + 受控执行管线

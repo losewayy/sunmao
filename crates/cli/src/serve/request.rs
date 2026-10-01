@@ -194,6 +194,7 @@ impl HostHandle {
             }
             ("POST", ["session", id, "rename"]) => session_rename(s, id, body).await,
             ("DELETE", ["session", id]) => session_delete(s, id).await,
+            ("GET", ["session", id, "events"]) => session_events(s, id),
             ("GET", ["session", id, "turns"]) => {
                 // the /rewind picker's data — user-turn boundaries on the
                 // log, numbered and previewed exactly like the TUI list
@@ -270,6 +271,7 @@ fn js_asset(name: &str) -> Option<&'static str> {
         "connection.js" => super::CONNECTION_JS,
         "composer.js" => super::COMPOSER_JS,
         "palette.js" => super::PALETTE_JS,
+        "find.js" => super::FIND_JS,
         "menus.js" => super::MENUS_JS,
         "boot.js" => super::BOOT_JS,
         _ => return None,
@@ -422,6 +424,23 @@ async fn session_delete(s: &Arc<Shared>, id: &str) -> HostResponse {
         }
         Err(e) => HostResponse::err(500, format!("delete {}: {e}", p.display())),
     }
+}
+
+/// `GET /session/{id}/events` — the raw durable event list (`{events:[]}`),
+/// for dormant logs that never got a host. Frontend exports (markdown
+/// download) read this instead of re-deriving the fold.
+fn session_events(s: &Arc<Shared>, id: &str) -> HostResponse {
+    let Some(p) = log_path(s, id) else {
+        return HostResponse::err(404, "no such session".into());
+    };
+    let Ok(text) = std::fs::read_to_string(&p) else {
+        return HostResponse::err(500, "unreadable log".into());
+    };
+    let events: Vec<serde_json::Value> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    HostResponse::json(serde_json::json!({"events": events}))
 }
 
 /// `GET /session[?id=…]` — the viewed host's id + live set + the session's

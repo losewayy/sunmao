@@ -10,6 +10,7 @@ function sessionMenu(id) {
   items.push({ v: 'rewind', t: '回退到某一轮', icon: 'reset', d: '恢复文件到该轮之前，并分叉会话' });
   items.push('-');
   items.push({ v: 'rename', t: '重命名', icon: 'pen', d: '会话的显示标题，写进事件日志' });
+  items.push({ v: 'export', t: '导出为 Markdown', icon: 'download', d: '从事件日志折叠成 .md 文件下载' });
   items.push({ v: 'delete', t: '删除会话', icon: 'trash', d: '移除事件日志文件', warn: true });
   items.push('-');
   items.push({ v: 'copy', t: '复制会话 ID', icon: 'copy', d: id });
@@ -20,6 +21,7 @@ function sessionAction(v, id, at) {
   else if (v === 'fork') forkSession(id);
   else if (v === 'rewind') rewindPick(id, at);
   else if (v === 'rename') renamePop(id, at);
+  else if (v === 'export') exportSession(id);
   else if (v === 'delete') deletePop(id, at);
   else if (v === 'copy') { if (navigator.clipboard) navigator.clipboard.writeText(id).catch(() => {}); toast('已复制会话 ID', 'copy'); }
 }
@@ -149,7 +151,8 @@ document.addEventListener('click', e => {
 document.addEventListener('keydown', e => {
   const typing = e.target.closest && e.target.closest('input,textarea,[contenteditable]');
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
-  if (e.key === 'Escape') { if (!$('#palette').hidden) return closePalette(); if (popEl) return closePop(); if (view === 'settings') return go('back'); if (typing) e.target.blur(); return; }
+  if (e.key === 'Escape') { if (!$('#palette').hidden) return closePalette(); if (popEl) return closePop(); if (findBar) return closeFind(); if (view === 'settings') return go('back'); if (typing) e.target.blur(); return; }
+  if (mod && k === 'f') { e.preventDefault(); return openFind(); }
   if (mod && k === 'k') { e.preventDefault(); return openPalette(); }
   if (mod && k === 'n') { e.preventDefault(); return newChat(); }
   if (mod && e.key === ',') { e.preventDefault(); return go('settings'); }

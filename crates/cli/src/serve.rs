@@ -17,7 +17,7 @@
 //!                  {"type":"annotate","name","note"} | {"type":"model","sel"}
 //!   REST: GET /sessions · GET /session · POST /session/new ·
 //!         POST /session/{id}/resume|fork|rename · DELETE /session/{id} ·
-//!         GET /session/{id}/turns ·
+//!         GET /session/{id}/events · GET /session/{id}/turns ·
 //!         POST /session/{id}/rewind · GET /artifacts/{name} ·
 //!         GET /artifacts/{name}/revs|notes|ui ·
 //!         POST /artifacts/{name}/annotate · GET /dataflow[/{id}]
@@ -67,6 +67,7 @@ const ISLANDS_JS: &str = include_str!("serve/assets/islands.js");
 const CONNECTION_JS: &str = include_str!("serve/assets/connection.js");
 const COMPOSER_JS: &str = include_str!("serve/assets/composer.js");
 const PALETTE_JS: &str = include_str!("serve/assets/palette.js");
+const FIND_JS: &str = include_str!("serve/assets/find.js");
 const MENUS_JS: &str = include_str!("serve/assets/menus.js");
 const BOOT_JS: &str = include_str!("serve/assets/boot.js");
 

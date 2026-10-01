@@ -14,8 +14,11 @@ clap = { workspace = true, features = ["env"] }
 serde_json.workspace = true
 sunmao = { path = "../cli" }
 tauri = { version = "2", features = [] }
+tauri-plugin-deep-link = "2.6.1"
 tauri-plugin-notification = "2.5.1"
 tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2.5.2"
+tauri-plugin-updater = "2.13.1"
 tauri-plugin-window-state = "2.5.0"
 tokio.workspace = true
 tracing.workspace = true

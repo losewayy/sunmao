@@ -194,6 +194,30 @@ impl Client {
                     }));
                 }
             }
+            // {type:"task_steer", sess, id, text} — steer a running sub-agent
+            // of that session; the roster decides (finished → use resume).
+            "task_steer" => {
+                let sub_id = v["id"].as_str().unwrap_or("").to_string();
+                let text = v["text"].as_str().unwrap_or("").to_string();
+                let target = v["sess"]
+                    .as_str()
+                    .and_then(|id| self.s.host(id))
+                    .or_else(|| self.viewing_host());
+                let sess = v["sess"].as_str().unwrap_or(&self.viewing).to_string();
+                let reply = match target {
+                    Some(h) if !sub_id.is_empty() && !text.is_empty() => {
+                        match h.agent.steer_sub(&sub_id, text) {
+                            Ok(()) => format!("steered {sub_id}"),
+                            Err(e) => e.to_string(),
+                        }
+                    }
+                    Some(_) => "task_steer needs id + text".into(),
+                    None => format!("no session {sess}"),
+                };
+                self.emit(serde_json::json!({
+                    "type":"note","sess":sess,"text":reply,
+                }));
+            }
             // `!` local shell — the user runs it, no approval gate, no LLM.
             // Same deno_task_shell path the TUI's `!` takes; the durable
             // LocalShell fact folds into the next turn's context.

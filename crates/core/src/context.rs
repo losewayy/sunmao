@@ -132,12 +132,15 @@ pub struct Context {
     /// so compaction never erases the plan. The LOG is source of truth;
     /// this is the hot snapshot for readers (turn injection, `/todos`).
     pub todos: std::sync::Mutex<Vec<crate::tool::TodoItem>>,
-    /// User steering — messages the frontend queues while a turn is running
+    /// User steering — messages queued while a turn is running
     /// (`(client id, text)`). The turn loop drains them at each boundary and
     /// appends them as user messages, so they steer THIS turn instead of
     /// becoming the next one. Anything still queued when the turn ends is
     /// claimed by the driver as follow-up input — a steer is never lost.
-    pub steer: std::sync::Mutex<std::collections::VecDeque<(u64, String)>>,
+    /// `Arc` because a sub-agent's queue is the parent's addressing target:
+    /// `TaskEntry.steer` holds a clone so `steer_sub`/`Task{steer}` can push
+    /// into a live child without owning its Context.
+    pub steer: SteerQueue,
     /// One turn at a time per context — the watermark fence. Concurrent
     /// `run_turn` calls (ACP `session/prompt` is per-request spawned, and
     /// any frontend could double-submit) would otherwise interleave
@@ -150,6 +153,10 @@ pub struct Context {
     /// the parent's ToolCall/ToolResult pair.
     pub turn_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
+
+/// The steer queue's shared shape — `(client id, text)` FIFO. Named once:
+/// Context carries it, TaskEntry clones the Arc for `steer_sub` addressing.
+pub type SteerQueue = std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<(u64, String)>>>;
 
 /// One detached sub-agent in the roster.
 #[derive(Debug, Clone)]
@@ -165,7 +172,38 @@ pub struct TaskEntry {
     pub prompt: String,
     /// None while running; Some(ok) once TaskDone landed.
     pub done: Option<bool>,
+    /// Steer-queue handle into the child's context — a clone of its
+    /// `Context.steer`. `Task{steer:id, message}` and `steer_sub` push
+    /// through here; None for entries registered before the handle was
+    /// threaded (legacy roster rows can't be steered).
+    pub(crate) steer: Option<SteerQueue>,
 }
+
+/// Why a `steer_sub`/`Task{steer}` push was refused.
+#[derive(Debug)]
+pub enum SubSteerError {
+    /// No roster entry under that id — wrong id, or the child predates this
+    /// process (restart loses the roster; `resume` is the way back in).
+    NoSuch(String),
+    /// The child already finished — a dead child can't take a steer; it can
+    /// only be resumed.
+    Finished(String),
+    /// The roster entry exists but carries no steer handle (a spawn that
+    /// never registered one — pre-feature entries can't appear in practice).
+    NoHandle(String),
+}
+
+impl std::fmt::Display for SubSteerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoSuch(id) => write!(f, "no such sub-agent: {id}"),
+            Self::Finished(id) => write!(f, "{id} finished, use resume"),
+            Self::NoHandle(id) => write!(f, "{id} can't be steered"),
+        }
+    }
+}
+
+impl std::error::Error for SubSteerError {}
 
 impl Context {
     pub fn new(
@@ -272,7 +310,7 @@ impl Context {
             loop_driver,
             live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             todos: std::sync::Mutex::new(todos),
-            steer: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            steer: SteerQueue::default(),
             turn_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         }
     }
@@ -377,6 +415,30 @@ impl Context {
             .lock()
             .unwrap()
             .insert(format!("{tool}\t{specifier}"));
+    }
+
+    /// Steer a live sub-agent by id — roster lookup, then push the text
+    /// onto the child's steer queue. The child's turn loop drains it at
+    /// the next request boundary like any other steer. `Finished` means
+    /// the child can only be resumed; `NoSuch` means the roster never knew
+    /// this id (a pre-restart child lives on disk only — resume it).
+    /// `AgentLoop::steer_sub` is this helper's public wrapper.
+    pub(crate) fn steer_sub(&self, sub_id: &str, text: String) -> Result<(), SubSteerError> {
+        let steer = {
+            let tasks = self.live_tasks.lock().unwrap();
+            match tasks.iter().find(|t| t.id == sub_id) {
+                None => return Err(SubSteerError::NoSuch(sub_id.to_string())),
+                Some(t) if t.done.is_some() => {
+                    return Err(SubSteerError::Finished(sub_id.to_string()));
+                }
+                Some(t) => t
+                    .steer
+                    .clone()
+                    .ok_or_else(|| SubSteerError::NoHandle(sub_id.to_string()))?,
+            }
+        };
+        steer.lock().unwrap().push_back((0, text));
+        Ok(())
     }
 
     /// Checkpoint a file before a tool mutates it — the first write in the

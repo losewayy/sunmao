@@ -12,6 +12,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use sunmao_core::agent::Observer as _;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -94,6 +95,7 @@ impl Client {
             "busy_sessions": client.s.sessions.lock().unwrap().values()
                 .filter(|h| h.busy.load(Ordering::Relaxed) > 0)
                 .map(|h| h.id.clone()).collect::<Vec<_>>(),
+            "steer": host.as_ref().map(|h| h.agent.steer_queue()).unwrap_or_default(),
             "replay": evs,
         }));
         client
@@ -116,8 +118,10 @@ impl Client {
             "busy": host.busy.load(Ordering::Relaxed) > 0,
             "mode": host.agent.approval_mode().as_str(),
             // pending approval cards re-render — a tab arriving mid-ask
-            // must see the card, not a frozen transcript
+            // must see the card, not a frozen transcript; queued steers
+            // surface as chips the same way
             "pending": host.approvals.cards(),
+            "steer": host.agent.steer_queue(),
         }));
     }
 
@@ -133,9 +137,72 @@ impl Client {
                 if !text.trim().is_empty()
                     && let Some(h) = self.viewing_host()
                 {
-                    let _ = h.input.send(Input {
-                        client: self.id,
-                        text,
+                    // busy + not a slash command → steer the running turn;
+                    // slash lines keep FIFO order (a queued `/mode` mustn't
+                    // jump ahead of the prompt it's queued behind)
+                    if h.busy.load(Ordering::Relaxed) > 0 && !text.trim_start().starts_with('/') {
+                        h.agent.push_steer(self.id, text);
+                        let _ = self.s.live.send(serde_json::json!({
+                            "type":"steer_queue","sess":h.id,
+                            "items":h.agent.steer_queue(),
+                        }));
+                    } else {
+                        let _ = h.input.send(Input {
+                            client: self.id,
+                            text,
+                        });
+                    }
+                }
+            }
+            "steer_cancel" => {
+                if let Some(h) = self.viewing_host() {
+                    h.agent
+                        .cancel_steer(v["idx"].as_u64().unwrap_or(0) as usize);
+                    let _ = self.s.live.send(serde_json::json!({
+                        "type":"steer_queue","sess":h.id,
+                        "items":h.agent.steer_queue(),
+                    }));
+                }
+            }
+            // `!` local shell — the user runs it, no approval gate, no LLM.
+            // Same deno_task_shell path the TUI's `!` takes; the durable
+            // LocalShell fact folds into the next turn's context.
+            "local_shell" => {
+                let cmd = v["cmd"].as_str().unwrap_or("").to_string();
+                if !cmd.trim().is_empty()
+                    && let Some(h) = self.viewing_host()
+                {
+                    let obs = WsObserver::new(self.s.live.clone(), h.id.clone());
+                    let cwd = h.agent.session_cwd();
+                    tokio::spawn(async move {
+                        use sunmao_core::agent::LiveEvent;
+                        obs.on_event(&LiveEvent::ToolStart {
+                            name: "!".into(),
+                            summary: format!("$ {cmd}"),
+                            depth: 0,
+                            lane: 0,
+                            call_id: None,
+                        });
+                        let t0 = std::time::Instant::now();
+                        let (ok, output, code) =
+                            match sunmao_core::tool::run_foreground(&cmd, cwd, 120).await {
+                                Ok(run) => (
+                                    run.exit_code == 0,
+                                    sunmao_core::tool::render_run(&run),
+                                    run.exit_code,
+                                ),
+                                Err(msg) => (false, msg, -1),
+                            };
+                        h.agent.record_local_shell(&cmd, code, &output).await;
+                        obs.on_event(&LiveEvent::ToolDone {
+                            name: "!".into(),
+                            ok,
+                            output,
+                            depth: 0,
+                            lane: 0,
+                            call_id: None,
+                            elapsed_ms: t0.elapsed().as_millis() as u64,
+                        });
                     });
                 }
             }

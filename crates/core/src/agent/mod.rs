@@ -440,6 +440,39 @@ impl AgentLoop {
             .await;
     }
 
+    /// Queue user steering for the running turn — the loop drains it at the
+    /// next request boundary and folds the text in as a user message, so it
+    /// steers THIS turn instead of becoming a queued next submission.
+    pub fn push_steer(&self, client: u64, text: String) {
+        self.ctx.steer.lock().unwrap().push_back((client, text));
+    }
+
+    /// Drop a queued steer before the turn consumes it (GUI chip ×). The
+    /// index is positional over the current queue; consumed items have
+    /// already left it, so a stale index is a harmless no-op.
+    pub fn cancel_steer(&self, idx: usize) {
+        self.ctx.steer.lock().unwrap().remove(idx);
+    }
+
+    /// Current steering backlog — replay/hello report it so a joining tab
+    /// shows the same queued chips.
+    pub fn steer_queue(&self) -> Vec<String> {
+        self.ctx
+            .steer
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, t)| t.clone())
+            .collect()
+    }
+
+    /// Claim every queued steer — the turn boundary drains into the log;
+    /// the driver drains leftovers after a turn ends (a steer that arrived
+    /// mid-shutdown becomes the next submission, never dropped).
+    pub fn drain_steer(&self) -> Vec<(u64, String)> {
+        self.ctx.steer.lock().unwrap().drain(..).collect()
+    }
+
     /// Swap the active session log (TUI `/resume`): `log` becomes the fold
     /// source for subsequent turns; returns its events so the frontend can
     /// rebuild the transcript. Fires SessionStart(source=resume) like a

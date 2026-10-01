@@ -31,6 +31,7 @@
 <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></symbol>
 <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
 <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+<symbol id="i-square" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2.5"/></symbol>
 <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></symbol>
 <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></symbol>
 <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></symbol>
@@ -200,10 +201,12 @@
         <span class="cmp-busy" id="cmp-busy"><i class="sd run"></i>执行中</span>
         <span class="cmp-wait" id="cmp-wait"><i class="sd wait"></i>等待批准 · Y / N / A</span>
       </div>
+      <div class="cmp-queue" id="cmp-queue" hidden></div>
       <div class="cmp-row">
         <textarea id="input" rows="1" placeholder="描述任务，/ 调用命令" aria-label="消息"></textarea>
         <button class="cb mode" data-act="pick-mode" id="mode-btn" data-tip="审批模式"><svg class="i"><use href="#i-shield-check" id="mode-ic"/></svg><span id="cmp-mode">auto</span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
         <button class="cb model" data-act="pick-model" id="model-btn"><span id="cmp-model">…</span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
+        <button class="cb stop" data-act="stop" id="stop-btn" data-tip="停止生成" aria-label="停止生成" hidden><svg class="i"><use href="#i-square"/></svg></button>
         <button class="cb send" data-act="send" id="send-btn" data-tip="发送|Enter" aria-label="发送"><svg class="i"><use href="#i-arrow-up"/></svg></button>
       </div>
     </div>
@@ -1036,10 +1039,9 @@ function setBusy(on) {
   busy = !!on;
   $('#cmp-busy').hidden = !busy;
   $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy;
-  const b = $('#send-btn');
-  b.classList.toggle('stop', busy);
-  $('use', b).setAttribute('href', busy ? '#i-x' : '#i-arrow-up');
-  b.dataset.tip = busy ? '停止' : '发送|Enter';
+  // send and stop are separate verbs — busy Enter steers (queues a message
+  // for the running turn), the square button cancels
+  $('#stop-btn').hidden = !busy;
   renderRail();
 }
 
@@ -1197,7 +1199,16 @@ function liveEvent(raw) {
   else if (t === 'tool_done') { toolDone(ev); logEv('tool_result', `${ev.name} ${ev.ok ? 'ok' : 'err'}`); refreshDataflowSoon(); }
   else if (t === 'artifact') { addArtifact(ev); logEv('artifact', `${ev.name} · ${fmtBytes(ev.bytes || 0)}`); }
   else if (t === 'usage') { logEv('usage', `prompt ${nf(ev.prompt_tokens || 0)} · cache_read ${nf(ev.cache_read_input_tokens || 0)}`); refreshDataflowSoon(); }
-  else if (t === 'hook') { logEv('hook', `${ev.event} · ${ev.detail}`); }
+  else if (t === 'hook') {
+    if (ev.event === 'steer') {
+      // a queued message just folded into the turn — its durable Message
+      // renders this same user bubble on replay
+      closeMsg();
+      append(TX, youHTML(ev.detail || '', true, clock()));
+      steerQ.shift(); renderSteerChips();
+      logEv('message', 'user · ' + String(ev.detail || '').slice(0, 60));
+    } else logEv('hook', `${ev.event} · ${ev.detail}`);
+  }
   else if (t === 'turn_end') {
     abortTurn();
     foldSettled(TX);
@@ -1268,6 +1279,7 @@ function route(v) {
       setApprovalMode(v.mode);
       sandboxPort = v.sandbox_port || 0;
       busySessions.clear(); (v.busy_sessions || []).forEach(id => busySessions.add(id));
+      steerQ = v.steer || []; renderSteerChips();
       renderReplay(v.replay || []);
       setBusy(!!v.busy);
       refreshSessions(); refreshModels(); refreshProjects();
@@ -1284,6 +1296,7 @@ function route(v) {
       setApprovalMode(v.mode);
       setBusy(!!v.busy);
       (v.pending || []).forEach(c => approvalCard(c));
+      steerQ = v.steer || []; renderSteerChips();
       syncWait();
       refreshSessions(); renderCrumb();
       break;
@@ -1319,6 +1332,9 @@ function route(v) {
       break;
     }
     case 'sessions_changed': refreshSessions(); break;
+    case 'steer_queue':
+      if (sess === sessionId) { steerQ = v.items || []; renderSteerChips(); }
+      break;
     case 'models_changed': refreshModels(); break;
     case 'model':
       if (sess === sessionId) { modelLabel = v.label || modelLabel; $('#cmp-model').textContent = modelLabel; toast(`模型切换为 ${v.label}`, 'cpu'); }
@@ -1576,10 +1592,22 @@ function toggleDock() {
 }
 
 /* ================= composer ================= */
-function autoGrow() { const ta = $('#input'); ta.style.height = '34px'; ta.style.height = Math.min(168, ta.scrollHeight) + 'px'; slashCheck(); }
+// paste stash — ≥2 KiB pastes ride as [paste #N] markers and expand into
+// <pasted-text> blocks at submit, same convention as the TUI
+const PASTE_STASH_LIMIT = 2048;
+let pasteStash = [];
+function expandPastes(text) {
+  let out = text;
+  pasteStash.forEach((content, i) => {
+    const marker = `[paste #${i + 1}]`;
+    if (out.includes(marker)) out = out.replace(marker, `\n<pasted-text>\n${content}\n</pasted-text>\n`);
+  });
+  return out;
+}
+function autoGrow() { const ta = $('#input'); ta.style.height = '34px'; ta.style.height = Math.min(168, ta.scrollHeight) + 'px'; slashCheck(); atCheck(); }
 function send() {
   const ta = $('#input'), text = ta.value.trim();
-  if (!text) { if (busy) { wsSend({ type: 'cancel' }); return; } return ta.focus(); }
+  if (!text) return ta.focus();
   // frontend-local commands — they never reach the kernel (the kernel's
   // slash list filters them; this is the same rule kept on the send path)
   const lc = text.match(/^\/(\S+)(?:\s|$)/);
@@ -1594,18 +1622,48 @@ function send() {
     toast('多行输入：Shift+Enter 换行，Enter 发送', 'info');
     return;
   }
-  if (busy) { wsSend({ type: 'cancel' }); return; }
-  if (!wsSend({ type: 'prompt', text })) return toast('未连接到内核，无法发送', 'alert', 'warn');
-  append(TX, youHTML(text, true, clock()));
+  // `!` local shell — the user runs it, no gate, no turn; output lands in
+  // the transcript via the kernel's local_shell fact
+  if (text.startsWith('!')) {
+    const cmd = text.slice(1).trim();
+    ta.value = ''; autoGrow(); slashCheck(true);
+    if (!cmd) return;
+    if (!wsSend({ type: 'local_shell', cmd })) return toast('未连接到内核，无法执行', 'alert', 'warn');
+    return;
+  }
+  const payload = expandPastes(text);
+  ta.value = ''; autoGrow(); slashCheck(true);
+  // a busy session steers — the message rides the running turn's next
+  // boundary (queued chips show it) instead of becoming the next turn
+  if (!wsSend({ type: 'prompt', text: payload })) return toast('未连接到内核，无法发送', 'alert', 'warn');
+  if (busy) return; // chip feedback comes from the kernel's steer_queue frame
+  append(TX, youHTML(payload, true, clock()));
   // first prompt names the session right away — same rule the host applies
   const m = SESSION_META[sessionId] || (SESSION_META[sessionId] = { mtime: Date.now() });
   if (!m.title) { m.title = text.split('\n').map(s => s.trim()).find(Boolean).slice(0, 80); renderRail(); renderCrumb(); }
   updateHero();
-  ta.value = ''; autoGrow(); slashCheck(true);
   logEv('message', 'user · ' + text.slice(0, 60));
 }
+// queued steering — the kernel reports the backlog; chips × cancel one
+let steerQ = [];
+function renderSteerChips() {
+  const box = $('#cmp-queue');
+  if (!steerQ.length) { box.hidden = true; box.innerHTML = ''; return; }
+  box.hidden = false;
+  box.innerHTML = steerQ.map((t, i) =>
+    `<span class="chip" data-tip="已入队，回合边界注入"><span>${esc(t.length > 40 ? t.slice(0, 40) + '…' : t)}</span><button class="chip-x" data-si="${i}" aria-label="撤回">×</button></span>`).join('');
+}
+$('#cmp-queue').addEventListener('click', e => {
+  const b = e.target.closest('[data-si]');
+  if (b) wsSend({ type: 'steer_cancel', idx: +b.dataset.si });
+});
 $('#input').addEventListener('input', autoGrow);
 $('#input').addEventListener('keydown', e => {
+  if (atEl) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); atIdx += e.key === 'ArrowDown' ? 1 : -1; atCheck(); return; }
+    if ((e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229)) && atAccept()) { e.preventDefault(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); closeAt(); return; }
+  }
   if (slashEl) {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); slashIdx += e.key === 'ArrowDown' ? 1 : -1; renderSlash(); return; }
     if (e.key === 'Tab') {
@@ -1618,7 +1676,85 @@ $('#input').addEventListener('keydown', e => {
   }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); }
 });
-$('#input').addEventListener('paste', () => setTimeout(autoGrow));
+$('#input').addEventListener('paste', e => {
+  const text = e.clipboardData && e.clipboardData.getData('text/plain') || '';
+  if (text.length >= PASTE_STASH_LIMIT) {
+    e.preventDefault();
+    const ta = e.target;
+    pasteStash.push(text);
+    const marker = `[paste #${pasteStash.length}]`;
+    const s = ta.selectionStart;
+    ta.value = ta.value.slice(0, s) + marker + ta.value.slice(ta.selectionEnd);
+    ta.selectionStart = ta.selectionEnd = s + marker.length;
+    toast(`已粘贴 ${text.length} 字符 → ${marker}（发送时展开）`, 'note');
+  }
+  setTimeout(autoGrow);
+});
+
+/* ================= @ file mention ================= */
+// same pool shape the TUI builds: repo-relative paths, dirs carry a `/`
+// suffix (descent marker); fragment = `@…` immediately before the caret
+let atEl = null, atIdx = 0, atItems = [], atSeq = 0;
+let pathPool = null, pathPoolSess = '';
+async function ensurePathPool() {
+  if (pathPool && pathPoolSess === sessionId) return pathPool;
+  try { pathPool = (await api('/paths?sess=' + encodeURIComponent(sessionId))).paths || []; }
+  catch { pathPool = []; }
+  pathPoolSess = sessionId;
+  return pathPool;
+}
+function atFragment() {
+  const ta = $('#input'), upto = ta.selectionStart;
+  const head = ta.value.slice(0, upto);
+  const at = head.lastIndexOf('@');
+  if (at < 0 || (at > 0 && !/\s/.test(head[at - 1]))) return null;
+  const frag = head.slice(at + 1);
+  if (/\s/.test(frag)) return null;
+  return { start: at + 1, end: upto, frag };
+}
+function closeAt() { if (atEl) { atEl.remove(); atEl = null; } }
+async function atCheck(hide) {
+  const seq = ++atSeq;
+  if (hide || view !== 'session') return closeAt();
+  const f = atFragment();
+  if (!f) return closeAt();
+  const pool = await ensurePathPool();
+  if (seq !== atSeq || !atFragment()) return; // the caret moved meanwhile
+  const q = f.frag.toLowerCase();
+  atItems = pool.filter(p => p.toLowerCase().includes(q)).slice(0, 40);
+  if (!atItems.length) return closeAt();
+  atIdx = Math.min(atIdx, atItems.length - 1);
+  if (!atEl) {
+    atEl = document.createElement('div');
+    atEl.className = 'pop glass up show slash';
+    const r = $('#composer').getBoundingClientRect();
+    atEl.style.left = Math.max(8, r.left + 6) + 'px';
+    atEl.style.width = Math.min(420, r.width - 12) + 'px';
+    atEl.style.bottom = (innerHeight - r.top + 8) + 'px';
+    document.body.appendChild(atEl);
+    atEl.addEventListener('click', e => { const b = e.target.closest('.mi'); if (b) pickAt(b.dataset.p); });
+  }
+  atEl.innerHTML = '<div class="lbl">@ 文件提及 — Enter 选中，目录可继续下钻</div>'
+    + atItems.map((p, i) => `<button class="mi${i === atIdx ? ' hl' : ''}" data-p="${esc(p)}">${ic(p.endsWith('/') ? 'folder' : 'file', 'i sm')}<span class="mt mono"><span>${esc(p)}</span></span></button>`).join('');
+}
+function pickAt(p) {
+  const ta = $('#input'), f = atFragment();
+  if (!f) return closeAt();
+  const isDir = p.endsWith('/');
+  const tail = ta.value.slice(f.end);
+  let fill = p;
+  // files get a trailing space — except when text already follows
+  if (!isDir && (!tail || !/^\s/.test(tail))) fill += ' ';
+  ta.value = ta.value.slice(0, f.start) + fill + tail;
+  ta.selectionStart = ta.selectionEnd = f.start + fill.length;
+  if (isDir) { autoGrow(); atCheck(); } else { closeAt(); autoGrow(); }
+  ta.focus();
+}
+function atAccept() {
+  if (!atItems.length) return false;
+  pickAt(atItems[((atIdx % atItems.length) + atItems.length) % atItems.length]);
+  return true;
+}
 
 /* ================= slash menu ================= */
 let slashEl = null, slashIdx = 0, slashItems = [];
@@ -1654,7 +1790,7 @@ function pickSlash(cmd) {
   slashCheck(true);
   ta.focus(); autoGrow();
 }
-document.addEventListener('mousedown', e => { if (slashEl && !slashEl.contains(e.target) && e.target !== $('#input')) slashCheck(true); }, true);
+document.addEventListener('mousedown', e => { if (slashEl && !slashEl.contains(e.target) && e.target !== $('#input')) slashCheck(true); if (atEl && !atEl.contains(e.target) && e.target !== $('#input')) closeAt(); }, true);
 
 /* ================= popovers / tooltip / toast ================= */
 let popEl = null, popAnchor = null;
@@ -2030,6 +2166,7 @@ function act(name, el) {
     }
     case 'pick-model': return modelPop(el);
     case 'send': return send();
+    case 'stop': return wsSend({ type: 'cancel' });
     case 'new-chat': return newChat();
     case 'new-chat-pop': return newChatPop(el);
     case 'upload-wall': return $('#file-wall').click();

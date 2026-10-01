@@ -8,6 +8,8 @@ use std::sync::atomic::Ordering;
 
 use tokio::sync::mpsc;
 
+use sunmao_core::agent::{LiveEvent, Observer as _};
+
 use crate::tui;
 
 use super::host::{Host, Input, Shared, WsObserver, slash_candidates};
@@ -36,37 +38,61 @@ pub(super) async fn driver(
     host: Arc<Host>,
     mut rx: mpsc::UnboundedReceiver<Input>,
 ) {
+    loop {
+        // Leftover steering becomes follow-up input: a steer queued as the
+        // turn ended would otherwise wait for the next prompt (or silently
+        // queue) — claim it before blocking on the FIFO. Emit the emptied
+        // queue + the same "steer" live event the in-turn drain sends, so
+        // the tab's chip row clears and the message lands as a user bubble.
+        let leftovers = host.agent.drain_steer();
+        if !leftovers.is_empty() {
+            let _ = s.live.send(serde_json::json!({
+                "type":"steer_queue","sess":host.id,"items":[],
+            }));
+            let obs = WsObserver::new(s.live.clone(), host.id.clone());
+            for (client, text) in leftovers {
+                obs.on_event(&LiveEvent::Hook {
+                    event: "steer".into(),
+                    detail: text.clone(),
+                });
+                dispatch_input(&s, &host, client, text).await;
+            }
+        }
+        let Some(input) = rx.recv().await else { break };
+        dispatch_input(&s, &host, input.client, input.text).await;
+    }
+}
+
+/// One queued submission: builtin slash commands resolve locally; file
+/// commands expand and run as prompts; everything else is a turn.
+async fn dispatch_input(s: &Arc<Shared>, host: &Arc<Host>, client: u64, input: String) {
     let sess = host.id.clone();
     let emit = |v: serde_json::Value| {
         let _ = s.live.send(v);
     };
-    while let Some(input) = rx.recv().await {
-        let client = input.client;
-        let input = input.text;
-        host.busy.fetch_add(1, Ordering::Relaxed);
-        emit(serde_json::json!({"type":"busy","sess":sess,"busy":true}));
-        if let Some(cmd_line) = input.trim().strip_prefix('/') {
-            let name = cmd_line.split_whitespace().next().unwrap_or("");
-            let rest = cmd_line[name.len()..].trim();
-            if dispatch_builtin(&s, &host, name, rest, client).await {
-                // handled locally — no model turn
-            } else if let Some(body) = crate::tui::slash::command_body(&s.cwd, &s.roots, name) {
-                let prompt = crate::tui::slash::expand_command(&body, rest);
-                let obs = WsObserver::new(s.live.clone(), sess.clone());
-                let _ = host.agent.run_turn(&prompt, &obs).await;
-            } else {
-                emit(serde_json::json!({
-                    "type": "note", "sess": sess,
-                    "text": format!("[unknown command: /{name}]"),
-                }));
-            }
-        } else {
+    host.busy.fetch_add(1, Ordering::Relaxed);
+    emit(serde_json::json!({"type":"busy","sess":sess,"busy":true}));
+    if let Some(cmd_line) = input.trim().strip_prefix('/') {
+        let name = cmd_line.split_whitespace().next().unwrap_or("");
+        let rest = cmd_line[name.len()..].trim();
+        if dispatch_builtin(s, host, name, rest, client).await {
+            // handled locally — no model turn
+        } else if let Some(body) = crate::tui::slash::command_body(&s.cwd, &s.roots, name) {
+            let prompt = crate::tui::slash::expand_command(&body, rest);
             let obs = WsObserver::new(s.live.clone(), sess.clone());
-            let _ = host.agent.run_turn(&input, &obs).await;
+            let _ = host.agent.run_turn(&prompt, &obs).await;
+        } else {
+            emit(serde_json::json!({
+                "type": "note", "sess": sess,
+                "text": format!("[unknown command: /{name}]"),
+            }));
         }
-        host.busy.fetch_sub(1, Ordering::Relaxed);
-        emit(serde_json::json!({"type":"busy","sess":sess,"busy":false}));
+    } else {
+        let obs = WsObserver::new(s.live.clone(), sess.clone());
+        let _ = host.agent.run_turn(&input, &obs).await;
     }
+    host.busy.fetch_sub(1, Ordering::Relaxed);
+    emit(serde_json::json!({"type":"busy","sess":sess,"busy":false}));
 }
 
 /// TUI-parity builtins — true when handled. Replies go out over the global

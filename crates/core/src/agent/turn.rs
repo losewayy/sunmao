@@ -170,6 +170,23 @@ impl AgentLoop {
                 outcome = TurnOutcome::Other("cancelled".into());
                 break;
             }
+            // Steering drain: user messages queued while this turn ran fold
+            // in HERE — at a loop boundary the transcript is well-formed
+            // (the last block is a complete assistant turn or its settled
+            // tool_results), so an appended user message never straddles a
+            // tool_call/tool_result pair. Leftovers after a cancelled turn
+            // stay queued — the driver claims them as follow-up input.
+            for (_cid, steered) in self.drain_steer() {
+                observer.on_event(&LiveEvent::Hook {
+                    event: "steer".into(),
+                    detail: steered.clone(),
+                });
+                let mut log = self.ctx.sessions.lock().await;
+                log.append(&SessionEvent::Message {
+                    message: Message::user(steered),
+                })
+                .await?;
+            }
             if self.est_tokens().await > self.compact_threshold {
                 observer.on_event(&LiveEvent::ToolStart {
                     name: "compact".into(),

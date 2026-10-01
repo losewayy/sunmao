@@ -420,6 +420,12 @@ impl App {
                     crate::commands::Command::Status => Submit::Status,
                     crate::commands::Command::Artifacts => Submit::Artifacts,
                     crate::commands::Command::Annotate(name, note) => Submit::Annotate(name, note),
+                    crate::commands::Command::Search(q) => {
+                        Submit::Note(crate::sessions::search_text(
+                            &[crate::sessions::sessions_dir(&self.cwd)],
+                            &q,
+                        ))
+                    }
                     crate::commands::Command::Note(n) => Submit::Note(n),
                     // file commands resolve in the driver (needs cwd) —
                     // paste markers expand too, $ARGUMENTS flows through

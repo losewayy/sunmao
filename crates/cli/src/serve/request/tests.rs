@@ -124,3 +124,44 @@ async fn rename_appends_meta_and_delete_removes_log() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[tokio::test]
+async fn sessions_search_greps_message_content() {
+    let root = std::env::temp_dir().join(format!("sunmao-search-{}", std::process::id()));
+    let dir = root.join(".sunmao/sessions");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("s-hit.jsonl"),
+        concat!(
+            "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"fix the drag bug\"}}\n",
+            "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"content\":\"drag fixed\"}}\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("s-miss.jsonl"),
+        "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"unrelated\"}}\n",
+    )
+    .unwrap();
+    let s = std::sync::Arc::new(shared_at(root.clone()));
+    let h = super::HostHandle { s };
+
+    let r = h.request("GET", "/sessions?q=drag", b"").await;
+    assert_eq!(r.status, 200);
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    let rows = v["sessions"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["id"], "s-hit");
+    assert_eq!(rows[0]["title"], "fix the drag bug");
+    assert!(!rows[0]["hits"].as_array().unwrap().is_empty());
+
+    let none = h.request("GET", "/sessions?q=nosuchword", b"").await;
+    let v: serde_json::Value = serde_json::from_slice(&none.body).unwrap();
+    assert_eq!(v["sessions"].as_array().unwrap().len(), 0);
+
+    // no query → the rail list shape, unchanged
+    let list = h.request("GET", "/sessions", b"").await;
+    let v: serde_json::Value = serde_json::from_slice(&list.body).unwrap();
+    assert!(v["meta"].is_object());
+    let _ = std::fs::remove_dir_all(&root);
+}

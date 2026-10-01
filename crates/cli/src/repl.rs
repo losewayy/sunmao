@@ -261,6 +261,13 @@ pub async fn run(
                     println!("{}", crate::commands::annotate(cwd, &name, &note));
                     continue;
                 }
+                crate::commands::Command::Search(q) => {
+                    println!(
+                        "{}",
+                        crate::sessions::search_text(&[crate::sessions::sessions_dir(cwd)], &q)
+                    );
+                    continue;
+                }
                 crate::commands::Command::Note(n) => {
                     println!("{n}");
                     continue;

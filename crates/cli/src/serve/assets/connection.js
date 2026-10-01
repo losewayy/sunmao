@@ -195,6 +195,55 @@ async function deleteSession(id) {
     toast('已删除会话', 'trash');
   } catch (e) { toast(`删除失败：${e.message}`, 'alert', 'warn'); }
 }
+/* ---- export — fold the session's durable events into Markdown and
+   download it. Reads GET /session/{id}/events (not the live transcript)
+   so dormant sessions export identically. ---- */
+function mdToolArgs(call) {
+  try { const a = JSON.parse((call.function || {}).arguments || '{}'); return JSON.stringify(a, null, 2); }
+  catch { return String((call.function || {}).arguments || ''); }
+}
+function sessionMarkdown(id, events) {
+  let title = (SESSION_META[id] && SESSION_META[id].title) || '';
+  const out = [];
+  for (const ev of events || []) {
+    const t = ev.type;
+    if (t === 'session_meta' && ev.title) title = ev.title;
+    else if (t === 'message') {
+      const m = ev.message || {};
+      if (m.role === 'user') {
+        const c = m.content || '';
+        if (c.startsWith('[hook context]') || c.startsWith('<local-shell>')) continue;
+        out.push(`## user\n\n${c}\n`);
+      } else if (m.role === 'assistant' && m.content) {
+        out.push(`## assistant\n\n${m.content}\n`);
+      }
+    } else if (t === 'tool_call') {
+      const c = ev.call || {}, name = (c.function || {}).name || '?';
+      out.push(`\`\`\`tool-call\n${name} ${mdToolArgs(c).replace(/\n+/g, ' ')}\n\`\`\`\n`);
+    } else if (t === 'tool_result') {
+      out.push(`\`\`\`tool-result\n${ev.ok === false ? '[error] ' : ''}${ev.output || ''}\n\`\`\`\n`);
+    } else if (t === 'local_shell') {
+      out.push(`\`\`\`shell\n$ ${ev.command || ''}\n${ev.output || ''}\n[exit ${ev.exit_code}]\n\`\`\`\n`);
+    } else if (t === 'compacted') {
+      out.push(`> [context compacted] ${ev.summary || ''}\n`);
+    } else if (t === 'artifact') {
+      out.push(`> artifact: \`${ev.name}.html\` (${fmtBytes(ev.bytes || 0)})\n`);
+    }
+  }
+  return `# ${title || id}\n\n> session \`${id}\` — exported from the event log\n\n${out.join('\n')}`;
+}
+async function exportSession(id) {
+  try {
+    const v = await api(`/session/${encodeURIComponent(id)}/events`);
+    const md = sessionMarkdown(id, v.events || []);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown' }));
+    a.download = `sunmao-${id}.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast(`已导出 ${id}.md`, 'download');
+  } catch (e) { toast(`导出失败：${e.message}`, 'alert', 'warn'); }
+}
 // project picker for 新对话 — known projects (launch dir + registry) plus
 // freeform input; a path that exists on disk becomes the session's root
 let PROJECTS = null;

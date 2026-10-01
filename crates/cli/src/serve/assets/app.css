@@ -154,6 +154,15 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:var(--ring-focu
 .snip{font-size:var(--fs-2xs);line-height:var(--lh-tight);color:var(--c-text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
 .snip:hover{color:var(--c-text-2)}
 
+/* ---------- transcript find ---------- */
+.findbar{position:absolute;top:var(--s-16);left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:var(--s-8);height:var(--h-xl);padding:0 var(--s-8);border-radius:var(--r-full);z-index:var(--z-pop);--ga:var(--glass-float);box-shadow:var(--sh-inset-hi),var(--sh-3)}
+.findbar .i{color:var(--c-text-3);flex:none}
+.findbar input{width:180px;border:0;outline:0;background:none;font:var(--fs-sm) var(--font-ui);color:var(--c-text)}
+.findbar input::placeholder{color:var(--c-text-3)}
+.findbar .cnt{font:var(--fs-2xs) var(--font-mono);color:var(--c-text-3);white-space:nowrap}
+.tx mark{background:var(--c-hi);color:inherit;border-radius:var(--r-xs)}
+.tx mark.cur{box-shadow:var(--ring-accent)}
+
 /* ---------- transcript ---------- */
 .scroller{position:absolute;inset:0;overflow-y:auto;padding:var(--s-64) var(--s-24) calc(var(--s-64) * 2 + var(--s-40));scroll-padding-bottom:calc(var(--s-64) * 2 + var(--s-40))}
 .tx{max-width:var(--w-read);margin:0 auto}

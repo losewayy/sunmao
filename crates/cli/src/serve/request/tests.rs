@@ -112,6 +112,16 @@ async fn rename_appends_meta_and_delete_removes_log() {
     let v: serde_json::Value = serde_json::from_slice(&list.body).unwrap();
     assert_eq!(v["meta"]["s-9"]["title"], "my chat");
 
+    // the export feed: raw events for dormant logs
+    let evs = h.request("GET", "/session/s-9/events", b"").await;
+    assert_eq!(evs.status, 200);
+    let v: serde_json::Value = serde_json::from_slice(&evs.body).unwrap();
+    assert_eq!(v["events"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        h.request("GET", "/session/s-nope/events", b"").await.status,
+        404
+    );
+
     // delete removes the log; a second delete 404s; unknown ids 404 both ways
     assert_eq!(h.request("DELETE", "/session/s-9", b"").await.status, 200);
     assert!(!log.exists());

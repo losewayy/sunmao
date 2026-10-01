@@ -78,6 +78,8 @@ function palSource() {
     { g: '操作', t: '打开设置', i: 'settings', k: 'Ctrl ,', run: () => go('settings') },
     { g: '操作', t: dockOn ? '隐藏数据面板' : '显示数据面板', i: 'panel-r', k: 'Ctrl \\', run: toggleDock },
     { g: '操作', t: '事件日志', i: 'history', run: () => pop($('[data-act="events"]'), eventsHTML(), { align: 'end', cls: 'events' }) },
+    { g: '操作', t: '在对话中查找', i: 'search', k: 'Ctrl F', run: openFind },
+    { g: '操作', t: '导出当前会话', i: 'download', run: () => exportSession(sessionId) },
     { g: '操作', t: '刷新会话列表', i: 'reset', run: refreshSessions },
     { g: '外观', t: '主题：深色', i: 'moon', run: () => { S.mode = 'dark'; commit(); } },
     { g: '外观', t: '主题：浅色', i: 'sun', run: () => { S.mode = 'light'; commit(); } },

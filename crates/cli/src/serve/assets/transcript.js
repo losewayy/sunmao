@@ -464,6 +464,7 @@ function renderReplay(events, anim) {
   foldSettled(TX);
   updateHero();
   refreshDataflow();
+  findRefresh();
   delete root.dataset.replaying;
   requestAnimationFrame(() => { $('#scroller').scrollTop = $('#scroller').scrollHeight; });
 }
@@ -505,6 +506,7 @@ function liveEvent(raw) {
     foldSettled(TX);
     $$('.think.live').forEach(t => t.classList.remove('live'));
     refreshDataflowSoon();
+    findRefresh();
     if (ev.outcome && ev.outcome !== 'completed') logEv('note', `turn_end ${ev.outcome}`);
   }
 }

@@ -64,6 +64,7 @@ fn live_event_wire_shape_is_stable() {
             depth: 1,
             lane: 2,
             call_id: Some("call_1".into()),
+            args: serde_json::json!({"command": "ls"}),
         },
         LiveEvent::ToolDone {
             name: "Bash".into(),
@@ -99,6 +100,11 @@ fn live_event_wire_shape_is_stable() {
     let v = serde_json::to_value(&evs[0]).unwrap();
     assert_eq!(v["type"], "content");
     assert_eq!(v["text"], "hi");
+    // ToolStart carries the call's parsed args — the GUI's diff cards
+    // consume them; `null` marks synthetic events (compact, local shell).
+    let v = serde_json::to_value(&evs[2]).unwrap();
+    assert_eq!(v["type"], "tool_start");
+    assert_eq!(v["args"]["command"], "ls");
 }
 
 /// Records every LiveEvent — used to assert TurnEnd fires on the error

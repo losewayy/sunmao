@@ -23,12 +23,19 @@ pub enum LiveEvent {
     /// parallel siblings apart (each spawn claims its own). `call_id` is the
     /// provider's tool_call id — the exact start↔done join key; `None` on
     /// synthetic events (compact, local shell) that have no wire call.
+    /// `args` is the parsed call arguments (post-hook-rewrite) so rich
+    /// frontends can render more than the one-line `summary` — Edit/Write
+    /// cards diff the payloads; `null` on synthetic events and unparseable
+    /// calls. `#[serde(default)]` is inert here (the enum is Serialize-only)
+    /// but keeps the field shape declared for any future Deserialize.
     ToolStart {
         name: String,
         summary: String,
         depth: u8,
         lane: u8,
         call_id: Option<String>,
+        #[serde(default)]
+        args: serde_json::Value,
     },
     /// Tool call finished. `output` carries the raw result so rich frontends
     /// can preview it; simple frontends ignore it. `call_id` joins back to

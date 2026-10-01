@@ -74,9 +74,13 @@ function mdRender(src) {
 
 /* ================= transcript blocks ================= */
 const stIcon = st => `<span class="st ${st}">${ic(st === 'ok' ? 'check' : st === 'err' ? 'x' : 'rotate')}</span>`;
+// `o.body` is pre-rendered HTML (Edit/Write diff preview from diff.js) —
+// unlike `out` it lands unescaped; only ever pass what editPreviewHTML built.
 function toolHTML([st, nm, sm, tm, out], o = {}) {
   const time = st === 'run' ? `<span class="tm live" data-start="${o.start ?? performance.now()}">0.0s</span>` : st === 'wait' ? '<span class="tm w">等待批准</span>' : `<span class="tm${st === 'err' && tm && !/\d/.test(tm) ? ' e' : ''}">${tm || ''}</span>`;
-  return `<div class="tool${st === 'err' ? ' bad' : ''}${o.cls ? ' ' + o.cls : ''}"><button class="tool-h">${stIcon(st)}<span class="nm">${esc(nm)}</span><span class="sum">${esc(sm)}</span>${time}${out ? ic('chev-r', 'i xs chev') : ''}</button>${out ? `<div class="tool-o"><pre>${esc(out)}</pre></div>` : ''}</div>`;
+  const body = o.body || '';
+  const chev = (out || body) ? ic('chev-r', 'i xs chev') : '';
+  return `<div class="tool${st === 'err' ? ' bad' : ''}${o.cls ? ' ' + o.cls : ''}"><button class="tool-h">${stIcon(st)}<span class="nm">${esc(nm)}</span><span class="sum">${esc(sm)}</span>${time}${chev}</button>${body || out ? `<div class="tool-o">${body}${out ? `<pre>${esc(out)}</pre>` : ''}</div>` : ''}</div>`;
 }
 // replayed prompts carry no timestamp in the log — only a live send shows
 // the wall clock, rather than stamping history with "now"
@@ -160,7 +164,11 @@ function setTool(el, st, tm, out) {
   t.className = 'tm';
   if (st === 'run') { t.classList.add('live'); t.dataset.start = performance.now(); t.textContent = '0.0s'; }
   else { delete t.dataset.start; if (st === 'err' && tm && !/\d/.test(tm)) t.classList.add('e'); t.textContent = tm || ''; }
-  if (out && !$('.tool-o', el)) { h.insertAdjacentHTML('beforeend', ic('chev-r', 'i xs chev')); el.insertAdjacentHTML('beforeend', `<div class="tool-o"><pre>${esc(out)}</pre></div>`); }
+  if (out) {
+    const o = $('.tool-o', el);
+    if (o) { const p = $('pre', o); p ? p.textContent = out : o.insertAdjacentHTML('beforeend', `<pre>${esc(out)}</pre>`); } // a diff body keeps the result under it
+    else { h.insertAdjacentHTML('beforeend', ic('chev-r', 'i xs chev')); el.insertAdjacentHTML('beforeend', `<div class="tool-o"><pre>${esc(out)}</pre></div>`); }
+  }
 }
 setInterval(() => { for (const t of $$('.tm.live')) t.textContent = ((performance.now() - +t.dataset.start) / 1000).toFixed(1) + 's'; }, 100);
 
@@ -207,7 +215,8 @@ function toolStart(ev) {
   const g = toolGroup(host);
   foldSettled(host, g); // an earlier card in this reply is done — tuck it away
   const name = (ev.depth ? '↳ ' : '') + (ev.name || '?');
-  const el = append(g, toolHTML(['run', name, ev.summary || '', '', ''], { cls: 'enter', start: performance.now() }));
+  // Edit/Write cards get a live diff/preview from the call's args payload
+  const el = append(g, toolHTML(['run', name, ev.summary || '', '', ''], { cls: 'enter', start: performance.now(), body: editPreviewHTML(ev.name, ev.args) }));
   refreshGroup(g);
   runningTools.push({ el, name: ev.name, lane: ev.lane || 0, depth: ev.depth || 0, call_id: ev.call_id || null, t0: performance.now() });
   curBubble = null; // text after a tool call starts a new bubble
@@ -380,12 +389,12 @@ function renderReplay(events, anim) {
     } else if (t === 'tool_call') {
       const c = ev.call || {};
       const fn = (c.function || {});
-      let sum = '';
-      try { const a = JSON.parse(fn.arguments || '{}'); sum = a.command || a.path || a.pattern || a.name || a.prompt || fn.arguments.slice(0, 120); } catch { sum = String(fn.arguments || '').slice(0, 120); }
+      let sum = '', a = null;
+      try { a = JSON.parse(fn.arguments || '{}'); sum = a.command || a.path || a.pattern || a.name || a.prompt || fn.arguments.slice(0, 120); } catch { sum = String(fn.arguments || '').slice(0, 120); }
       const host = msgHost();
       absorbStep(host);
       let g = toolGroup(host);
-      const el = append(g, toolHTML(['run', (ev.depth ? '↳ ' : '') + (fn.name || '?'), sum, '', ''], {}));
+      const el = append(g, toolHTML(['run', (ev.depth ? '↳ ' : '') + (fn.name || '?'), sum, '', ''], { body: editPreviewHTML(fn.name, a) }));
       // key on (call.id, depth, lane) — relayed sub-agent calls can share a
       // call id namespace across lanes; missing id falls back to a unique key
       pendingCalls.set(c.id ? `${ev.depth || 0}:${ev.lane || 0}:${c.id}` : Symbol(),

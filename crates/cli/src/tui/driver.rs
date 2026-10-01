@@ -179,6 +179,7 @@ pub(super) fn spawn(
                         depth: 0,
                         lane: 0,
                         call_id: None,
+                        args: serde_json::Value::Null,
                     }));
                     let shell_cwd = cwd.clone();
                     let t0 = std::time::Instant::now();

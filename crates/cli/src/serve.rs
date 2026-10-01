@@ -60,6 +60,7 @@ const APP_CSS: &str = include_str!("serve/assets/app.css");
 const STATE_JS: &str = include_str!("serve/assets/state.js");
 const WALLPAPER_JS: &str = include_str!("serve/assets/wallpaper.js");
 const SETTINGS_JS: &str = include_str!("serve/assets/settings.js");
+const DIFF_JS: &str = include_str!("serve/assets/diff.js");
 const TRANSCRIPT_JS: &str = include_str!("serve/assets/transcript.js");
 const ISLANDS_JS: &str = include_str!("serve/assets/islands.js");
 const CONNECTION_JS: &str = include_str!("serve/assets/connection.js");

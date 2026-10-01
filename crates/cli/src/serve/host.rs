@@ -550,6 +550,10 @@ fn register_project(launch_cwd: &std::path::Path, project: &std::path::Path) {
     if project == launch_cwd {
         return; // launch dir is implicit — always listed
     }
+    // read-modify-write races under concurrent adopts — serialize the
+    // whole cycle on a process-wide lock.
+    static REG: Mutex<()> = Mutex::new(());
+    let _g = REG.lock().unwrap();
     let path = launch_cwd.join(".sunmao/projects.json");
     let mut list: Vec<String> = std::fs::read_to_string(&path)
         .ok()

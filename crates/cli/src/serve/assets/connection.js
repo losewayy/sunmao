@@ -178,6 +178,23 @@ async function newChat(project) {
     renderCrumb(); refreshSessions();
   } catch (e) { toast(`新会话失败：${e.message}`, 'alert', 'warn'); }
 }
+async function renameSession(id, title) {
+  try {
+    await api(`/session/${encodeURIComponent(id)}/rename`, jpost({ title }));
+    const m = SESSION_META[id] || (SESSION_META[id] = {});
+    m.title = title; renderRail(); renderCrumb();
+    toast('已重命名', 'pen');
+  } catch (e) { toast(`重命名失败：${e.message}`, 'alert', 'warn'); }
+}
+async function deleteSession(id) {
+  try {
+    await api(`/session/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    delete SESSION_META[id];
+    SESSION_IDS = SESSION_IDS.filter(x => x !== id);
+    renderRail();
+    toast('已删除会话', 'trash');
+  } catch (e) { toast(`删除失败：${e.message}`, 'alert', 'warn'); }
+}
 // project picker for 新对话 — known projects (launch dir + registry) plus
 // freeform input; a path that exists on disk becomes the session's root
 let PROJECTS = null;

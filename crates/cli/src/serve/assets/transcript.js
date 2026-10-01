@@ -436,6 +436,10 @@ function renderReplay(events, anim) {
       let g = toolGroup(host);
       append(g, toolHTML([ev.exit_code === 0 ? 'ok' : 'err', 'shell', '$ ' + (ev.command || ''), 'exit ' + ev.exit_code, capOut(ev.output || '')]));
       logEv('tool_call', '! ' + (ev.command || ''));
+    } else if (t === 'session_meta') {
+      // rename fact — rail title override; audit-visible like mode_change,
+      // no transcript row
+      logEv('hook', `session.rename · ${ev.title || ''}`);
     } else if (t === 'mode_change') {
       // audit row in the TUI — on this side the event log is the audit
       // surface, so the fold only re-syncs the chip + logs the fact

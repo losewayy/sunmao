@@ -86,6 +86,11 @@ pub enum SessionEvent {
     /// selector). Audit, not conversation — the fold ignores it, but a
     /// resume reseeds `Context.approval_mode` from the latest one.
     ModeChange { mode: crate::agent::ApprovalMode },
+    /// The session's display title was renamed (serve `POST rename`). Audit,
+    /// not conversation — the fold ignores it; readers (`session_meta`, the
+    /// rail) take the LAST one as the title, overriding first-prompt
+    /// derivation.
+    SessionMeta { title: String },
     /// A file's pre-write bytes were snapshotted into the session's
     /// checkpoint ledger (`checkpoints.rs`). Durable audit fact, not
     /// model-facing — the fold ignores it; `/rewind` reads the manifest

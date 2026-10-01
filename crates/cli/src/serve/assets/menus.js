@@ -9,6 +9,9 @@ function sessionMenu(id) {
   items.push({ v: 'fork', t: cur ? '从此分叉' : '分叉此会话', icon: 'fork', d: '复制事件日志，另起一支' });
   items.push({ v: 'rewind', t: '回退到某一轮', icon: 'reset', d: '恢复文件到该轮之前，并分叉会话' });
   items.push('-');
+  items.push({ v: 'rename', t: '重命名', icon: 'pen', d: '会话的显示标题，写进事件日志' });
+  items.push({ v: 'delete', t: '删除会话', icon: 'trash', d: '移除事件日志文件', warn: true });
+  items.push('-');
   items.push({ v: 'copy', t: '复制会话 ID', icon: 'copy', d: id });
   return items;
 }
@@ -16,7 +19,29 @@ function sessionAction(v, id, at) {
   if (v === 'resume') resumeSession(id);
   else if (v === 'fork') forkSession(id);
   else if (v === 'rewind') rewindPick(id, at);
+  else if (v === 'rename') renamePop(id, at);
+  else if (v === 'delete') deletePop(id, at);
   else if (v === 'copy') { if (navigator.clipboard) navigator.clipboard.writeText(id).catch(() => {}); toast('已复制会话 ID', 'copy'); }
+}
+function renamePop(id, at) {
+  pop(at, `<div class="lbl">重命名会话</div><div class="field"><input id="rn-in" placeholder="${esc(sessTitle(id) || id)}" spellcheck="false" autocomplete="off"></div>`, { onMount(p) {
+    const inp = $('#rn-in', p);
+    inp.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault(); const t = inp.value.trim();
+      closePop(); if (t) renameSession(id, t);
+    });
+    setTimeout(() => inp.focus(), 20);
+  } });
+}
+function deletePop(id, at) {
+  const title = sessTitle(id) || id;
+  pop(at, `<div class="lbl">删除会话</div><div class="mp-list"><div class="empty-hint">将永久删除 ${esc(title)} 的事件日志。</div><button class="mi warn" data-yes="1">${ic('trash')}<span class="mt"><span>确认删除</span></span></button></div>`, { onMount(p) {
+    p.addEventListener('click', ev => {
+      if (!ev.target.closest('[data-yes]')) return;
+      closePop(); deleteSession(id);
+    });
+  } });
 }
 async function rewindPick(id, at) {
   let turns = [];

@@ -185,6 +185,26 @@ async fn tool_event_depth_roundtrips_and_defaults() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// SessionMeta is a rename fact — audit only, zero transcript footprint in
+/// the message fold (it must never become a message the model sees).
+#[tokio::test]
+async fn session_meta_stays_out_of_the_fold() {
+    let mut log = SessionLog::ephemeral();
+    log.append(&SessionEvent::Message {
+        message: Message::user("hi"),
+    })
+    .await
+    .unwrap();
+    log.append(&SessionEvent::SessionMeta {
+        title: "renamed".into(),
+    })
+    .await
+    .unwrap();
+    let msgs = log.messages().await.unwrap();
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0].content.as_deref(), Some("hi"));
+}
+
 /// A corrupt JSONL line must not brick every future turn — the fold
 /// skips it and keeps the good events on both sides.
 #[tokio::test]

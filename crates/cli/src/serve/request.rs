@@ -459,7 +459,7 @@ fn session_events(s: &Arc<Shared>, id: &str) -> HostResponse {
 
 /// `GET /session[?id=…]` — the viewed host's id + live set + the session's
 /// own project dir (a session adopted from another project reports its
-/// root, not the launch dir).
+/// root, not the launch dir) + its session-grant ledger.
 async fn session_info(s: &Arc<Shared>, id: Option<String>) -> HostResponse {
     let host = s.host(&id.unwrap_or_default());
     HostResponse::json(serde_json::json!({
@@ -469,6 +469,7 @@ async fn session_info(s: &Arc<Shared>, id: Option<String>) -> HostResponse {
             .map(|h| display_path(&h.agent.session_cwd()))
             .unwrap_or_else(|| display_path(&s.cwd)),
         "base_cwd": display_path(&s.cwd),
+        "grants": host.as_ref().map(|h| h.agent.session_grants()).unwrap_or_default(),
     }))
 }
 

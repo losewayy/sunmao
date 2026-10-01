@@ -56,6 +56,11 @@ pub struct SessionStatus {
     pub provider: String,
     pub approval_mode: ApprovalMode,
     pub tokens: TokenTotals,
+    /// Session-scoped approval grants (`Approval::Session` ledger), each
+    /// `"tool specifier"` — the set a `/status` reader wants to audit.
+    /// Read-only surface: revoking a grant has no UI (TODO if one lands,
+    /// it must clear the shared Arc so sub-agents see it too).
+    pub grants: Vec<String>,
 }
 /// Which built-in loop driver runs turns — SPEC §4.5's "the loop is a
 /// plugin" stance made concrete. Selected by the `loop` key in a
@@ -338,6 +343,7 @@ impl AgentLoop {
             provider,
             approval_mode: self.approval_mode(),
             tokens,
+            grants: self.session_grants(),
         }
     }
 
@@ -345,6 +351,22 @@ impl AgentLoop {
     /// `Todos` events keep durable.
     pub fn todos(&self) -> Vec<crate::tool::TodoItem> {
         self.ctx.todos.lock().unwrap().clone()
+    }
+
+    /// The session-scoped approval grants — the `Approval::Session` ledger,
+    /// sorted `"tool specifier"` strings (the stored keys are
+    /// `"tool\tspecifier"`; the tab is display noise here).
+    pub fn session_grants(&self) -> Vec<String> {
+        let mut v: Vec<String> = self
+            .ctx
+            .session_grants
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|g| g.replace('\t', " "))
+            .collect();
+        v.sort();
+        v
     }
 
     /// Record a `!` local-shell run as a durable session fact. The event

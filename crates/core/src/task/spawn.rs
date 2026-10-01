@@ -72,6 +72,19 @@ impl Observer for RelayObserver {
                     });
                 }
             }
+            // Non-tool events forward verbatim — except `Hook`, whose detail
+            // gets a lane prefix so the frontend can attribute the child's
+            // audit line (the wire shape is locked; no lane field exists).
+            // Content/Reasoning stay unprefixed: they're per-delta streams —
+            // a tag inside them would corrupt the rendered text.
+            LiveEvent::Hook { event, detail } => {
+                if let Some(s) = &self.sink {
+                    s.on_event(&LiveEvent::Hook {
+                        event: event.clone(),
+                        detail: format!("[l{}] {detail}", self.lane),
+                    });
+                }
+            }
             _ => {
                 if let Some(s) = &self.sink {
                     s.on_event(ev);
@@ -83,8 +96,16 @@ impl Observer for RelayObserver {
 
 /// Register a spawn in the roster — both foreground and detached spawns
 /// register; `done` flips when the result lands. `sub_ctx.lane` is the
-/// claimed lane.
-fn register_task(ctx: &Context, sub_id: &str, lane: u8, prompt: &str, def: Option<&str>) {
+/// claimed lane; the `steer` handle lets the parent push mid-run messages
+/// into the child's queue (`Task{steer:}`, `steer_sub`).
+fn register_task(
+    ctx: &Context,
+    sub_id: &str,
+    lane: u8,
+    prompt: &str,
+    def: Option<&str>,
+    steer: &crate::context::SteerQueue,
+) {
     let mut digest: String = prompt.chars().take(60).collect();
     if prompt.chars().count() > 60 {
         digest.push('…');
@@ -98,16 +119,46 @@ fn register_task(ctx: &Context, sub_id: &str, lane: u8, prompt: &str, def: Optio
             agent: def.map(String::from),
             prompt: digest.split_whitespace().collect::<Vec<_>>().join(" "),
             done: None,
+            steer: Some(steer.clone()),
         });
 }
 
 /// Flip the roster entry to finished — the detached completion path and
 /// the foreground return both route here.
-fn finish_task(tasks: &std::sync::Mutex<Vec<crate::context::TaskEntry>>, sub_id: &str, ok: bool) {
+pub(super) fn finish_task(
+    tasks: &std::sync::Mutex<Vec<crate::context::TaskEntry>>,
+    sub_id: &str,
+    ok: bool,
+) {
     let mut tasks = tasks.lock().unwrap();
     if let Some(e) = tasks.iter_mut().find(|t| t.id == sub_id) {
         e.done = Some(ok);
     }
+}
+
+/// Run one sub-agent to completion in the foreground: registers, drives
+/// `run_spawn` (`source` names the hook dialect — `"subagent"` for a fresh
+/// spawn, `"subagent-resume"` for a continuation), then flips the roster.
+async fn drive_foreground(
+    ctx: &Context,
+    sub_id: String,
+    sub_ctx: Context,
+    prompt: String,
+    source: &'static str,
+    agent: Option<&str>,
+) -> ToolResult {
+    let lane = sub_ctx.lane;
+    let steer = sub_ctx.steer.clone();
+    register_task(ctx, &sub_id, lane, &prompt, agent, &steer);
+    let res = run_spawn(
+        Arc::new(sub_ctx),
+        prompt,
+        ctx.live_sink.get().cloned(),
+        source,
+    )
+    .await;
+    finish_task(&ctx.live_tasks, &sub_id, res.ok);
+    res
 }
 
 /// Run one sub-agent to completion: own context, own session file, own
@@ -121,16 +172,15 @@ pub(super) async fn spawn_one(
     llm_override: Option<Arc<dyn ProviderAdapter>>,
 ) -> ToolResult {
     let (sub_id, sub_ctx) = spawn_parts(ctx, def, llm_override).await;
-    let lane = sub_ctx.lane;
-    register_task(ctx, &sub_id, lane, prompt, def.map(|d| d.name.as_str()));
-    let res = run_spawn(
-        Arc::new(sub_ctx),
+    drive_foreground(
+        ctx,
+        sub_id,
+        sub_ctx,
         prompt.to_string(),
-        ctx.live_sink.get().cloned(),
+        "subagent",
+        def.map(|d| d.name.as_str()),
     )
-    .await;
-    finish_task(&ctx.live_tasks, &sub_id, res.ok);
-    res
+    .await
 }
 
 /// Detached spawn (`run_in_background: true`): the tool returns an id at
@@ -152,7 +202,22 @@ pub(super) async fn spawn_detached(
         sub_ctx.lane,
         prompt,
         def.map(|d| d.name.as_str()),
+        &sub_ctx.steer,
     );
+    detach(ctx, sub_id.clone(), sub_ctx, prompt.to_string(), "subagent");
+    sub_id
+}
+
+/// The detached driver task shared by fresh spawns and resumes: run the
+/// turn on its own tokio task, append `TaskDone` into the parent log under
+/// the parent's turn fence, flip the roster, notify the live sink.
+pub(super) fn detach(
+    ctx: &Context,
+    sub_id: String,
+    sub_ctx: Context,
+    prompt: String,
+    source: &'static str,
+) {
     let parent_log = ctx.sessions.clone();
     let parent_tasks = ctx.live_tasks.clone();
     // The parent's turn fence: a mid-turn completion must not append the
@@ -163,10 +228,9 @@ pub(super) async fn spawn_detached(
     let parent_fence = ctx.turn_lock.clone();
     let sink = ctx.live_sink.get().cloned();
     let notify_sink = sink.clone();
-    let id = sub_id.clone();
-    let prompt = prompt.to_string();
+    let id = sub_id;
     tokio::spawn(async move {
-        let res = run_spawn(Arc::new(sub_ctx), prompt, sink).await;
+        let res = run_spawn(Arc::new(sub_ctx), prompt, sink, source).await;
         // The child's own log already holds the full transcript — the
         // parent record stays lean (capped), with `id` pointing there.
         let output = crate::agent::truncate_output(&res.output);
@@ -191,7 +255,6 @@ pub(super) async fn spawn_detached(
             });
         }
     });
-    sub_id
 }
 
 /// Build the child's context: lane claimed *first* so it doubles as the
@@ -235,7 +298,24 @@ pub(super) async fn spawn_parts(
             })
             .await;
     }
+    (
+        sub_id.clone(),
+        build_sub_ctx(ctx, sub_id, lane, def, llm_override, log).await,
+    )
+}
 
+/// Assemble a child's Context over a given log — shared by fresh spawns
+/// (`spawn_parts` mints id+lane+log) and resumes (`resume_parts` keeps the
+/// id and the on-disk log). Model routing, the `tools:`/`spawns:` surface
+/// trim and per-child seams are policy, identical on both paths.
+pub(super) async fn build_sub_ctx(
+    ctx: &Context,
+    sub_id: String,
+    lane: u8,
+    def: Option<&crate::agents::AgentDef>,
+    llm_override: Option<Arc<dyn ProviderAdapter>>,
+    log: SessionLog,
+) -> Context {
     // model routing: call-site `model` selector > def `model:` frontmatter
     // > the parent's *active* adapter — a `/model` swap mid-session carries
     // into children that didn't pin one.
@@ -318,9 +398,10 @@ pub(super) async fn spawn_parts(
         // the child's list is its own plan, not a copy of the parent's —
         // sub-session logs only carry their own Todos events.
         todos: std::sync::Mutex::new(Vec::new()),
-        // steering is a top-level UX surface — sub-agents never take
-        // mid-turn user input; their queue stays empty
-        steer: std::sync::Mutex::new(std::collections::VecDeque::new()),
+        // the child's steer queue is shared with the parent's roster
+        // (TaskEntry.steer) — `steer_sub`/`Task{steer}` push mid-run
+        // messages that this child's turn drains like any other steer
+        steer: crate::context::SteerQueue::default(),
         // own fence: children must never queue behind the parent's turn
         turn_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
     };
@@ -331,15 +412,19 @@ pub(super) async fn spawn_parts(
     if let Some(names) = &allow_names {
         sub_ctx.tools = sub_ctx.tools.filtered(names);
     }
-    (sub_id, sub_ctx)
+    sub_ctx
 }
 
 /// Drive a built child context through one turn — SubagentStart/Stop hooks
 /// wrap the run and the final assistant text becomes the ToolResult.
-async fn run_spawn(
+/// `source` stamps the lifecycle-hook dialect: `"subagent"` for a fresh
+/// spawn, `"subagent-resume"` for a continuation (a capture hook can tell
+/// which path fired it).
+pub(super) async fn run_spawn(
     sub_ctx: Arc<Context>,
     prompt: String,
     sink: Option<Arc<dyn Observer>>,
+    source: &'static str,
 ) -> ToolResult {
     let lane = sub_ctx.lane;
     // the child runs a real session (own JSONL) — lifecycle hooks fire the
@@ -351,7 +436,7 @@ async fn run_spawn(
             crate::hooks::HookEvent::SessionStart,
             &sub_ctx.cwd,
             &crate::hooks::HookInput {
-                source: Some("subagent"),
+                source: Some(source),
                 ..Default::default()
             },
         )
@@ -362,6 +447,7 @@ async fn run_spawn(
             crate::hooks::HookEvent::SubagentStart,
             &sub_ctx.cwd,
             &crate::hooks::HookInput {
+                source: Some(source),
                 tool_input: Some(&json!({"prompt": prompt})),
                 ..Default::default()
             },

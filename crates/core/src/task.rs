@@ -23,7 +23,9 @@ use sunmao_llm::types::Tool;
 use crate::context::Context;
 use crate::tool::{ToolImpl, ToolResult};
 
+mod resume;
 mod spawn;
+use resume::resume_sub;
 use spawn::{spawn_detached, spawn_one};
 
 const MAX_DEPTH: u8 = 2;
@@ -56,14 +58,20 @@ impl ToolImpl for TaskTool {
              orchestration, e.g. cheap model for probes, strong model for the \
              final pass. `run_in_background: true` detaches each spawn: returns \
              task ids now, and each finished sub-agent pushes its result into this \
-             session as a tagged message. Use for parallelizable or scope-isolated \
+             session as a tagged message. `steer` + `message` injects a mid-run \
+             user message into a named running sub-agent. `resume` + `prompt` \
+             continues a finished sub-agent on its own transcript (optionally \
+             re-routed via `model`). Use for parallelizable or scope-isolated \
              work; sub-agents cannot spawn further sub-agents beyond the depth cap.",
             json!({
                 "type": "object",
                 "properties": {
-                    "prompt": {"type": "string", "description": "Complete instructions for the subtask (flat form)"},
+                    "prompt": {"type": "string", "description": "Complete instructions for the subtask (flat form); the continuation instruction when combined with `resume`"},
                     "subagent_type": {"type": "string", "description": "Named agent def from .sunmao/agents/*.md or .claude/agents/*.md"},
                     "model": {"type": "string", "description": "Model selector — @route or provider/<model-id> from .sunmao/models.json; child runs on that adapter instead of inheriting the parent's"},
+                    "steer": {"type": "string", "description": "Inject a mid-run user message into the named running sub-agent (sub-<id>). The child folds it at its next request boundary. Requires `message`."},
+                    "message": {"type": "string", "description": "The steer's text — required with `steer`"},
+                    "resume": {"type": "string", "description": "Continue a previous sub-agent: its sub-<id> log becomes the transcript base. Combine with `prompt` for the continuation instruction; `model` may re-route to another provider (rate-limit escape)."},
                     "context": {"type": "string", "description": "Shared background prepended to every task (batch form)"},
                     "tasks": {
                         "type": "array",
@@ -90,11 +98,98 @@ impl ToolImpl for TaskTool {
             prompt: Option<String>,
             subagent_type: Option<String>,
             model: Option<String>,
+            steer: Option<String>,
+            message: Option<String>,
+            resume: Option<String>,
             context: Option<String>,
             tasks: Option<Vec<TaskItem>>,
             run_in_background: Option<bool>,
         }
         let a: Args = serde_json::from_value(args)?;
+
+        // steer/resume are per-sub-id operations — they never combine with
+        // the spawn forms (batch stays spawn-only).
+        if a.tasks.is_some() && (a.steer.is_some() || a.resume.is_some()) {
+            bail!("steer/resume take a single sub-id — tasks[] is spawn-only");
+        }
+        if let Some(sub_id) = a.steer.as_deref() {
+            if a.resume.is_some() {
+                bail!("steer and resume are exclusive");
+            }
+            if a.prompt.is_some()
+                || a.subagent_type.is_some()
+                || a.context.is_some()
+                || a.run_in_background.unwrap_or(false)
+            {
+                bail!("steer takes only `message` — no spawn args apply");
+            }
+            let Some(msg) = a.message.as_deref() else {
+                bail!("steer needs `message` — the text to inject into {sub_id}");
+            };
+            return match ctx.steer_sub(sub_id, msg.to_string()) {
+                Ok(()) => Ok(ToolResult {
+                    output: format!("steered {sub_id}"),
+                    ok: true,
+                }),
+                Err(e) => Ok(ToolResult {
+                    output: e.to_string(),
+                    ok: false,
+                }),
+            };
+        }
+        if a.message.is_some() {
+            bail!("`message` is the steer's text — it needs `steer`");
+        }
+        if let Some(sub_id) = a.resume.as_deref() {
+            if a.subagent_type.is_some() {
+                bail!("resume re-resolves the roster's def — subagent_type doesn't apply");
+            }
+            if a.context.is_some() {
+                bail!("`context` is the batch preamble — it doesn't apply to resume");
+            }
+            let Some(prompt) = a.prompt.as_deref() else {
+                bail!("resume needs `prompt` — the continuation instruction");
+            };
+            if ctx.depth >= MAX_DEPTH {
+                bail!("sub-agent depth limit reached ({MAX_DEPTH})");
+            }
+            // def re-resolution: the roster remembered the def name (minus
+            // the `-r` lineage tag a fresh resumed entry carries); a child
+            // the roster never knew — a process restart left only the log —
+            // resumes as a generic sub-agent.
+            let agent_name = {
+                let tasks = ctx.live_tasks.lock().unwrap();
+                tasks
+                    .iter()
+                    .find(|t| t.id == sub_id)
+                    .and_then(|t| t.agent.as_deref())
+                    .map(|n| n.strip_suffix("-r").unwrap_or(n).to_string())
+            };
+            let def = agent_name
+                .as_deref()
+                .and_then(|n| crate::agents::find(&ctx.cwd, &ctx.extra_plugin_roots, n));
+            let llm_override = match &a.model {
+                None => None,
+                Some(sel) => match ctx.models.as_ref() {
+                    Some(m) => m.adapter_for(sel).map(Some).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "unknown model selector `{sel}` — available: {}",
+                            m.describe().join(", ")
+                        )
+                    })?,
+                    None => bail!("model selector `{sel}` needs .sunmao/models.json routes"),
+                },
+            };
+            return resume_sub(
+                ctx,
+                sub_id,
+                prompt,
+                def.as_ref(),
+                llm_override,
+                a.run_in_background.unwrap_or(false),
+            )
+            .await;
+        }
 
         if ctx.depth >= MAX_DEPTH {
             bail!("sub-agent depth limit reached ({MAX_DEPTH})");
@@ -264,3 +359,5 @@ fn resolve_spawn_def(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_steer_resume;

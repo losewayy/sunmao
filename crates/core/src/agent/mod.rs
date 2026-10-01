@@ -389,6 +389,19 @@ impl AgentLoop {
             .collect()
     }
 
+    /// Steer a *sub-agent* mid-turn: roster lookup, then push onto the
+    /// child's steer queue — its own turn loop folds the text as a user
+    /// message at the next request boundary. Errors are legible: a finished
+    /// child must be `resume`d, an unknown id never registered (or predates
+    /// this process — resume covers that too).
+    pub fn steer_sub(
+        &self,
+        sub_id: &str,
+        text: String,
+    ) -> Result<(), crate::context::SubSteerError> {
+        self.ctx.steer_sub(sub_id, text)
+    }
+
     /// Claim every queued steer — the turn boundary drains into the log;
     /// the driver drains leftovers after a turn ends (a steer that arrived
     /// mid-shutdown becomes the next submission, never dropped).

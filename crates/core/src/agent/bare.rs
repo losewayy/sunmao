@@ -25,15 +25,18 @@ use sunmao_llm::{ChatRequest, StreamDelta};
 
 impl AgentLoop {
     /// A straight "prompt → stream → dispatch → record" circuit.
+    /// `attachments` ride as content blocks on the user message, same as
+    /// the full loop — bare skips hooks and the gate, not the wire shape.
     pub(super) async fn run_turn_bare(
         &self,
         input: &str,
+        attachments: &[sunmao_llm::Content],
         observer: &dyn Observer,
     ) -> anyhow::Result<TurnOutcome> {
         {
             let mut log = self.ctx.sessions.lock().await;
             log.append(&SessionEvent::Message {
-                message: Message::user(input),
+                message: Message::user_blocks(input, attachments.to_vec()),
             })
             .await?;
         }

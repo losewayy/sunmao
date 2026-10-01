@@ -27,13 +27,119 @@ pub struct ToolCall {
     pub function: FunctionCall,
 }
 
-/// Outgoing message. `content` is `null` when an assistant message carries
-/// only tool calls.
+/// One piece of a message's content — the multimodal shape providers map
+/// onto their own dialect (`image_url` parts for OpenAI, `image` blocks for
+/// Anthropic). `Image` carries the *path*, not the bytes: the session log
+/// stays text-sized, and resolution to base64 happens once, at request
+/// assembly (`resolve`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Content {
+    Text {
+        text: String,
+    },
+    /// An attached image — `path` is absolute (attachments land under
+    /// `<project>/.sunmao/attachments/`). `mime` is guessed from the
+    /// extension at construction; providers may re-derive it.
+    Image {
+        path: String,
+        mime: String,
+    },
+}
+
+/// Extensions a prompt can attach as image blocks — the mention parser
+/// (`@file.png`) and the serve `/attachments` upload share this allowlist.
+pub const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+
+/// Extension → MIME for image attachments. Unknown extensions return
+/// `None` — callers decide whether the file qualifies as an image at all.
+pub fn image_mime(path: &std::path::Path) -> Option<&'static str> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        _ => return None,
+    })
+}
+
+impl Content {
+    pub fn text(s: impl Into<String>) -> Self {
+        Content::Text { text: s.into() }
+    }
+
+    /// An image block for `path` — `None` when the extension isn't a known
+    /// image type (callers attach those as a text path instead).
+    pub fn image(path: impl Into<String>) -> Option<Self> {
+        let path = path.into();
+        Some(Content::Image {
+            mime: image_mime(std::path::Path::new(&path))?.to_string(),
+            path,
+        })
+    }
+}
+
+/// A content block resolved for the wire — `Image` has been read off disk
+/// and base64'd (or degraded to a text marker when the file is gone).
+#[derive(Debug)]
+pub enum ResolvedBlock {
+    Text(String),
+    /// (mime, base64 data)
+    Image {
+        mime: String,
+        data: String,
+    },
+}
+
+impl Content {
+    /// Read the block into wire-ready form. A missing/unreadable image
+    /// degrades to a text marker — the turn still runs and the model sees
+    /// *that* an attachment was dropped, rather than the request failing.
+    pub async fn resolve(&self) -> ResolvedBlock {
+        match self {
+            Content::Text { text } => ResolvedBlock::Text(text.clone()),
+            Content::Image { path, mime } => match tokio::fs::read(path).await {
+                Ok(bytes) => {
+                    use base64::Engine;
+                    ResolvedBlock::Image {
+                        mime: mime.clone(),
+                        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+                    }
+                }
+                Err(_) => ResolvedBlock::Text(format!("[missing image: {path}]")),
+            },
+        }
+    }
+}
+
+/// `content` on the wire may be a bare string (every log written before
+/// content blocks existed, plus any OAI-shaped producer) or a block array —
+/// this fold accepts both so old logs keep replaying.
+fn de_content<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Vec<Content>>, D::Error> {
+    match Option::<serde_json::Value>::deserialize(d)? {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => Ok(Some(vec![Content::Text { text: s }])),
+        Some(v) => serde_json::from_value(v)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
+}
+
+/// Outgoing message. `content` is `None` when an assistant message carries
+/// only tool calls; otherwise a block list (a lone text block serializes
+/// as a one-element array — the array shape is canonical on write, strings
+/// stay readable on the way in).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "de_content",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub content: Option<Vec<Content>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -44,7 +150,7 @@ impl Message {
     pub fn system(content: impl Into<String>) -> Self {
         Self {
             role: Role::System,
-            content: Some(content.into()),
+            content: Some(vec![Content::text(content)]),
             tool_calls: None,
             tool_call_id: None,
         }
@@ -53,7 +159,20 @@ impl Message {
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             role: Role::User,
-            content: Some(content.into()),
+            content: Some(vec![Content::text(content)]),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    /// A user turn carrying more than text — attachments ride as their own
+    /// blocks after the prompt text. `extra` blocks (non-image attachments)
+    /// arrive already shaped by the caller.
+    pub fn user_blocks(text: impl Into<String>, mut blocks: Vec<Content>) -> Self {
+        blocks.insert(0, Content::text(text));
+        Self {
+            role: Role::User,
+            content: Some(blocks),
             tool_calls: None,
             tool_call_id: None,
         }
@@ -62,7 +181,7 @@ impl Message {
     pub fn assistant(content: Option<String>, tool_calls: Vec<ToolCall>) -> Self {
         Self {
             role: Role::Assistant,
-            content,
+            content: content.map(|c| vec![Content::text(c)]),
             tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
             tool_call_id: None,
         }
@@ -71,10 +190,27 @@ impl Message {
     pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             role: Role::Tool,
-            content: Some(content.into()),
+            content: Some(vec![Content::text(content)]),
             tool_calls: None,
             tool_call_id: Some(tool_call_id.into()),
         }
+    }
+
+    /// The message's text surface — Text blocks joined on newlines, image
+    /// blocks rendered as `[image: path]` placeholders. `None` only when
+    /// there is no content at all. Every consumer that printed or searched
+    /// the old `Option<String>` should read through this.
+    pub fn content_text(&self) -> Option<String> {
+        let parts: Vec<String> = self
+            .content
+            .as_ref()?
+            .iter()
+            .map(|c| match c {
+                Content::Text { text } => text.clone(),
+                Content::Image { path, .. } => format!("[image: {path}]"),
+            })
+            .collect();
+        Some(parts.join("\n"))
     }
 }
 

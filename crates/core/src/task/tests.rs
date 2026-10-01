@@ -92,7 +92,7 @@ async fn bg_task_pushes_result_into_parent_log() {
     let msgs = ctx.sessions.lock().await.messages().await.unwrap();
     assert!(
         msgs.iter().any(|m| m
-            .content
+            .content_text()
             .as_deref()
             .is_some_and(|c| c.contains("<task-result") && c.contains("bg done"))),
         "TaskDone must fold into a tagged user message"

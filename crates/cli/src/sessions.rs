@@ -103,7 +103,12 @@ pub fn log_title(path: &Path) -> Option<String> {
         if prompt.is_some() || v.pointer("/message/role").and_then(|r| r.as_str()) != Some("user") {
             continue;
         }
-        let Some(c) = v.pointer("/message/content").and_then(|c| c.as_str()) else {
+        // content is a string in old logs, a block array in new ones —
+        // deserialize through Message so both land on the same text view.
+        let Some(c) = serde_json::from_value::<sunmao_llm::types::Message>(v["message"].clone())
+            .ok()
+            .and_then(|m| m.content_text())
+        else {
             continue;
         };
         if c.starts_with("[hook context]") || c.starts_with("<local-shell>") {
@@ -222,7 +227,11 @@ pub fn search_sessions(dirs: &[PathBuf], q: &str) -> Vec<SearchHit> {
             if !matches!(role, Some("user") | Some("assistant")) {
                 continue;
             }
-            let Some(c) = v.pointer("/message/content").and_then(|c| c.as_str()) else {
+            let Some(c) =
+                serde_json::from_value::<sunmao_llm::types::Message>(v["message"].clone())
+                    .ok()
+                    .and_then(|m| m.content_text())
+            else {
                 continue;
             };
             if c.starts_with("[hook context]") || c.starts_with("<local-shell>") {
@@ -230,7 +239,7 @@ pub fn search_sessions(dirs: &[PathBuf], q: &str) -> Vec<SearchHit> {
             }
             let lower = c.to_lowercase();
             let Some(pos) = lower.find(&ql) else { continue };
-            hits.push(snippet(c, &lower, pos, ql.len()));
+            hits.push(snippet(&c, &lower, pos, ql.len()));
         }
         if hits.is_empty() {
             continue;

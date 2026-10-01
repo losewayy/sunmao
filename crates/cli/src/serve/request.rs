@@ -234,6 +234,13 @@ impl HostHandle {
                 artifacts::artifact_get(s, name, query_arg(query, "rev"), query_arg(query, "sess"))
                     .await
             }
+            // image attachments — uploads land in the viewed session's
+            // `.sunmao/attachments/` (content-hashed name), reads serve the
+            // same dir so transcripts can render <img> from a stored block
+            ("POST", ["attachments"]) => {
+                attachments::put(s, query_arg(query, "sess"), query_arg(query, "ext"), body).await
+            }
+            ("GET", ["attachments", name]) => attachments::get(s, name, query_arg(query, "sess")),
             ("GET", ["artifacts", name, "revs"]) => {
                 artifacts::artifact_revs(s, name, query_arg(query, "sess")).await
             }
@@ -502,6 +509,8 @@ async fn dataflow_by_id(s: &Arc<Shared>, id: &str) -> HostResponse {
     }
 }
 
+#[path = "request/attachments.rs"]
+mod attachments;
 #[path = "request/models.rs"]
 mod models;
 

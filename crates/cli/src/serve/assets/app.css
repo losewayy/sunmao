@@ -179,6 +179,8 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:var(--ring-focu
 .bubble{width:fit-content;max-width:100%;padding:var(--s-10) var(--s-16);border-radius:var(--r-xl);font-size:var(--fs-md);line-height:var(--lh-body);--ga:var(--glass-content);user-select:text;overflow-wrap:anywhere}
 .msg.bot>.bubble{width:100%}
 .msg.you .bubble{max-width:min(var(--w-bubble-you),88%);border-radius:var(--r-xl) var(--r-xl) var(--r-xs) var(--r-xl);background-image:linear-gradient(var(--c-accent-tint),var(--c-accent-tint)),var(--noise);border-color:color-mix(in srgb,var(--c-accent) 18%,var(--c-stroke));white-space:pre-wrap}
+.att-row{display:flex;gap:var(--s-8);justify-content:flex-end;flex-wrap:wrap}
+.att{max-width:220px;max-height:160px;border-radius:var(--r-lg);border:1px solid var(--c-stroke);object-fit:cover}
 .bubble p{margin:0}
 .bubble p+p,.bubble p+ul,.bubble p+ol,.bubble ul+p,.bubble ol+p{margin-top:var(--s-10)}
 .bubble b,.bubble strong{font-weight:var(--fw-strong);color:var(--c-text)}

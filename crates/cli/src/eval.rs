@@ -259,7 +259,7 @@ async fn run_case_inner(
         .iter()
         .rev()
         .find(|m| m.role == sunmao_llm::types::Role::Assistant)
-        .and_then(|m| m.content.clone())
+        .and_then(|m| m.content_text())
         .unwrap_or_default();
     if final_text.is_empty() {
         final_text = obs.content.lock().unwrap().clone();

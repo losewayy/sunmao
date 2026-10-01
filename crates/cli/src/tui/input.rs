@@ -474,18 +474,18 @@ fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
         Submit::Rewind(arg) => {
             let _ = tx_input.send(Submit::Rewind(arg));
         }
-        Submit::Turn(t) => {
+        Submit::Turn(t, atts) => {
             if app.busy {
                 // the driver drains submissions FIFO — the queue holds the
                 // real text so ↑ can recall it and the footer can show it.
-                app.queue.push_back(Submit::Turn(t.clone()));
+                app.queue.push_back(Submit::Turn(t.clone(), atts.clone()));
                 app.toast(format!(
                     "queued #{} — runs after this turn · ↑ recalls",
                     app.queue.len()
                 ));
             }
             app.busy = true;
-            let _ = tx_input.send(Submit::Turn(t));
+            let _ = tx_input.send(Submit::Turn(t, atts));
         }
         // Flush is app→driver only — submit() never produces it
         Submit::Flush => {}

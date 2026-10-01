@@ -54,7 +54,7 @@ fn submit_while_busy_counts_queued() {
     app.input = "second prompt".into();
     input_key(&mut app, key(KeyCode::Enter), &tx);
     assert_eq!(app.queue.len(), 1);
-    assert!(matches!(rx.try_recv(), Ok(Submit::Turn(_))));
+    assert!(matches!(rx.try_recv(), Ok(Submit::Turn(..))));
     // a free submit leaves the queue alone
     app.busy = false;
     app.input = "third".into();
@@ -542,7 +542,7 @@ fn large_paste_stashes_and_expands_on_submit() {
     assert_eq!(app.input, "[paste #1] small");
 
     let sub = app.submit();
-    let Submit::Turn(text) = sub else {
+    let Submit::Turn(text, _) = sub else {
         panic!("expected a turn");
     };
     assert!(text.contains("<pasted-text>"), "{text}");

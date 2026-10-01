@@ -75,23 +75,41 @@ pub(super) async fn driver(
                     event: "steer".into(),
                     detail: text.clone(),
                 });
-                dispatch_input(&s, &host, client, text).await;
+                dispatch_input(
+                    &s,
+                    &host,
+                    Input {
+                        client,
+                        text,
+                        attachments: Vec::new(),
+                    },
+                )
+                .await;
             }
         }
         let Some(input) = rx.recv().await else { break };
-        dispatch_input(&s, &host, input.client, input.text).await;
+        dispatch_input(&s, &host, input).await;
     }
 }
 
 /// One queued submission: builtin slash commands resolve locally; file
 /// commands expand and run as prompts; everything else is a turn.
-async fn dispatch_input(s: &Arc<Shared>, host: &Arc<Host>, client: u64, input: String) {
+/// `@`-mentions in the text attach on top of the frame's explicit
+/// `attachments` — the composer uploads images itself, but a typed
+/// `@img.png` still lands.
+async fn dispatch_input(s: &Arc<Shared>, host: &Arc<Host>, input: Input) {
+    let Input {
+        client,
+        text: input,
+        attachments,
+    } = input;
     let sess = host.id.clone();
     let emit = |v: serde_json::Value| {
         let _ = s.live.send(v);
     };
     host.busy.fetch_add(1, Ordering::Relaxed);
     emit(serde_json::json!({"type":"busy","sess":sess,"busy":true}));
+    let cwd = host.agent.session_cwd();
     if let Some(cmd_line) = input.trim().strip_prefix('/') {
         if dispatch_builtin(s, host, cmd_line, client).await {
             // handled locally — no model turn
@@ -99,9 +117,13 @@ async fn dispatch_input(s: &Arc<Shared>, host: &Arc<Host>, client: u64, input: S
             let name = cmd_line.split_whitespace().next().unwrap_or("");
             let rest = cmd_line[name.len()..].trim();
             if let Some(body) = commands::command_body(&s.cwd, &s.roots, name) {
-                let prompt = commands::expand_command(&body, rest);
+                let (prompt, mut atts) = crate::attachments::attach_mentions(
+                    &commands::expand_command(&body, rest),
+                    &cwd,
+                );
+                atts.extend(attachments);
                 let obs = WsObserver::new(s.live.clone(), sess.clone());
-                let _ = host.agent.run_turn(&prompt, &obs).await;
+                let _ = host.agent.run_turn_blocks(&prompt, &atts, &obs).await;
             } else {
                 emit(serde_json::json!({
                     "type": "note", "sess": sess,
@@ -110,8 +132,10 @@ async fn dispatch_input(s: &Arc<Shared>, host: &Arc<Host>, client: u64, input: S
             }
         }
     } else {
+        let (text, mut atts) = crate::attachments::attach_mentions(&input, &cwd);
+        atts.extend(attachments);
         let obs = WsObserver::new(s.live.clone(), sess.clone());
-        let _ = host.agent.run_turn(&input, &obs).await;
+        let _ = host.agent.run_turn_blocks(&text, &atts, &obs).await;
     }
     host.busy.fetch_sub(1, Ordering::Relaxed);
     emit(serde_json::json!({"type":"busy","sess":sess,"busy":false}));

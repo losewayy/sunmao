@@ -18,10 +18,13 @@ use super::driver;
 
 /// One queued submission into a session's driver — the text plus which
 /// viewer client sent it, so answer-back frames (`session` switches) can
-/// target the requester instead of dragging every tab along.
+/// target the requester instead of dragging every tab along. `attachments`
+/// carries image blocks uploaded ahead of the prompt (`POST /attachments`,
+/// then `attachments:[{path,mime}]` on the prompt frame).
 pub(crate) struct Input {
     pub(crate) client: u64,
     pub(crate) text: String,
+    pub(crate) attachments: Vec<sunmao_llm::Content>,
 }
 
 /// One live session the host is running — its own AgentLoop, input queue,

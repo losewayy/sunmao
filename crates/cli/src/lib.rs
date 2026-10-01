@@ -15,6 +15,7 @@ use sunmao_core::{Context, SessionLog};
 use sunmao_llm::OaiClient;
 
 mod acp;
+mod attachments;
 mod commands;
 mod dataflow;
 mod doctor;
@@ -345,7 +346,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 
     if let Some(prompt) = &cli.print {
         let obs = repl::StdoutObserver::new();
-        let outcome = agent.run_turn(prompt, &obs).await?;
+        let (prompt, atts) = attachments::attach_mentions(prompt, &ctx.cwd);
+        let outcome = agent.run_turn_blocks(&prompt, &atts, &obs).await?;
         // SessionEnd hooks run in every frontend — a one-shot exit is
         // still a session ending (context-mode-style state capture hooks
         // depend on this event, not on which surface drove it).

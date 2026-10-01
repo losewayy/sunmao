@@ -18,6 +18,18 @@ Retry: connection failure / HTTP 429 / 5xx → backoff 300ms, 600ms, then give
 up — *request-establishment only*. Once a delta has flown, never replay (a
 partial assistant message + re-request = duplicated content).
 
+### Multimodal content
+
+`Message.content` is a block list (`text`/`image`); the session log stores
+image *paths* (`.sunmao/attachments/`), and `Content::resolve` reads + base64s
+them once, at request assembly. A text-only message still writes a bare
+`content` string on the OAI dialect — parts arrays only appear when an image
+block is present (`{"type":"image_url","image_url":{"url":"data:…;base64,…"}}`).
+A missing file degrades to a `[missing image: …]` text block — the turn runs,
+the model sees the gap. `@path` mentions in REPL/TUI (and `?sess`-scoped GUI
+uploads) attach through the same path: image allowlist only, misses stay
+literal text.
+
 ## Anthropic Messages (`crates/llm/src/anthropic.rs`)
 
 `POST {base}/messages`, `x-api-key` + `anthropic-version` headers,
@@ -29,6 +41,7 @@ Message mapping (our flat `Message` → their content blocks):
 |---|---|
 | `Role::System` | top-level `system` field (concatenated) |
 | `Role::User` text | `content: [{type:"text"}]` |
+| `Role::User` + images | `content: [text, {type:"image",source:{base64}}]` |
 | `Role::Assistant` + tool_calls | `content: [text?, tool_use blocks]` |
 | `Role::Tool` result | user turn containing `{type:"tool_result"}` |
 

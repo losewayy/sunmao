@@ -134,13 +134,43 @@ impl Client {
         match v["type"].as_str().unwrap_or("") {
             "prompt" => {
                 let text = v["text"].as_str().unwrap_or("").to_string();
+                // attachments arrive as {path,mime} — the path must resolve
+                // inside the viewed session's attachments dir (a browser-
+                // supplied absolute path elsewhere is dropped, not trusted)
+                let mut attachments: Vec<sunmao_llm::Content> = Vec::new();
+                if let Some(h) = self.viewing_host() {
+                    let dir = crate::attachments::dir(&h.agent.session_cwd());
+                    // canonicalize both sides — Windows verbatim prefixes
+                    // (`\\?\`) would otherwise make starts_with always fail
+                    let dir = dir.canonicalize().unwrap_or(dir);
+                    for a in v["attachments"].as_array().into_iter().flatten() {
+                        let Some(path) = a["path"].as_str() else {
+                            continue;
+                        };
+                        let ok = std::path::Path::new(path)
+                            .canonicalize()
+                            .map(|c| c.starts_with(&dir))
+                            .unwrap_or(false);
+                        if ok && let Some(mime) = a["mime"].as_str() {
+                            attachments.push(sunmao_llm::Content::Image {
+                                path: path.to_string(),
+                                mime: mime.to_string(),
+                            });
+                        }
+                    }
+                }
                 if !text.trim().is_empty()
                     && let Some(h) = self.viewing_host()
                 {
                     // busy + not a slash command → steer the running turn;
+                    // a prompt carrying attachments can't steer (steer is
+                    // text-only), so it keeps FIFO order as a queued input.
                     // slash lines keep FIFO order (a queued `/mode` mustn't
                     // jump ahead of the prompt it's queued behind)
-                    if h.busy.load(Ordering::Relaxed) > 0 && !text.trim_start().starts_with('/') {
+                    if h.busy.load(Ordering::Relaxed) > 0
+                        && !text.trim_start().starts_with('/')
+                        && attachments.is_empty()
+                    {
                         h.agent.push_steer(self.id, text);
                         let _ = self.s.live.send(serde_json::json!({
                             "type":"steer_queue","sess":h.id,
@@ -150,6 +180,7 @@ impl Client {
                         let _ = h.input.send(Input {
                             client: self.id,
                             text,
+                            attachments,
                         });
                     }
                 }
@@ -412,6 +443,7 @@ impl Client {
                     let _ = h.input.send(Input {
                         client: self.id,
                         text,
+                        attachments: Vec::new(),
                     });
                 }
                 self.emit(serde_json::json!({"type":"ui_result","id":v["id"],"result":{}}));

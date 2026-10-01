@@ -237,7 +237,7 @@ async fn malformed_tool_args_become_failed_result() {
     assert_eq!(tool_msgs.len(), 1, "one result per call — no duplicates");
     assert!(
         tool_msgs[0]
-            .content
+            .content_text()
             .as_deref()
             .unwrap()
             .contains("malformed")
@@ -294,7 +294,7 @@ async fn auto_compact_runs_before_prompt_append() {
     // 2 provider calls: summarizer + the actual turn
     assert_eq!(provider.calls.load(std::sync::atomic::Ordering::Relaxed), 2);
     let msgs = ctx.sessions.lock().await.messages().await.unwrap();
-    let texts: Vec<&str> = msgs.iter().filter_map(|m| m.content.as_deref()).collect();
+    let texts: Vec<String> = msgs.iter().filter_map(|m| m.content_text()).collect();
     let spos = texts
         .iter()
         .position(|t| t.contains("summary of the old talk"))
@@ -444,7 +444,7 @@ async fn steer_folds_into_running_turn() {
     let msgs = ctx.sessions.lock().await.messages().await.unwrap();
     let roles: Vec<String> = msgs
         .iter()
-        .map(|m| format!("{:?}:{}", m.role, m.content.clone().unwrap_or_default()))
+        .map(|m| format!("{:?}:{}", m.role, m.content_text().unwrap_or_default()))
         .collect();
     // [user "hi", assistant(calls), tool(result), user "steer", assistant "ack"]
     let pos = roles

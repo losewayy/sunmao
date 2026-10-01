@@ -233,7 +233,7 @@ pub fn turn_boundaries(log_path: &Path) -> Vec<TurnBoundary> {
         if message.role != Role::User {
             continue;
         }
-        let Some(content) = &message.content else {
+        let Some(content) = message.content_text() else {
             continue;
         };
         if content.starts_with("[hook context]") || content.starts_with("<local-shell>") {
@@ -261,8 +261,7 @@ pub(crate) fn is_turn_boundary(ev: &SessionEvent) -> bool {
     };
     message.role == Role::User
         && message
-            .content
-            .as_deref()
+            .content_text()
             .is_some_and(|c| !c.starts_with("[hook context]") && !c.starts_with("<local-shell>"))
 }
 

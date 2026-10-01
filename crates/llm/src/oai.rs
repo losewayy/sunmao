@@ -47,9 +47,10 @@ impl OaiClient {
 
     /// Streaming chat completion over a live SSE byte stream.
     async fn stream_inner(&self, req: &ChatRequest<'_>) -> anyhow::Result<DeltaStream> {
+        let messages = map_messages(req.messages).await;
         let mut body = serde_json::json!({
             "model": self.model,
-            "messages": req.messages,
+            "messages": messages,
             "stream": true,
             "stream_options": { "include_usage": true },
         });
@@ -82,6 +83,51 @@ impl OaiClient {
         let s = parse_stream(byte_stream);
         Ok(Box::pin(s))
     }
+}
+
+/// Message → wire JSON. Pure text stays a bare string (the shape every
+/// OAI-compatible server accepts); a message carrying image blocks becomes
+/// the parts array (`text` + `image_url` data-url parts). Images are read
+/// off disk here — the async is the file read, not anything provider-bound.
+async fn map_messages(messages: &[Message]) -> Vec<serde_json::Value> {
+    use crate::types::ResolvedBlock;
+    let mut out = Vec::with_capacity(messages.len());
+    for m in messages {
+        let role = serde_json::to_value(&m.role).unwrap_or_default();
+        let mut v = serde_json::json!({ "role": role });
+        if let Some(blocks) = &m.content {
+            let has_image = blocks
+                .iter()
+                .any(|b| matches!(b, crate::types::Content::Image { .. }));
+            if !has_image {
+                v["content"] = serde_json::json!(m.content_text().unwrap_or_default());
+            } else {
+                let mut parts = Vec::with_capacity(blocks.len());
+                for b in blocks {
+                    match b.resolve().await {
+                        ResolvedBlock::Text(text) => {
+                            parts.push(serde_json::json!({"type": "text", "text": text}));
+                        }
+                        ResolvedBlock::Image { mime, data } => {
+                            parts.push(serde_json::json!({
+                                "type": "image_url",
+                                "image_url": {"url": format!("data:{mime};base64,{data}")},
+                            }));
+                        }
+                    }
+                }
+                v["content"] = serde_json::Value::Array(parts);
+            }
+        }
+        if let Some(calls) = &m.tool_calls {
+            v["tool_calls"] = serde_json::to_value(calls).unwrap_or_default();
+        }
+        if let Some(id) = &m.tool_call_id {
+            v["tool_call_id"] = serde_json::json!(id);
+        }
+        out.push(v);
+    }
+    out
 }
 
 /// Retryable provider failures: transport errors (connect/TLS/timeout) and

@@ -6,6 +6,9 @@
 // <pasted-text> blocks at submit, same convention as the TUI
 const PASTE_STASH_LIMIT = 2048;
 let pasteStash = [];
+// image attachments uploaded this draft — each entry {marker, path, mime};
+// send() ships the ones whose marker still sits in the text
+let pendingAtts = [];
 function expandPastes(text) {
   let out = text;
   pasteStash.forEach((content, i) => {
@@ -42,10 +45,14 @@ function send() {
     return;
   }
   const payload = expandPastes(text);
+  const atts = pendingAtts.filter(a => payload.includes(a.marker));
+  if (atts.length) pendingAtts = pendingAtts.filter(a => !atts.includes(a));
   ta.value = ''; autoGrow(); slashCheck(true);
   // a busy session steers — the message rides the running turn's next
   // boundary (queued chips show it) instead of becoming the next turn
-  if (!wsSend({ type: 'prompt', text: payload })) return toast('未连接到内核，无法发送', 'alert', 'warn');
+  const frame = { type: 'prompt', text: payload };
+  if (atts.length) frame.attachments = atts.map(a => ({ path: a.path, mime: a.mime }));
+  if (!wsSend(frame)) return toast('未连接到内核，无法发送', 'alert', 'warn');
   if (busy) return; // chip feedback comes from the kernel's steer_queue frame
   append(TX, youHTML(payload, true, clock()));
   // first prompt names the session right away — same rule the host applies
@@ -87,6 +94,29 @@ $('#input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); }
 });
 $('#input').addEventListener('paste', e => {
+  // images first — a copied screenshot arrives as a File, not text. Upload
+  // it to the session's attachments dir and drop a [图片 name] marker; the
+  // marker's presence at send decides whether the block rides the prompt.
+  const file = e.clipboardData && [...(e.clipboardData.files || [])].find(f => /^image\//.test(f.type));
+  if (file) {
+    e.preventDefault();
+    const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+    const s = e.target.selectionStart;
+    (async () => {
+      try {
+        const bytes = await file.arrayBuffer();
+        const r = await api('/attachments?ext=' + ext + '&sess=' + encodeURIComponent(sessionId), { method: 'POST', body: bytes });
+        const marker = `[图片 ${r.name}]`;
+        pendingAtts.push({ marker, path: r.path, mime: r.mime });
+        const ta = $('#input');
+        ta.value = ta.value.slice(0, s) + marker + ta.value.slice(s);
+        ta.selectionStart = ta.selectionEnd = s + marker.length;
+        autoGrow();
+        toast(`图片已附加 → ${marker}`, 'note');
+      } catch (err) { toast(`图片上传失败：${err.message || err}`, 'alert', 'warn'); }
+    })();
+    return;
+  }
   const text = e.clipboardData && e.clipboardData.getData('text/plain') || '';
   if (text.length >= PASTE_STASH_LIMIT) {
     e.preventDefault();

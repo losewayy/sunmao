@@ -96,6 +96,10 @@ struct Gui {
     channels: std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<String, tauri::ipc::Channel<serde_json::Value>>>,
     >,
+    /// latest `sunmao://` URL seen before any page channel attached —
+    /// flushed to the first `session_events` attach so a cold-start deep
+    /// link isn't dropped while webviews are still booting
+    pending_link: std::sync::Mutex<Option<String>>,
     zooms: std::sync::Mutex<std::collections::HashMap<String, f64>>,
 }
 
@@ -209,11 +213,15 @@ async fn session_events(
     let channels = state.inner().channels.clone();
     let label = win.label().to_string();
     // the deep-link sink — a live Channel per window so URL events can
-    // reach this page even before JS-side handling exists
-    channels
-        .lock()
-        .expect("channel map")
-        .insert(label.clone(), events.clone());
+    // reach this page even before JS-side handling exists; a link that
+    // arrived pre-attach replays now
+    {
+        let mut chans = channels.lock().expect("channel map");
+        chans.insert(label.clone(), events.clone());
+        if let Some(url) = state.pending_link.lock().expect("pending link").take() {
+            let _ = events.send(serde_json::json!({"type": "deep_link", "url": url}));
+        }
+    }
     let seq = state
         .inner()
         .client_gen
@@ -302,6 +310,13 @@ fn open_deep_link(app: &tauri::AppHandle, url: &str) {
         });
     }
     let chans = gui.channels.lock().expect("channel map");
+    if chans.is_empty() {
+        gui.pending_link
+            .lock()
+            .expect("pending link")
+            .replace(url.to_string());
+        return;
+    }
     for ch in chans.values() {
         let _ = ch.send(serde_json::json!({"type": "deep_link", "url": url}));
     }
@@ -355,6 +370,7 @@ fn main() {
         clients: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         client_gen: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         channels: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        pending_link: std::sync::Mutex::new(None),
         zooms: std::sync::Mutex::new(std::collections::HashMap::new()),
     };
     tauri::Builder::default()

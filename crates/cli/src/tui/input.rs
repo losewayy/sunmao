@@ -468,6 +468,9 @@ fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
         Submit::Fork(arg) => {
             let _ = tx_input.send(Submit::Fork(arg));
         }
+        Submit::Rewind(arg) => {
+            let _ = tx_input.send(Submit::Rewind(arg));
+        }
         Submit::Turn(t) => {
             if app.busy {
                 // the driver drains submissions FIFO — the queue holds the

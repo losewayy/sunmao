@@ -20,6 +20,7 @@ mod doctor;
 mod eval;
 mod plugin;
 mod repl;
+mod rewind;
 mod serve;
 mod tui;
 

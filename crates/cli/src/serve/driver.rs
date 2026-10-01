@@ -30,6 +30,26 @@ async fn adopt_via_mgmt(s: &Arc<Shared>, id: &str, fork: bool) -> Result<String,
     rx.await.map_err(|_| "host mgmt dropped".to_string())?
 }
 
+/// Same mgmt lane for `/rewind` — the reply is the JSON payload
+/// `{"session","restored"}` serialized to a string.
+async fn rewind_via_mgmt(
+    s: &Arc<Shared>,
+    id: &str,
+    upto_turn: u64,
+    mode: super::host::RewindMode,
+) -> Result<String, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    s.mgmt
+        .send(super::host::SessionOp::Rewind {
+            id: id.to_string(),
+            upto_turn,
+            mode,
+            reply: tx,
+        })
+        .map_err(|_| "host mgmt channel closed".to_string())?;
+    rx.await.map_err(|_| "host mgmt dropped".to_string())?
+}
+
 /// The submission driver for ONE session host — one turn at a time,
 /// slash builtins resolved here, prompts stream LiveEvents tagged with
 /// this session's id.
@@ -189,6 +209,61 @@ async fn dispatch_builtin(
                     }
                     Err(e) => note(format!("[fork failed] {e}")),
                 }
+            }
+            true
+        }
+        "rewind" => {
+            if rest.is_empty() {
+                let bounds =
+                    sunmao_core::checkpoints::turn_boundaries(&host.agent.session_path().await);
+                note(if bounds.is_empty() {
+                    "[no turns to rewind to]".into()
+                } else {
+                    let rows = bounds
+                        .iter()
+                        .map(|b| format!("  {}  {}", b.n, b.preview))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    format!("turn boundaries — /rewind <n> [session|code|both]:\n{rows}")
+                });
+                return true;
+            }
+            let mut it = rest.split_whitespace();
+            let n: Option<u64> = it.next().and_then(|t| t.parse().ok()).filter(|n| *n >= 1);
+            let mode = crate::rewind::Mode::parse(it.next());
+            let (Some(n), Some(mode)) = (n, mode) else {
+                note("[usage: /rewind <n> [session|code|both]]".into());
+                return true;
+            };
+            if it.next().is_some() {
+                note("[usage: /rewind <n> [session|code|both]]".into());
+                return true;
+            }
+            let rewind_mode = match mode {
+                crate::rewind::Mode::Both => super::host::RewindMode::Both,
+                crate::rewind::Mode::Session => super::host::RewindMode::Session,
+                crate::rewind::Mode::Code => super::host::RewindMode::Code,
+            };
+            match rewind_via_mgmt(s, &host.id, n, rewind_mode).await {
+                Ok(body) => {
+                    let v: serde_json::Value =
+                        serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+                    let restored = v["restored"].as_array().map(|a| a.len()).unwrap_or(0);
+                    let new_id = v["session"].as_str().map(|s| s.to_string());
+                    let files = if restored == 0 {
+                        "no files to restore".to_string()
+                    } else {
+                        format!("{restored} file(s) restored")
+                    };
+                    match new_id {
+                        Some(id) => {
+                            note(format!("[rewound to turn {n} — {files}, session → {id}]"));
+                            switch(id);
+                        }
+                        None => note(format!("[rewound to turn {n} — {files}]")),
+                    }
+                }
+                Err(e) => note(format!("[rewind failed] {e}")),
             }
             true
         }

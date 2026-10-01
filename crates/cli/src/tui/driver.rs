@@ -230,6 +230,26 @@ pub(super) fn spawn(
                     }
                     continue;
                 }
+                Submit::Rewind(arg) => {
+                    match arg {
+                        None => {
+                            let _ = tx_msg.send(Msg::Note(crate::rewind::list(&agent).await));
+                        }
+                        Some(spec) => match crate::rewind::run(&agent, &cwd, &spec).await {
+                            Ok(crate::rewind::Outcome::Forked { note, events }) => {
+                                let _ = tx_msg.send(Msg::Note(note));
+                                let _ = tx_msg.send(Msg::Replay(events));
+                            }
+                            Ok(crate::rewind::Outcome::CodeOnly(note)) => {
+                                let _ = tx_msg.send(Msg::Note(note));
+                            }
+                            Err(e) => {
+                                let _ = tx_msg.send(Msg::Note(e));
+                            }
+                        },
+                    }
+                    continue;
+                }
                 Submit::Bash(cmd) => {
                     // `!` local shell — the user runs it, so no approval
                     // gate and no LLM involvement. Same deno_task_shell

@@ -147,8 +147,8 @@ It never persists; frontends that want full tool output read the session log.
 ## Frontends
 
 ```text
-sunmao              stdin/stdout REPL — /compact, /model, /resume, /tasks,
-                    /todos, /artifacts, /<command>
+sunmao              stdin/stdout REPL — /compact, /model, /resume, /rewind,
+                    /tasks, /todos, /artifacts, /<command>
 sunmao -p "..."     one-shot; exit code encodes outcome
 sunmao --tui        ratatui: block transcript (virtualized draw,
                     fold-by-cap + `e` expand, copy OSC52, select via

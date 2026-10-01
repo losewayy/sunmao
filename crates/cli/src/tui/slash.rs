@@ -17,6 +17,7 @@ const BUILTINS: &[&str] = &[
     "multiline",
     "quit",
     "resume",
+    "rewind",
     "sessions",
     "fork",
     "tasks",

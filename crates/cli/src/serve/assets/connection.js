@@ -66,9 +66,16 @@ function route(v) {
       renderReplay(v.replay || []);
       setBusy(!!v.busy);
       refreshSessions(); refreshModels(); refreshProjects();
+      refreshRoster();
       renderCrumb();
       break;
     case 'live':
+      // roster/jobs nudges are refresh signals, not transcript content —
+      // skip liveEvent (no bubble, no event-log line), just re-pull
+      if (v.event && v.event.type === 'hook' && v.event.event === 'tasks.changed') {
+        if (sess === sessionId) refreshRosterSoon();
+        break;
+      }
       if (sess === sessionId) liveEvent(v.event);
       if (v.event && v.event.type === 'turn_end' && !shellFocused()) {
         shellNotify('回合结束', sessTitle(sess) || sess);
@@ -84,7 +91,7 @@ function route(v) {
       (v.pending || []).forEach(c => approvalCard(c));
       steerQ = v.steer || []; renderSteerChips();
       syncWait();
-      refreshSessions(); renderCrumb();
+      refreshSessions(); refreshRoster(); renderCrumb();
       break;
     case 'approval':
       waitingSessions.add(sess);

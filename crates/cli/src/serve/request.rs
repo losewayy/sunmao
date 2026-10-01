@@ -255,6 +255,7 @@ impl HostHandle {
             }
             ("GET", ["dataflow"]) => dataflow_current(s, query_arg(query, "sess")).await,
             ("GET", ["dataflow", id]) => dataflow_by_id(s, id).await,
+            ("GET", ["tasks"]) => ops::tasks_list(s, query_arg(query, "sess")),
             ("GET", ["paths"]) => paths_list(s, query_arg(query, "sess")).await,
             ("GET", ["models"]) => models::view(s, query_arg(query, "sess")).await,
             ("POST", ["models", "fetch"]) => models::fetch(s, query_arg(query, "sess"), body).await,
@@ -280,6 +281,7 @@ fn js_asset(name: &str) -> Option<&'static str> {
         "palette.js" => super::PALETTE_JS,
         "find.js" => super::FIND_JS,
         "menus.js" => super::MENUS_JS,
+        "roster.js" => super::ROSTER_JS,
         "boot.js" => super::BOOT_JS,
         _ => return None,
     })
@@ -513,6 +515,8 @@ async fn dataflow_by_id(s: &Arc<Shared>, id: &str) -> HostResponse {
 mod attachments;
 #[path = "request/models.rs"]
 mod models;
+#[path = "request/ops.rs"]
+mod ops;
 
 #[cfg(test)]
 #[path = "request/tests.rs"]

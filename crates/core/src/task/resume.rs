@@ -50,6 +50,8 @@ fn roster_reopen(
             steer: Some(steer.clone()),
         });
     }
+    drop(tasks);
+    super::spawn::roster_changed(&ctx.live_sink.get().cloned(), sub_id);
 }
 
 /// Continue a finished sub-agent on its own log (`Task{resume}`): the
@@ -122,6 +124,7 @@ pub(super) async fn resume_sub(
         )
         .await;
         finish_task(&ctx.live_tasks, sub_id, res.ok);
+        super::spawn::roster_changed(&ctx.live_sink.get().cloned(), sub_id);
         Ok(res)
     }
 }

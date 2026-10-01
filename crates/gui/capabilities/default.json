@@ -1,13 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "the single sunmao window — the scheme-served page gets the caption/drag verbs plus the host session channel",
+  "description": "sunmao windows — the scheme-served page gets the caption/drag verbs, the host session channel, OS notifications and new-window",
   "local": true,
-  "windows": ["main"],
+  "windows": ["main", "win-*"],
   "permissions": [
     "allow-shell-win",
     "allow-shell-drag",
     "allow-shell-open",
+    "allow-shell-notify",
     "allow-session-events",
     "allow-host-call"
   ]

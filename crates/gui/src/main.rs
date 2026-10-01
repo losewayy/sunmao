@@ -29,6 +29,7 @@ window.__sunmaoShell = {
   win(op) { return window.__TAURI_INTERNALS__.invoke('shell_win', { op }); },
   drag() { return window.__TAURI_INTERNALS__.invoke('shell_drag'); },
   openExternal(path) { return window.__TAURI_INTERNALS__.invoke('shell_open', { path }); },
+  notify(title, body) { return window.__TAURI_INTERNALS__.invoke('shell_notify', { title, body }); },
   Channel: class {
     constructor() {
       this.onmessage = () => {};
@@ -61,16 +62,22 @@ window.__sunmaoShell = {
 
 /// Everything Tauri-side needs from the host runtime: the transport-free
 /// host handle, the tokio runtime it lives on (command handlers run on
-/// Tauri's own runtime — host work must spawn back onto `rt`), and this
-/// window's viewer client (one window → at most one).
+/// Tauri's own runtime — host work must spawn back onto `rt`), and each
+/// window's viewer client keyed by window label — a second window gets
+/// its own Client so tabs don't steal each other's frames. The `u64` is
+/// a generation tag: on close/reload a dying channel removes its own
+/// client only, never the fresher one that already replaced it.
 struct Gui {
     host: sunmao::HostHandle,
     rt: tokio::runtime::Handle,
-    client: std::sync::Arc<tokio::sync::Mutex<Option<sunmao::Client>>>,
+    clients: std::sync::Arc<
+        tokio::sync::Mutex<std::collections::HashMap<String, (u64, sunmao::Client)>>,
+    >,
+    client_gen: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 #[tauri::command]
-fn shell_win(win: tauri::WebviewWindow, op: &str) {
+fn shell_win(app: tauri::AppHandle, win: tauri::WebviewWindow, op: &str) {
     match op {
         "min" => {
             let _ = win.minimize();
@@ -85,6 +92,21 @@ fn shell_win(win: tauri::WebviewWindow, op: &str) {
         "close" => {
             let _ = win.close();
         }
+        "new" => {
+            // a second window on the same host — its session_events attach
+            // claims a client keyed by this window's label (per-window tab)
+            let n = app.webview_windows().len() + 1;
+            let label = format!("win-{n}");
+            let _ = tauri::WebviewWindowBuilder::new(
+                &app,
+                label,
+                tauri::WebviewUrl::External("http://sunmao.localhost/".parse().expect("gui url")),
+            )
+            .title("sunmao")
+            .decorations(false)
+            .disable_drag_drop_handler()
+            .build();
+        }
         _ => {}
     }
 }
@@ -94,6 +116,19 @@ fn shell_win(win: tauri::WebviewWindow, op: &str) {
 #[tauri::command]
 fn shell_drag(win: tauri::WebviewWindow) {
     let _ = win.start_dragging();
+}
+
+/// OS notification — the page fires this when a turn ends or an approval
+/// lands while the window is unfocused (focus check stays page-side).
+#[tauri::command]
+fn shell_notify(app: tauri::AppHandle, title: &str, body: &str) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt as _;
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|e| e.to_string())
 }
 
 /// Open a local file with the OS default handler — artifact islands live on
@@ -115,17 +150,25 @@ fn shell_open(app: tauri::AppHandle, path: &str) -> Result<(), String> {
 #[tauri::command]
 async fn session_events(
     events: tauri::ipc::Channel<serde_json::Value>,
+    win: tauri::WebviewWindow,
     state: tauri::State<'_, Gui>,
 ) -> Result<(), String> {
     let host = state.host.clone();
     let rt = state.rt.clone();
-    let client_slot = state.inner().client.clone();
+    let clients = state.inner().clients.clone();
+    let label = win.label().to_string();
+    let seq = state
+        .inner()
+        .client_gen
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        + 1;
     // the host's tokio runtime owns every spawn inside `client()`
     let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let client = rt
         .spawn(async move { host.client(out_tx).await })
         .await
         .map_err(|e| e.to_string())?;
+    clients.lock().await.insert(label.clone(), (seq, client));
     rt.spawn(async move {
         while let Some(text) = out_rx.recv().await {
             let v = serde_json::from_str::<serde_json::Value>(&text).unwrap_or_default();
@@ -133,19 +176,31 @@ async fn session_events(
                 break;
             }
         }
+        // the page went away (window closed / reload) — drop the client so
+        // its bus forwarder aborts instead of leaking a live subscription;
+        // a reload may have already installed a newer client for the label
+        let mut map = clients.lock().await;
+        if map.get(&label).map(|(g, _)| *g) == Some(seq) {
+            map.remove(&label);
+        }
     });
-    *client_slot.lock().await = Some(client);
     Ok(())
 }
 
 /// One inbound frame from the page (`prompt`, `view`, `approval`, …) —
-/// same dispatch the ws loop runs, serialized through the client mutex.
+/// same dispatch the ws loop runs, routed to the *calling window's*
+/// client so sibling windows stay independent tabs.
 #[tauri::command]
-async fn host_call(msg: serde_json::Value, state: tauri::State<'_, Gui>) -> Result<(), String> {
+async fn host_call(
+    msg: serde_json::Value,
+    win: tauri::WebviewWindow,
+    state: tauri::State<'_, Gui>,
+) -> Result<(), String> {
     let rt = state.rt.clone();
-    let client_slot = state.inner().client.clone();
+    let clients = state.inner().clients.clone();
+    let label = win.label().to_string();
     rt.spawn(async move {
-        if let Some(c) = client_slot.lock().await.as_mut() {
+        if let Some((_, c)) = clients.lock().await.get_mut(&label) {
             c.handle(msg).await;
         }
     })
@@ -199,10 +254,13 @@ fn main() {
     let gui = Gui {
         host,
         rt,
-        client: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+        clients: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+        client_gen: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
     };
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_window_state::Builder::new().build())
         .manage(gui)
         // the whole REST surface, scheme-served — `HostHandle::request`
         // is the same route table `sunmao serve`'s axum fallback answers
@@ -233,6 +291,7 @@ fn main() {
             shell_win,
             shell_drag,
             shell_open,
+            shell_notify,
             session_events,
             host_call
         ])

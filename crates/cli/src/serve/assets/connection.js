@@ -70,6 +70,9 @@ function route(v) {
       break;
     case 'live':
       if (sess === sessionId) liveEvent(v.event);
+      if (v.event && v.event.type === 'turn_end' && !shellFocused()) {
+        shellNotify('回合结束', sessTitle(sess) || sess);
+      }
       break;
     case 'replay':
       if (v.session) { sessionId = v.session; }
@@ -85,6 +88,7 @@ function route(v) {
       break;
     case 'approval':
       waitingSessions.add(sess);
+      if (!shellFocused()) shellNotify('需要批准', `${v.tool || ''} · ${(v.detail || '').slice(0, 80)}`);
       if (sess === sessionId) { approvalCard(v); logEv('hook', `approval requested · ${v.tool}: ${(v.detail || '').slice(0, 80)}`); }
       else {
         // a background session raised an approval — surface it as a
@@ -150,6 +154,16 @@ async function api(path, opts) {
   const r = await fetch(path, opts);
   if (!r.ok) throw new Error(`${r.status} ${await r.text().then(t => t.slice(0, 160)).catch(() => '')}`);
   return r.json();
+}
+// OS notification via the shell — no-op outside the Tauri window.
+// Focus tracking: document.hasFocus() can lie in some webviews, so blur
+// events demote the flag and focus restores it.
+let shellFocus = true;
+const shellFocused = () => shellFocus && (typeof document.hasFocus !== 'function' || document.hasFocus());
+const shellNotify = (title, body) => { if (TAURI && TAURI.notify) TAURI.notify(title, body).catch(() => {}); };
+if (TAURI) {
+  window.addEventListener('blur', () => { shellFocus = false; });
+  window.addEventListener('focus', () => { shellFocus = true; });
 }
 async function resumeSession(id) {
   if (!id || id === sessionId) return;

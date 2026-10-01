@@ -196,6 +196,7 @@ impl HostHandle {
             }
             ("GET", ["dataflow"]) => dataflow_current(s, query_arg(query, "sess")).await,
             ("GET", ["dataflow", id]) => dataflow_by_id(s, id).await,
+            ("GET", ["paths"]) => paths_list(s, query_arg(query, "sess")).await,
             ("GET", ["models"]) => models_view(s, query_arg(query, "sess")).await,
             ("POST", ["models", "fetch"]) => models_fetch(s, query_arg(query, "sess"), body).await,
             ("PUT", ["models"]) => models_put(s, query_arg(query, "sess"), body).await,
@@ -328,6 +329,65 @@ async fn session_info(s: &Arc<Shared>, id: Option<String>) -> HostResponse {
             .unwrap_or_else(|| display_path(&s.cwd)),
         "base_cwd": display_path(&s.cwd),
     }))
+}
+
+/// `GET /paths?sess=…` — the `@` mention picker's path pool: a
+/// depth-bounded walk of the viewed session's project, skipping VCS/build/
+/// dependency dirs (they'd drown the menu in generated paths). Mirrors
+/// `tui::menu`'s `scan_files` exactly — same walk, same skip list, same
+/// `/`-suffix convention for directories.
+async fn paths_list(s: &Arc<Shared>, sess: Option<String>) -> HostResponse {
+    let root = sess
+        .as_deref()
+        .and_then(|id| s.host(id))
+        .map(|h| h.agent.session_cwd())
+        .unwrap_or_else(|| s.cwd.clone());
+    const SKIP: &[&str] = &[
+        ".git",
+        "target",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "dist",
+        "build",
+        ".dart_tool",
+        ".idea",
+        ".vscode",
+    ];
+    const MAX_DEPTH: usize = 6;
+    const MAX_ENTRIES: usize = 3000;
+    let mut out = Vec::new();
+    let mut stack = vec![(root, 0usize, String::new())];
+    while let Some((dir, depth, prefix)) = stack.pop() {
+        if out.len() >= MAX_ENTRIES {
+            break;
+        }
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut entries: Vec<_> = rd.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            if out.len() >= MAX_ENTRIES {
+                break;
+            }
+            let name = e.file_name().to_string_lossy().to_string();
+            let rel = format!("{prefix}{name}");
+            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                if SKIP.contains(&name.as_str()) {
+                    continue;
+                }
+                out.push(format!("{rel}/"));
+                if depth < MAX_DEPTH {
+                    stack.push((e.path(), depth + 1, format!("{rel}/")));
+                }
+            } else {
+                out.push(rel);
+            }
+        }
+    }
+    out.sort();
+    HostResponse::json(serde_json::json!({"paths": out}))
 }
 
 /// `GET /dataflow[?sess=…]` — `sess` picks a live host's log; without it

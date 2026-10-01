@@ -311,6 +311,9 @@ pub(super) async fn spawn_parts(
         // the child's list is its own plan, not a copy of the parent's —
         // sub-session logs only carry their own Todos events.
         todos: std::sync::Mutex::new(Vec::new()),
+        // steering is a top-level UX surface — sub-agents never take
+        // mid-turn user input; their queue stays empty
+        steer: std::sync::Mutex::new(std::collections::VecDeque::new()),
         // own fence: children must never queue behind the parent's turn
         turn_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
     };

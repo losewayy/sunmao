@@ -379,3 +379,93 @@ async fn concurrent_turns_queue_on_the_fence() {
     assert!(matches!(outcome, TurnOutcome::Completed));
     assert_eq!(provider.calls.load(std::sync::atomic::Ordering::Relaxed), 1);
 }
+
+/// Steering: a message queued while the turn runs folds into THIS turn at
+/// the next request boundary — appended after the settled tool_result,
+/// before the follow-up request. It never becomes a separate queued turn.
+#[tokio::test]
+async fn steer_folds_into_running_turn() {
+    struct SteerOnce {
+        ctx: std::sync::Mutex<Option<Arc<Context>>>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+    #[async_trait::async_trait]
+    impl ProviderAdapter for SteerOnce {
+        async fn stream(&self, _req: ChatRequest<'_>) -> anyhow::Result<DeltaStream> {
+            let n = self
+                .calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n == 0 {
+                // mid-first-request the user queues a steer; this call also
+                // emits a tool call so the turn keeps looping — the boundary
+                // drain folds the steer before request #2
+                if let Some(ctx) = self.ctx.lock().unwrap().take() {
+                    ctx.steer
+                        .lock()
+                        .unwrap()
+                        .push_back((7, "steer follow-up".into()));
+                }
+                return Ok(Box::pin(stream::iter(vec![
+                    Ok(StreamDelta::ToolCalls(vec![ToolCallFragment {
+                        index: 0,
+                        id: Some("call_1".into()),
+                        name: Some("Glob".into()),
+                        arguments: Some("{\"pattern\":\"*.rs\"}".into()),
+                    }])),
+                    Ok(StreamDelta::Finish {
+                        reason: Some("tool_calls".into()),
+                        usage: None,
+                    }),
+                ])));
+            }
+            Ok(Box::pin(stream::iter(vec![
+                Ok(StreamDelta::Content("ack".into())),
+                Ok(StreamDelta::Finish {
+                    reason: Some("stop".into()),
+                    usage: None,
+                }),
+            ])))
+        }
+    }
+    let provider = Arc::new(SteerOnce {
+        ctx: std::sync::Mutex::new(None),
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let ctx = Arc::new(Context::new(
+        provider.clone(),
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        std::env::temp_dir(),
+    ));
+    *provider.ctx.lock().unwrap() = Some(ctx.clone());
+    let agent = AgentLoop::new(ctx.clone());
+    let outcome = agent.run_turn("hi", &NullObserver).await.unwrap();
+    assert!(matches!(outcome, TurnOutcome::Completed));
+    let msgs = ctx.sessions.lock().await.messages().await.unwrap();
+    let roles: Vec<String> = msgs
+        .iter()
+        .map(|m| format!("{:?}:{}", m.role, m.content.clone().unwrap_or_default()))
+        .collect();
+    // [user "hi", assistant(calls), tool(result), user "steer", assistant "ack"]
+    let pos = roles
+        .iter()
+        .position(|r| r.contains("steer follow-up"))
+        .expect("steered text must fold into this turn's messages — {roles:?}");
+    assert!(
+        roles[pos - 1].starts_with("Tool"),
+        "steer lands after the settled tool_result, never inside the pair — {roles:?}"
+    );
+    assert!(
+        roles.last().unwrap().starts_with("Assistant"),
+        "the turn answers the steer — {roles:?}"
+    );
+    assert_eq!(
+        provider.calls.load(std::sync::atomic::Ordering::Relaxed),
+        2,
+        "steer rides the same turn — no third request"
+    );
+    assert!(
+        ctx.steer.lock().unwrap().is_empty(),
+        "the drain consumes the queue"
+    );
+}

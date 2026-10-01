@@ -125,6 +125,12 @@ pub struct Context {
     /// so compaction never erases the plan. The LOG is source of truth;
     /// this is the hot snapshot for readers (turn injection, `/todos`).
     pub todos: std::sync::Mutex<Vec<crate::tool::TodoItem>>,
+    /// User steering — messages the frontend queues while a turn is running
+    /// (`(client id, text)`). The turn loop drains them at each boundary and
+    /// appends them as user messages, so they steer THIS turn instead of
+    /// becoming the next one. Anything still queued when the turn ends is
+    /// claimed by the driver as follow-up input — a steer is never lost.
+    pub steer: std::sync::Mutex<std::collections::VecDeque<(u64, String)>>,
     /// One turn at a time per context — the watermark fence. Concurrent
     /// `run_turn` calls (ACP `session/prompt` is per-request spawned, and
     /// any frontend could double-submit) would otherwise interleave
@@ -252,6 +258,7 @@ impl Context {
             loop_driver,
             live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             todos: std::sync::Mutex::new(todos),
+            steer: std::sync::Mutex::new(std::collections::VecDeque::new()),
             turn_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         }
     }

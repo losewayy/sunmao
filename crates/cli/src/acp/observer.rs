@@ -45,6 +45,7 @@ impl Observer for AcpObserver {
                 depth,
                 lane,
                 call_id,
+                ..
             } => {
                 let label = if *depth > 0 {
                     format!("↳{name}")

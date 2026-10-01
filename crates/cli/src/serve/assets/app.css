@@ -220,6 +220,15 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:var(--ring-focu
 .tool-o{display:none;padding:0 var(--s-10) var(--s-10) var(--s-32)}
 .tool.open .tool-o{display:block}
 .tool-o pre{margin:0;padding:var(--s-8) var(--s-10);border-radius:var(--r-md);background:var(--c-sunken);font:var(--fs-xs)/var(--lh-code) var(--font-mono);color:var(--c-text-2);white-space:pre;overflow-x:auto;user-select:text}
+.tool-o .diff{margin:0;padding:var(--s-2) 0;border-radius:var(--r-md);background:var(--c-sunken);font:var(--fs-xs)/var(--lh-code) var(--font-mono);overflow-x:auto;user-select:text}
+.diff .dl{display:flex;white-space:pre}
+.diff .dl--{background:var(--c-err-row);color:var(--c-err)}
+.diff .dl-\+{background:var(--c-ok-row);color:var(--c-ok)}
+.diff .dl-f{color:var(--c-text-3)}
+.diff .dm{flex:none;width:var(--s-16);text-align:center;opacity:.6;user-select:none}
+.diff .dt{flex:1;padding-right:var(--s-8);color:var(--c-text-2)}
+.diff .dl-- .dt{color:var(--c-err)}
+.diff .dl-\+ .dt{color:var(--c-ok)}
 
 .island{border-radius:var(--r-xl);overflow:hidden;--glass-rgb:var(--island-rgb);--ga:var(--glass-float);border-color:var(--c-stroke-2);box-shadow:var(--sh-inset-hi),var(--sh-3)}
 .island-h{display:flex;align-items:center;gap:var(--s-8);height:var(--h-2xl);padding:0 var(--s-6) 0 var(--s-10);font-size:var(--fs-sm)}

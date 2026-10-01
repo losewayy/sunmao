@@ -182,6 +182,7 @@ impl Client {
                             depth: 0,
                             lane: 0,
                             call_id: None,
+                            args: serde_json::Value::Null,
                         });
                         let t0 = std::time::Instant::now();
                         let (ok, output, code) =

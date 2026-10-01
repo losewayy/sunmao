@@ -311,6 +311,7 @@ async fn run_inner(
                     depth,
                     lane,
                     call_id,
+                    ..
                 } => app.tool_start(&name, &summary, depth, lane, call_id),
                 LiveEvent::ToolDone {
                     name,

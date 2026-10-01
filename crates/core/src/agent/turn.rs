@@ -129,6 +129,7 @@ impl AgentLoop {
                 depth: self.ctx.depth,
                 lane: self.ctx.lane,
                 call_id: None,
+                args: serde_json::Value::Null,
             });
             if let Err(e) = self.compact_inner(observer, "auto").await {
                 observer.on_event(&LiveEvent::ToolDone {
@@ -198,6 +199,7 @@ impl AgentLoop {
                     depth: self.ctx.depth,
                     lane: self.ctx.lane,
                     call_id: None,
+                    args: serde_json::Value::Null,
                 });
                 if let Err(e) = self.compact_inner(observer, "auto").await {
                     observer.on_event(&LiveEvent::ToolDone {
@@ -306,6 +308,9 @@ impl AgentLoop {
                     observer.on_event(&LiveEvent::ToolStart {
                         name: call.function.name.clone(),
                         summary: "malformed arguments".into(),
+                        // arguments never parsed — Null reads as "no payload",
+                        // not an empty-object call
+                        args: serde_json::Value::Null,
                         depth: self.ctx.depth,
                         lane: self.ctx.lane,
                         call_id: Some(call.id.clone()),
@@ -419,6 +424,9 @@ impl AgentLoop {
                     depth: self.ctx.depth,
                     lane: self.ctx.lane,
                     call_id: Some(call.id.clone()),
+                    // the effective args — post-hook-rewrite, the same value
+                    // the ToolCall fact and the dispatch below see
+                    args: args_value.clone(),
                 });
                 let t0 = std::time::Instant::now();
 

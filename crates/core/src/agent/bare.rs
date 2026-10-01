@@ -126,6 +126,7 @@ impl AgentLoop {
                         depth: self.ctx.depth,
                         lane: self.ctx.lane,
                         call_id: Some(call.id.clone()),
+                        args: serde_json::Value::Null,
                     });
                     crate::tool::ToolResult {
                         output: format!("malformed tool call: {err}"),
@@ -141,6 +142,7 @@ impl AgentLoop {
                         depth: self.ctx.depth,
                         lane: self.ctx.lane,
                         call_id: Some(call.id.clone()),
+                        args: args_value.clone(),
                     });
                     self.ctx
                         .tools

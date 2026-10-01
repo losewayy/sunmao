@@ -262,6 +262,7 @@ fn js_asset(name: &str) -> Option<&'static str> {
         "state.js" => super::STATE_JS,
         "wallpaper.js" => super::WALLPAPER_JS,
         "settings.js" => super::SETTINGS_JS,
+        "diff.js" => super::DIFF_JS,
         "transcript.js" => super::TRANSCRIPT_JS,
         "islands.js" => super::ISLANDS_JS,
         "connection.js" => super::CONNECTION_JS,

@@ -294,15 +294,20 @@ fn replay_parity_tui_vs_gui() {
     let html_path = manifest.join("src/serve/assets/index.html");
     let driver = manifest.join("src/serve/replay_parity.mjs");
 
-    // node availability gates the GUI half — absent node skips, never fails
-    let node = match Command::new("node").arg("--version").output() {
-        Ok(o) if o.status.success() => true,
-        _ => {
-            eprintln!("skipping replay parity test: node not on PATH");
-            return;
+    // node availability gates the GUI half — absent node skips locally but
+    // fails on CI (the runner images ship node; a skip there is coverage debt)
+    let node_ok = Command::new("node")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !node_ok {
+        if std::env::var_os("CI").is_some() {
+            panic!("replay parity requires node on CI — it is absent from PATH");
         }
-    };
-    assert!(node);
+        eprintln!("skipping replay parity test: node not on PATH");
+        return;
+    }
 
     let events = fixture();
     let jsonl: String = events

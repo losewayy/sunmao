@@ -1,12 +1,14 @@
 //! xtask arch — the architecture gate. `CODE-ARCHITECTURE.md` is prose; this
 //! binary is what actually stops a violation from landing. Four checks:
 //!
-//!   god files   — a source file past the line budget gets split
+//!   god files   — a source file past the line budget gets split; the
+//!                 serve/assets frontend files it embeds share the budget
 //!   layers      — llm may not know core/cli; core may not know the cli exists
 //!   prose       — long prose-ish string literals belong in assets/*.md|txt,
 //!                 not `.rs` code (cold-plug rule 6)
-//!   tokens      — serve/assets/app.css + index.html consume design tokens;
-//!                 raw colors/durations/radii live in tokens.css only
+//!   tokens      — serve/assets consumes design tokens; raw
+//!                 colors/durations/radii live in tokens.css only
+//!   js syntax   — every serve/assets/*.js parses under `node --check`
 //!
 //! `#[cfg(test)]` modules are exempt — tests carry fixtures and diagnostics
 //! that would trip every rule by design.
@@ -35,17 +37,28 @@ fn main() {
     let mut rs_files = Vec::new();
     collect_rs(&root.join("crates"), &mut rs_files);
     rs_files.sort();
+    let mut asset_files = Vec::new();
+    collect_assets(&root.join("crates/cli/src/serve/assets"), &mut asset_files);
+    asset_files.sort();
 
     for file in &rs_files {
         check_god_file(file, &root, &mut violations);
         check_layers(file, &root, &mut violations);
         check_prose(file, &root, &mut violations);
     }
+    for file in &asset_files {
+        check_god_file(file, &root, &mut violations);
+    }
+    check_js_syntax(&asset_files, &root, &mut violations);
     check_mirrors(&root, &mut violations);
     check_design_tokens(&root, &mut violations);
 
     if violations.is_empty() {
-        println!("arch gate: clean ({} files checked)", rs_files.len());
+        println!(
+            "arch gate: clean ({} rs + {} asset files checked)",
+            rs_files.len(),
+            asset_files.len()
+        );
     } else {
         eprintln!("arch gate: {} violation(s)\n", violations.len());
         for v in &violations {
@@ -74,6 +87,75 @@ fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
             collect_rs(&p, out);
         } else if p.extension().map(|x| x == "rs").unwrap_or(false) {
             out.push(p);
+        }
+    }
+}
+
+/// The serve frontend bundle (`crates/cli/src/serve/assets/`) shares the
+/// god-file budget with `.rs` — same navigability argument; the gate only
+/// checked Rust, which is how index.html grew past 2000 lines.
+fn collect_assets(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            collect_assets(&p, out);
+        } else if matches!(
+            p.extension().and_then(|x| x.to_str()),
+            Some("html" | "js" | "css")
+        ) {
+            out.push(p);
+        }
+    }
+}
+
+/// JS syntax gate — `node --check` catches a malformed asset before it
+/// ships inside the binary. Node absent locally → warn and skip; on CI
+/// (windows-latest ships node) absence is itself a violation — a silently
+/// skipped gate there is coverage debt.
+fn check_js_syntax(files: &[PathBuf], root: &Path, violations: &mut Vec<String>) {
+    let node_ok = std::process::Command::new("node")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !node_ok {
+        if std::env::var_os("CI").is_some() {
+            violations
+                .push("js syntax: node not on PATH on CI — serve assets unchecked".to_string());
+        } else {
+            eprintln!("node not found — js syntax gate skipped");
+        }
+        return;
+    }
+    for f in files
+        .iter()
+        .filter(|p| p.extension().map(|x| x == "js").unwrap_or(false))
+    {
+        let out = match std::process::Command::new("node")
+            .arg("--check")
+            .arg(f)
+            .output()
+        {
+            Ok(o) => o,
+            Err(e) => {
+                violations.push(format!(
+                    "js syntax: node --check failed to run for {}: {e}",
+                    rel(f, root)
+                ));
+                continue;
+            }
+        };
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            let tail: Vec<&str> = err.lines().rev().take(6).collect();
+            violations.push(format!(
+                "js syntax: {} fails `node --check`:\n    {}",
+                rel(f, root),
+                tail.into_iter().rev().collect::<Vec<_>>().join("\n    ")
+            ));
         }
     }
 }
@@ -338,6 +420,16 @@ fn check_design_tokens(root: &Path, violations: &mut Vec<String>) {
         return;
     };
     let tokens_css = std::fs::read_to_string(dir.join("tokens.css")).unwrap_or_default();
+    // the page's logic moved out of index.html into per-responsibility
+    // .js files — token checks that scanned the inline script scan these now
+    let mut js_files: Vec<PathBuf> = Vec::new();
+    collect_assets(&dir, &mut js_files);
+    js_files.retain(|p| p.extension().map(|x| x == "js").unwrap_or(false));
+    js_files.sort();
+    let js_srcs: Vec<(String, String)> = js_files
+        .iter()
+        .filter_map(|f| std::fs::read_to_string(f).ok().map(|t| (rel(f, root), t)))
+        .collect();
 
     // ---- app.css: banned raw values -------------------------------------
     let comment = Regex::new(r"(?s)/\*.*?\*/").unwrap();
@@ -432,13 +524,15 @@ fn check_design_tokens(root: &Path, violations: &mut Vec<String>) {
     }
     let script_lit =
         Regex::new(r"cubic-bezier\(|duration\s*:\s*\d|setTimeout\([^)]*,\s*\d{3,}\)").unwrap();
-    for (line_no, line) in index_html.lines().enumerate() {
-        for m in script_lit.find_iter(line) {
-            violations.push(format!(
-                "design token: index.html:{} — raw timing {} in script; go through the motion bridge",
-                line_no + 1,
-                m.as_str()
-            ));
+    for (name, text) in js_srcs.iter().map(|(n, t)| (n.as_str(), t.as_str())) {
+        for (line_no, line) in text.lines().enumerate() {
+            for m in script_lit.find_iter(line) {
+                violations.push(format!(
+                    "design token: {name}:{} — raw timing {} in script; go through the motion bridge",
+                    line_no + 1,
+                    m.as_str()
+                ));
+            }
         }
     }
 
@@ -454,6 +548,11 @@ fn check_design_tokens(root: &Path, violations: &mut Vec<String>) {
                 .captures_iter(&index_html)
                 .map(|c| c[1].to_string()),
         )
+        .chain(js_srcs.iter().flat_map(|(_, t)| {
+            setprop_re
+                .captures_iter(t.as_str())
+                .map(|c| c[1].to_string())
+        }))
         .collect();
     let defined_app: std::collections::HashSet<String> = def_re
         .captures_iter(&app_css)

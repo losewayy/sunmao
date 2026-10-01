@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use super::artifacts;
-use super::host::{Host, HostHandle, Shared, display_path, log_path};
+use super::host::{HostHandle, Shared, display_path, log_path};
 use crate::tui;
 
 /// One answered request — status line, headers, body bytes. Header names
@@ -39,6 +39,17 @@ impl HostResponse {
         Self {
             status: 200,
             headers: vec![("content-type".into(), "text/css; charset=utf-8".into())],
+            body: s.as_bytes().to_vec(),
+        }
+    }
+
+    pub(crate) fn js(s: &'static str) -> Self {
+        Self {
+            status: 200,
+            headers: vec![(
+                "content-type".into(),
+                "text/javascript; charset=utf-8".into(),
+            )],
             body: s.as_bytes().to_vec(),
         }
     }
@@ -150,6 +161,10 @@ impl HostHandle {
             ("GET" | "HEAD", []) => HostResponse::html(super::INDEX),
             ("GET" | "HEAD", ["tokens.css"]) => HostResponse::css(super::TOKENS_CSS),
             ("GET" | "HEAD", ["app.css"]) => HostResponse::css(super::APP_CSS),
+            ("GET" | "HEAD", [name]) if name.ends_with(".js") => match js_asset(name) {
+                Some(s) => HostResponse::js(s),
+                None => HostResponse::err(404, "not found".into()),
+            },
             ("GET", ["sessions"]) => sessions_list(s).await,
             ("GET", ["session"]) => session_info(s, query_arg(query, "id")).await,
             ("GET", ["projects"]) => projects_list(s).await,
@@ -232,12 +247,31 @@ impl HostHandle {
             ("GET", ["dataflow"]) => dataflow_current(s, query_arg(query, "sess")).await,
             ("GET", ["dataflow", id]) => dataflow_by_id(s, id).await,
             ("GET", ["paths"]) => paths_list(s, query_arg(query, "sess")).await,
-            ("GET", ["models"]) => models_view(s, query_arg(query, "sess")).await,
-            ("POST", ["models", "fetch"]) => models_fetch(s, query_arg(query, "sess"), body).await,
-            ("PUT", ["models"]) => models_put(s, query_arg(query, "sess"), body).await,
+            ("GET", ["models"]) => models::view(s, query_arg(query, "sess")).await,
+            ("POST", ["models", "fetch"]) => models::fetch(s, query_arg(query, "sess"), body).await,
+            ("PUT", ["models"]) => models::put(s, query_arg(query, "sess"), body).await,
             _ => HostResponse::err(404, "not found".into()),
         }
     }
+}
+
+/// `GET /{name}.js` — the page's split script bundle, served off the same
+/// route table the Tauri scheme rides (GUI.md §8). New asset scripts need
+/// both the include_str! const in serve.rs and an arm here.
+fn js_asset(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "state.js" => super::STATE_JS,
+        "wallpaper.js" => super::WALLPAPER_JS,
+        "settings.js" => super::SETTINGS_JS,
+        "transcript.js" => super::TRANSCRIPT_JS,
+        "islands.js" => super::ISLANDS_JS,
+        "connection.js" => super::CONNECTION_JS,
+        "composer.js" => super::COMPOSER_JS,
+        "palette.js" => super::PALETTE_JS,
+        "menus.js" => super::MENUS_JS,
+        "boot.js" => super::BOOT_JS,
+        _ => return None,
+    })
 }
 
 /// `GET /sessions` — the rail = dormant logs on disk ∪ live hosts (a
@@ -458,130 +492,8 @@ async fn dataflow_by_id(s: &Arc<Shared>, id: &str) -> HostResponse {
     }
 }
 
-// ── provider/model surface (GUI settings page + composer picker) ──
-
-/// The host to answer models/config questions for — `?sess=` picks a live
-/// session's project; absent it, the newest live host; no live host → the
-/// launch dir (settings still work on the bare file).
-fn models_host(s: &Arc<Shared>, sess: Option<String>) -> Option<Arc<Host>> {
-    if let Some(id) = sess
-        && let Some(h) = s.host(&id)
-    {
-        return Some(h);
-    }
-    s.live_ids().first().and_then(|id| s.host(id))
-}
-
-/// `GET /models?sess=` — providers (keys redacted) + routes + completable
-/// selectors, everything the settings page and the composer picker need
-/// in one shot. Anchored to the viewed session's project.
-async fn models_view(s: &Arc<Shared>, sess: Option<String>) -> HostResponse {
-    let host = models_host(s, sess);
-    let resolver = host.as_ref().and_then(|h| h.agent.models_resolver());
-    let file = match resolver.as_ref() {
-        Some(m) => m.file(),
-        None => {
-            // no live host — the bare file still answers (the session's
-            // own `default` row is honestly absent: nothing is running)
-            let text =
-                std::fs::read_to_string(s.cwd.join(".sunmao/models.json")).unwrap_or_default();
-            serde_json::from_str::<sunmao_core::models::ModelsFile>(&text).unwrap_or_default()
-        }
-    };
-    HostResponse::json(serde_json::json!({
-        "providers": providers_view(&file),
-        "routes": file.routes,
-        "selectors": resolver.as_ref().map(|m| m.selectors()).unwrap_or_default(),
-        "default_provider": resolver.as_ref().map(|m| m.default_provider()).unwrap_or_else(|| "default".into()),
-    }))
-}
-
-/// Serialize the provider table for the GUI — keys are redacted to a
-/// `api_key_set` boolean; the settings editor writes keys, it never
-/// reads them back.
-fn providers_view(file: &sunmao_core::models::ModelsFile) -> serde_json::Value {
-    file.providers
-        .iter()
-        .map(|(name, p)| {
-            (
-                name.clone(),
-                serde_json::json!({
-                    "base_url": p.base_url,
-                    "dialect": p.dialect,
-                    "api_key_env": p.api_key_env,
-                    "api_key_set": p.api_key_env.is_some() || p.api_key.is_some(),
-                    "catalog": p.catalog,
-                }),
-            )
-        })
-        .collect::<serde_json::Map<String, serde_json::Value>>()
-        .into()
-}
-
-/// `POST /models/fetch?sess= {provider}` — proxy the provider's own
-/// `/models` listing. Body may instead carry an inline
-/// `{"base_url","api_key",…}` for a provider the user is still typing
-/// (not yet saved).
-async fn models_fetch(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> HostResponse {
-    let v: serde_json::Value = match serde_json::from_slice(body) {
-        Ok(v) => v,
-        Err(e) => return HostResponse::err(400, format!("bad json: {e}")),
-    };
-    let def: sunmao_core::models::ProviderDef = if let Some(name) = v["provider"].as_str() {
-        let resolver = models_host(s, sess).and_then(|h| h.agent.models_resolver());
-        let file = resolver.as_ref().map(|m| m.file()).unwrap_or_else(|| {
-            let text =
-                std::fs::read_to_string(s.cwd.join(".sunmao/models.json")).unwrap_or_default();
-            serde_json::from_str(&text).unwrap_or_default()
-        });
-        match file.providers.get(name) {
-            Some(p) => p.clone(),
-            None => return HostResponse::err(404, format!("no such provider: {name}")),
-        }
-    } else {
-        match serde_json::from_value(v) {
-            Ok(p) => p,
-            Err(e) => {
-                return HostResponse::err(400, format!("provider object or provider name: {e}"));
-            }
-        }
-    };
-    match sunmao_core::models::fetch_catalog(&def).await {
-        Ok(catalog) => HostResponse::json(serde_json::json!({ "catalog": catalog })),
-        Err(e) => HostResponse::err(502, format!("{e:#}")),
-    }
-}
-
-/// `PUT /models?sess=` — replace `<session's project>/.sunmao/models.json`
-/// wholesale, then reload every live host's resolver so the
-/// picker/settings see it at once. The file shape is `ModelsFile`.
-async fn models_put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> HostResponse {
-    let file: sunmao_core::models::ModelsFile = match serde_json::from_slice(body) {
-        Ok(f) => f,
-        Err(e) => return HostResponse::err(400, format!("bad models.json: {e}")),
-    };
-    let cwd = models_host(s, sess.clone())
-        .map(|h| h.agent.session_cwd())
-        .unwrap_or_else(|| s.cwd.clone());
-    let dir = cwd.join(".sunmao");
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        return HostResponse::err(500, format!("{e:#}"));
-    }
-    let pretty = match serde_json::to_string_pretty(&file) {
-        Ok(t) => t,
-        Err(e) => return HostResponse::err(400, format!("{e:#}")),
-    };
-    if let Err(e) = std::fs::write(dir.join("models.json"), pretty) {
-        return HostResponse::err(500, format!("{e:#}"));
-    }
-    for id in s.live_ids() {
-        if let Some(h) = s.host(&id) {
-            h.agent.reload_models();
-        }
-    }
-    s.emit(serde_json::json!({"type": "models_changed"}));
-    models_view(s, sess).await
-}
+#[path = "request/models.rs"]
+mod models;
 
 #[cfg(test)]
 #[path = "request/tests.rs"]

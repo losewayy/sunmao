@@ -3,7 +3,7 @@
 //
 //   node replay_parity.mjs <path-to-index.html> <events.jsonl>
 //
-// The HTML's inline <script> is eval'd against a hand-rolled fake DOM, then
+// The HTML's <script> files are eval'd against a hand-rolled fake DOM, then
 // `window.__sunmao.renderReplay(events)` folds the session log into it.
 // The driver walks the resulting transcript plus the event log and prints
 // one canonical line per entry; tui/replay_parity.rs diffs these lines
@@ -21,6 +21,7 @@
 //   step_summary|<n>     (TUI fold-by-cap — must not appear; surfaced on purpose)
 
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 const htmlPath = process.argv[2];
 const eventsPath = process.argv[3];
@@ -394,11 +395,22 @@ const globals = {
   ...fakeTimers,
 };
 
-/* ================= eval the page script ================= */
+/* ================= eval the page scripts =================
+   index.html's scripts now live in external files (state.js … boot.js).
+   Walk every <script> tag in document order: an inline body contributes
+   itself, a src="x.js" contributes the file's bytes (resolved against the
+   page's own directory, not the cwd). All sources concatenate into one
+   Function scope — the same shared lexical surface the browser gives
+   classic scripts. */
 const html = readFileSync(htmlPath, 'utf8');
-const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)];
+const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];
 if (!scripts.length) { console.error('no <script> block found'); process.exit(2); }
-const src = scripts.reduce((a, b) => (b[1].length > a[1].length ? b : a))[1];
+const srcs = [];
+for (const [, attrs, body] of scripts) {
+  const m = /\bsrc\s*=\s*["']([^"']+)["']/.exec(attrs);
+  srcs.push(m ? readFileSync(join(dirname(htmlPath), m[1]), 'utf8') : body);
+}
+const src = srcs.join('\n');
 
 const names = Object.keys(globals);
 const fn = new Function(...names, src);

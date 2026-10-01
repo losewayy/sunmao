@@ -26,84 +26,12 @@ pub use mode::ApprovalMode;
 #[cfg(test)]
 mod tests;
 
-/// Live events the frontend can observe (stdout printer, TUI, ACP, web).
-/// `Serialize` is the `sunmao serve` wire shape — tagged snake_case, the
-/// only JSON dialect the GUI speaks (GUI.md §7).
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum LiveEvent {
-    /// A streamed text delta — `text` because serde's tagged-enum wire shape
-    /// can't carry a bare tuple payload (GUI.md §7 serves this verbatim).
-    Content {
-        text: String,
-    },
-    /// Reasoning/thinking channel delta.
-    Reasoning {
-        text: String,
-    },
-    /// Tool call began. `summary` is a one-line digest of the interesting
-    /// argument (path/command/pattern/…) for frontends to render. `depth`
-    /// is the agent's nesting level — 0 for the interactive agent, 1+ for
-    /// `Task` sub-agents relayed through `ctx.live_sink`; `lane` tells
-    /// parallel siblings apart (each spawn claims its own). `call_id` is the
-    /// provider's tool_call id — the exact start↔done join key; `None` on
-    /// synthetic events (compact, local shell) that have no wire call.
-    ToolStart {
-        name: String,
-        summary: String,
-        depth: u8,
-        lane: u8,
-        call_id: Option<String>,
-    },
-    /// Tool call finished. `output` carries the raw result so rich frontends
-    /// can preview it; simple frontends ignore it. `call_id` joins back to
-    /// its ToolStart — pairing by name alone mispairs when the same tool
-    /// runs twice in one turn.
-    ToolDone {
-        name: String,
-        ok: bool,
-        output: String,
-        depth: u8,
-        lane: u8,
-        call_id: Option<String>,
-        /// Wall time from ToolStart to done — frontends render it; replayed
-        /// transcripts (SessionEvent::ToolResult) can't carry it, so frontends
-        /// that replay fall back to nothing rather than recompute.
-        elapsed_ms: u64,
-    },
-    /// A hook changed the turn — input rewrite, veto, injected context, or a
-    /// session-scoped approval grant. Mirrors `SessionEvent::Hook` so the
-    /// audit spine is *visible* live, not just durable.
-    Hook {
-        event: String,
-        detail: String,
-    },
-    /// An HTML artifact landed on disk — emitted by `HtmlArtifact` through
-    /// `ctx.live_sink`. Frontends that can render (or link) surfaces it;
-    /// degraded frontends show the path. `rev` = version number (0 for
-    /// unversioned sources; islands offer ◀ ▶ when rev > 1).
-    Artifact {
-        name: String,
-        path: String,
-        bytes: usize,
-        rev: usize,
-    },
-    /// Token accounting for one completed LLM request — mirrors the durable
-    /// `SessionEvent::Usage` so footers can show context pressure live.
-    Usage(sunmao_llm::types::Usage),
-    TurnEnd {
-        outcome: TurnOutcome,
-    },
-}
+mod events;
+mod summary;
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TurnOutcome {
-    Completed,
-    LengthLimited,
-    Other(String),
-}
-
+pub use events::{LiveEvent, Observer, TurnOutcome};
+pub use summary::call_summary;
+pub(crate) use summary::{specifier_for, truncate_output};
 /// Which built-in loop driver runs turns — SPEC §4.5's "the loop is a
 /// plugin" stance made concrete. Selected by the `loop` key in a
 /// plugin/preset manifest, or `--loop` on the CLI (highest precedence).
@@ -181,105 +109,6 @@ impl LoopDriver {
         }
         chosen
     }
-}
-
-/// Observer sink — the REPL prints these, a GUI would render them.
-pub trait Observer: Send + Sync {
-    fn on_event(&self, ev: &LiveEvent);
-}
-
-/// One-line argument digest for `LiveEvent::ToolStart.summary`: the single
-/// most interesting value per tool (the command for Bash, the path for file
-/// tools, …), falling back to compact `k=v` pairs for unknown tools.
-/// One-line digest of a tool call's interesting argument — the transcript
-/// header string. Public so frontends replaying a session log render the
-/// same headers a live turn would have produced.
-pub fn call_summary(name: &str, args: &serde_json::Value) -> String {
-    let obj = match args.as_object() {
-        Some(o) => o,
-        None => return String::new(),
-    };
-    let preferred: &[&str] = match name {
-        "Bash" => &["command"],
-        "Read" | "Write" | "Edit" => &["path"],
-        "Glob" | "Grep" => &["pattern", "path"],
-        "WebFetch" => &["url"],
-        "Task" => &["prompt"],
-        "JobOutput" => &["id"],
-        "HtmlArtifact" => &["name"],
-        _ => &[],
-    };
-    let mut out = String::new();
-    for k in preferred {
-        if let Some(v) = obj.get(*k).and_then(|v| v.as_str()) {
-            out = v.to_string();
-            break;
-        }
-    }
-    if out.is_empty() {
-        for (k, v) in obj.iter().take(3) {
-            let vs = v
-                .as_str()
-                .map(String::from)
-                .unwrap_or_else(|| v.to_string());
-            if !out.is_empty() {
-                out.push_str("  ");
-            }
-            out.push_str(k);
-            out.push('=');
-            out.push_str(&vs);
-        }
-    }
-    if name == "Bash" && obj.get("background").and_then(|v| v.as_bool()) == Some(true) {
-        out.push_str("  &");
-    }
-    ellipsize(&out, 90)
-}
-
-/// Flatten whitespace and cap at `max` chars, adding `…` when cut.
-fn ellipsize(s: &str, max: usize) -> String {
-    let flat: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut it = flat.chars();
-    let kept: String = it.by_ref().take(max).collect();
-    if it.next().is_some() {
-        format!("{kept}…")
-    } else {
-        kept
-    }
-}
-
-/// Cap tool output carried in `LiveEvent::ToolDone` — frontends only need a
-/// preview; the full text already lands in the session log.
-pub(crate) fn truncate_output(s: &str) -> String {
-    const MAX: usize = 8 * 1024;
-    if s.len() <= MAX {
-        return s.to_string();
-    }
-    let mut end = MAX;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…\n[truncated — {} bytes total]", &s[..end], s.len())
-}
-
-/// The string declarative rules glob over for a given tool: the command for
-/// Bash, the path for file tools, the pattern for search — whatever a rule
-/// like `Bash(npm *)` or `Read(./src/**)` is meant to match.
-fn specifier_for(tool: &str, args: &serde_json::Value) -> String {
-    let key = match tool {
-        "Bash" => "command",
-        "Read" | "Write" | "Edit" => "path",
-        "Glob" | "Grep" => "pattern",
-        "WebFetch" => "url",
-        "Task" => "prompt",
-        "HtmlArtifact" => "name",
-        "JobOutput" => "id",
-        _ => "",
-    };
-    args.get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string()
 }
 
 #[derive(Clone)]

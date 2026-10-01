@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use clap::Parser;
-use sunmao_core::agent::{AgentLoop, LiveEvent, Observer, TurnOutcome};
+use sunmao_core::agent::{AgentLoop, Observer, TurnOutcome};
 use sunmao_core::approval::{Approval, Approver};
 use sunmao_core::tool::builtin_registry;
 use sunmao_core::{Context, SessionLog};
@@ -93,6 +93,12 @@ pub struct Cli {
     /// no gate, no auto-compaction). Wins over any manifest `loop:` key.
     #[arg(long = "loop", value_parser = parse_driver)]
     driver: Option<sunmao_core::agent::LoopDriver>,
+    /// Approval stance for the session: always_ask · auto · read_only ·
+    /// full_access. Under `-p` this is the only way to grant ask-prompted
+    /// calls — `full_access` skips them, an explicit allow rule or session
+    /// grant answers them; everything else that would prompt is denied.
+    #[arg(long, value_parser = parse_approval_mode)]
+    mode: Option<sunmao_core::agent::ApprovalMode>,
     #[command(subcommand)]
     command: Option<plugin::Cmd>,
 }
@@ -102,90 +108,10 @@ fn parse_driver(s: &str) -> Result<sunmao_core::agent::LoopDriver, String> {
     sunmao_core::agent::LoopDriver::parse(s).map_err(|e| e.to_string())
 }
 
-struct StdoutObserver {
-    in_reasoning: std::sync::Mutex<bool>,
-}
-
-impl Observer for StdoutObserver {
-    fn on_event(&self, ev: &LiveEvent) {
-        let mut in_r = self.in_reasoning.lock().unwrap();
-        match ev {
-            LiveEvent::Reasoning { text } => {
-                if !*in_r {
-                    eprint!("\x1b[2m"); // dim
-                    *in_r = true;
-                }
-                eprint!("{text}");
-            }
-            LiveEvent::Content { text } => {
-                if *in_r {
-                    eprintln!("\x1b[0m");
-                    *in_r = false;
-                }
-                print!("{text}");
-                std::io::stdout().flush().ok();
-            }
-            LiveEvent::ToolStart {
-                name,
-                summary,
-                depth,
-                ..
-            } => {
-                if *in_r {
-                    eprintln!("\x1b[0m");
-                    *in_r = false;
-                }
-                let nest = if *depth > 0 { "↳" } else { "" };
-                if summary.is_empty() {
-                    println!("\n\x1b[36m[tool → {nest}{name}]\x1b[0m");
-                } else {
-                    println!("\n\x1b[36m[tool → {nest}{name} · {summary}]\x1b[0m");
-                }
-            }
-            LiveEvent::ToolDone {
-                name, ok, depth, ..
-            } => {
-                let mark = if *ok { "✓" } else { "✗" };
-                let nest = if *depth > 0 { "↳" } else { "" };
-                println!("\x1b[36m[tool {nest}{name} {mark}]\x1b[0m");
-            }
-            LiveEvent::Hook { event, detail } => {
-                if *in_r {
-                    eprintln!("\x1b[0m");
-                    *in_r = false;
-                }
-                println!("\x1b[33m[⚙ {event} — {detail}]\x1b[0m");
-            }
-            LiveEvent::Artifact {
-                name,
-                path,
-                bytes,
-                rev,
-            } => {
-                if *in_r {
-                    eprintln!("\x1b[0m");
-                    *in_r = false;
-                }
-                let v = if *rev > 1 {
-                    format!(" · rev {rev}")
-                } else {
-                    String::new()
-                };
-                println!("\x1b[36m[artifact '{name}' → {path} ({bytes} B{v})]\x1b[0m");
-            }
-            LiveEvent::Usage(_) => {} // durable in the log; REPL stays quiet
-            LiveEvent::TurnEnd { outcome } => {
-                if *in_r {
-                    eprintln!("\x1b[0m");
-                    *in_r = false;
-                }
-                match outcome {
-                    TurnOutcome::Completed => println!(),
-                    other => println!("\n[turn ended: {other:?}]"),
-                }
-            }
-        }
-    }
+/// `--mode` spellings are `ApprovalMode::parse`'s — unknown names refuse.
+fn parse_approval_mode(s: &str) -> Result<sunmao_core::agent::ApprovalMode, String> {
+    sunmao_core::agent::ApprovalMode::parse(s)
+        .ok_or_else(|| "unknown mode — always_ask · auto · read_only · full_access".to_string())
 }
 
 fn session_id() -> String {
@@ -348,15 +274,25 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     ctx_raw.connect_extensions().await;
     if cli.tui {
         ctx_raw.approval = Arc::new(tui::TuiApprover { tx: tx_approval });
+    } else if cli.print.is_some() {
+        // non-interactive: no human will ever answer a card, so every ask
+        // downgrades to a deny — the reason rides the failed ToolResult so
+        // the model sees why. full_access (via --mode) and allow rules
+        // never reach the approver, so they stay the escape hatches.
+        ctx_raw.approval = Arc::new(sunmao_core::approval::PipedApprover);
     } else if interactive {
-        ctx_raw.approval = Arc::new(StdinApprover { interactive: true });
+        ctx_raw.approval = Arc::new(StdinApprover);
     }
-    // -p is the non-interactive path — it never prompts and never
-    // read_only-blocks; pin the stance so a resumed log's ModeChange
-    // can't smuggle a restrictive mode into a headless run. (Recorded
-    // posture only — the AllowAll approver is what actually skips asks.)
-    if cli.print.is_some() {
-        *ctx_raw.approval_mode.write().unwrap() = sunmao_core::agent::ApprovalMode::FullAccess;
+    // --mode picks the stance explicitly; under -p an unset flag clamps a
+    // resumed log's full_access back to auto — headless runs deny asks by
+    // default, never silently skip them. Restrictive resumed modes
+    // (read_only/always_ask) are honored: they only refuse more.
+    if let Some(mode) = cli.mode {
+        *ctx_raw.approval_mode.write().unwrap() = mode;
+    } else if cli.print.is_some()
+        && *ctx_raw.approval_mode.read().unwrap() == sunmao_core::agent::ApprovalMode::FullAccess
+    {
+        *ctx_raw.approval_mode.write().unwrap() = sunmao_core::agent::ApprovalMode::Auto;
     }
     // Model routing seam: `.sunmao/models.json` (+ `.claude` compat) names
     // providers and routes; agent `model:` selectors resolve through it.
@@ -408,9 +344,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let agent = AgentLoop::new(ctx.clone());
 
     if let Some(prompt) = &cli.print {
-        let obs = StdoutObserver {
-            in_reasoning: std::sync::Mutex::new(false),
-        };
+        let obs = repl::StdoutObserver::new();
         let outcome = agent.run_turn(prompt, &obs).await?;
         // SessionEnd hooks run in every frontend — a one-shot exit is
         // still a session ending (context-mode-style state capture hooks
@@ -453,9 +387,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         return res;
     }
 
-    let observer = Arc::new(StdoutObserver {
-        in_reasoning: std::sync::Mutex::new(false),
-    });
+    let observer = Arc::new(repl::StdoutObserver::new());
     repl::run(
         &agent,
         &ctx,
@@ -562,17 +494,14 @@ async fn host_spec(cli: &Cli) -> anyhow::Result<serve::HostSpec> {
     })
 }
 
-/// Interactive approver for the REPL/-p: prints the risky command, y/n on stdin.
-struct StdinApprover {
-    interactive: bool,
-}
+/// Interactive approver for the REPL: prints the risky command, y/n on stdin.
+/// (Piped `-p` never installs this — core's `PipedApprover` denies asks
+/// instead of hanging on a prompt nobody can answer.)
+struct StdinApprover;
 
 #[async_trait::async_trait]
 impl Approver for StdinApprover {
     async fn approve(&self, tool: &str, detail: &str, why: &str) -> Approval {
-        if !self.interactive {
-            return Approval::Once; // piped -p mode: don't hang waiting for stdin
-        }
         let tool = tool.to_string();
         let detail = detail.to_string();
         let why = why.to_string();
@@ -589,12 +518,12 @@ impl Approver for StdinApprover {
             Some(match line.trim().to_lowercase().as_str() {
                 "y" | "yes" => Approval::Once,
                 "a" | "always" => Approval::Session,
-                _ => Approval::Deny,
+                _ => Approval::Deny { reason: None },
             })
         })
         .await
         .ok()
         .flatten()
-        .unwrap_or(Approval::Deny)
+        .unwrap_or(Approval::Deny { reason: None })
     }
 }

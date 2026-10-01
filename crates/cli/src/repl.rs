@@ -6,7 +6,103 @@ use std::path::Path;
 use std::sync::Arc;
 
 use sunmao_core::Context;
-use sunmao_core::agent::{AgentLoop, Observer};
+use sunmao_core::agent::{AgentLoop, LiveEvent, Observer, TurnOutcome};
+
+/// The plain-stdio live observer — REPL transcript lines and the `-p`
+/// one-shot output both render through this.
+pub(crate) struct StdoutObserver {
+    in_reasoning: std::sync::Mutex<bool>,
+}
+
+impl StdoutObserver {
+    pub(crate) fn new() -> Self {
+        Self {
+            in_reasoning: std::sync::Mutex::new(false),
+        }
+    }
+}
+
+impl Observer for StdoutObserver {
+    fn on_event(&self, ev: &LiveEvent) {
+        let mut in_r = self.in_reasoning.lock().unwrap();
+        match ev {
+            LiveEvent::Reasoning { text } => {
+                if !*in_r {
+                    eprint!("\x1b[2m"); // dim
+                    *in_r = true;
+                }
+                eprint!("{text}");
+            }
+            LiveEvent::Content { text } => {
+                if *in_r {
+                    eprintln!("\x1b[0m");
+                    *in_r = false;
+                }
+                print!("{text}");
+                std::io::stdout().flush().ok();
+            }
+            LiveEvent::ToolStart {
+                name,
+                summary,
+                depth,
+                ..
+            } => {
+                if *in_r {
+                    eprintln!("\x1b[0m");
+                    *in_r = false;
+                }
+                let nest = if *depth > 0 { "↳" } else { "" };
+                if summary.is_empty() {
+                    println!("\n\x1b[36m[tool → {nest}{name}]\x1b[0m");
+                } else {
+                    println!("\n\x1b[36m[tool → {nest}{name} · {summary}]\x1b[0m");
+                }
+            }
+            LiveEvent::ToolDone {
+                name, ok, depth, ..
+            } => {
+                let mark = if *ok { "✓" } else { "✗" };
+                let nest = if *depth > 0 { "↳" } else { "" };
+                println!("\x1b[36m[tool {nest}{name} {mark}]\x1b[0m");
+            }
+            LiveEvent::Hook { event, detail } => {
+                if *in_r {
+                    eprintln!("\x1b[0m");
+                    *in_r = false;
+                }
+                println!("\x1b[33m[⚙ {event} — {detail}]\x1b[0m");
+            }
+            LiveEvent::Artifact {
+                name,
+                path,
+                bytes,
+                rev,
+            } => {
+                if *in_r {
+                    eprintln!("\x1b[0m");
+                    *in_r = false;
+                }
+                let v = if *rev > 1 {
+                    format!(" · rev {rev}")
+                } else {
+                    String::new()
+                };
+                println!("\x1b[36m[artifact '{name}' → {path} ({bytes} B{v})]\x1b[0m");
+            }
+            LiveEvent::Usage(_) => {} // durable in the log; REPL stays quiet
+            LiveEvent::TurnEnd { outcome } => {
+                if *in_r {
+                    eprintln!("\x1b[0m");
+                    *in_r = false;
+                }
+                match outcome {
+                    TurnOutcome::Completed => println!(),
+                    other => println!("\n[turn ended: {other:?}]"),
+                }
+            }
+        }
+    }
+}
 
 /// Print every `.jsonl` log in `dir` as `<id>\t<size>` rows — the
 /// `/sessions` and `--sessions` surface.

@@ -217,7 +217,7 @@ impl Client {
                 let verdict = match v["verdict"].as_str().unwrap_or("deny") {
                     "once" => sunmao_core::approval::Approval::Once,
                     "session" => sunmao_core::approval::Approval::Session,
-                    _ => sunmao_core::approval::Approval::Deny,
+                    _ => sunmao_core::approval::Approval::Deny { reason: None },
                 };
                 // ids are process-global; the card's session owns the slot
                 let target = v["sess"]

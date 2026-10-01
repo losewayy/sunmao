@@ -183,9 +183,9 @@ impl sunmao_core::approval::Approver for AcpApprover {
                 {
                     Approval::Session
                 }
-                _ => Approval::Deny,
+                _ => Approval::Deny { reason: None },
             },
-            Err(_) => Approval::Deny,
+            Err(_) => Approval::Deny { reason: None },
         }
     }
 }

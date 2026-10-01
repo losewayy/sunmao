@@ -10,6 +10,7 @@ use anyhow::{Context as _, Result};
 use sunmao_core::SessionEvent;
 use sunmao_core::SessionLog;
 use sunmao_core::agent::{AgentLoop, LiveEvent, Observer};
+use sunmao_core::approval::{Approval, Approver};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use super::client::Client;
@@ -335,7 +336,7 @@ pub(crate) async fn new_session(
 /// card was raised with (a tab switching into a session re-renders cards
 /// from these, so a pending approval survives the view switch).
 pub(crate) struct PendingCard {
-    pub(crate) tx: oneshot::Sender<sunmao_core::approval::Approval>,
+    pub(crate) tx: oneshot::Sender<Approval>,
     tool: String,
     detail: String,
     why: String,
@@ -387,13 +388,8 @@ pub(crate) struct ServeApprover {
 }
 
 #[async_trait::async_trait]
-impl sunmao_core::approval::Approver for ServeApprover {
-    async fn approve(
-        &self,
-        tool: &str,
-        detail: &str,
-        why: &str,
-    ) -> sunmao_core::approval::Approval {
+impl Approver for ServeApprover {
+    async fn approve(&self, tool: &str, detail: &str, why: &str) -> Approval {
         let id = self.pending.next.fetch_add(1, Ordering::Relaxed) + 1;
         let (tx, rx) = oneshot::channel();
         self.pending.map.lock().unwrap().insert(
@@ -410,7 +406,7 @@ impl sunmao_core::approval::Approver for ServeApprover {
             "tool": tool, "detail": detail, "why": why,
         }));
         // verdicts route through the map by id — ws ordering never decides
-        rx.await.unwrap_or(sunmao_core::approval::Approval::Deny)
+        rx.await.unwrap_or(Approval::Deny { reason: None })
     }
 }
 

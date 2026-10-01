@@ -12,7 +12,7 @@ struct Counting(
 impl crate::approval::Approver for Counting {
     async fn approve(&self, _t: &str, _d: &str, _w: &str) -> crate::approval::Approval {
         self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.1
+        self.1.clone()
     }
 }
 
@@ -185,7 +185,7 @@ async fn full_access_skips_prompts_but_not_deny() {
             &dir,
             "Bash",
             "{\"command\":\"git push origin\"}",
-            Approval::Deny, // even a would-be deny is never reached
+            Approval::Deny { reason: None }, // even a would-be deny is never reached
             ApprovalMode::FullAccess,
         );
         AgentLoop::new(ctx.clone())

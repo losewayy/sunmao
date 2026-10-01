@@ -282,10 +282,17 @@ impl AgentLoop {
                 Ok(())
             }
             crate::approval::Approval::Once => Ok(()),
-            crate::approval::Approval::Deny => {
+            crate::approval::Approval::Deny { reason } => {
                 let detail = format!("{tool}: {specifier} ({why})");
                 self.audit_fact("approval.deny", &detail, observer).await;
-                Err(format!("denied at approval gate ({why})"))
+                // the denial reason names *why it couldn't be answered*
+                // (non-interactive session) when the approver supplies one —
+                // the failed ToolResult shows it so the model can route
+                // around the refusal
+                Err(match reason {
+                    Some(r) => format!("denied at approval gate ({why}): {r}"),
+                    None => format!("denied at approval gate ({why})"),
+                })
             }
         }
     }

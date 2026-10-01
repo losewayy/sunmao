@@ -20,7 +20,7 @@ pub(super) fn handle_key(
     // session (same two-press convention as the draft-clear Esc).
     if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) {
         if app.focus == Focus::Approval {
-            resolve_card(app, sunmao_core::approval::Approval::Deny);
+            resolve_card(app, sunmao_core::approval::Approval::Deny { reason: None });
             return false;
         }
         if app.busy {
@@ -62,18 +62,21 @@ pub(super) fn handle_key(
 
 pub(super) fn resolve_card(app: &mut App, verdict: sunmao_core::approval::Approval) {
     if let Some(card) = app.approval.take() {
-        let _ = card.reply.send(verdict);
-        let mark = match verdict {
+        let mark = match &verdict {
             sunmao_core::approval::Approval::Once => "[approved]",
             sunmao_core::approval::Approval::Session => "[approved for session]",
-            sunmao_core::approval::Approval::Deny => "[denied]",
+            sunmao_core::approval::Approval::Deny { .. } => "[denied]",
         };
+        // `verdict` isn't Copy (Deny may carry a reason) — note the grant
+        // before the send moves it.
+        let session_grant = matches!(verdict, sunmao_core::approval::Approval::Session);
+        let _ = card.reply.send(verdict);
         app.push_note(&format!("{mark} {}: {}", card.tool, card.detail));
         // session grants cover the identical call everywhere — a queued
         // request for the same (tool, specifier) inherits the verdict
         // instead of re-asking what the user just answered (the grant is
         // core-side too, so auto-approval and the gate can't disagree).
-        if verdict == sunmao_core::approval::Approval::Session {
+        if session_grant {
             let (inheriting, rest): (VecDeque<_>, VecDeque<_>) = app
                 .approval_backlog
                 .drain(..)
@@ -116,12 +119,12 @@ fn card_key(app: &mut App, k: KeyEvent) -> bool {
             resolve_card(app, Approval::Session)
         }
         KeyCode::Char('3') | KeyCode::Char('n') | KeyCode::Char('N') => {
-            resolve_card(app, Approval::Deny)
+            resolve_card(app, Approval::Deny { reason: None })
         }
         KeyCode::Enter => {
             let v = match app.approval.as_ref().map(|c| c.selected).unwrap_or(0) {
                 1 => Approval::Session,
-                2 => Approval::Deny,
+                2 => Approval::Deny { reason: None },
                 _ => Approval::Once,
             };
             resolve_card(app, v);

@@ -99,9 +99,10 @@ impl sunmao_core::approval::Approver for TuiApprover {
             })
             .is_err()
         {
-            return sunmao_core::approval::Approval::Deny;
+            return sunmao_core::approval::Approval::Deny { reason: None };
         }
-        rx.await.unwrap_or(sunmao_core::approval::Approval::Deny)
+        rx.await
+            .unwrap_or(sunmao_core::approval::Approval::Deny { reason: None })
     }
 }
 

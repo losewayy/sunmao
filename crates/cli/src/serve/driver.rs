@@ -258,6 +258,12 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, cmd_line: &str, cli
             note(commands::artifacts_text(&host.agent.session_cwd()));
             true
         }
+        commands::Command::Search(q) => {
+            // cross-session grep over every known sessions dir — the same
+            // helper the REST `GET /sessions?q=` arm runs
+            note(sessions::search_text(&super::host::session_dirs(s), &q));
+            true
+        }
         commands::Command::Annotate(name, text) => {
             note(commands::annotate(&host.agent.session_cwd(), &name, &text));
             true

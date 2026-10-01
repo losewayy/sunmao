@@ -164,7 +164,7 @@ impl HostHandle {
                 Some(s) => HostResponse::js(s),
                 None => HostResponse::err(404, "not found".into()),
             },
-            ("GET", ["sessions"]) => sessions_list(s).await,
+            ("GET", ["sessions"]) => sessions_list(s, query_arg(query, "q")).await,
             ("GET", ["session"]) => session_info(s, query_arg(query, "id")).await,
             ("GET", ["projects"]) => projects_list(s).await,
             ("POST", ["session", "new"]) => {
@@ -276,11 +276,21 @@ fn js_asset(name: &str) -> Option<&'static str> {
     })
 }
 
-/// `GET /sessions` — the rail = dormant logs on disk ∪ live hosts (a
+/// `GET /sessions[?q=…]` — the rail = dormant logs on disk ∪ live hosts (a
 /// session the host is running exists even when its log hasn't flushed a
 /// fresh name yet). Scans every registered project's sessions dir; entries
 /// are `{id, project}` — `project` is the display path the row groups by.
-async fn sessions_list(s: &Arc<Shared>) -> HostResponse {
+/// `?q` switches to cross-session content search instead: `{id, title,
+/// hits[]}` rows from `crate::sessions::search_sessions`, capped at 20.
+async fn sessions_list(s: &Arc<Shared>, q: Option<String>) -> HostResponse {
+    if let Some(q) = q.filter(|q| !q.trim().is_empty()) {
+        let hits = crate::sessions::search_sessions(&super::host::session_dirs(s), &q);
+        return HostResponse::json(serde_json::json!({
+            "sessions": hits.iter().map(|h| serde_json::json!({
+                "id": h.id, "title": h.title, "hits": h.hits,
+            })).collect::<Vec<_>>(),
+        }));
+    }
     use std::collections::BTreeSet;
     let mut rows: Vec<(std::time::SystemTime, String, String)> = Vec::new();
     let mut seen = BTreeSet::new();

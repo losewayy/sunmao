@@ -34,6 +34,7 @@ const BUILTINS: &[&str] = &[
     "quit",
     "resume",
     "rewind",
+    "search",
     "sessions",
     "fork",
     "status",
@@ -62,6 +63,9 @@ pub enum Command {
     /// /sessions [id] — the resume picker alias: an arg resumes in the
     /// TUI, bare lists recent sessions everywhere
     Sessions(Option<String>),
+    /// /search <q> — cross-session grep over every known sessions dir;
+    /// frontends render `sessions::search_text` (or the REST rows)
+    Search(String),
     /// /tasks — the live sub-agent roster
     Tasks,
     /// /todos — the model's session task list
@@ -136,6 +140,10 @@ pub fn parse(cmd_line: &str) -> Command {
             },
         },
         "sessions" => Command::Sessions(arg()),
+        "search" => match arg() {
+            Some(q) => Command::Search(q),
+            None => Command::Note("[usage: /search <query>]".into()),
+        },
         "tasks" => Command::Tasks,
         "todos" => Command::Todos,
         "mcp" => Command::Mcp,
@@ -356,6 +364,11 @@ mod tests {
         assert!(matches!(parse("fork s-1"), Command::Fork(ref s) if s == "s-1"));
         assert!(matches!(parse("fork"), Command::Note(_)));
         assert!(matches!(parse("sessions"), Command::Sessions(None)));
+        assert!(matches!(parse("search"), Command::Note(_)));
+        assert!(matches!(
+            parse("search helo wrld"),
+            Command::Search(ref q) if q == "helo wrld"
+        ));
         assert!(matches!(parse("mcp"), Command::Mcp));
         assert!(matches!(parse("status"), Command::Status));
         assert!(matches!(parse("mode auto"), Command::Mode(Some(_))));

@@ -230,8 +230,17 @@ async function refreshSessions() {
     });
     SESSION_META = v.meta && typeof v.meta === 'object' ? v.meta : {};
     renderRail(); renderCrumb();
+    railSearch(); // an open rail query re-runs against the fresh list
   } catch {}
 }
+let railTimer = 0;
+$('#rail-q').addEventListener('input', () => { clearTimeout(railTimer); railTimer = setTimeout(railSearch, DEBOUNCE_SEARCH); });
+$('#rail-q').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const first = $('#sessions [data-sess]');
+  if (first) resumeSession(first.dataset.sess);
+});
 let dfTimer = 0;
 function refreshDataflowSoon() { clearTimeout(dfTimer); dfTimer = setTimeout(refreshDataflow, DEBOUNCE_DATAFLOW); }
 async function refreshDataflow() {
@@ -345,12 +354,45 @@ const sessRow = id => {
   const state = wait ? '<i class="sd wait" aria-label="等待批准"></i>' : run ? '<i class="sd run" aria-label="运行中"></i>' : `<span class="when">${sessWhen(m.mtime)}</span>`;
   return `<button class="row sess${on ? ' on' : ''}" data-sess="${esc(id)}" data-tip="${esc((proj ? proj + ' · ' : '') + (title ? title + '|' + id : id))}" data-tip-side="right"><span class="t${title ? '' : ' untitled'}">${esc(title || '新对话')}</span>${foreign}${state}</button>`;
 };
+/* ---- rail search — ≥2 chars greps every session log's message content
+   server-side (GET /sessions?q=); shorter input filters the rail by
+   title/id client-side. railHits: null = list mode, else the last
+   endpoint payload. ---- */
+let railHits = null, railQ = 0;
+const DEBOUNCE_SEARCH = 250;
+function railSearch() {
+  const q = ($('#rail-q') && $('#rail-q').value || '').trim();
+  if (q.length < 2) { railHits = null; renderRail(); return; }
+  const seq = ++railQ;
+  railHits = null; // keep the filtered list while the query flies
+  fetch(`/sessions?q=${encodeURIComponent(q)}`)
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(v => { if (seq !== railQ) return; railHits = (v.sessions || []); renderRail(); })
+    .catch(() => { if (seq === railQ) { railHits = null; renderRail(); } });
+}
+function railRowWithHits(h) {
+  const id = h.id;
+  SESSION_META[id] = SESSION_META[id] || {};
+  if (h.title) SESSION_META[id].title = h.title;
+  const snips = (h.hits || []).map(s => `<div class="snip" data-sess="${esc(id)}">${esc(s)}</div>`).join('');
+  return sessRow(id) + `<div class="snips">${snips}</div>`;
+}
 function renderRail() {
   let html = '', last = '';
   // a session nobody typed into is just an opened-and-left window: keep it
   // out of the rail (the palette still lists every id) unless it's the
   // current one or has something running / waiting
-  const shown = SESSION_IDS.filter(id => sessTitle(id) || id === sessionId || busySessions.has(id) || waitingSessions.has(id));
+  const q = ($('#rail-q') && $('#rail-q').value || '').trim().toLowerCase();
+  if (railHits) {
+    $('#sessions').innerHTML = railHits.map(railRowWithHits).join('') ||
+      `<div class="empty-hint">没有匹配 “${esc(q)}” 的会话</div>`;
+    $$('.nav-i[data-go]').forEach(b => b.classList.toggle('on', b.dataset.go === view));
+    return;
+  }
+  const shown = SESSION_IDS.filter(id => {
+    if (q && !(sessTitle(id) + ' ' + id).toLowerCase().includes(q)) return false;
+    return sessTitle(id) || id === sessionId || busySessions.has(id) || waitingSessions.has(id);
+  });
   for (const id of shown) {
     const b = sessBucket((SESSION_META[id] || {}).mtime);
     if (b !== last) { html += `<div class="grp"><span>${b}</span></div>`; last = b; }

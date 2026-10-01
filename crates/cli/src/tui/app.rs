@@ -104,6 +104,10 @@ pub struct App {
     /// the driver fills this once at startup; slash-menu arg completion
     /// filters it.
     pub model_selectors: Vec<String>,
+    /// `/srv:prompt` names the connected MCP servers advertise — merges
+    /// into the command-completion pool at startup (a prompts/list_changed
+    /// mid-session refreshes resolution, not this snapshot).
+    pub mcp_prompts: Vec<String>,
     /// enabled preset plugin roots — slash commands resolve against their
     /// `commands/` dirs too. The driver sets this once at startup.
     pub extra_roots: Vec<std::path::PathBuf>,
@@ -225,6 +229,7 @@ impl App {
             viewer: None,
             busy_since: None,
             model_selectors: Vec::new(),
+            mcp_prompts: Vec::new(),
             extra_roots: Vec::new(),
             file_pool: Vec::new(),
             session_ids: Vec::new(),

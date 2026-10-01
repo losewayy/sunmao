@@ -250,7 +250,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             false,
         ),
     };
-    let mut registry = builtin_registry();
+    let registry = builtin_registry();
     let mcp = sunmao_core::mcp::connect_all(&cwd, &preset_roots).await;
     for tool in mcp.tools {
         registry.register_boxed(tool);
@@ -317,6 +317,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             &ctx.cwd,
             &sunmao_core::hooks::HookInput {
                 source: Some(if resumed { "resume" } else { "startup" }),
+                mcp_servers: Some(ctx.mcp_servers.iter().map(|s| s.name.clone()).collect()),
                 ..Default::default()
             },
         )
@@ -459,7 +460,7 @@ async fn host_spec(cli: &Cli) -> anyhow::Result<serve::HostSpec> {
             let driver = driver_override;
             let default_provider = default_provider.clone();
             Box::pin(async move {
-                let mut registry = builtin_registry();
+                let registry = builtin_registry();
                 for h in &mcp_servers {
                     for t in h.tool_impls() {
                         registry.register_boxed(t);

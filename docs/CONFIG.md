@@ -9,7 +9,7 @@ per-key where merging applies (hooks/permissions/mcp).
 | File | Shape | Effect |
 |---|---|---|
 | `hooks.json` | `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "..."}]}]}}` | Claude-contract hook procs; stdin=JSON event, exit 0 allow / 2 veto |
-| `mcp.json` | `{"mcpServers": {"name": {"command","args","env"} \| {"url"}}}` | MCP servers — stdio spawn or streamable-HTTP |
+| `mcp.json` | `{"mcpServers": {"name": {"command","args","env"} \| {"url","headers"?,"auth_env"?,"token_file"?,"timeout_secs"?}}}` | MCP servers — stdio spawn or streamable-HTTP; `auth_env`/`token_file` supply a static bearer token, `headers` merges literal request headers. Server prompts surface as `/srv:name` slash commands |
 | `permissions.json` | `{"permissions": {"allow":[..],"ask":[..],"deny":[..]}}` | `Tool(glob)` rules; deny>ask>allow>default |
 | `risky-patterns.txt` | `pattern | reason` per line | **replaces** the shipped approval-gate table outright (cold-plug); preset dirs' same-named file merges additively |
 | `plugin.json` | `{"name", "hooks":{...}, "mcpServers":{...}, "extensions":[{...}], "loop": "full"\|"bare"}` | bundle manifest — folds hooks + MCP + extension children into the same paths; `extensions` entries are `{command, args, env}` spawn specs (`${CLAUDE_PLUGIN_ROOT}` → the plugin dir) — any executable speaking the `ext/*` JSON-RPC protocol qualifies (PROTOCOLS.md "Extension protocol"); tools surface as `ext__{name}__{tool}`; `loop` picks the turn driver — `full` (contract loop: hooks+gate+compaction) or `bare` (none of those) |

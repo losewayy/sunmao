@@ -203,6 +203,7 @@ impl Shared {
                 &ctx.cwd,
                 &sunmao_core::hooks::HookInput {
                     source: Some(source),
+                    mcp_servers: Some(host.agent.mcp_server_names()),
                     ..Default::default()
                 },
             )
@@ -566,15 +567,6 @@ fn register_project(launch_cwd: &std::path::Path, project: &std::path::Path) {
     if let Ok(t) = serde_json::to_string_pretty(&list) {
         let _ = std::fs::write(&path, t);
     }
-}
-
-/// Slash-command list for the composer menu — same candidates the TUI
-/// shows (builtins + file commands), minus pure-TUI affordances.
-pub(crate) fn slash_candidates(s: &Shared) -> Vec<String> {
-    crate::commands::candidates(&s.cwd, &s.roots)
-        .into_iter()
-        .filter(|n| *n != "multiline" && *n != "clear" && *n != "quit")
-        .collect()
 }
 
 /// The transport-free host handle — the GUI's seam (GUI.md §8). `spawn_host`

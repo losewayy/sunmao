@@ -83,11 +83,38 @@ prefix, so any byte that moves breaks the hit downstream of it.
 Two transports from one `ServerSpec`:
 
 - `{"command","args","env"}` → `TokioChildProcess` (stderr → null)
-- `{"url": "https://…"}` → `StreamableHttpClientTransport::from_uri`
+- `{"url": "https://…", "headers"?, "auth_env"?, "token_file"?,
+  "timeout_secs"?}` → `StreamableHttpClientTransport` over a custom
+  reqwest client. `headers` values expand `${VAR}`/`$VAR` from the
+  process env; `auth_env` names an env var holding the bearer token;
+  `token_file` reads it from a file (`${CLAUDE_PLUGIN_ROOT}` expands).
+  A credential that can't resolve fails that server — warn-and-skip,
+  never a silent unauthenticated call.
 
 Tools surface as `mcp__{server}__{tool}`, schema/description passed through.
+Prompts surface as `/srv:prompt` slash commands — resolution order is
+`dispatch_builtin` → `prompts/get` → file commands, and whitespace args
+map onto the prompt's declared arguments positionally (extras land on the
+last declared arg). Server push traffic rides `SessionHandler`
+(`mcp/handler.rs`): `*/list_changed` re-lists all three catalogs and bumps
+a version — `AgentLoop::drain_mcp` applies it at the next turn boundary
+(inside `turn_lock`, so a swap can't straddle a ToolCall/ToolResult pair)
+and records an `mcp.refresh` audit fact; elicitation requests get a
+protocol error — this client never prompts mid-tool — plus an
+`mcp.notice` fact so the decline is visible. `SessionStart` hook payloads
+carry `mcp_servers` (connected server names).
+
 Merge order: `.sunmao/mcp.json` then `plugin.json`/`plugins/*/plugin.json` —
 each malformed entry warns and continues; a dead server bricks only itself.
+`/mcp` reports tools/prompts/resources counts + liveness per server.
+
+Not implemented (by design, reported rather than faked): OAuth flows
+(`auth_env`/`token_file`/`headers` cover static credentials — no
+authorization-code or dynamic-client-registration dance), sampling
+(server→client LLM requests), `@server:uri` resource mentions
+(resources/list+read work — `/mcp` counts and the island bridge proxy
+them — but there is no `@` mention expansion for URIs yet), and
+prompt/resource *template* expansion beyond declared positional args.
 
 ## ACP server (`crates/cli/src/acp/`, agent-client-protocol 2.2 + `unstable_protocol_v2`)
 

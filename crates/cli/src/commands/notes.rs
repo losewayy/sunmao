@@ -100,9 +100,9 @@ pub fn todos_text(items: &[TodoItem]) -> String {
 }
 
 /// `/mcp` — the configured MCP server roster: name, transport, how many
-/// tools it advertised, and whether the connection is still alive. Servers
-/// that failed at startup never connected — they're the startup warnings,
-/// not roster rows.
+/// tools/prompts/resources it advertised, and whether the connection is
+/// still alive. Servers that failed at startup never connected — they're
+/// the startup warnings, not roster rows.
 pub fn mcp_text(servers: &[McpServerStatus]) -> String {
     if servers.is_empty() {
         return "[no MCP servers connected — .sunmao/mcp.json or plugin manifests]".to_string();
@@ -111,10 +111,12 @@ pub fn mcp_text(servers: &[McpServerStatus]) -> String {
         .iter()
         .map(|s| {
             format!(
-                "  {}  {} · {} tools · {}",
+                "  {}  {} · {} tools · {} prompts · {} resources · {}",
                 s.name,
                 s.transport,
                 s.tools,
+                s.prompts,
+                s.resources,
                 if s.connected {
                     "connected"
                 } else {

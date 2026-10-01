@@ -42,6 +42,10 @@ impl AgentLoop {
         observer: &dyn Observer,
     ) -> anyhow::Result<TurnOutcome> {
         let _turn_permit = self.ctx.turn_lock.lock().await;
+        // MCP push traffic lands here — inside the fence, before the
+        // driver runs, so a catalog bump can never swap the registry
+        // between a turn's ToolCall and its ToolResult.
+        self.drain_mcp(observer).await;
         let res = match self.ctx.loop_driver {
             crate::agent::LoopDriver::Full => {
                 self.run_turn_full(input, attachments, observer).await

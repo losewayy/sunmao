@@ -18,6 +18,7 @@ use crate::session::{SessionEvent, SessionLog};
 mod bare;
 mod compact;
 mod gate;
+mod mcp;
 pub mod mode;
 mod turn;
 
@@ -442,6 +443,7 @@ impl AgentLoop {
                 &self.ctx.cwd,
                 &crate::hooks::HookInput {
                     source: Some("resume"),
+                    mcp_servers: Some(self.mcp_server_names()),
                     ..Default::default()
                 },
             )

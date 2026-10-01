@@ -130,10 +130,26 @@ pub fn mcp_text(servers: &[McpServerStatus]) -> String {
 }
 
 /// `/status` — the session's vitals, folded by `AgentLoop::status`.
+/// `grants` lists the `Approval::Session` ledger verbatim — a grant covers
+/// the identical call only, so the rows are the audit surface (revocation
+/// is deliberately absent this round: read-only).
 pub fn status_text(s: &SessionStatus) -> String {
     let t = &s.tokens;
+    let grants = if s.grants.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n  grants   {} session grant{}",
+            s.grants.len(),
+            if s.grants.len() == 1 { "" } else { "s" }
+        ) + &s
+            .grants
+            .iter()
+            .map(|g| format!("\n           · {g}"))
+            .collect::<String>()
+    };
     format!(
-        "session {id}\n  model    {model} ({provider})\n  cwd      {cwd}\n  mode     {mode}\n  tokens   {total} total — {prompt} prompt + {completion} completion · cache {cache_read} read / {cache_write} write",
+        "session {id}\n  model    {model} ({provider})\n  cwd      {cwd}\n  mode     {mode}\n  tokens   {total} total — {prompt} prompt + {completion} completion · cache {cache_read} read / {cache_write} write{grants}",
         id = s.session_id,
         model = s.model,
         provider = s.provider,

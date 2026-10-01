@@ -75,6 +75,7 @@ function closePalette() { $('#palette').hidden = true; }
 function palSource() {
   return [
     { g: '操作', t: '新对话', i: 'pen', k: 'Ctrl N', run: newChat },
+    ...(TAURI && TAURI.win ? [{ g: '操作', t: '新窗口', i: 'monitor', run: () => TAURI.win('new') }] : []),
     { g: '操作', t: '打开设置', i: 'settings', k: 'Ctrl ,', run: () => go('settings') },
     { g: '操作', t: dockOn ? '隐藏数据面板' : '显示数据面板', i: 'panel-r', k: 'Ctrl \\', run: toggleDock },
     { g: '操作', t: '事件日志', i: 'history', run: () => pop($('[data-act="events"]'), eventsHTML(), { align: 'end', cls: 'events' }) },

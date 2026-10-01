@@ -85,6 +85,22 @@ function toolHTML([st, nm, sm, tm, out], o = {}) {
 // replayed prompts carry no timestamp in the log — only a live send shows
 // the wall clock, rather than stamping history with "now"
 const youHTML = (text, anim, at) => `<div class="msg you"><div class="msg-h${anim ? ' enter' : ''}"><i class="dot"></i><span>你</span>${at ? `<time>${at}</time>` : ''}</div><div class="bubble glass${anim ? ' enter' : ''}">${esc(text)}</div></div>`;
+// message.content may be a bare string (old logs) or a block array
+// [{type:'text'|'image',…}] — the same normalization the kernel's
+// content_text() applies. msgText flattens for text surfaces; msgParts
+// keeps the image blocks so the transcript can render real thumbs.
+function msgParts(m) {
+  const c = m && m.content;
+  if (typeof c === 'string') return c ? [{ type: 'text', text: c }] : [];
+  if (Array.isArray(c)) return c.filter(b => b && (b.type === 'text' || b.type === 'image'));
+  return [];
+}
+const attBase = p => String(p || '').split(/[\\/]/).pop();
+function msgText(m) { return msgParts(m).map(b => b.type === 'text' ? b.text : `[image: ${attBase(b.path)}]`).join('\n'); }
+// a stored attachment's serving URL — same dir POST /attachments wrote into
+function attURL(p) { return '/attachments/' + encodeURIComponent(attBase(p)) + '?sess=' + encodeURIComponent(sessionId); }
+const attImgs = m => msgParts(m).filter(b => b.type === 'image')
+  .map(b => `<img class="att" src="${attURL(b.path)}" alt="${esc(attBase(b.path))}" title="${esc(b.path)}">`).join('');
 const botHead = anim => `<div class="msg-h${anim ? ' enter' : ''}"><i class="dot"></i><span>sunmao</span>${modelLabel ? `<span class="model">${esc(modelLabel.replace(/^global:/, ''))}</span>` : ''}</div>`;
 const TX = $('#tx');
 function append(parent, html) { const t = document.createElement('template'); t.innerHTML = html.trim(); const first = t.content.firstElementChild; parent.appendChild(t.content); keepBottom(true); return first; }
@@ -365,7 +381,7 @@ function renderReplay(events, anim) {
       const m = ev.message || {};
       if (m.role === 'system') { logEv('message', 'system · (identity, hidden)'); continue; }
       if (m.role === 'user') {
-        const c = m.content || '';
+        const c = msgText(m);
         if (c.startsWith('[hook context]')) {
           // folded hook evidence — the TUI renders this as an audit row,
           // not a prompt the user typed; the event log carries the detail
@@ -379,10 +395,13 @@ function renderReplay(events, anim) {
         }
         closeMsg();
         append(TX, youHTML(c, anim));
+        const imgs = attImgs(m);
+        if (imgs) append(TX, `<div class="msg you"><div class="att-row">${imgs}</div></div>`);
         logEv('message', 'user · ' + c.slice(0, 60));
       } else if (m.role === 'assistant') {
-        if (m.content) { const h = msgHost(); append(h, `<div class="bubble glass">${mdRender(m.content)}</div>`); }
-        logEv('message', 'assistant · ' + (m.content || '').slice(0, 60) + (m.tool_calls ? ` (+${m.tool_calls.length} calls)` : ''));
+        const c = msgText(m);
+        if (c) { const h = msgHost(); append(h, `<div class="bubble glass">${mdRender(c)}</div>`); }
+        logEv('message', 'assistant · ' + c.slice(0, 60) + (m.tool_calls ? ` (+${m.tool_calls.length} calls)` : ''));
       } else if (m.role === 'tool') {
         continue; // paired tool_result covers it
       }

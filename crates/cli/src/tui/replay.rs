@@ -262,20 +262,20 @@ impl App {
                 }
                 E::Message { message } => match message.role {
                     Role::User => {
-                        if let Some(c) = &message.content {
+                        if let Some(c) = message.content_text() {
                             if c.starts_with("[hook context]") {
                                 self.push_audit("hook injected context");
                             } else if c.starts_with("<local-shell>") {
                                 // folded evidence — the real block comes
                                 // from the LocalShell event itself
                             } else {
-                                self.echo_user(c);
+                                self.echo_user(&c);
                             }
                         }
                     }
                     Role::Assistant => {
-                        if let Some(c) = message.content.as_ref().filter(|c| !c.is_empty()) {
-                            self.stream(BlockKind::Assistant, c);
+                        if let Some(c) = message.content_text().filter(|c| !c.is_empty()) {
+                            self.stream(BlockKind::Assistant, &c);
                         }
                     }
                     _ => {}

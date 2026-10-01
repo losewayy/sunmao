@@ -22,7 +22,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::sse::{SseEvent, SseParser};
-use crate::types::{Message, Role, Usage};
+use crate::types::{Content, Message, ResolvedBlock, Role, Usage};
 use crate::{DeltaStream, ProviderAdapter, StreamDelta, ToolCallFragment};
 
 pub struct AnthropicClient {
@@ -51,14 +51,16 @@ impl AnthropicClient {
 
     /// Our `Message` uses OAI shape (flat content + tool_calls +
     /// tool_call_id); Anthropic needs content-block arrays and tool results
-    /// nested inside user turns.
-    fn map_messages(&self, messages: &[Message]) -> (Option<String>, Vec<Value>) {
+    /// nested inside user turns. `async` because image blocks read their
+    /// bytes off disk (`Content::resolve` — a missing file degrades to a
+    /// `[missing image]` text block rather than failing the request).
+    async fn map_messages(&self, messages: &[Message]) -> (Option<String>, Vec<Value>) {
         let mut system = None;
         let mut out: Vec<Value> = Vec::new();
         for m in messages {
             match m.role {
                 Role::System => {
-                    system = Some(match (system.take(), m.content.clone()) {
+                    system = Some(match (system.take(), m.content_text()) {
                         (Some(prev), Some(c)) => format!("{prev}\n\n{c}"),
                         (None, c) => c.unwrap_or_default(),
                         (p, None) => p.unwrap_or_default(),
@@ -72,22 +74,39 @@ impl AnthropicClient {
                             "content": [{
                                 "type": "tool_result",
                                 "tool_use_id": id,
-                                "content": m.content.clone().unwrap_or_default(),
+                                "content": m.content_text().unwrap_or_default(),
                             }],
                         }));
                     } else {
-                        out.push(json!({
-                            "role": "user",
-                            "content": [{ "type": "text", "text": m.content.clone().unwrap_or_default() }],
-                        }));
+                        let mut content = Vec::new();
+                        for b in m.content.iter().flatten() {
+                            match b.resolve().await {
+                                ResolvedBlock::Text(text) => {
+                                    content.push(json!({"type": "text", "text": text}));
+                                }
+                                ResolvedBlock::Image { mime, data } => {
+                                    content.push(json!({
+                                        "type": "image",
+                                        "source": {
+                                            "type": "base64",
+                                            "media_type": mime,
+                                            "data": data,
+                                        },
+                                    }));
+                                }
+                            }
+                        }
+                        out.push(json!({"role": "user", "content": content}));
                     }
                 }
                 Role::Assistant => {
                     let mut content = Vec::new();
-                    if let Some(c) = &m.content
-                        && !c.is_empty()
-                    {
-                        content.push(json!({"type": "text", "text": c}));
+                    for b in m.content.iter().flatten() {
+                        if let Content::Text { text } = b
+                            && !text.is_empty()
+                        {
+                            content.push(json!({"type": "text", "text": text}));
+                        }
                     }
                     for tc in m.tool_calls.clone().unwrap_or_default() {
                         let input: Value =
@@ -112,7 +131,7 @@ impl AnthropicClient {
                         "content": [{
                             "type": "tool_result",
                             "tool_use_id": m.tool_call_id.clone().unwrap_or_default(),
-                            "content": m.content.clone().unwrap_or_default(),
+                            "content": m.content_text().unwrap_or_default(),
                         }],
                     }));
                 }
@@ -140,7 +159,7 @@ impl AnthropicClient {
     }
 
     async fn stream_inner(&self, req: &crate::oai::ChatRequest<'_>) -> anyhow::Result<DeltaStream> {
-        let (system, messages) = self.map_messages(req.messages);
+        let (system, messages) = self.map_messages(req.messages).await;
         let mut body = json!({
             "model": self.model,
             "max_tokens": req.max_tokens.unwrap_or(self.default_max_tokens),
@@ -378,8 +397,8 @@ mod tests {
     use super::*;
     use crate::types::{FunctionCall, ToolCall};
 
-    #[test]
-    fn maps_tool_calls_and_results_into_block_arrays() {
+    #[tokio::test]
+    async fn maps_tool_calls_and_results_into_block_arrays() {
         let c = AnthropicClient::new("http://x", "k", "m");
         let msgs = vec![
             Message::system("sys"),
@@ -397,7 +416,7 @@ mod tests {
             ),
             Message::tool_result("t1", "file.rs"),
         ];
-        let (sys, mapped) = c.map_messages(&msgs);
+        let (sys, mapped) = c.map_messages(&msgs).await;
         assert_eq!(sys.as_deref(), Some("sys"));
         assert_eq!(mapped.len(), 3);
         // assistant message has tool_use block
@@ -416,8 +435,8 @@ mod tests {
     /// already wrote. A lone tail breakpoint would leave the prior write
     /// findable only through the 20-block lookback, which a fat tool batch
     /// can exceed.
-    #[test]
-    fn cache_breakpoints_mark_last_two_messages() {
+    #[tokio::test]
+    async fn cache_breakpoints_mark_last_two_messages() {
         let c = AnthropicClient::new("http://x", "k", "m");
         let msgs = vec![
             Message::system("sys"),
@@ -425,7 +444,7 @@ mod tests {
             Message::assistant(Some("a1".into()), vec![]),
             Message::user("q2"),
         ];
-        let (_sys, mapped) = c.map_messages(&msgs);
+        let (_sys, mapped) = c.map_messages(&msgs).await;
         let marked: Vec<usize> = mapped
             .iter()
             .enumerate()

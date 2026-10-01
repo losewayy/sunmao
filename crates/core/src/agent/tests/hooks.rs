@@ -68,7 +68,7 @@ async fn pretooluse_updated_input_rewrites_dispatch() {
         .find(|m| matches!(m.role, sunmao_llm::types::Role::Tool))
         .expect("tool result message");
     assert_eq!(
-        tool_msg.content.as_deref().map(str::trim_end),
+        tool_msg.content_text().as_deref().map(str::trim_end),
         Some("rewritten")
     );
     std::fs::remove_dir_all(&dir).ok();
@@ -127,7 +127,13 @@ async fn pretooluse_permission_deny_blocks() {
         .iter()
         .find(|m| matches!(m.role, sunmao_llm::types::Role::Tool))
         .expect("tool result message");
-    assert!(tool_msg.content.as_deref().unwrap().contains("policy"));
+    assert!(
+        tool_msg
+            .content_text()
+            .as_deref()
+            .unwrap()
+            .contains("policy")
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 

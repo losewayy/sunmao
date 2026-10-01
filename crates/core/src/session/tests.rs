@@ -56,9 +56,15 @@ async fn compacted_boundary_clears_prior_transcript() {
     // system prompt survives the fold — it's identity, not history
     assert_eq!(msgs.len(), 3);
     assert_eq!(msgs[0].role, sunmao_llm::types::Role::System);
-    assert_eq!(msgs[0].content.as_deref(), Some("identity"));
-    assert!(msgs[1].content.as_deref().unwrap().contains("summary text"));
-    assert_eq!(msgs[2].content.as_deref(), Some("new"));
+    assert_eq!(msgs[0].content_text().as_deref(), Some("identity"));
+    assert!(
+        msgs[1]
+            .content_text()
+            .as_deref()
+            .unwrap()
+            .contains("summary text")
+    );
+    assert_eq!(msgs[2].content_text().as_deref(), Some("new"));
 }
 
 /// A crash mid-append strands a partial JSON fragment at EOF without a
@@ -90,7 +96,7 @@ async fn open_path_heals_crash_truncated_tail() {
 
     let log = SessionLog::open_path(&path).await.unwrap();
     let msgs = log.messages().await.unwrap();
-    let texts: Vec<_> = msgs.iter().filter_map(|m| m.content.as_deref()).collect();
+    let texts: Vec<String> = msgs.iter().filter_map(|m| m.content_text()).collect();
     assert_eq!(texts, vec!["first", "second"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -111,7 +117,7 @@ async fn local_shell_folds_into_messages_both_paths() {
     log.append(&ev).await.unwrap();
     let msgs = log.messages().await.unwrap();
     assert_eq!(msgs.len(), 1);
-    let c = msgs[0].content.as_deref().unwrap();
+    let c = msgs[0].content_text().unwrap();
     assert!(c.contains("$ echo hi") && c.contains("[exit 0]"));
 
     // file-backed — same fold through the disk replay path. Unique dir
@@ -202,7 +208,7 @@ async fn session_meta_stays_out_of_the_fold() {
     .unwrap();
     let msgs = log.messages().await.unwrap();
     assert_eq!(msgs.len(), 1);
-    assert_eq!(msgs[0].content.as_deref(), Some("hi"));
+    assert_eq!(msgs[0].content_text().as_deref(), Some("hi"));
 }
 
 /// A corrupt JSONL line must not brick every future turn — the fold
@@ -234,7 +240,7 @@ async fn corrupt_line_is_skipped_not_fatal() {
 
     let log = SessionLog::open(&dir, "c").await.unwrap();
     let msgs = log.messages().await.unwrap();
-    let texts: Vec<_> = msgs.iter().filter_map(|m| m.content.as_deref()).collect();
+    let texts: Vec<String> = msgs.iter().filter_map(|m| m.content_text()).collect();
     assert_eq!(texts, vec!["before", "after"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -275,7 +281,13 @@ async fn dangling_tool_call_gets_interrupted_result() {
         .iter()
         .find(|m| m.tool_call_id.as_deref() == Some("c-dead"))
         .expect("orphaned tool_call must gain a synthetic result");
-    assert!(result.content.as_deref().unwrap().contains("interrupted"));
+    assert!(
+        result
+            .content_text()
+            .as_deref()
+            .unwrap()
+            .contains("interrupted")
+    );
     // the repair lands before the following user message (adjacency)
     let idx = msgs
         .iter()
@@ -295,7 +307,7 @@ async fn dangling_tool_call_gets_interrupted_result() {
     assert!(
         msgs.iter()
             .any(|m| m.tool_call_id.as_deref() == Some("c-dead")
-                && m.content.as_deref().unwrap().contains("interrupted")),
+                && m.content_text().as_deref().unwrap().contains("interrupted")),
         "file-backed fold must repair dangling calls too"
     );
     let _ = std::fs::remove_dir_all(&dir);

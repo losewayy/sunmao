@@ -29,10 +29,26 @@ impl AgentLoop {
         input: &str,
         observer: &dyn Observer,
     ) -> anyhow::Result<TurnOutcome> {
+        self.run_turn_blocks(input, &[], observer).await
+    }
+
+    /// A turn whose user message carries attachment blocks (images) after
+    /// the prompt text. Empty `attachments` behaves exactly like
+    /// `run_turn` — `Message::user_blocks` degenerates to one text block.
+    pub async fn run_turn_blocks(
+        &self,
+        input: &str,
+        attachments: &[sunmao_llm::Content],
+        observer: &dyn Observer,
+    ) -> anyhow::Result<TurnOutcome> {
         let _turn_permit = self.ctx.turn_lock.lock().await;
         let res = match self.ctx.loop_driver {
-            crate::agent::LoopDriver::Full => self.run_turn_full(input, observer).await,
-            crate::agent::LoopDriver::Bare => self.run_turn_bare(input, observer).await,
+            crate::agent::LoopDriver::Full => {
+                self.run_turn_full(input, attachments, observer).await
+            }
+            crate::agent::LoopDriver::Bare => {
+                self.run_turn_bare(input, attachments, observer).await
+            }
         };
         // cancelled resets at turn END on *every* exit path — an Err or an
         // early-returned outcome must not leak the flag into the next turn
@@ -55,9 +71,10 @@ impl AgentLoop {
     async fn run_turn_full(
         &self,
         input: &str,
+        attachments: &[sunmao_llm::Content],
         observer: &dyn Observer,
     ) -> anyhow::Result<TurnOutcome> {
-        match self.run_turn_inner(input, observer).await {
+        match self.run_turn_inner(input, attachments, observer).await {
             Ok(o) => {
                 // non-clean outcomes fire StopFailure — Stop itself is emitted
                 // inside run_turn_inner on Completed only; the union event
@@ -93,6 +110,7 @@ impl AgentLoop {
     async fn run_turn_inner(
         &self,
         input: &str,
+        attachments: &[sunmao_llm::Content],
         observer: &dyn Observer,
     ) -> anyhow::Result<TurnOutcome> {
         // NOTE: cancelled flag is cleared at turn END, not start — a cancel
@@ -146,7 +164,7 @@ impl AgentLoop {
         {
             let mut log = self.ctx.sessions.lock().await;
             log.append(&SessionEvent::Message {
-                message: Message::user(input),
+                message: Message::user_blocks(input, attachments.to_vec()),
             })
             .await?;
             for extra in prompt_outcome.extra_context {

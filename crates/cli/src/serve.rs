@@ -11,7 +11,8 @@
 //!                  "tool","detail","why"} | {"type":"note","text"} |
 //!                  {"type":"session","id"} | {"type":"model","label"} |
 //!                  {"type":"busy","busy":bool}
-//!   client → host: {"type":"prompt","text"} | {"type":"cancel"} |
+//!   client → host: {"type":"prompt","text","attachments":[{"path","mime"}]?}
+//!                  | {"type":"cancel"} |
 //!                  {"type":"approval","id","verdict":"once|session|deny"} |
 //!                  {"type":"resume","id"} | {"type":"fork","id"} |
 //!                  {"type":"annotate","name","note"} | {"type":"model","sel"}
@@ -20,7 +21,8 @@
 //!         GET /session/{id}/events · GET /session/{id}/turns ·
 //!         POST /session/{id}/rewind · GET /artifacts/{name} ·
 //!         GET /artifacts/{name}/revs|notes|ui ·
-//!         POST /artifacts/{name}/annotate · GET /dataflow[/{id}]
+//!         POST /artifacts/{name}/annotate · GET /dataflow[/{id}] ·
+//!         POST /attachments[?sess&ext] · GET /attachments/{name}
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;

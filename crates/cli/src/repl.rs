@@ -324,7 +324,10 @@ pub async fn run(
                         Some(body) => {
                             let rest = cmd_line[name.len()..].trim();
                             let prompt = crate::commands::expand_command(&body, rest);
-                            if let Err(e) = agent.run_turn(&prompt, &*observer.0).await {
+                            let (prompt, atts) = crate::attachments::attach_mentions(&prompt, cwd);
+                            if let Err(e) =
+                                agent.run_turn_blocks(&prompt, &atts, &*observer.0).await
+                            {
                                 eprintln!("[error] {e:#}");
                             }
                         }
@@ -334,7 +337,8 @@ pub async fn run(
                 }
             }
         }
-        if let Err(e) = agent.run_turn(line, &*observer.0).await {
+        let (line, atts) = crate::attachments::attach_mentions(line, cwd);
+        if let Err(e) = agent.run_turn_blocks(&line, &atts, &*observer.0).await {
             eprintln!("[error] {e:#}");
         }
     }

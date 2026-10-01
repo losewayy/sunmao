@@ -225,11 +225,12 @@ function sessionMarkdown(id, events) {
     else if (t === 'message') {
       const m = ev.message || {};
       if (m.role === 'user') {
-        const c = m.content || '';
+        const c = msgText(m);
         if (c.startsWith('[hook context]') || c.startsWith('<local-shell>')) continue;
         out.push(`## user\n\n${c}\n`);
-      } else if (m.role === 'assistant' && m.content) {
-        out.push(`## assistant\n\n${m.content}\n`);
+        for (const b of msgParts(m)) if (b.type === 'image') out.push(`![image](${attBase(b.path)})\n`);
+      } else if (m.role === 'assistant' && msgText(m)) {
+        out.push(`## assistant\n\n${msgText(m)}\n`);
       }
     } else if (t === 'tool_call') {
       const c = ev.call || {}, name = (c.function || {}).name || '?';

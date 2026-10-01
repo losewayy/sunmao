@@ -154,8 +154,9 @@ type RenderEntry = (u64, usize, bool, Vec<ratatui::text::Line<'static>>);
 /// How a submitted line should be dispatched — the driver task interprets.
 #[derive(Debug, Clone)]
 pub enum Submit {
-    /// normal prompt or a resolved command body — goes to run_turn
-    Turn(String),
+    /// normal prompt or a resolved command body — goes to run_turn;
+    /// the Vec carries image attachments picked up from `@` mentions
+    Turn(String, Vec<sunmao_llm::Content>),
     /// `!` local shell — run directly, never a model turn
     Bash(String),
     /// /resume [id|path] — swap the session log; bare = list recent
@@ -270,7 +271,7 @@ impl App {
         }
         let sub = self.queue.pop_back()?;
         let text = match sub {
-            Submit::Turn(t) => t,
+            Submit::Turn(t, _) => t,
             Submit::Bash(c) => {
                 self.bash_mode = true;
                 c
@@ -430,11 +431,20 @@ impl App {
                     // file commands resolve in the driver (needs cwd) —
                     // paste markers expand too, $ARGUMENTS flows through
                     crate::commands::Command::Other => {
-                        Submit::Turn(self.expand_pastes(&format!("/{cmd_line}")))
+                        // mentions attach in the driver after the command
+                        // body expands — attaching here AND there would
+                        // double-send the same image
+                        Submit::Turn(self.expand_pastes(&format!("/{cmd_line}")), Vec::new())
                     }
                 }
             }
-            None => Submit::Turn(self.expand_pastes(&text)),
+            None => {
+                // mentions attach on the typed text only — paste-stash
+                // content expands after, so a pasted "@x.png" can never
+                // smuggle in an image the user didn't mention themselves
+                let (text, atts) = crate::attachments::attach_mentions(&text, &self.cwd);
+                Submit::Turn(self.expand_pastes(&text), atts)
+            }
         }
     }
 

@@ -211,12 +211,20 @@ pub(super) fn spawn(
                     }));
                     continue;
                 }
-                Submit::Turn(input) => {
-                    let prompt = if let Some(cmd_line) = input.trim().strip_prefix('/') {
+                Submit::Turn(input, atts) => {
+                    let (prompt, atts) = if let Some(cmd_line) = input.trim().strip_prefix('/') {
                         let name = cmd_line.split_whitespace().next().unwrap_or("");
                         let rest = cmd_line[name.len()..].trim();
                         match commands::command_body(&cwd, &extra_roots, name) {
-                            Some(body) => commands::expand_command(&body, rest),
+                            Some(body) => {
+                                // mentions in the command's args attach too
+                                let (p, mut a) = crate::attachments::attach_mentions(
+                                    &commands::expand_command(&body, rest),
+                                    &cwd,
+                                );
+                                a.extend(atts);
+                                (p, a)
+                            }
                             None => {
                                 let _ =
                                     tx_msg.send(Msg::Note(format!("[unknown command: /{name}]")));
@@ -224,10 +232,10 @@ pub(super) fn spawn(
                             }
                         }
                     } else {
-                        input
+                        (input, atts)
                     };
                     let obs = ChanObserver(tx_msg.clone());
-                    let mut turn = Box::pin(agent.run_turn(&prompt, &obs));
+                    let mut turn = Box::pin(agent.run_turn_blocks(&prompt, &atts, &obs));
                     loop {
                         tokio::select! {
                             res = &mut turn => {

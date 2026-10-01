@@ -200,14 +200,14 @@ async fn batch_tasks_fan_out_on_distinct_lanes() {
         .expect("Task result must fold in");
     assert!(
         tool_msg
-            .content
+            .content_text()
             .as_deref()
             .unwrap_or("")
             .contains("## task 1 ✓")
     );
     assert!(
         tool_msg
-            .content
+            .content_text()
             .as_deref()
             .unwrap_or("")
             .contains("## task 2 ✓")

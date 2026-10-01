@@ -415,7 +415,7 @@ fn draw_status(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         } else {
             // the queue is real text — show what lands next, not just a count
             let head: String = match app.queue.front() {
-                Some(crate::tui::app::Submit::Turn(t)) => t.chars().take(20).collect(),
+                Some(crate::tui::app::Submit::Turn(t, _)) => t.chars().take(20).collect(),
                 Some(crate::tui::app::Submit::Bash(c)) => {
                     format!("!{}", c.chars().take(18).collect::<String>())
                 }

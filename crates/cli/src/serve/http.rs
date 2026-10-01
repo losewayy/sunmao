@@ -39,7 +39,8 @@ async fn rest_dispatch(host: axum::extract::State<HostHandle>, req: Request) -> 
         .map(|pq| pq.as_str())
         .unwrap_or("/");
     // axum's `get` used to answer HEAD / implicitly — keep that parity.
-    let body = to_bytes(body, 4 * 1024 * 1024).await.unwrap_or_default();
+    // 32 MiB: /attachments uploads carry whole images
+    let body = to_bytes(body, 32 * 1024 * 1024).await.unwrap_or_default();
     let mut resp = host
         .request(if method == "HEAD" { "GET" } else { method }, pq, &body)
         .await;

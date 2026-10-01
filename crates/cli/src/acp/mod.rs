@@ -15,6 +15,7 @@ use sunmao_core::{Context, SessionEvent, SessionLog};
 use sunmao_llm::OaiClient;
 use sunmao_llm::types::Message;
 
+mod blocks;
 mod observer;
 use observer::{AcpApprover, AcpObserver};
 
@@ -494,15 +495,9 @@ pub async fn run(
                         return responder.respond_with_error(invalid_params("unknown session"));
                     };
 
-                    let prompt_text = req
-                        .prompt
-                        .iter()
-                        .filter_map(|b| match b {
-                            v2::ContentBlock::Text(t) => Some(t.text.clone()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                    let session_cwd = session.lock().unwrap().ctx.cwd.clone();
+                    let (prompt_text, attachments) =
+                        blocks::prompt_blocks(&req.prompt, &session_cwd);
 
                     let user_msg_id = {
                         let mut st = session.lock().unwrap();
@@ -530,7 +525,9 @@ pub async fn run(
                             // clone the loop handle out from under the lock —
                             // turns on one session serialize via ACP anyway
                             let agent_loop = session.lock().unwrap().agent.clone();
-                            let outcome = agent_loop.run_turn(&prompt_text, &obs).await;
+                            let outcome = agent_loop
+                                .run_turn_blocks(&prompt_text, &attachments, &obs)
+                                .await;
                             let reason = match outcome {
                                 Ok(TurnOutcome::Completed) => v2::StopReason::EndTurn,
                                 _ => v2::StopReason::Cancelled,

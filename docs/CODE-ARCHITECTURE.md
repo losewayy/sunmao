@@ -78,7 +78,9 @@ crates/core    the kernel. Owns state, dispatch, policy. May not know
                ├── agents.rs     named sub-agent definitions loader
                ├── task.rs       Task tool — nested AgentLoop, depth cap
                │   task/         spawn.rs (child ctx, detached completion),
-               │               tests.rs — nested-loop fixtures
+               │               resume.rs (Task{resume} — continuation on the
+               │               child's own log), tests.rs — nested-loop
+               │               fixtures, tests_steer_resume.rs
                ├── preflight.rs  shell/preflight — spawnfate advisory pass
                ├── prompt.rs     PromptAssembler — sectioned prompt layering
                ├── assets/       kernel-owned data files (prompt/*.md,

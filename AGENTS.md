@@ -140,7 +140,7 @@ live in [`docs/CODE-ARCHITECTURE.md`](docs/CODE-ARCHITECTURE.md). Follow them.
 | MCP client (stdio + HTTP) | `crates/core/src/mcp.rs` |
 | extension host (`ext/*` JSON-RPC) | `crates/core/src/ext/` — `mod` spec scan, `registry` children + request/reply |
 | tools | `crates/core/src/tool/{mod,fs,shell,search,artifact,webmod,todo}.rs` |
-| sub-agents | `crates/core/src/task.rs` + `task/tests.rs` + `agents.rs` |
+| sub-agents | `crates/core/src/task.rs` + `task/{spawn,resume}.rs` + `agents.rs` |
 | model routing | `crates/core/src/models.rs` (ModelResolver — `.sunmao/models.json`) |
 | SSE parser | `crates/llm/src/sse.rs` |
 | OAI dialect | `crates/llm/src/oai.rs` |

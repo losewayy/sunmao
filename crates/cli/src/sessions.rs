@@ -1,6 +1,7 @@
 //! Session-log helpers the frontends share — `<cwd>/.sunmao/sessions`
 //! resolution, the recent-list the `/resume` picker and bare `/sessions`
-//! render, and the copy-to-fresh-id that backs local `/fork`.
+//! render, the copy-to-fresh-id that backs local `/fork`, and the log's
+//! display title (last `session_meta` rename, else first prompt).
 
 use std::path::{Path, PathBuf};
 
@@ -74,4 +75,43 @@ pub fn fork_copy(cwd: &Path, id: &str) -> Result<(String, PathBuf), String> {
     let dst = sessions_dir(cwd).join(format!("{new_id}.jsonl"));
     std::fs::copy(&src, &dst).map_err(|e| format!("[fork {id} failed] {e}"))?;
     Ok((new_id, dst))
+}
+
+/// A log's display title: the LAST `session_meta` rename event wins;
+/// absent one, the first line of the first real user prompt (hook/
+/// local-shell folded evidence doesn't count as a prompt). Shared by the
+/// `/sessions` rail metadata and cross-session search hits.
+pub fn log_title(path: &Path) -> Option<String> {
+    use std::io::BufRead;
+    let f = std::fs::File::open(path).ok()?;
+    let mut renamed: Option<String> = None;
+    let mut prompt: Option<String> = None;
+    for line in std::io::BufReader::new(f).lines().map_while(Result::ok) {
+        // cheap pre-filter: only rename/message lines can carry a title
+        if !line.contains("session_meta") && !line.contains(r#""role":"user""#) {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        if v["type"].as_str() == Some("session_meta") {
+            if let Some(t) = v["title"].as_str().map(str::trim).filter(|t| !t.is_empty()) {
+                renamed = Some(t.chars().take(80).collect());
+            }
+            continue;
+        }
+        if prompt.is_some() || v.pointer("/message/role").and_then(|r| r.as_str()) != Some("user") {
+            continue;
+        }
+        let Some(c) = v.pointer("/message/content").and_then(|c| c.as_str()) else {
+            continue;
+        };
+        if c.starts_with("[hook context]") || c.starts_with("<local-shell>") {
+            continue;
+        }
+        if let Some(first) = c.lines().map(str::trim).find(|l| !l.is_empty()) {
+            prompt = Some(first.chars().take(80).collect());
+        }
+    }
+    renamed.or(prompt)
 }

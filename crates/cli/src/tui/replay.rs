@@ -245,6 +245,11 @@ impl App {
                     // the stance flip is audit-visible, same as hook events
                     self.push_audit(&format!("approval.mode — {}", mode.as_str()));
                 }
+                E::SessionMeta { title } => {
+                    // a rename is audit, not conversation — same visibility
+                    // rule as approval.mode
+                    self.push_audit(&format!("session.rename — {title}"));
+                }
                 E::Todos { items } => {
                     // the task list is durable state, not transcript — a
                     // resumed session shows it once, as a note.

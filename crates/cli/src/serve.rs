@@ -16,7 +16,8 @@
 //!                  {"type":"resume","id"} | {"type":"fork","id"} |
 //!                  {"type":"annotate","name","note"} | {"type":"model","sel"}
 //!   REST: GET /sessions · GET /session · POST /session/new ·
-//!         POST /session/{id}/resume|fork · GET /session/{id}/turns ·
+//!         POST /session/{id}/resume|fork|rename · DELETE /session/{id} ·
+//!         GET /session/{id}/turns ·
 //!         POST /session/{id}/rewind · GET /artifacts/{name} ·
 //!         GET /artifacts/{name}/revs|notes|ui ·
 //!         POST /artifacts/{name}/annotate · GET /dataflow[/{id}]

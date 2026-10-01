@@ -192,6 +192,8 @@ impl HostHandle {
                     Err(e) => HostResponse::err(400, format!("{e:#}")),
                 }
             }
+            ("POST", ["session", id, "rename"]) => session_rename(s, id, body).await,
+            ("DELETE", ["session", id]) => session_delete(s, id).await,
             ("GET", ["session", id, "turns"]) => {
                 // the /rewind picker's data — user-turn boundaries on the
                 // log, numbered and previewed exactly like the TUI list
@@ -344,45 +346,72 @@ async fn projects_list(s: &Arc<Shared>) -> HostResponse {
     HostResponse::json(serde_json::json!({ "projects": out }))
 }
 
-/// Rail metadata for one log: `title` = the first prompt the user typed
-/// (folded hook/local-shell evidence skipped, first line, ≤ 80 chars;
-/// `null` for a log with no prompt yet) and `mtime` in epoch ms. Reads
-/// only up to the first user message — logs are append-only, so the
-/// title never changes once it exists.
+/// Rail metadata for one log: `title` = the last `session_meta` rename,
+/// else the first prompt the user typed (hook/local-shell evidence skipped,
+/// first line, ≤ 80 chars; `null` for a log with neither) and `mtime` in
+/// epoch ms — `crate::sessions::log_title` owns the scan.
 fn session_meta(path: &std::path::Path) -> serde_json::Value {
-    use std::io::BufRead;
     let mtime = std::fs::metadata(path)
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64);
-    let mut title: Option<String> = None;
-    if let Ok(f) = std::fs::File::open(path) {
-        for line in std::io::BufReader::new(f).lines().map_while(Result::ok) {
-            // cheap pre-filter: only message lines can carry a prompt
-            if !line.contains(r#""role":"user""#) {
-                continue;
-            }
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
-                continue;
-            };
-            if v.pointer("/message/role").and_then(|r| r.as_str()) != Some("user") {
-                continue;
-            }
-            let Some(c) = v.pointer("/message/content").and_then(|c| c.as_str()) else {
-                continue;
-            };
-            if c.starts_with("[hook context]") || c.starts_with("<local-shell>") {
-                continue;
-            }
-            let first = c.lines().map(str::trim).find(|l| !l.is_empty());
-            if let Some(first) = first {
-                title = Some(first.chars().take(80).collect());
-                break;
-            }
-        }
-    }
+    let title = crate::sessions::log_title(path);
     serde_json::json!({ "title": title, "mtime": mtime })
+}
+
+/// `POST /session/{id}/rename {"title"}` — append a `session_meta` fact to
+/// the log. Works on dormant logs (append-only is safe next to the open
+/// live handle) and live ones alike; the rail re-reads on the
+/// `sessions_changed` frame.
+async fn session_rename(s: &Arc<Shared>, id: &str, body: &[u8]) -> HostResponse {
+    let title = serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v["title"].as_str().map(str::to_string))
+        .or_else(|| raw_string_field(body, "title"))
+        .unwrap_or_default();
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return HostResponse::err(400, "title must be non-empty".into());
+    }
+    let Some(p) = log_path(s, id) else {
+        return HostResponse::err(404, "no such session".into());
+    };
+    // open_path also seals a crash-stranded partial tail before appending
+    let log = sunmao_core::SessionLog::open_path(&p).await;
+    match log {
+        Ok(mut log) => match log
+            .append(&sunmao_core::SessionEvent::SessionMeta { title })
+            .await
+        {
+            Ok(()) => {
+                s.emit(serde_json::json!({"type":"sessions_changed"}));
+                HostResponse::json(serde_json::json!({"ok": true}))
+            }
+            Err(e) => HostResponse::err(500, format!("{e:#}")),
+        },
+        Err(e) => HostResponse::err(500, format!("{e:#}")),
+    }
+}
+
+/// `DELETE /session/{id}` — remove the log file. A live session refuses
+/// outright (idle or busy): there's no graceful host teardown today, and a
+/// driver still appending to an unlinked log would keep mutating a session
+/// the UI already forgot — restartable confusion, not data safety.
+async fn session_delete(s: &Arc<Shared>, id: &str) -> HostResponse {
+    if s.host(id).is_some() {
+        return HostResponse::err(409, "session is live — close it before deleting".into());
+    }
+    let Some(p) = log_path(s, id) else {
+        return HostResponse::err(404, "no such session".into());
+    };
+    match std::fs::remove_file(&p) {
+        Ok(()) => {
+            s.emit(serde_json::json!({"type":"sessions_changed"}));
+            HostResponse::json(serde_json::json!({"ok": true}))
+        }
+        Err(e) => HostResponse::err(500, format!("delete {}: {e}", p.display())),
+    }
 }
 
 /// `GET /session[?id=…]` — the viewed host's id + live set + the session's

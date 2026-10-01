@@ -186,6 +186,10 @@ pub enum Submit {
     Annotate(String, String),
     /// /mode [name] — None lists stances, Some switches the approval mode
     Mode(Option<String>),
+    /// /mcp — the connected MCP server roster
+    Mcp,
+    /// /status — session vitals note
+    Status,
 }
 
 impl App {
@@ -412,6 +416,8 @@ impl App {
                     crate::commands::Command::Mode(arg) => Submit::Mode(arg),
                     crate::commands::Command::Tasks => Submit::Tasks,
                     crate::commands::Command::Todos => Submit::Todos,
+                    crate::commands::Command::Mcp => Submit::Mcp,
+                    crate::commands::Command::Status => Submit::Status,
                     crate::commands::Command::Artifacts => Submit::Artifacts,
                     crate::commands::Command::Annotate(name, note) => Submit::Annotate(name, note),
                     crate::commands::Command::Note(n) => Submit::Note(n),

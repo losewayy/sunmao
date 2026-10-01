@@ -166,3 +166,9 @@ a JSON array. Every case is a real session — its log lands in
 `--session-dir` as `s-<secs>-c<idx>.jsonl`, so hooks fire and
 `transcript_path` is a real file.
 
+Multi-step cases — `steps: [{prompt, expect}]` instead of the flat
+`prompt`/`expect` (mixing both is a parse error): each step is its own
+`run_turn` on the SAME session, so step 2 sees step 1's transcript.
+Per-step assertions scope to that turn's `ToolCall` events and reply;
+failures read `step N: <failure>`.
+

@@ -74,18 +74,35 @@ pub(crate) struct Shared {
     pub(crate) mgmt: mpsc::UnboundedSender<SessionOp>,
 }
 
-/// Host-management op — today just "make this session id live (possibly
-/// as a fork)"; the reply carries the live id.
+/// Host-management op — "make this session id live (possibly as a fork)"
+/// plus rewind (which is a boundary-trimmed fork + optional file restore);
+/// the reply carries a JSON payload `{"session","restored"}`.
 pub(crate) enum SessionOp {
     Adopt {
         id: String,
         fork: bool,
         reply: oneshot::Sender<Result<String, String>>,
     },
+    Rewind {
+        id: String,
+        /// 1-based turn ordinal — rewind to just before its boundary
+        upto_turn: u64,
+        mode: RewindMode,
+        reply: oneshot::Sender<Result<String, String>>,
+    },
 }
 
-/// Drains `Shared.mgmt`: forks/resumes issued from inside a session driver
-/// land here, one adoption at a time.
+/// What `/rewind` restores — `Both` forks the session at the boundary and
+/// reverts code, `Session` forks only, `Code` reverts files in place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RewindMode {
+    Both,
+    Session,
+    Code,
+}
+
+/// Drains `Shared.mgmt`: forks/resumes/rewinds issued from inside a
+/// session driver land here, one adoption at a time.
 pub(crate) async fn mgmt_loop(s: Arc<Shared>, mut rx: mpsc::UnboundedReceiver<SessionOp>) {
     while let Some(op) = rx.recv().await {
         match op {
@@ -93,6 +110,18 @@ pub(crate) async fn mgmt_loop(s: Arc<Shared>, mut rx: mpsc::UnboundedReceiver<Se
                 let res = fork_or_resume(&s, &id, fork)
                     .await
                     .map(|v| v["session"].as_str().unwrap_or_default().to_string())
+                    .map_err(|e| format!("{e:#}"));
+                let _ = reply.send(res);
+            }
+            SessionOp::Rewind {
+                id,
+                upto_turn,
+                mode,
+                reply,
+            } => {
+                let res = rewind_session(&s, &id, upto_turn, mode)
+                    .await
+                    .map(|v| v.to_string())
                     .map_err(|e| format!("{e:#}"));
                 let _ = reply.send(res);
             }
@@ -206,6 +235,55 @@ pub(crate) async fn fork_or_resume(
     let log = sunmao_core::SessionLog::open_path(&path).await?;
     let host = s.adopt(log, if fork { "fork" } else { "resume" }).await?;
     Ok(serde_json::json!({"session": host.id}))
+}
+
+/// rewind = the log's byte prefix up to the boundary line becomes a fork
+/// (`session`/`both` modes), plus a checkpoint-ledger restore of files
+/// touched at or after the boundary turn (`code`/`both`). Restore runs
+/// first — a fork that can't write back files shouldn't orphan a new
+/// session. The fork's ledger inherits the source's snapshots truncated to
+/// turns before the boundary, so rewinds inside the fork stay honest.
+/// Replies `{"session": <new id|null>, "restored": [rel paths]}` — the
+/// same shape the REST route hands back.
+pub(crate) async fn rewind_session(
+    s: &Arc<Shared>,
+    id: &str,
+    upto_turn: u64,
+    mode: RewindMode,
+) -> Result<serde_json::Value> {
+    let src = log_path(s, id).context("no such session")?;
+    let project = session_project(s, &src);
+    let bounds = sunmao_core::checkpoints::turn_boundaries(&src);
+    let boundary = bounds
+        .iter()
+        .find(|b| b.n == upto_turn)
+        .with_context(|| format!("no turn {upto_turn} — {} boundaries", bounds.len()))?;
+
+    let mut restored: Vec<String> = Vec::new();
+    if mode != RewindMode::Session {
+        restored = sunmao_core::checkpoints::restore_files(&project, id, upto_turn)?;
+    }
+
+    let mut session = serde_json::Value::Null;
+    if mode != RewindMode::Code {
+        // byte-prefix copy — raw lines, not a parsed-events rewrite, so
+        // unknown/corrupt event lines survive the fork verbatim
+        let ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let new_id = format!("s-{ms}-fork");
+        let dst = src
+            .parent()
+            .unwrap_or(&s.cwd)
+            .join(format!("{new_id}.jsonl"));
+        sunmao_core::checkpoints::copy_log_prefix(&src, &dst, boundary.line)?;
+        sunmao_core::checkpoints::fork_checkpoints(&project, id, &new_id, upto_turn)?;
+        let log = sunmao_core::SessionLog::open_path(&dst).await?;
+        let host = s.adopt(log, "rewind").await?;
+        session = serde_json::Value::String(host.id.clone());
+    }
+    Ok(serde_json::json!({"session": session, "restored": restored}))
 }
 
 /// `POST /session/new {"cwd"?}` — a fresh log under the chosen project's

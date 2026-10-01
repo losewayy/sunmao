@@ -1785,7 +1785,7 @@ function renderSlash() {
 }
 function pickSlash(cmd) {
   const ta = $('#input');
-  const needsArg = ['resume', 'fork', 'model', 'annotate', 'mode'].includes(cmd);
+  const needsArg = ['resume', 'fork', 'model', 'annotate', 'mode', 'rewind'].includes(cmd);
   ta.value = '/' + cmd + (needsArg ? ' ' : '');
   slashCheck(true);
   ta.focus(); autoGrow();
@@ -2102,14 +2102,33 @@ function sessionMenu(id) {
   const items = [];
   if (!cur) items.push({ v: 'resume', t: '切换到此会话', icon: 'history', d: '接回它的事件日志继续' });
   items.push({ v: 'fork', t: cur ? '从此分叉' : '分叉此会话', icon: 'fork', d: '复制事件日志，另起一支' });
+  items.push({ v: 'rewind', t: '回退到某一轮', icon: 'reset', d: '恢复文件到该轮之前，并分叉会话' });
   items.push('-');
   items.push({ v: 'copy', t: '复制会话 ID', icon: 'copy', d: id });
   return items;
 }
-function sessionAction(v, id) {
+function sessionAction(v, id, at) {
   if (v === 'resume') resumeSession(id);
   else if (v === 'fork') forkSession(id);
+  else if (v === 'rewind') rewindPick(id, at);
   else if (v === 'copy') { if (navigator.clipboard) navigator.clipboard.writeText(id).catch(() => {}); toast('已复制会话 ID', 'copy'); }
+}
+async function rewindPick(id, at) {
+  let turns = [];
+  try { turns = (await api(`/session/${encodeURIComponent(id)}/turns`)).turns || []; }
+  catch (e) { toast(`回退列表失败：${e.message}`, 'alert', 'warn'); return; }
+  if (!turns.length) return toast('没有可回退的轮次', 'reset');
+  const items = turns.map(t => ({ v: String(t.n), t: `第 ${t.n} 轮`, d: t.preview }));
+  menuPop(at, [{ label: '回退到此轮之前（会话 + 文件）' }, ...items], v => rewindTo(id, +v));
+}
+async function rewindTo(id, n) {
+  try {
+    const r = await api(`/session/${encodeURIComponent(id)}/rewind`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ turn: n, mode: 'both' }) });
+    const files = (r.restored || []).length;
+    if (r.session) wsSend({ type: 'view', id: r.session });
+    toast(`已回退到第 ${n} 轮之前${files ? `，恢复 ${files} 个文件` : ''}`, 'reset');
+  }
+  catch (e) { toast(`回退失败：${e.message}`, 'alert', 'warn'); }
 }
 async function submitNote(name, btn) {
   const wrap = btn.closest('.notes'), inp = $('input', wrap), v = inp.value.trim();
@@ -2128,7 +2147,7 @@ function act(name, el) {
     case 'palette-close': return closePalette();
     case 'events': if (popAnchor === el) return closePop(); return pop(el, eventsHTML(), { align: 'end', cls: 'events' });
     case 'dock': return toggleDock();
-    case 'crumb': return menuPop(el, sessionMenu(sessionId), v => sessionAction(v, sessionId));
+    case 'crumb': return menuPop(el, sessionMenu(sessionId), v => sessionAction(v, sessionId, el));
     case 'help': return menuPop(el, [{ v: 'keys', t: '键盘快捷键', icon: 'keyboard' }, { v: 'about', t: '关于 sunmao', icon: 'info' }], v => { show('settings'); settingsPage(v); }, { place: 'top' });
     case 'notes': return el.closest('.island').classList.toggle('show-notes');
     case 'note-add': return submitNote(el.dataset.name, el);
@@ -2216,7 +2235,7 @@ document.addEventListener('contextmenu', e => {
     e.preventDefault(); const id = s.dataset.sess, x = e.clientX, y = e.clientY;
     const at = { getBoundingClientRect: () => ({ left: x, right: x, top: y, bottom: y, width: 0, height: 0 }), contains: () => false };
     closePop();
-    return pop(at, menuHTML(sessionMenu(id)), { onMount(p) { p.addEventListener('click', ev => { const b = ev.target.closest('.mi'); if (!b) return; closePop(); sessionAction(b.dataset.v, id); }); } });
+    return pop(at, menuHTML(sessionMenu(id)), { onMount(p) { p.addEventListener('click', ev => { const b = ev.target.closest('.mi'); if (!b) return; closePop(); sessionAction(b.dataset.v, id, at); }); } });
   }
   if (!e.target.closest('input,textarea,.bubble,.cmd,pre,.jp-b,.think-o')) e.preventDefault();
 });

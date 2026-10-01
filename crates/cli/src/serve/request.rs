@@ -178,6 +178,41 @@ impl HostHandle {
                     Err(e) => HostResponse::err(400, format!("{e:#}")),
                 }
             }
+            ("GET", ["session", id, "turns"]) => {
+                // the /rewind picker's data — user-turn boundaries on the
+                // log, numbered and previewed exactly like the TUI list
+                match log_path(s, id) {
+                    Some(p) => {
+                        let turns: Vec<serde_json::Value> =
+                            sunmao_core::checkpoints::turn_boundaries(&p)
+                                .iter()
+                                .map(|b| serde_json::json!({"n": b.n, "preview": b.preview}))
+                                .collect();
+                        HostResponse::json(serde_json::json!({"turns": turns}))
+                    }
+                    None => HostResponse::err(404, "no such session".into()),
+                }
+            }
+            ("POST", ["session", id, "rewind"]) => {
+                let v: serde_json::Value = match serde_json::from_slice(body) {
+                    Ok(v) => v,
+                    Err(e) => return HostResponse::err(400, format!("bad json: {e}")),
+                };
+                let n = v["turn"].as_u64().unwrap_or(0);
+                let mode = match v["mode"].as_str().unwrap_or("both") {
+                    "session" => super::host::RewindMode::Session,
+                    "code" => super::host::RewindMode::Code,
+                    "both" => super::host::RewindMode::Both,
+                    m => return HostResponse::err(400, format!("unknown mode: {m}")),
+                };
+                if n == 0 {
+                    return HostResponse::err(400, "missing turn".into());
+                }
+                match super::host::rewind_session(s, id, n, mode).await {
+                    Ok(v) => HostResponse::json(v),
+                    Err(e) => HostResponse::err(400, format!("{e:#}")),
+                }
+            }
             ("GET", ["artifacts", name]) => {
                 artifacts::artifact_get(s, name, query_arg(query, "rev"), query_arg(query, "sess"))
                     .await
@@ -549,37 +584,5 @@ async fn models_put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> HostR
 }
 
 #[cfg(test)]
-mod tests {
-    use super::session_meta;
-    use crate::serve::host::display_path;
-
-    #[test]
-    fn title_is_first_typed_prompt() {
-        let dir = std::env::temp_dir().join(format!("sunmao-meta-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("s-1.jsonl");
-        let log = [
-            r#"{"type":"started","model":"m","cwd":"x"}"#,
-            r#"{"type":"message","message":{"role":"system","content":"identity"}}"#,
-            r#"{"type":"message","message":{"role":"user","content":"[hook context] injected"}}"#,
-            r#"{"type":"message","message":{"role":"user","content":"\n  fix the drag bug  \nsecond line"}}"#,
-            r#"{"type":"message","message":{"role":"user","content":"later prompt"}}"#,
-        ];
-        std::fs::write(&p, log.join("\n")).unwrap();
-        let m = session_meta(&p);
-        assert_eq!(m["title"], "fix the drag bug");
-        assert!(m["mtime"].as_u64().is_some());
-
-        std::fs::write(&p, log[..3].join("\n")).unwrap();
-        assert!(session_meta(&p)["title"].is_null());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn display_path_strips_verbatim_prefix() {
-        let p = |s: &str| display_path(std::path::Path::new(s));
-        assert_eq!(p(r"\\?\C:\work\x"), r"C:\work\x");
-        assert_eq!(p(r"\\?\UNC\srv\share\x"), r"\\srv\share\x");
-        assert_eq!(p("/home/u/x"), "/home/u/x");
-    }
-}
+#[path = "request/tests.rs"]
+mod tests;

@@ -133,7 +133,7 @@ pub struct Viewer {
 const HELP_TEXT: &str = "keys — Tab browse blocks · Enter expand · e fold · y copy · \
 g/G ends · ! bash · / commands · Esc×2 stash draft · Ctrl+S restore · \
 Ctrl+A/E/U/W line edit · Ctrl-C cancel, ×2 quits
-commands — /compact · /model · /mode · /multiline · /clear · /resume [id] · /tasks · /todos · /artifacts · /annotate · /help · /quit · \
+commands — /compact · /model · /mode · /multiline · /clear · /resume [id] · /rewind [n] · /tasks · /todos · /artifacts · /annotate · /help · /quit · \
 + every *.md in .sunmao/commands, .claude/commands, plugins/*/commands";
 
 /// Pastes at or above this many bytes stash into `paste_stash` and insert
@@ -156,6 +156,8 @@ pub enum Submit {
     Resume(Option<String>),
     /// /fork <id|path> — copy the log to a fresh id, resume the copy
     Fork(Option<String>),
+    /// /rewind [n] [session|code|both] — boundary fork + checkpoint restore
+    Rewind(Option<String>),
     /// /compact
     Compact,
     /// command name didn't resolve — show a note, no turn
@@ -403,6 +405,12 @@ impl App {
                     "fork" => {
                         let arg = cmd_line.split_whitespace().nth(1).map(|s| s.to_string());
                         Submit::Fork(arg)
+                    }
+                    // /rewind — boundary fork + checkpoint restore need the
+                    // agent's session state; driver-side like /resume
+                    "rewind" => {
+                        let arg = cmd_line[name.len()..].trim().to_string();
+                        Submit::Rewind((!arg.is_empty()).then_some(arg))
                     }
                     // /model resolves through the session's ModelResolver —
                     // only the driver holds the agent.

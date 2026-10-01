@@ -108,7 +108,7 @@ pub async fn run(
                 }
                 "help" | "h" | "?" => {
                     println!(
-                        "commands — /compact · /model [sel] · /mode [stance] · /resume [id] · /sessions · /tasks · /todos · /artifacts · /annotate <name> <note> · /help · /quit\n\
+                        "commands — /compact · /model [sel] · /mode [stance] · /resume [id] · /rewind [n] [session|code|both] · /sessions · /tasks · /todos · /artifacts · /annotate <name> <note> · /help · /quit\n\
                          `!cmd` runs locally; /name resolves .sunmao/commands + .claude/commands"
                     );
                     continue;
@@ -254,6 +254,20 @@ pub async fn run(
                             Err(e) => eprintln!("[fork failed] {e:#}"),
                         },
                         Err(e) => eprintln!("[fork {rest} failed] {e}"),
+                    }
+                    continue;
+                }
+                "rewind" => {
+                    if rest.is_empty() {
+                        println!("{}", crate::rewind::list(agent).await);
+                    } else {
+                        match crate::rewind::run(agent, cwd, rest).await {
+                            Ok(crate::rewind::Outcome::Forked { note, events }) => {
+                                println!("{note} — {} events folded in", events.len());
+                            }
+                            Ok(crate::rewind::Outcome::CodeOnly(note)) => println!("{note}"),
+                            Err(e) => println!("{e}"),
+                        }
                     }
                     continue;
                 }

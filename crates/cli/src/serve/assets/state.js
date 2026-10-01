@@ -1,0 +1,89 @@
+/* dom helpers, motion bridge, Tauri shell detection, ui state */
+'use strict';
+
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const ic = (n, c = 'i') => `<svg class="${c}" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const nf = n => Math.round(n).toLocaleString('en-US');
+const clone = o => JSON.parse(JSON.stringify(o));
+const pad = n => String(n).padStart(2, '0');
+const root = document.documentElement, app = $('#app');
+/* motion — the only way JS touches timing; values come from tokens.css */
+const motion = (() => {
+  const FALLBACK = { instant: 80, fast: 140, base: 200, slow: 320, scene: 560 };
+  const css = n => getComputedStyle(root).getPropertyValue(n).trim();
+  const ms = (n, d) => { const v = css(n); return v ? parseFloat(v) * (v.endsWith('ms') ? 1 : 1000) : d; };
+  return {
+    dur: k => ms(`--dur-${k}`, FALLBACK[k]),
+    ease: k => css(`--ease-${k}`) || 'ease-out',
+    hold: k => ms(`--hold-${k}`, 2600),
+    delay: k => ms(`--delay-${k}`, 400),
+    reduced: () => root.dataset.motionEff === 'reduce',
+    wait: k => new Promise(r => setTimeout(r, motion.dur(k))),
+    // one-shot WAAPI height tween; no-op when reduced
+    height(el, from, to, k = 'slow') {
+      if (motion.reduced()) return;
+      el.animate([{ height: from + 'px' }, { height: to + 'px' }], { duration: motion.dur(k), easing: motion.ease('out') });
+    },
+  };
+})();
+/* debounces aren't motion — named constants, gate exempts the references */
+const DEBOUNCE_DATAFLOW = 400, DEBOUNCE_RESIZE = 160;
+const clock = sec => { const d = new Date(); return pad(d.getHours()) + ':' + pad(d.getMinutes()) + (sec ? ':' + pad(d.getSeconds()) : ''); };
+const fmtBytes = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? (n / 1024).toFixed(1) + ' KB' : n + ' B';
+const hex2rgb = h => { h = h.replace('#', ''); if (h.length === 3) h = [...h].map(c => c + c).join(''); const n = parseInt(h, 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; };
+const rgb2hex = a => '#' + a.map(v => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join('').toUpperCase();
+const mix = (a, b, t) => { const A = hex2rgb(a), B = hex2rgb(b); return rgb2hex(A.map((v, i) => v + (B[i] - v) * t)); };
+
+/* Tauri shell — the desktop app injects `__sunmaoShell` (loopback pages
+   never get Tauri's own globals), so the page detects it that way and
+   unlocks the window chrome: caption buttons + titlebar drag. In a plain
+   browser nothing here fires. */
+const TAURI = window.__sunmaoShell || null;
+const shellWin = () => TAURI;
+if (TAURI) {
+  document.body.classList.add('shell');
+  // frameless drag — the titlebar is the drag surface; interactive
+  // controls (buttons) opt out so clicks still reach them.
+  // Double-press toggles maximize (the Windows caption convention) — it is
+  // read off the second mousedown's `detail`, because the first press's
+  // native drag loop swallows the dblclick event.
+  $('.titlebar').addEventListener('mousedown', e => {
+    if (e.button !== 0 || e.target.closest('button,input,a,[contenteditable]')) return;
+    e.preventDefault();
+    if (e.detail === 2) TAURI.win('max'); else TAURI.drag();
+  });
+  // the titlebar now catches pointer input — hand wheel scrolls through
+  // to whatever scroll surface sits under it
+  $('.titlebar').addEventListener('wheel', e => {
+    const sc = view === 'settings' ? $('#set-scroll') : $('#scroller');
+    sc.scrollBy({ top: e.deltaY, left: 0 });
+  }, { passive: true });
+}
+
+/* ================= state ================= */
+let view = 'session', lastMain = 'session', dockOn = true, setPage = 'appearance';
+let sessionId = '', cwd = '', slashList = [], models = [], modelLabel = '', busy = false, connected = false;
+let clientId = 0; // hello assigns this tab's id — directed frames name it
+// per-session rail state — every host frame carries `sess`; the transcript
+// only renders the viewed session, the rail tracks them all
+const busySessions = new Set(), waitingSessions = new Set();
+let approvalMode = 'auto'; // kernel-reported stance — the only source of truth
+const MODE_LABELS = { always_ask: '请求批准', auto: '自动', read_only: '只读', full_access: '完全访问' };
+const MODE_ICONS = { always_ask: 'shield-check', auto: 'shield', read_only: 'eye', full_access: 'lock' };
+function setApprovalMode(m) {
+  if (!m) return;
+  approvalMode = m;
+  $('#cmp-mode').textContent = MODE_LABELS[m] || m;
+  $('#mode-ic').setAttribute('href', '#i-' + (MODE_ICONS[m] || 'shield'));
+}
+let SESSION_IDS = [], SESSION_META = {};
+const EVLOG = [];
+
+const DEFAULTS = { mode: 'dark', motion: 'system', accent: '#339CFF', background: '#16181F', foreground: '#E8E9F0', wallpaper: 'graphite', dim: 0.16, panelOpacity: 0.72, blur: 24, translucentSidebar: false, contrast: 50, fonts: { ui: 'Segoe UI', code: 'JetBrains Mono' } };
+const INITIAL = Object.assign(clone(DEFAULTS), { wallpaper: 'dusk-ridge', dim: 0.08, panelOpacity: 0.56, translucentSidebar: true });
+let S = (() => { try { const v = JSON.parse(localStorage.getItem('sunmao.ui')); if (v && v.fonts) return Object.assign(clone(INITIAL), v, { fonts: Object.assign({}, INITIAL.fonts, v.fonts) }); } catch {} return clone(INITIAL); })();
+const save = () => { try { localStorage.setItem('sunmao.ui', JSON.stringify(S)); } catch {} };
+
+

@@ -53,6 +53,21 @@ const INDEX: &str = include_str!("serve/assets/index.html");
 const TOKENS_CSS: &str = include_str!("serve/assets/tokens.css");
 const APP_CSS: &str = include_str!("serve/assets/app.css");
 
+/// The page's script surface — index.html's inline script split by
+/// responsibility (plain `<script src>` classic scripts, not modules: the
+/// replay-parity harness evals them in one shared scope). Order in
+/// index.html is load order.
+const STATE_JS: &str = include_str!("serve/assets/state.js");
+const WALLPAPER_JS: &str = include_str!("serve/assets/wallpaper.js");
+const SETTINGS_JS: &str = include_str!("serve/assets/settings.js");
+const TRANSCRIPT_JS: &str = include_str!("serve/assets/transcript.js");
+const ISLANDS_JS: &str = include_str!("serve/assets/islands.js");
+const CONNECTION_JS: &str = include_str!("serve/assets/connection.js");
+const COMPOSER_JS: &str = include_str!("serve/assets/composer.js");
+const PALETTE_JS: &str = include_str!("serve/assets/palette.js");
+const MENUS_JS: &str = include_str!("serve/assets/menus.js");
+const BOOT_JS: &str = include_str!("serve/assets/boot.js");
+
 /// MCP Apps sandbox proxy — a separate origin serving a single static
 /// page (`serve/assets/sandbox.html`); see `http::sandbox_page`/`ui/`
 /// bridge. `pub` for the Tauri shell's `sunmao-sandbox` scheme handler —

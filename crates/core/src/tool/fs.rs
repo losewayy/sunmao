@@ -145,6 +145,9 @@ impl ToolImpl for WriteTool {
                 ok: false,
             });
         }
+        // checkpoint BEFORE bytes change — the ledger keeps what this
+        // write is about to destroy (no-op for files already preserved)
+        ctx.checkpoint_file(&path).await?;
         tokio::fs::write(&path, &a.content)
             .await
             .with_context(|| format!("cannot write {}", path.display()))?;
@@ -193,8 +196,10 @@ impl ToolImpl for EditTool {
         let a: Args = serde_json::from_value(args)?;
         let path = ctx.cwd.join(&a.path);
 
-        // empty old_string = create file
+        // empty old_string = create file — still destroys the bytes when
+        // the target already exists, so the checkpoint runs unconditionally
         if a.old_string.is_empty() {
+            ctx.checkpoint_file(&path).await?;
             tokio::fs::write(&path, &a.new_string).await?;
             return Ok(ToolResult {
                 output: format!("created {}", path.display()),
@@ -226,6 +231,7 @@ impl ToolImpl for EditTool {
         new_text.push_str(&text[..start]);
         new_text.push_str(&a.new_string);
         new_text.push_str(&text[end..]);
+        ctx.checkpoint_file(&path).await?;
         tokio::fs::write(&path, &new_text).await?;
         Ok(ToolResult {
             output: format!("edited {}", path.display()),

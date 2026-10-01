@@ -159,6 +159,10 @@ impl AgentLoop {
                 .await?;
             }
         }
+        // the turn's ordinal is set once the user prompt is durable —
+        // snapshot writes below stamp manifest entries with it, so
+        // /rewind's turn numbering == the prompt ordinals users count.
+        self.ctx.checkpoints.lock().unwrap().turn += 1;
 
         let mut outcome = TurnOutcome::Completed;
         for _ in 0..self.max_iterations {

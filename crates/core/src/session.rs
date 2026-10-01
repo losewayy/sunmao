@@ -86,6 +86,17 @@ pub enum SessionEvent {
     /// selector). Audit, not conversation — the fold ignores it, but a
     /// resume reseeds `Context.approval_mode` from the latest one.
     ModeChange { mode: crate::agent::ApprovalMode },
+    /// A file's pre-write bytes were snapshotted into the session's
+    /// checkpoint ledger (`checkpoints.rs`). Durable audit fact, not
+    /// model-facing — the fold ignores it; `/rewind` reads the manifest
+    /// this event indexes, so `files` records the relative paths
+    /// snapshotted at `turn`.
+    Checkpoint {
+        #[serde(default)]
+        turn: u64,
+        #[serde(default)]
+        files: Vec<String>,
+    },
 }
 
 /// Where a session's event log lives — `<cwd>/.sunmao/sessions/<id>.jsonl`.

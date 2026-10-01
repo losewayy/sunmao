@@ -60,6 +60,13 @@ pub struct Context {
     /// Files read this session — the Read-before-Write gate's ledger.
     /// (crate-visible so sub-agent contexts can construct one)
     pub(crate) read_paths: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
+    /// File-checkpoint ledger — Write/Edit commit points snapshot pre-write
+    /// bytes under `.sunmao/checkpoints/{session_id}/` the first time a file
+    /// is mutated in the session; `/rewind` folds them back. `turn` counts
+    /// this session's user-turn ordinals (seeded from the log, bumped once
+    /// per `run_turn`) — the manifest's rewind granularity. `pub(crate)` so
+    /// the turn loop can bump it.
+    pub(crate) checkpoints: std::sync::Mutex<crate::checkpoints::CheckpointState>,
     /// Session-scoped approval grants — `"tool\tspecifier"` keys the user
     /// approved with `Approval::Session`. Exact-match only: a grant covers
     /// the identical call, nothing broader. `Arc` so `Task` sub-agents share
@@ -205,6 +212,12 @@ impl Context {
         // ModeChange.
         let todos = seed_todos(sessions.path());
         let approval_mode = seed_mode(sessions.path());
+        // checkpoints: rebuild `taken`/`seq` from any existing manifest so a
+        // resumed session doesn't re-snapshot already-preserved files, and
+        // seed the turn counter from the log's user-turn boundaries so the
+        // next manifest entry lands under the right ordinal.
+        let mut checkpoints = crate::checkpoints::load(&cwd, &session_id);
+        checkpoints.turn = crate::checkpoints::turn_boundaries(sessions.path()).len() as u64;
         // readonly whitelist: builtin verbs + project file + plugin dirs,
         // merged the same way risky-patterns stacks
         let mut verb_extra = Vec::new();
@@ -244,6 +257,7 @@ impl Context {
             lane_counter: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
             cancelled: std::sync::atomic::AtomicBool::new(false),
             read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),
+            checkpoints: std::sync::Mutex::new(checkpoints),
             session_grants: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),
@@ -363,6 +377,44 @@ impl Context {
             .lock()
             .unwrap()
             .insert(format!("{tool}\t{specifier}"));
+    }
+
+    /// Checkpoint a file before a tool mutates it — the first write in the
+    /// session preserves the pre-state under `.sunmao/checkpoints/`; repeat
+    /// writes and out-of-scope paths (`.sunmao`, outside the project) are
+    /// no-ops. A taken snapshot is also a durable `SessionEvent::Checkpoint`
+    /// — the audit spine carries which files a turn preserved. Errors
+    /// propagate: a write proceeding without its snapshot would make the
+    /// rewind surface lie.
+    pub async fn checkpoint_file(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        let turn = self.checkpoints.lock().unwrap().turn;
+        if let Some(rel) =
+            crate::checkpoints::snapshot_if_new(&self.checkpoints, &self.cwd, path, turn).await?
+        {
+            let mut log = self.sessions.lock().await;
+            log.append(&crate::session::SessionEvent::Checkpoint {
+                turn,
+                files: vec![rel],
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Rebuild checkpoint state for a swapped-in session — the new log's id
+    /// selects its own manifest, and its boundary count seeds `turn` so a
+    /// resumed/forked session writes entries under correct ordinals
+    /// (`/resume`, `/fork`, `/rewind` all route through `swap_session`).
+    /// `events` are the log's already-folded events — the same classifier
+    /// `turn_boundaries` applies to raw lines.
+    pub(crate) fn reseed_checkpoints(&self, events: &[crate::session::SessionEvent]) {
+        let id = self.session_id.read().unwrap().clone();
+        let mut st = crate::checkpoints::load(&self.cwd, &id);
+        st.turn = events
+            .iter()
+            .filter(|e| crate::checkpoints::is_turn_boundary(e))
+            .count() as u64;
+        *self.checkpoints.lock().unwrap() = st;
     }
 }
 

@@ -305,6 +305,11 @@ impl App {
                         if *ok { "done" } else { "failed" }
                     ));
                 }
+                E::Checkpoint { turn, files } => {
+                    // audit-visible like hook events: which files this turn
+                    // preserved (rewind reads the manifest, not the fold)
+                    self.push_audit(&format!("checkpoint turn {turn} — {}", files.join(", ")));
+                }
                 E::LocalShell {
                     command,
                     exit_code,

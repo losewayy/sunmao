@@ -289,6 +289,11 @@ pub(super) async fn spawn_parts(
         lane_counter: ctx.lane_counter.clone(),
         cancelled: std::sync::atomic::AtomicBool::new(false),
         read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),
+        // the child's ledger is its own — keyed to its session id, not the
+        // parent's: a parallel sibling's `taken` must not starve this one's
+        // snapshots (same rule as read_paths; unlike session_grants which
+        // IS shared)
+        checkpoints: std::sync::Mutex::new(crate::checkpoints::load(&ctx.cwd, &sub_id)),
         session_grants: ctx.session_grants.clone(),
         // the session's stance is shared, not copied — a mid-session /mode
         // switch applies to children already running

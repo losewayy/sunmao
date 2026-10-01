@@ -497,10 +497,11 @@ impl AgentLoop {
         }
         *self.ctx.session_id.write().unwrap() = new_id.clone();
         self.ctx.hooks.retarget(&new_id, new_path);
-        // the new log's task list + approval stance become the live
-        // state — resume must not inherit the abandoned session's plan
-        // nor its mode (a full_access session shouldn't follow the next
-        // prompt into a different log).
+        // the new log's task list + approval stance + checkpoint ledger
+        // become the live state — resume must not inherit the abandoned
+        // session's plan, its mode (a full_access session shouldn't follow
+        // the next prompt into a different log), or its snapshot ledger.
+        self.ctx.reseed_checkpoints(&events);
         self.ctx.reseed_todos(&events);
         let mode = events
             .iter()

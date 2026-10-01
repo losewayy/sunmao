@@ -37,6 +37,9 @@ impl AgentLoop {
             })
             .await?;
         }
+        // same ordinal accounting as the full loop — bare skips hooks and
+        // the gate, not the checkpoint ledger
+        self.ctx.checkpoints.lock().unwrap().turn += 1;
         let mut outcome = TurnOutcome::Completed;
         for _ in 0..self.max_iterations {
             if self

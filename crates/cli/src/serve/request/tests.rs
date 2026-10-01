@@ -193,3 +193,53 @@ async fn tasks_route_reports_empty_roster_without_host() {
     }
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// `GET /jobs` + `/jobs/{id}/output` — the filesystem IS the state: a dir
+/// with only output.log reads running, exit.json flips it done with the
+/// code surfaced verbatim; the output endpoint streams byte-offset chunks.
+#[tokio::test]
+async fn jobs_route_reads_jobs_dir_layout() {
+    let root = std::env::temp_dir().join(format!("sunmao-jobs-{}", std::process::id()));
+    let jobs = root.join(".sunmao/jobs");
+    std::fs::create_dir_all(jobs.join("j-run")).unwrap();
+    std::fs::write(jobs.join("j-run/output.log"), b"line1\nstill going\n").unwrap();
+    std::fs::create_dir_all(jobs.join("j-done")).unwrap();
+    std::fs::write(jobs.join("j-done/output.log"), b"all done\n").unwrap();
+    std::fs::write(jobs.join("j-done/exit.json"), b"{\"exit_code\":3}").unwrap();
+    let s = std::sync::Arc::new(shared_at(root.clone()));
+    let h = super::HostHandle { s };
+
+    let r = h.request("GET", "/jobs", b"").await;
+    assert_eq!(r.status, 200);
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    let rows = v["jobs"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    let by_id = |id: &str| rows.iter().find(|j| j["id"] == id).unwrap();
+    assert_eq!(by_id("j-run")["running"], true);
+    assert!(by_id("j-run")["exit"].is_null());
+    assert!(
+        by_id("j-run")["preview"]
+            .as_str()
+            .unwrap()
+            .contains("still going")
+    );
+    assert_eq!(by_id("j-done")["running"], false);
+    assert_eq!(by_id("j-done")["exit"], 3);
+
+    let out = h.request("GET", "/jobs/j-done/output", b"").await;
+    let v: serde_json::Value = serde_json::from_slice(&out.body).unwrap();
+    assert_eq!(v["chunk"], "all done\n");
+    assert_eq!(v["total"], 9);
+    // offset continuation + bad ids
+    let out = h.request("GET", "/jobs/j-done/output?offset=4", b"").await;
+    let v: serde_json::Value = serde_json::from_slice(&out.body).unwrap();
+    assert_eq!(v["chunk"], "done\n");
+    assert_eq!(h.request("GET", "/jobs/nope/output", b"").await.status, 404);
+    assert_eq!(
+        h.request("GET", "/jobs/..%2Fsneaky/output", b"")
+            .await
+            .status,
+        400
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

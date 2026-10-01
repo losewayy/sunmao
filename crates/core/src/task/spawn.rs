@@ -94,6 +94,17 @@ impl Observer for RelayObserver {
     }
 }
 
+/// Tell the session's live sink the roster moved — frontends re-pull
+/// `/tasks` on this hook (the roster is pull-state; this is its nudge).
+pub(super) fn roster_changed(sink: &Option<Arc<dyn Observer>>, sub_id: &str) {
+    if let Some(s) = sink {
+        s.on_event(&LiveEvent::Hook {
+            event: "tasks.changed".into(),
+            detail: sub_id.to_string(),
+        });
+    }
+}
+
 /// Register a spawn in the roster — both foreground and detached spawns
 /// register; `done` flips when the result lands. `sub_ctx.lane` is the
 /// claimed lane; the `steer` handle lets the parent push mid-run messages
@@ -121,6 +132,7 @@ fn register_task(
             done: None,
             steer: Some(steer.clone()),
         });
+    roster_changed(&ctx.live_sink.get().cloned(), sub_id);
 }
 
 /// Flip the roster entry to finished — the detached completion path and
@@ -158,6 +170,7 @@ async fn drive_foreground(
     )
     .await;
     finish_task(&ctx.live_tasks, &sub_id, res.ok);
+    roster_changed(&ctx.live_sink.get().cloned(), &sub_id);
     res
 }
 
@@ -249,6 +262,7 @@ pub(super) fn detach(
             finish_task(&parent_tasks, &id, res.ok);
         }
         if let Some(s) = notify_sink {
+            roster_changed(&Some(s.clone()), &id);
             s.on_event(&LiveEvent::Hook {
                 event: "task.bg.done".into(),
                 detail: format!("{} — {}", id, if res.ok { "done" } else { "failed" }),

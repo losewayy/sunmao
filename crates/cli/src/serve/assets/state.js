@@ -29,7 +29,7 @@ const motion = (() => {
   };
 })();
 /* debounces aren't motion — named constants, gate exempts the references */
-const DEBOUNCE_DATAFLOW = 400, DEBOUNCE_RESIZE = 160;
+const DEBOUNCE_DATAFLOW = 400, DEBOUNCE_RESIZE = 160, DEBOUNCE_ROSTER = 700;
 const clock = sec => { const d = new Date(); return pad(d.getHours()) + ':' + pad(d.getMinutes()) + (sec ? ':' + pad(d.getSeconds()) : ''); };
 const fmtBytes = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? (n / 1024).toFixed(1) + ' KB' : n + ' B';
 const hex2rgb = h => { h = h.replace('#', ''); if (h.length === 3) h = [...h].map(c => c + c).join(''); const n = parseInt(h, 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; };

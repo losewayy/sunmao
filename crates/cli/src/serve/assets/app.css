@@ -383,6 +383,12 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:var(--ring-focu
 .fl-t .i{width:var(--icon-sm);height:var(--icon-sm);color:var(--c-text-3)}
 .fl-t b{margin-left:auto;font:var(--fw-medium) var(--fs-2xs) var(--font-mono);color:var(--c-text)}
 .fl-i{padding-left:var(--s-20);font:var(--fs-2xs)/var(--lh-body) var(--font-mono);color:color-mix(in srgb,var(--c-text-2) 85%,transparent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt-list{display:flex;flex-direction:column;gap:2px;margin-top:var(--s-8)}
+.rt{display:flex;align-items:center;gap:var(--s-6);min-height:var(--h-sm);padding:var(--s-2) var(--s-6);border-radius:var(--r-md);font-size:var(--fs-xs);color:var(--c-text-2);text-align:left}
+button.rt:hover{background:var(--c-fill-2);color:var(--c-text)}
+.rt .rt-id{font:var(--fs-2xs) var(--font-mono);color:var(--c-text)}
+.rt .rt-p{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt .rt-go{color:var(--c-text-3);flex:none}
 
 /* ---------- settings ---------- */
 .set{position:absolute;inset:0;overflow-y:auto;padding:var(--s-64) var(--s-32) var(--s-64)}

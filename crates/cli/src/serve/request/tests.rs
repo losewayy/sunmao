@@ -175,3 +175,21 @@ async fn sessions_search_greps_message_content() {
     assert!(v["meta"].is_object());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// `GET /tasks` — no live host means an empty roster, not an error (the
+/// roster is in-memory; dormant sessions have nothing to report).
+#[tokio::test]
+async fn tasks_route_reports_empty_roster_without_host() {
+    let root = std::env::temp_dir().join(format!("sunmao-tasks-{}", std::process::id()));
+    std::fs::create_dir_all(root.join(".sunmao/sessions")).unwrap();
+    let s = std::sync::Arc::new(shared_at(root.clone()));
+    let h = super::HostHandle { s };
+
+    for path in ["/tasks", "/tasks?sess=s-nope"] {
+        let r = h.request("GET", path, b"").await;
+        assert_eq!(r.status, 200, "{path}");
+        let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(v["tasks"].as_array().unwrap().len(), 0, "{path}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}

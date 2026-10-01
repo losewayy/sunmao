@@ -464,14 +464,36 @@ pub(crate) fn safe_name(name: &str) -> bool {
 
 /// `id` may be a bare session id (resolved under the launch dir's
 /// .sunmao/sessions, then every registered project's) or a path — paths
-/// are allowed only if they stay inside a sessions dir, otherwise a GET
-/// could read arbitrary files as JSONL.
+/// are allowed only if they canonicalize inside a known sessions dir,
+/// otherwise a GET/POST could read (or append to) arbitrary local files
+/// through the loopback surface.
 pub(crate) fn log_path(s: &Shared, id: &str) -> Option<std::path::PathBuf> {
+    let dirs = session_dirs(s);
     let p = std::path::PathBuf::from(id);
     if p.exists() {
-        return Some(p);
+        // path-shaped id: must live inside a sessions dir — `..` and
+        // bare `C:\…` escapes are rejected by the prefix check.
+        let canon = p.canonicalize().ok()?;
+        for dir in &dirs {
+            if let Ok(d) = dir.canonicalize()
+                && canon.starts_with(&d)
+            {
+                return Some(canon);
+            }
+        }
+        return None;
     }
-    for dir in session_dirs(s) {
+    // bare id: joined under a sessions dir. Reject anything that could
+    // escape it — separators, `..`, rooted/prefixed components — the join
+    // itself is not a sandbox.
+    let safe = !id.is_empty()
+        && std::path::Path::new(id)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)));
+    if !safe {
+        return None;
+    }
+    for dir in dirs {
         let cand = dir.join(format!("{id}.jsonl"));
         if cand.exists() {
             return Some(cand);
@@ -569,3 +591,6 @@ impl HostHandle {
         Client::connect(self.s.clone(), out).await
     }
 }
+
+#[cfg(test)]
+mod tests;

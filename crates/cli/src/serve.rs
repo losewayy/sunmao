@@ -22,7 +22,7 @@
 //!         POST /session/{id}/rewind · GET /artifacts/{name} ·
 //!         GET /artifacts/{name}/revs|notes|ui ·
 //!         POST /artifacts/{name}/annotate · GET /dataflow[/{id}] ·
-//!         GET /tasks?sess= ·
+//!         GET /tasks?sess= · GET /jobs?sess= · GET /jobs/{id}/output ·
 //!         POST /attachments[?sess&ext] · GET /attachments/{name}
 
 use std::collections::HashMap;
@@ -73,6 +73,7 @@ const PALETTE_JS: &str = include_str!("serve/assets/palette.js");
 const FIND_JS: &str = include_str!("serve/assets/find.js");
 const MENUS_JS: &str = include_str!("serve/assets/menus.js");
 const ROSTER_JS: &str = include_str!("serve/assets/roster.js");
+const JOBS_JS: &str = include_str!("serve/assets/jobs.js");
 const BOOT_JS: &str = include_str!("serve/assets/boot.js");
 
 /// MCP Apps sandbox proxy — a separate origin serving a single static

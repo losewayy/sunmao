@@ -389,6 +389,9 @@ button.rt:hover{background:var(--c-fill-2);color:var(--c-text)}
 .rt .rt-id{font:var(--fs-2xs) var(--font-mono);color:var(--c-text)}
 .rt .rt-p{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rt .rt-go{color:var(--c-text-3);flex:none}
+.rt .rt-when{font:var(--fs-2xs) var(--font-mono);color:var(--c-text-3);flex:none}
+.pop.jobview-pop{max-width:min(560px,calc(100vw - var(--s-32)))}
+.pop .jobview{max-height:300px;margin:var(--s-2) var(--s-6) var(--s-4);padding:var(--s-6) var(--s-8);border-radius:var(--r-md);background:var(--c-sunken);font:var(--fs-2xs)/var(--lh-body) var(--font-mono);white-space:pre-wrap;word-break:break-all;color:var(--c-text-2);overflow-y:auto}
 
 /* ---------- settings ---------- */
 .set{position:absolute;inset:0;overflow-y:auto;padding:var(--s-64) var(--s-32) var(--s-64)}

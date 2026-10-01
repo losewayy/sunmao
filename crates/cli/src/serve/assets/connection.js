@@ -66,7 +66,7 @@ function route(v) {
       renderReplay(v.replay || []);
       setBusy(!!v.busy);
       refreshSessions(); refreshModels(); refreshProjects();
-      refreshRoster();
+      refreshRoster(); refreshJobs();
       renderCrumb();
       break;
     case 'live':
@@ -76,7 +76,16 @@ function route(v) {
         if (sess === sessionId) refreshRosterSoon();
         break;
       }
-      if (sess === sessionId) liveEvent(v.event);
+      if (v.event && v.event.type === 'hook' && v.event.event === 'jobs.changed') {
+        if (sess === sessionId) refreshJobsSoon();
+        break;
+      }
+      if (sess === sessionId) {
+        liveEvent(v.event);
+        // output.log grows inside a running job with no further signal —
+        // any live tool frame throttles a re-pull so the tail stays fresh
+        if (v.event && (v.event.type === 'tool_start' || v.event.type === 'tool_done')) refreshJobsSoon();
+      }
       if (v.event && v.event.type === 'turn_end' && !shellFocused()) {
         shellNotify('回合结束', sessTitle(sess) || sess);
       }
@@ -91,7 +100,7 @@ function route(v) {
       (v.pending || []).forEach(c => approvalCard(c));
       steerQ = v.steer || []; renderSteerChips();
       syncWait();
-      refreshSessions(); refreshRoster(); renderCrumb();
+      refreshSessions(); refreshRoster(); refreshJobs(); renderCrumb();
       break;
     case 'approval':
       waitingSessions.add(sess);

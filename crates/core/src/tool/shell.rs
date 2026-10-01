@@ -243,9 +243,19 @@ async fn spawn_background(
     let cwd = ctx.cwd.clone();
     let env_vars: std::collections::HashMap<std::ffi::OsString, std::ffi::OsString> =
         std::env::vars_os().collect();
+    // the jobs dir is pull-state; the sink gets a nudge at spawn and at
+    // exit so watching frontends re-read it (mirrors tasks.changed)
+    let sink = ctx.live_sink.get().cloned();
+    if let Some(s) = &sink {
+        s.on_event(&crate::agent::LiveEvent::Hook {
+            event: "jobs.changed".into(),
+            detail: format!("{id} started"),
+        });
+    }
 
     // Detach: drop the JoinHandle — the blocking thread outlives the call.
     let log_path_for_msg = log_path.clone();
+    let job_id = id.clone();
     tokio::task::spawn_blocking(move || {
         let run = || -> anyhow::Result<i32> {
             let list = deno_task_shell::parser::parse(&command)?;
@@ -270,6 +280,12 @@ async fn spawn_background(
         };
         let code = run().unwrap_or(-1);
         let _ = std::fs::write(&exit_path, format!("{{\"exit_code\":{code}}}"));
+        if let Some(s) = &sink {
+            s.on_event(&crate::agent::LiveEvent::Hook {
+                event: "jobs.changed".into(),
+                detail: format!("{job_id} exit {code}"),
+            });
+        }
     });
 
     Ok(ToolResult {

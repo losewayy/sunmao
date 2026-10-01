@@ -143,8 +143,35 @@ pub struct McpToolInfo {
 #[derive(Clone)]
 pub struct McpServerHandle {
     pub name: String,
+    /// `"stdio"` (spawned child) or `"http"` (streamable-HTTP URL) — the
+    /// `/mcp` roster reports it; not part of the wire dialect.
+    pub transport: &'static str,
     pub client: ClientHandle,
     pub tools: Vec<McpToolInfo>,
+}
+
+/// One roster row for `/mcp` — name, transport, how many tools it
+/// advertised, and whether the connection is still live.
+#[derive(Debug, Clone)]
+pub struct McpServerStatus {
+    pub name: String,
+    pub transport: &'static str,
+    pub tools: usize,
+    /// the client service hasn't been closed/cancelled — a dead child or
+    /// dropped HTTP transport shows false
+    pub connected: bool,
+}
+
+impl McpServerHandle {
+    /// Roster row snapshot — reads off the live service state.
+    pub fn status(&self) -> McpServerStatus {
+        McpServerStatus {
+            name: self.name.clone(),
+            transport: self.transport,
+            tools: self.tools.len(),
+            connected: !self.client.is_closed(),
+        }
+    }
 }
 
 /// What `connect_all` assembled: model-facing tools plus the per-server
@@ -431,6 +458,7 @@ async fn connect_one(
         Arc::new(().serve(transport).await?)
     };
 
+    let transport = if spec.url.is_some() { "http" } else { "stdio" };
     let listed = client.peer().list_all_tools().await?;
     tracing::info!("mcp server {name}: {} tools", listed.len());
     let catalog: Vec<McpToolInfo> = listed
@@ -453,6 +481,7 @@ async fn connect_one(
     Ok((
         McpServerHandle {
             name: name.to_string(),
+            transport,
             client,
             tools: catalog,
         },

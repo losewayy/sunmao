@@ -32,6 +32,30 @@ mod summary;
 pub use events::{LiveEvent, Observer, TurnOutcome};
 pub use summary::call_summary;
 pub(crate) use summary::{specifier_for, truncate_output};
+
+/// Folded usage facts for `/status` — sums over every `SessionEvent::Usage`.
+#[derive(Debug, Clone, Default)]
+pub struct TokenTotals {
+    pub prompt: u64,
+    pub completion: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+}
+
+/// One `/status` snapshot — the session's observable vitals, all derived
+/// from ctx + the durable log (no extra state to keep honest).
+#[derive(Debug, Clone)]
+pub struct SessionStatus {
+    pub session_id: String,
+    pub cwd: std::path::PathBuf,
+    /// display label — `Started.model`, or the last `model.change` label
+    pub model: String,
+    /// provider dialect ("openai"/"anthropic") resolved off the active
+    /// selector; "?" when no resolver/route can pin it
+    pub provider: String,
+    pub approval_mode: ApprovalMode,
+    pub tokens: TokenTotals,
+}
 /// Which built-in loop driver runs turns — SPEC §4.5's "the loop is a
 /// plugin" stance made concrete. Selected by the `loop` key in a
 /// plugin/preset manifest, or `--loop` on the CLI (highest precedence).
@@ -245,6 +269,75 @@ impl AgentLoop {
     /// register at launch, `done` flips when TaskDone lands.
     pub fn task_roster(&self) -> Vec<crate::context::TaskEntry> {
         self.ctx.live_tasks.lock().unwrap().clone()
+    }
+
+    /// The connected MCP servers (`/mcp`) — name, transport, tool count,
+    /// connection liveness. Configured-but-failed servers never reached the
+    /// roster: `connect_all` degrades them to a startup warning.
+    pub fn mcp_roster(&self) -> Vec<crate::mcp::McpServerStatus> {
+        self.ctx
+            .mcp_servers
+            .iter()
+            .map(crate::mcp::McpServerHandle::status)
+            .collect()
+    }
+
+    /// Session vitals (`/status`) — everything is folded out of the log
+    /// or read off ctx, no dedicated bookkeeping: model is the `Started`
+    /// label unless a `model.change` hook fact supersedes it (selector wins
+    /// resolution, label wins display), provider dialect resolves through
+    /// the session's `ModelResolver`, tokens sum the `Usage` facts.
+    pub async fn status(&self) -> SessionStatus {
+        let events = self
+            .ctx
+            .sessions
+            .lock()
+            .await
+            .events()
+            .await
+            .unwrap_or_default();
+        let mut model: Option<String> = None;
+        let mut selector: Option<String> = None;
+        let mut tokens = TokenTotals::default();
+        for ev in &events {
+            match ev {
+                SessionEvent::Started { model: m, .. } => {
+                    if model.is_none() {
+                        model = Some(m.clone());
+                    }
+                }
+                SessionEvent::Hook { event, detail } if event == "model.change" => {
+                    // `record_model_change` writes "selector → label"
+                    if let Some((sel, lbl)) = detail.split_once(" → ") {
+                        selector = Some(sel.to_string());
+                        model = Some(lbl.to_string());
+                    } else {
+                        model = Some(detail.clone());
+                    }
+                }
+                SessionEvent::Usage { usage } => {
+                    tokens.prompt += usage.prompt_tokens;
+                    tokens.completion += usage.completion_tokens;
+                    tokens.cache_read += usage.cache_read_input_tokens;
+                    tokens.cache_write += usage.cache_creation_input_tokens;
+                }
+                _ => {}
+            }
+        }
+        let provider = selector
+            .as_deref()
+            .or(model.as_deref())
+            .and_then(|sel| self.ctx.models.as_ref().and_then(|m| m.resolve(sel)))
+            .map(|t| t.provider.dialect)
+            .unwrap_or_else(|| "?".to_string());
+        SessionStatus {
+            session_id: self.ctx.session_id.read().unwrap().clone(),
+            cwd: self.ctx.cwd.clone(),
+            model: model.unwrap_or_else(|| "?".to_string()),
+            provider,
+            approval_mode: self.approval_mode(),
+            tokens,
+        }
     }
 
     /// The model's current task list (`/todos`) — the hot snapshot the

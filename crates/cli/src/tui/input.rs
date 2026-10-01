@@ -498,6 +498,12 @@ fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
         Submit::Todos => {
             let _ = tx_input.send(Submit::Todos);
         }
+        Submit::Mcp => {
+            let _ = tx_input.send(Submit::Mcp);
+        }
+        Submit::Status => {
+            let _ = tx_input.send(Submit::Status);
+        }
         Submit::Artifacts => {
             let _ = tx_input.send(Submit::Artifacts);
         }

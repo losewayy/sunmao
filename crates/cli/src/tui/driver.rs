@@ -100,6 +100,14 @@ pub(super) fn spawn(
                     let _ = tx_msg.send(Msg::Note(commands::todos_text(&agent.todos())));
                     continue;
                 }
+                Submit::Mcp => {
+                    let _ = tx_msg.send(Msg::Note(commands::mcp_text(&agent.mcp_roster())));
+                    continue;
+                }
+                Submit::Status => {
+                    let _ = tx_msg.send(Msg::Note(commands::status_text(&agent.status().await)));
+                    continue;
+                }
                 Submit::Annotate(name, note) => {
                     let _ = tx_msg.send(Msg::Note(commands::annotate(&cwd, &name, &note)));
                     continue;

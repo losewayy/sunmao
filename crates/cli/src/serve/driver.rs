@@ -246,6 +246,14 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, cmd_line: &str, cli
             note(commands::todos_text(&host.agent.todos()));
             true
         }
+        commands::Command::Mcp => {
+            note(commands::mcp_text(&host.agent.mcp_roster()));
+            true
+        }
+        commands::Command::Status => {
+            note(commands::status_text(&host.agent.status().await));
+            true
+        }
         commands::Command::Artifacts => {
             note(commands::artifacts_text(&host.agent.session_cwd()));
             true

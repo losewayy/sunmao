@@ -149,6 +149,14 @@ pub async fn run(
                     println!("{}", crate::commands::todos_text(&agent.todos()));
                     continue;
                 }
+                crate::commands::Command::Mcp => {
+                    println!("{}", crate::commands::mcp_text(&agent.mcp_roster()));
+                    continue;
+                }
+                crate::commands::Command::Status => {
+                    println!("{}", crate::commands::status_text(&agent.status().await));
+                    continue;
+                }
                 crate::commands::Command::Artifacts => {
                     println!("{}", crate::commands::artifacts_text(cwd));
                     continue;

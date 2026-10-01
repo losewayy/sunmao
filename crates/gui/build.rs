@@ -8,6 +8,7 @@ fn main() {
             "shell_drag",
             "shell_open",
             "shell_notify",
+            "shell_zoom",
             "session_events",
             "host_call",
         ]),

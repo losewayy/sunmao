@@ -30,6 +30,7 @@ window.__sunmaoShell = {
   drag() { return window.__TAURI_INTERNALS__.invoke('shell_drag'); },
   openExternal(path) { return window.__TAURI_INTERNALS__.invoke('shell_open', { path }); },
   notify(title, body) { return window.__TAURI_INTERNALS__.invoke('shell_notify', { title, body }); },
+  zoom(op) { return window.__TAURI_INTERNALS__.invoke('shell_zoom', { op }); },
   Channel: class {
     constructor() {
       this.onmessage = () => {};
@@ -58,6 +59,20 @@ window.__sunmaoShell = {
     toJSON() { return `__CHANNEL__:${this.id}`; }
   },
 };
+// In-shell zoom: Ctrl/Cmd+= (in), - (out), 0 (reset). Native webview zoom
+// hotkeys stay off (IsZoomControlEnabled=false) so the keydown path is the
+// single authority and the Rust-side level can't desync.
+window.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+    const op = (e.key === '=' || e.key === '+') ? 'in'
+      : (e.key === '-' || e.key === '_') ? 'out'
+      : (e.key === '0' || e.key === ')') ? 'reset' : null;
+    if (op) {
+      e.preventDefault();
+      window.__sunmaoShell.zoom(op);
+    }
+  }
+});
 "#;
 
 /// Everything Tauri-side needs from the host runtime: the transport-free
@@ -67,6 +82,10 @@ window.__sunmaoShell = {
 /// its own Client so tabs don't steal each other's frames. The `u64` is
 /// a generation tag: on close/reload a dying channel removes its own
 /// client only, never the fresher one that already replaced it.
+/// `channels` keeps each window's session_events Channel so host-side
+/// events that aren't client frames (deep links) can still reach the page;
+/// `zooms` tracks per-window zoom — window-state doesn't persist it, so
+/// the level is session-local.
 struct Gui {
     host: sunmao::HostHandle,
     rt: tokio::runtime::Handle,
@@ -74,6 +93,10 @@ struct Gui {
         tokio::sync::Mutex<std::collections::HashMap<String, (u64, sunmao::Client)>>,
     >,
     client_gen: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    channels: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, tauri::ipc::Channel<serde_json::Value>>>,
+    >,
+    zooms: std::sync::Mutex<std::collections::HashMap<String, f64>>,
 }
 
 #[tauri::command]
@@ -105,6 +128,7 @@ fn shell_win(app: tauri::AppHandle, win: tauri::WebviewWindow, op: &str) {
             .title("sunmao")
             .decorations(false)
             .disable_drag_drop_handler()
+            .initialization_script(SHELL_SHIM)
             .build();
         }
         _ => {}
@@ -142,6 +166,32 @@ fn shell_open(app: tauri::AppHandle, path: &str) -> Result<(), String> {
         .map_err(|e| format!("open {path}: {e}"))
 }
 
+/// Browser-style zoom ladder — ±20% steps, 20%..500% clamp.
+fn zoom_step(cur: f64, dir: f64) -> f64 {
+    (cur * dir).clamp(0.2, 5.0)
+}
+
+/// Page zoom driven by the Ctrl/Cmd+=/-/0 keydown listener in SHELL_SHIM.
+/// Native webview hotkeys stay disabled so this map stays the single
+/// source of truth for the factor.
+#[tauri::command]
+fn shell_zoom(win: tauri::WebviewWindow, state: tauri::State<'_, Gui>, op: &str) {
+    let label = win.label().to_string();
+    let next = {
+        let zooms = state.zooms.lock().expect("zoom map");
+        let cur = *zooms.get(&label).unwrap_or(&1.0);
+        match op {
+            "in" => zoom_step(cur, 1.2),
+            "out" => zoom_step(cur, 1.0 / 1.2),
+            "reset" => 1.0,
+            _ => return,
+        }
+    };
+    if win.set_zoom(next).is_ok() {
+        state.zooms.lock().expect("zoom map").insert(label, next);
+    }
+}
+
 /// The event channel — ws's replacement (GUI.md §8). The page hands us a
 /// JS Channel; we attach a fresh host `Client` (hello + replay are sent
 /// by `HostHandle::client` verbatim, same as a new ws connection), then
@@ -156,7 +206,14 @@ async fn session_events(
     let host = state.host.clone();
     let rt = state.rt.clone();
     let clients = state.inner().clients.clone();
+    let channels = state.inner().channels.clone();
     let label = win.label().to_string();
+    // the deep-link sink — a live Channel per window so URL events can
+    // reach this page even before JS-side handling exists
+    channels
+        .lock()
+        .expect("channel map")
+        .insert(label.clone(), events.clone());
     let seq = state
         .inner()
         .client_gen
@@ -183,6 +240,8 @@ async fn session_events(
         if map.get(&label).map(|(g, _)| *g) == Some(seq) {
             map.remove(&label);
         }
+        drop(map);
+        channels.lock().expect("channel map").remove(&label);
     });
     Ok(())
 }
@@ -217,13 +276,52 @@ fn scheme_response(r: sunmao::HostResponse) -> tauri::http::Response<Vec<u8>> {
     b.body(r.body).expect("static response")
 }
 
+/// `sunmao://` dispatch: focus the main window and surface the URL.
+/// `sunmao://session/<id>` navigates that window's viewer — the same
+/// `view` frame the session sidebar sends; unknown ids no-op silently on
+/// the host. Every URL also goes out on each window's events channel as
+/// `{"type":"deep_link","url":…}` so the page can grow its own routing.
+fn open_deep_link(app: &tauri::AppHandle, url: &str) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+    let gui = app.state::<Gui>();
+    let session = url
+        .strip_prefix("sunmao://")
+        .and_then(|rest| rest.trim_start_matches('/').strip_prefix("session/"))
+        .map(|id| id.trim_end_matches('/').to_string())
+        .filter(|id| !id.is_empty());
+    if let Some(id) = session {
+        let (clients, rt) = (gui.clients.clone(), gui.rt.clone());
+        rt.spawn(async move {
+            if let Some((_, c)) = clients.lock().await.get_mut("main") {
+                c.handle(serde_json::json!({"type": "view", "id": id}))
+                    .await;
+            }
+        });
+    }
+    let chans = gui.channels.lock().expect("channel map");
+    for ch in chans.values() {
+        let _ = ch.send(serde_json::json!({"type": "deep_link", "url": url}));
+    }
+}
+
 fn main() {
     sunmao::init_tracing();
     // Provider/config resolve through the same Cli the CLI uses — argv is
     // real here: `--cwd`/`--model`/`--preset`/`--loop` etc. work on the
     // desktop shell exactly as on `sunmao serve` (task launchers and MSI
-    // shortcuts can carry a project dir).
-    let cli = sunmao::Cli::parse();
+    // shortcuts can carry a project dir). `sunmao://` deep links arrive as
+    // the bare argv tail when Windows forwards one to a fresh process —
+    // strip them before clap sees an unexpected positional; the deep-link
+    // plugin reads env::args() itself for the launch URL.
+    let argv: Vec<String> = std::env::args()
+        .enumerate()
+        .filter(|(i, a)| *i == 0 || !a.starts_with("sunmao://"))
+        .map(|(_, a)| a)
+        .collect();
+    let cli = sunmao::Cli::parse_from(argv);
     // The host owns its own tokio runtime on a dedicated thread — Tauri's
     // main thread belongs to the Win32 event loop. No listeners anywhere:
     // the page reaches the host through the `sunmao` scheme + IPC.
@@ -256,11 +354,28 @@ fn main() {
         rt,
         clients: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         client_gen: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        channels: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        zooms: std::sync::Mutex::new(std::collections::HashMap::new()),
     };
     tauri::Builder::default()
+        // deep links spawn a second process on Windows — single-instance
+        // forwards its argv here; handle_cli_arguments turns it into the
+        // `deep-link://new-url` event our setup listener consumes
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            use tauri_plugin_deep_link::DeepLinkExt as _;
+            app.deep_link().handle_cli_arguments(argv.iter());
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
+        .plugin(tauri_plugin_deep_link::init())
+        // updater is capability-only this round: `plugins.updater.pubkey`
+        // and `endpoints` in tauri.conf.json are placeholders — fill them
+        // before `cargo tauri build` for releases (`cargo tauri signer
+        // generate` produces the keypair; the private key stays with the
+        // maintainer). No code path calls `check` — update cadence is a
+        // product decision.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(gui)
         // the whole REST surface, scheme-served — `HostHandle::request`
         // is the same route table `sunmao serve`'s axum fallback answers
@@ -292,6 +407,7 @@ fn main() {
             shell_drag,
             shell_open,
             shell_notify,
+            shell_zoom,
             session_events,
             host_call
         ])
@@ -309,6 +425,30 @@ fn main() {
             .disable_drag_drop_handler()
             .initialization_script(SHELL_SHIM)
             .build()?;
+            // deep links: the plugin's launch-arg event already fired in
+            // its setup, so drain get_current() after registering the live
+            // listener — the MSI registers the `sunmao` scheme; dev builds
+            // register it per-user so `start sunmao://session/…` works
+            {
+                use tauri_plugin_deep_link::DeepLinkExt as _;
+                let app_handle = app.handle().clone();
+                let dl = app.deep_link();
+                dl.on_open_url(move |ev| {
+                    for url in ev.urls() {
+                        open_deep_link(&app_handle, url.as_str());
+                    }
+                });
+                #[cfg(desktop)]
+                if cfg!(debug_assertions) {
+                    let _ = dl.register_all();
+                }
+                let app_handle = app.handle().clone();
+                if let Ok(Some(urls)) = dl.get_current() {
+                    for url in urls {
+                        open_deep_link(&app_handle, url.as_str());
+                    }
+                }
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

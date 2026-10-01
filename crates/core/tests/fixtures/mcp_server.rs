@@ -2,11 +2,13 @@
 //! 2.0 (the framing rmcp's child-process transport uses).
 //!
 //! Contract:
-//!   initialize          → protocolVersion + capabilities.tools + serverInfo
-//!   notifications/*     → ignored (no reply)
+//!   initialize          → protocolVersion + capabilities.{tools,prompts,resources} + serverInfo
 //!   tools/list          → ping + draw (SEP-1865 _meta.ui) + internal
 //!                         (["app"]-only) + model_only (["model"]-only)
+//!                         (+ after_push once a list_changed was pushed)
 //!   tools/call <name>   → text content echoing name + arguments.msg
+//!   prompts/list        → `summarize` (one required positional arg `topic`)
+//!   prompts/get         → user message "Summarize: <topic>"
 //!   resources/read      → the ui://echo/app html document (with csp meta)
 //!   anything else       → method-not-found error
 //!
@@ -14,6 +16,8 @@
 //!   --die    reply to initialize + tools/list, then exit(0) — every later
 //!            request hits a dead child (the crash-tolerance path)
 //!   --hang   reply to initialize, then sleep forever without another byte
+//!   --push   after replying to the first tools/list, emit a spontaneous
+//!            `notifications/tools/list_changed` (the refresh path)
 //!
 //! Protocol notes that keep this honest:
 //!   - requests carry a numeric-or-string "id"; the reply must echo it
@@ -26,11 +30,13 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let die = args.iter().any(|a| a == "--die");
     let hang = args.iter().any(|a| a == "--hang");
+    let push = args.iter().any(|a| a == "--push");
 
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     let mut saw_list = false;
+    let mut pushed = false;
 
     for line in BufReader::new(stdin.lock()).lines() {
         let Ok(line) = line else { break };
@@ -48,20 +54,46 @@ fn main() {
         let Some(id) = id else { continue };
         let result = match method {
             "initialize" => Some(format!(
-                "{{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{{\"tools\":{{}},\"resources\":{{}}}},\"serverInfo\":{{\"name\":\"mcp-echo\",\"version\":\"0.1\"}}}}"
+                "{{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{{\"tools\":{{}},\"prompts\":{{}},\"resources\":{{}}}},\"serverInfo\":{{\"name\":\"mcp-echo\",\"version\":\"0.1\"}}}}"
             )),
             "tools/list" => {
+                // the pushed list_changed flips the catalog — every list
+                // issued after it reports `after_push`, whoever asks
                 saw_list = true;
-                // `ping` = plain echo; `draw` carries SEP-1865 `_meta.ui` —
-                // a ui:// resourceUri + the full visibility pair; `internal`
-                // is app-only (["app"]) so the model registry must NOT see
-                // it while the bridge catalog must.
-                Some("{\"tools\":[
-                    {\"name\":\"ping\",\"description\":\"echo the msg\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"msg\":{\"type\":\"string\"}}}},
-                    {\"name\":\"draw\",\"description\":\"render a tiny ui\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"msg\":{\"type\":\"string\"}}},\"_meta\":{\"ui\":{\"resourceUri\":\"ui://echo/app\",\"visibility\":[\"model\",\"app\"]}}},
-                    {\"name\":\"internal\",\"description\":\"app-only probe\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"msg\":{\"type\":\"string\"}}},\"_meta\":{\"ui\":{\"resourceUri\":\"ui://echo/app\",\"visibility\":[\"app\"]}}},
-                    {\"name\":\"model_only\",\"description\":\"model-only probe\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"msg\":{\"type\":\"string\"}}},\"_meta\":{\"ui\":{\"visibility\":[\"model\"]}}}
-                ]}".replace('\n', "").replace("    ", ""))
+                let extra = if pushed {
+                    ",{\"name\":\"after_push\",\"description\":\"joined post-list_changed\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"msg\":{\"type\":\"string\"}}}}"
+                } else {
+                    ""
+                };
+                Some(format!("{{\"tools\":[
+                    {{\"name\":\"ping\",\"description\":\"echo the msg\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"msg\":{{\"type\":\"string\"}}}}}}}},
+                    {{\"name\":\"draw\",\"description\":\"render a tiny ui\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"msg\":{{\"type\":\"string\"}}}}}},\"_meta\":{{\"ui\":{{\"resourceUri\":\"ui://echo/app\",\"visibility\":[\"model\",\"app\"]}}}}}},
+                    {{\"name\":\"internal\",\"description\":\"app-only probe\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"msg\":{{\"type\":\"string\"}}}}}},\"_meta\":{{\"ui\":{{\"resourceUri\":\"ui://echo/app\",\"visibility\":[\"app\"]}}}}}},
+                    {{\"name\":\"model_only\",\"description\":\"model-only probe\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"msg\":{{\"type\":\"string\"}}}}}},\"_meta\":{{\"ui\":{{\"visibility\":[\"model\"]}}}}}}
+                    {extra}]}}").replace('\n', "").replace("    ", ""))
+            }
+            "prompts/list" => Some(
+                "{\"prompts\":[{\"name\":\"summarize\",\"description\":\"summarize a topic\",\"arguments\":[{\"name\":\"topic\",\"required\":true}]}]}".to_string(),
+            ),
+            "prompts/get" => {
+                let name = v
+                    .get("params")
+                    .and_then(|p| p.get("name"))
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("");
+                let topic = v
+                    .get("params")
+                    .and_then(|p| p.get("arguments"))
+                    .and_then(|a| a.get("topic"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("");
+                if name == "summarize" {
+                    Some(format!(
+                        "{{\"description\":\"summarize\",\"messages\":[{{\"role\":\"user\",\"content\":{{\"type\":\"text\",\"text\":\"Summarize: {topic}\"}}}}]}}"
+                    ))
+                } else {
+                    None
+                }
             }
             "resources/read" => {
                 let uri = v
@@ -101,6 +133,19 @@ fn main() {
         };
         let _ = writeln!(out, "{frame}");
         let _ = out.flush();
+        // --push: the catalog change lands right after the first
+        // tools/list — the client's bootstrap listing already answered,
+        // so every list it (or the refresh pass) issues next reports the
+        // post-change catalog. Deterministic ordering: the push can never
+        // race ahead of the listing it describes.
+        if push && !pushed && method == "tools/list" {
+            pushed = true;
+            let _ = writeln!(
+                out,
+                "{{\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}}"
+            );
+            let _ = out.flush();
+        }
         if die && saw_list && method == "tools/list" {
             std::process::exit(0);
         }

@@ -2,6 +2,7 @@
 //! tolerance and the MCP Apps (SEP-1865) host surface. The fixture
 //! binary is `tests/fixtures/mcp_server.rs` compiled once per run.
 
+use super::spec::ServerSpec;
 use super::*;
 
 use serde_json::json;
@@ -55,11 +56,15 @@ async fn mcp_call_survives_then_fails_after_child_death() {
         args: vec![],
         env: Default::default(),
         url: None,
+        headers: Default::default(),
+        auth_env: None,
+        token_file: None,
+        timeout_secs: None,
     };
     let (handle, tools) = connect_one("echo", &spec).await.unwrap();
     assert_eq!(tools.len(), 3, "model registry hides the app-only tool");
     assert_eq!(tools[0].name(), "mcp__echo__ping");
-    assert_eq!(handle.tools.len(), 4, "catalog keeps every listed tool");
+    assert_eq!(handle.tools().len(), 4, "catalog keeps every listed tool");
     let res = tools[0].call(json!({"msg": "hi"}), &ctx).await.unwrap();
     assert!(res.ok);
     assert!(res.output.contains("pong[ping]: hi"), "{}", res.output);
@@ -71,6 +76,10 @@ async fn mcp_call_survives_then_fails_after_child_death() {
         args: vec!["--die".into()],
         env: Default::default(),
         url: None,
+        headers: Default::default(),
+        auth_env: None,
+        token_file: None,
+        timeout_secs: None,
     };
     let (_h, tools) = connect_one("die", &dying).await.unwrap();
     assert_eq!(tools.len(), 3, "listed before death");
@@ -100,11 +109,7 @@ async fn mcp_call_survives_then_fails_after_child_death() {
 ///   - `mcp_resource_read` proxies `resources/read` for the island
 #[tokio::test]
 async fn mcp_apps_lands_artifact_and_bridges_visibility() {
-    use crate::agent::{AgentLoop, ApprovalMode, LiveEvent, Observer};
-    struct Null;
-    impl Observer for Null {
-        fn on_event(&self, _ev: &LiveEvent) {}
-    }
+    use crate::agent::{AgentLoop, ApprovalMode};
     let Some(bin) = fixture_bin() else {
         eprintln!("rustc not found — skipping live MCP apps test");
         return;
@@ -115,6 +120,10 @@ async fn mcp_apps_lands_artifact_and_bridges_visibility() {
         args: vec![],
         env: Default::default(),
         url: None,
+        headers: Default::default(),
+        auth_env: None,
+        token_file: None,
+        timeout_secs: None,
     };
     let (handle, tools) = connect_one("echo", &spec).await.unwrap();
 
@@ -129,14 +138,13 @@ async fn mcp_apps_lands_artifact_and_bridges_visibility() {
         ],
         "app-only tools stay out of the model registry"
     );
-    let internal = handle
-        .tools
+    let catalog = handle.tools();
+    let internal = catalog
         .iter()
         .find(|t| t.server_tool == "internal")
         .expect("internal in catalog");
     assert!(internal.app_visible);
-    let model_only = handle
-        .tools
+    let model_only = catalog
         .iter()
         .find(|t| t.server_tool == "model_only")
         .expect("model_only in catalog");
@@ -244,4 +252,161 @@ impl sunmao_llm::ProviderAdapter for StubLlm {
     ) -> anyhow::Result<sunmao_llm::DeltaStream> {
         Ok(Box::pin(futures_util::stream::empty()))
     }
+}
+
+struct Null;
+impl crate::agent::Observer for Null {
+    fn on_event(&self, _ev: &crate::agent::LiveEvent) {}
+}
+
+/// `/srv:prompt` resolves through prompts/get — the fixture's `summarize`
+/// takes the `topic` arg positionally; a non-colon name falls through to
+/// file commands (None), and a colon name no server owns is also None.
+#[tokio::test]
+async fn mcp_prompt_resolves_via_get_prompt() {
+    let Some(bin) = fixture_bin() else {
+        eprintln!("rustc not found — skipping live MCP prompt test");
+        return;
+    };
+    let dir = crate::fresh_test_dir("mcp-prompt");
+    let spec = ServerSpec {
+        command: Some(bin.to_string_lossy().to_string()),
+        args: vec![],
+        env: Default::default(),
+        url: None,
+        headers: Default::default(),
+        auth_env: None,
+        token_file: None,
+        timeout_secs: None,
+    };
+    let (handle, _tools) = connect_one("echo", &spec).await.unwrap();
+    // prompts/list landed at connect — the roster surface sees it
+    let prompts = handle.prompts();
+    assert_eq!(prompts.len(), 1);
+    assert_eq!(prompts[0].name, "summarize");
+    assert_eq!(prompts[0].arg_names, ["topic"]);
+
+    let mut ctx_raw = crate::context::Context::new(
+        std::sync::Arc::new(StubLlm),
+        crate::session::SessionLog::ephemeral(),
+        crate::tool::ToolRegistry::new(),
+        dir.clone(),
+    );
+    ctx_raw.mcp_servers = vec![handle];
+    let agent = crate::agent::AgentLoop::new(std::sync::Arc::new(ctx_raw));
+
+    // completion surface: `echo:summarize` is offered
+    assert_eq!(agent.mcp_prompt_names(), ["echo:summarize"]);
+    // positional arg mapping → the prompt's declared `topic`
+    let text = agent
+        .mcp_prompt_text("echo:summarize", "the diff")
+        .await
+        .expect("echo:summarize resolves")
+        .unwrap();
+    assert_eq!(text, "Summarize: the diff");
+    // a plain name never touches MCP — file commands keep the slot
+    assert!(agent.mcp_prompt_text("summarize", "x").await.is_none());
+    // a colon name no server claims falls through too
+    assert!(
+        agent
+            .mcp_prompt_text("ghost:summarize", "x")
+            .await
+            .is_none()
+    );
+    // a colon name the server knows but doesn't list errors — the caller
+    // gets Some(Err), never a silent "unknown command"
+    assert!(
+        agent.mcp_prompt_text("echo:nosuch", "").await.is_none(),
+        "unlisted prompt falls through to file commands"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A pushed `notifications/tools/list_changed` refreshes the shared
+/// catalog; `drain_mcp` swaps the session registry at the turn boundary —
+/// the new tool is declared and callable after the drain, and the bump is
+/// durable (an `mcp.refresh` audit fact lands in the log).
+#[tokio::test]
+async fn list_changed_refreshes_registry_at_turn_boundary() {
+    let Some(bin) = fixture_bin() else {
+        eprintln!("rustc not found — skipping live MCP list_changed test");
+        return;
+    };
+    let dir = crate::fresh_test_dir("mcp-push");
+    let spec = ServerSpec {
+        command: Some(bin.to_string_lossy().to_string()),
+        args: vec!["--push".into()],
+        env: Default::default(),
+        url: None,
+        headers: Default::default(),
+        auth_env: None,
+        token_file: None,
+        timeout_secs: None,
+    };
+    let (handle, tools) = connect_one("echo", &spec).await.unwrap();
+    assert_eq!(tools.len(), 3, "initial catalog predates the push");
+
+    let mut ctx_raw = crate::context::Context::new(
+        std::sync::Arc::new(StubLlm),
+        crate::session::SessionLog::ephemeral(),
+        crate::tool::builtin_registry(),
+        dir.clone(),
+    );
+    // move the handle — Clone resets seen_version, the live connection's
+    // own catalog bump must be what the drain observes
+    ctx_raw.mcp_servers = vec![handle];
+    for t in tools {
+        ctx_raw.tools.register_boxed(t);
+    }
+    let ctx = std::sync::Arc::new(ctx_raw);
+    let agent = crate::agent::AgentLoop::new(ctx.clone());
+
+    // wait for the push to land — notification delivery + the handler's
+    // re-list are async off the serve task
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while ctx.mcp_servers[0].version() == 0 {
+        if std::time::Instant::now() > deadline {
+            panic!("list_changed never arrived");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    // registry is stale until the drain — the push must not mutate a
+    // session's tool surface mid-turn by itself
+    assert!(
+        !ctx.tools
+            .declarations()
+            .iter()
+            .any(|t| t.function.name == "mcp__echo__after_push"),
+        "refresh waits for the turn-boundary drain"
+    );
+
+    agent.drain_mcp(&Null).await;
+
+    let names: Vec<String> = ctx
+        .tools
+        .declarations()
+        .iter()
+        .map(|t| t.function.name.clone())
+        .collect();
+    assert!(
+        names.iter().any(|n| n == "mcp__echo__after_push"),
+        "drained catalog registered: {names:?}"
+    );
+    // the refreshed impl actually calls through
+    let res = ctx
+        .tools
+        .call("mcp__echo__after_push", "{\"msg\":\"x\"}", &ctx)
+        .await;
+    assert!(res.ok, "{}", res.output);
+    assert!(res.output.contains("pong[after_push]: x"));
+    // the drain is durable — replay shows when the catalog moved
+    let evs = ctx.sessions.lock().await.events().await.unwrap();
+    assert!(
+        evs.iter().any(|e| matches!(
+            e,
+            crate::session::SessionEvent::Hook { event, .. } if event == "mcp.refresh"
+        )),
+        "mcp.refresh audit fact missing"
+    );
+    std::fs::remove_dir_all(&dir).ok();
 }

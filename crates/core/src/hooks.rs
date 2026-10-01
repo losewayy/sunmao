@@ -117,6 +117,10 @@ pub struct HookInput<'a> {
     pub tool_input: Option<&'a Value>,
     /// Serialized tool output (PostToolUse).
     pub tool_response: Option<&'a str>,
+    /// Connected MCP server names (SessionStart payload field
+    /// `mcp_servers`) — owned because the caller builds the list off
+    /// `ctx.mcp_servers`, not a borrowable field.
+    pub mcp_servers: Option<Vec<String>>,
 }
 
 /// Aggregated effect of all hooks fired for one event.
@@ -322,6 +326,7 @@ impl HookEngine {
             "tool_use_id": input.tool_use_id,
             "tool_input": input.tool_input,
             "tool_response": input.tool_response,
+            "mcp_servers": input.mcp_servers,
         })
     }
 

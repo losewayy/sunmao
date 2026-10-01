@@ -171,7 +171,7 @@ pub async fn run(
                                 .respond_with_error(invalid_params(format!("session log: {e:#}")));
                         }
                     };
-                    let mut registry = builtin_registry();
+                    let registry = builtin_registry();
                     let mcp = sunmao_core::mcp::connect_all(&cwd, &preset_roots).await;
                     for t in mcp.tools {
                         registry.register_boxed(t);
@@ -223,6 +223,9 @@ pub async fn run(
                             &ctx.cwd,
                             &sunmao_core::hooks::HookInput {
                                 source: Some("startup"),
+                                mcp_servers: Some(
+                                    ctx.mcp_servers.iter().map(|s| s.name.clone()).collect(),
+                                ),
                                 ..Default::default()
                             },
                         )
@@ -343,7 +346,7 @@ pub async fn run(
                                 .respond_with_error(invalid_params(format!("open log: {e:#}")));
                         }
                     };
-                    let mut registry = builtin_registry();
+                    let registry = builtin_registry();
                     let mcp = sunmao_core::mcp::connect_all(&cwd, &preset_roots).await;
                     for t in mcp.tools {
                         registry.register_boxed(t);
@@ -371,6 +374,9 @@ pub async fn run(
                             &ctx.cwd,
                             &sunmao_core::hooks::HookInput {
                                 source: Some("resume"),
+                                mcp_servers: Some(
+                                    ctx.mcp_servers.iter().map(|s| s.name.clone()).collect(),
+                                ),
                                 ..Default::default()
                             },
                         )

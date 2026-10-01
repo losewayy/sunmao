@@ -207,7 +207,16 @@ impl App {
             Some((kind, frag)) => {
                 let pool = match kind {
                     MenuKind::Args => self.model_selectors.clone(),
-                    _ => commands::candidates(&self.cwd, &self.extra_roots),
+                    _ => {
+                        // MCP `/srv:prompt` names complete like file
+                        // commands — the snapshot is fine, a pushed
+                        // list_changed refreshes resolution, not the menu
+                        let mut pool = commands::candidates(&self.cwd, &self.extra_roots);
+                        pool.extend(self.mcp_prompts.iter().cloned());
+                        pool.sort();
+                        pool.dedup();
+                        pool
+                    }
                 };
                 let matches: Vec<String> = pool
                     .into_iter()

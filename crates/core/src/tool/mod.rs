@@ -30,44 +30,74 @@ pub trait ToolImpl: Send + Sync {
 }
 
 pub struct ToolRegistry {
-    /// Arc storage: agent `tools:` whitelists rebuild filtered registries
-    /// by cloning handles — no impl needs to be cloneable.
-    tools: BTreeMap<String, Arc<dyn ToolImpl>>,
+    /// Arc storage under a lock: agent `tools:` whitelists rebuild
+    /// filtered registries by cloning handles — no impl needs to be
+    /// cloneable — and MCP `list_changed` refresh re-registers into a
+    /// live Context (Arc<Context> means no `&mut` anywhere).
+    /// Never hold a guard across `.await` — `call` clones the Arc first.
+    tools: std::sync::RwLock<BTreeMap<String, Arc<dyn ToolImpl>>>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
-            tools: BTreeMap::new(),
+            tools: std::sync::RwLock::new(BTreeMap::new()),
         }
     }
 
-    pub fn register(&mut self, tool: impl ToolImpl + 'static) {
-        self.tools.insert(tool.name().to_string(), Arc::new(tool));
+    pub fn register(&self, tool: impl ToolImpl + 'static) {
+        self.tools
+            .write()
+            .unwrap()
+            .insert(tool.name().to_string(), Arc::new(tool));
     }
 
-    pub fn register_boxed(&mut self, tool: Box<dyn ToolImpl>) {
-        self.tools.insert(tool.name().to_string(), tool.into());
+    pub fn register_boxed(&self, tool: Box<dyn ToolImpl>) {
+        self.tools
+            .write()
+            .unwrap()
+            .insert(tool.name().to_string(), tool.into());
     }
 
     /// Register an already-shared impl — extension tools live on the
     /// `ExtRegistry` (the child owns the wire); the session registry just
     /// borrows the same handle.
-    pub fn register_arc(&mut self, tool: Arc<dyn ToolImpl>) {
-        self.tools.insert(tool.name().to_string(), tool);
+    pub fn register_arc(&self, tool: Arc<dyn ToolImpl>) {
+        self.tools
+            .write()
+            .unwrap()
+            .insert(tool.name().to_string(), tool);
+    }
+
+    /// Swap the tools one prefix exposes — an MCP `list_changed` refresh
+    /// drops the old `mcp__{server}__*` entries and registers the fresh
+    /// catalog in one pass (removed tools really go away, they don't
+    /// linger as stale declarations).
+    pub fn replace_prefixed(&self, prefix: &str, tools: Vec<Box<dyn ToolImpl>>) {
+        let mut map = self.tools.write().unwrap();
+        map.retain(|k, _| !k.starts_with(prefix));
+        for t in tools {
+            map.insert(t.name().to_string(), t.into());
+        }
     }
 
     pub fn declarations(&self) -> Vec<Tool> {
-        self.tools.values().map(|t| t.decl()).collect()
+        self.tools
+            .read()
+            .unwrap()
+            .values()
+            .map(|t| t.decl())
+            .collect()
     }
 
     /// A registry with only `names` — agent `tools:` whitelists trim a
     /// child's surface to exactly what the def allows.
     pub fn filtered(&self, names: &[String]) -> ToolRegistry {
-        let mut r = ToolRegistry::new();
+        let r = ToolRegistry::new();
+        let map = self.tools.read().unwrap();
         for n in names {
-            if let Some(t) = self.tools.get(n) {
-                r.tools.insert(n.clone(), t.clone());
+            if let Some(t) = map.get(n) {
+                r.register_arc(t.clone());
             }
         }
         r
@@ -75,8 +105,8 @@ impl ToolRegistry {
 
     /// Drop one tool — the depth cap strips `Task` from leaf children so
     /// the model never sees a spawner it can't legally use.
-    pub fn remove(&mut self, name: &str) {
-        self.tools.remove(name);
+    pub fn remove(&self, name: &str) {
+        self.tools.write().unwrap().remove(name);
     }
 
     pub async fn call(
@@ -85,7 +115,10 @@ impl ToolRegistry {
         args_json: &str,
         ctx: &crate::context::Context,
     ) -> ToolResult {
-        let Some(tool) = self.tools.get(name) else {
+        // clone the Arc out from under the lock — a std::sync guard isn't
+        // Send, and a list_changed refresh mid-call must not deadlock on it
+        let tool = self.tools.read().unwrap().get(name).cloned();
+        let Some(tool) = tool else {
             return ToolResult {
                 output: format!("unknown tool: {name}"),
                 ok: false,
@@ -118,7 +151,7 @@ impl Default for ToolRegistry {
 
 /// Canonical builtin set for v0.1.
 pub fn builtin_registry() -> ToolRegistry {
-    let mut r = ToolRegistry::new();
+    let r = ToolRegistry::new();
     r.register(ReadTool);
     r.register(WriteTool);
     r.register(EditTool);
@@ -250,7 +283,7 @@ mod tests {
         }
         let dir = fresh_dir("die");
         std::fs::create_dir_all(&dir).unwrap();
-        let mut reg = builtin_registry();
+        let reg = builtin_registry();
         reg.register(DyingTool);
         let ctx = Arc::new(Context::new(
             Arc::new(StubLlm),

@@ -314,24 +314,37 @@ pub async fn run(
                     }
                     continue;
                 }
-                // local-only builtins and unknown names — try a command file
-                // first, else report unknown.
+                // local-only builtins and unknown names — an MCP prompt
+                // (`/srv:name`) resolves through the server first, then a
+                // command file, else report unknown.
                 crate::commands::Command::Clear
                 | crate::commands::Command::Multiline
                 | crate::commands::Command::Other => {
                     let name = cmd_line.split_whitespace().next().unwrap_or("");
-                    match crate::commands::command_body(cwd, preset_roots, name) {
-                        Some(body) => {
-                            let rest = cmd_line[name.len()..].trim();
-                            let prompt = crate::commands::expand_command(&body, rest);
-                            let (prompt, atts) = crate::attachments::attach_mentions(&prompt, cwd);
+                    let rest = cmd_line[name.len()..].trim();
+                    match agent.mcp_prompt_text(name, rest).await {
+                        Some(Ok(text)) => {
+                            let (prompt, atts) = crate::attachments::attach_mentions(&text, cwd);
                             if let Err(e) =
                                 agent.run_turn_blocks(&prompt, &atts, &*observer.0).await
                             {
                                 eprintln!("[error] {e:#}");
                             }
                         }
-                        None => println!("[unknown command: /{name}]"),
+                        Some(Err(e)) => println!("[mcp prompt /{name} failed] {e:#}"),
+                        None => match crate::commands::command_body(cwd, preset_roots, name) {
+                            Some(body) => {
+                                let prompt = crate::commands::expand_command(&body, rest);
+                                let (prompt, atts) =
+                                    crate::attachments::attach_mentions(&prompt, cwd);
+                                if let Err(e) =
+                                    agent.run_turn_blocks(&prompt, &atts, &*observer.0).await
+                                {
+                                    eprintln!("[error] {e:#}");
+                                }
+                            }
+                            None => println!("[unknown command: /{name}]"),
+                        },
                     }
                     continue;
                 }

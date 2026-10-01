@@ -165,8 +165,8 @@ impl AgentLoop {
             .iter()
             .find(|s| s.name == server)
             .ok_or_else(|| format!("no such mcp server: {server}"))?;
-        let info = handle
-            .tools
+        let catalog = handle.tools();
+        let info = catalog
             .iter()
             .find(|t| t.server_tool == tool)
             .ok_or_else(|| format!("no such tool on {server}: {tool}"))?;

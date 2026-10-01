@@ -172,6 +172,8 @@ async fn run_inner(
     // grab before the driver task takes `agent` — slash-menu arg completion
     // filters this list for `/model <sel>`.
     let model_selectors = agent.model_selectors();
+    // MCP `/srv:prompt` names complete like builtin commands
+    let mcp_prompts = agent.mcp_prompt_names();
     let (tx_input, rx_input) = mpsc::unbounded_channel::<Submit>();
     let (tx_cancel, rx_cancel) = mpsc::unbounded_channel::<()>();
 
@@ -265,6 +267,7 @@ async fn run_inner(
 
     let mut app = App::new(model, cwd.clone(), &session_id);
     app.model_selectors = model_selectors;
+    app.mcp_prompts = mcp_prompts;
     app.extra_roots = extra_roots;
     // the log's recorded stance wins — a resumed full_access session must
     // not look like it was auto all along

@@ -12,7 +12,25 @@ use sunmao_core::agent::{LiveEvent, Observer as _};
 
 use crate::{commands, sessions};
 
-use super::host::{Host, Input, Shared, WsObserver, slash_candidates};
+use super::host::{Host, Input, Shared, WsObserver};
+
+/// Slash-command list for the composer menu — same candidates the TUI
+/// shows (builtins + file commands + connected servers' `/srv:prompt`
+/// names), minus pure-TUI affordances.
+pub(crate) fn slash_candidates(s: &Shared) -> Vec<String> {
+    let mut out: Vec<String> = crate::commands::candidates(&s.cwd, &s.roots)
+        .into_iter()
+        .filter(|n| *n != "multiline" && *n != "clear" && *n != "quit")
+        .collect();
+    // any live host's prompts complete — catalogs are process-shared, so
+    // the first session's `srv:prompt` names describe every server's
+    if let Some(host) = s.sessions.lock().unwrap().values().next() {
+        out.extend(host.agent.mcp_prompt_names());
+    }
+    out.sort();
+    out.dedup();
+    out
+}
 
 /// Ask the host's mgmt lane to adopt a session — drivers can't call
 /// `adopt`/`fork_or_resume` directly: adopt spawns drivers, so an awaited
@@ -116,19 +134,38 @@ async fn dispatch_input(s: &Arc<Shared>, host: &Arc<Host>, input: Input) {
         } else {
             let name = cmd_line.split_whitespace().next().unwrap_or("");
             let rest = cmd_line[name.len()..].trim();
-            if let Some(body) = commands::command_body(&s.cwd, &s.roots, name) {
-                let (prompt, mut atts) = crate::attachments::attach_mentions(
-                    &commands::expand_command(&body, rest),
-                    &cwd,
-                );
+            // `/srv:prompt` resolves through the MCP server before file
+            // commands — the server owns the name
+            enum Resolved {
+                Prompt(String),
+                Failed,
+                Missing,
+            }
+            let resolved = match host.agent.mcp_prompt_text(name, rest).await {
+                Some(Ok(text)) => Resolved::Prompt(text),
+                Some(Err(e)) => {
+                    emit(serde_json::json!({
+                        "type": "note", "sess": sess,
+                        "text": format!("[mcp prompt /{name} failed] {e:#}"),
+                    }));
+                    Resolved::Failed
+                }
+                None => match commands::command_body(&s.cwd, &s.roots, name) {
+                    Some(body) => Resolved::Prompt(commands::expand_command(&body, rest)),
+                    None => {
+                        emit(serde_json::json!({
+                            "type": "note", "sess": sess,
+                            "text": format!("[unknown command: /{name}]"),
+                        }));
+                        Resolved::Missing
+                    }
+                },
+            };
+            if let Resolved::Prompt(text) = resolved {
+                let (prompt, mut atts) = crate::attachments::attach_mentions(&text, &cwd);
                 atts.extend(attachments);
                 let obs = WsObserver::new(s.live.clone(), sess.clone());
                 let _ = host.agent.run_turn_blocks(&prompt, &atts, &obs).await;
-            } else {
-                emit(serde_json::json!({
-                    "type": "note", "sess": sess,
-                    "text": format!("[unknown command: /{name}]"),
-                }));
             }
         }
     } else {

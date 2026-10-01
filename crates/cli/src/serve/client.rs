@@ -16,9 +16,8 @@ use sunmao_core::agent::Observer as _;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use super::host::{
-    Host, Input, Shared, WsObserver, display_path, fork_or_resume, new_session, slash_candidates,
-};
+use super::driver::slash_candidates;
+use super::host::{Host, Input, Shared, WsObserver, display_path, fork_or_resume, new_session};
 
 /// Process-global client ids — a `session` switch frame names its issuer
 /// so only that tab follows (`0` = the caller opted out of the tag).

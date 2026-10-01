@@ -262,7 +262,7 @@ pub(super) async fn spawn_parts(
         }
         names
     });
-    let mut tools = match &allow_names {
+    let tools = match &allow_names {
         Some(names) => builtin_registry().filtered(names),
         None => builtin_registry(),
     };

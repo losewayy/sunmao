@@ -10,6 +10,21 @@ ACP v2 server, event-sourced sessions with resume/fork/dataflow, CJK-native
 TUI.
 
 **post-0.2 additions**
+- **behavior change**: `-p`/`--print` no longer pins `full_access`. With no
+  `--mode` flag a piped run denies every approval prompt (new
+  `PipedApprover`) — headless sessions can't wait on cards — and the
+  denial reason lands in the failed `ToolResult` so the model sees it.
+  `--mode full_access` or a `permissions.json` allow rule stays the
+  escape hatch. A resumed log's `full_access` clamps to `auto` under `-p`
+  unless `--mode` says otherwise. New `--mode <stance>` flag also sets the
+  approval mode for interactive sessions
+- `LiveEvent::ToolStart` carries the parsed `args` (post-hook-rewrite) —
+  the GUI renders Edit calls as line-level diffs and Write calls as new-
+  file previews; synthetic events (compact, `!` shell) carry `null`
+- `/mcp` (connected server roster: name · transport · tool count · liveness)
+  and `/status` (model · provider · cwd · session id · approval mode ·
+  token totals) builtins — parsed in `commands.rs`, executed by all three
+  frontends; `commands/` note-text builders split out to `notes.rs`
 - `sunmao-gui` — GUI phase 2 (GUI.md §8): a Tauri v2 shell embedding the
   SAME multi-session host in-process (`sunmao::serve_host` — the new
   transport-free entry; `serve/` split into host/client/request +

@@ -155,7 +155,10 @@ fn pending_approval_card_is_never_overwritten() {
     assert_eq!(app.approval.as_ref().unwrap().tool, "Write");
     assert_eq!(app.focus, Focus::Approval);
 
-    resolve_card(&mut app, sunmao_core::approval::Approval::Deny);
+    resolve_card(
+        &mut app,
+        sunmao_core::approval::Approval::Deny { reason: None },
+    );
     assert!(app.approval.is_none());
     assert_eq!(app.focus, Focus::Input);
 }

@@ -46,15 +46,18 @@ pub trait Approver: Send + Sync {
 }
 
 /// The verdict a user gave at the approval seam.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Approval {
     /// Permit this call only.
     Once,
     /// Permit this call and every identical (tool, specifier) call for the
     /// rest of the session — recorded as a `SessionEvent::Hook` fact.
     Session,
-    /// Refuse.
-    Deny,
+    /// Refuse. `reason` says *why it couldn't be answered* when the caller
+    /// is a machine (a piped `-p` session can't wait on a card) — the gate
+    /// folds it into the denied ToolResult so the model sees the cause, not
+    /// just the refusal. `None` = a human said no.
+    Deny { reason: Option<String> },
 }
 
 /// Non-interactive default: allow everything, audit the decision.
@@ -64,6 +67,24 @@ pub struct AllowAll;
 impl Approver for AllowAll {
     async fn approve(&self, _tool: &str, _detail: &str, _why: &str) -> Approval {
         Approval::Once
+    }
+}
+
+/// Piped/headless sessions (`-p`, non-interactive embedders): there is no
+/// human to answer the card, so every `ask` downgrades to a deny whose
+/// reason the model can read and work around. Exemptions never reach this
+/// approver — `full_access` mode, allow rules and session grants all
+/// short-circuit in the gate before `approve()` runs.
+pub struct PipedApprover;
+
+#[async_trait::async_trait]
+impl Approver for PipedApprover {
+    async fn approve(&self, _tool: &str, _detail: &str, _why: &str) -> Approval {
+        Approval::Deny {
+            reason: Some(
+                "non-interactive (-p) session — approval prompts can't be answered".into(),
+            ),
+        }
     }
 }
 

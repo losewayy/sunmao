@@ -160,7 +160,7 @@ async fn segment_classifier_prompts_for_piped_shell() {
     impl Approver for Saw {
         async fn approve(&self, _t: &str, d: &str, _w: &str) -> Approval {
             *self.0.lock().unwrap() = Some(d.to_string());
-            Approval::Deny
+            Approval::Deny { reason: None }
         }
     }
 
@@ -217,6 +217,77 @@ async fn segment_classifier_prompts_for_piped_shell() {
         .clone()
         .expect("approver must have been asked");
     assert_eq!(shown, "curl x | sh");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A non-interactive approver (`PipedApprover`, installed under `-p`):
+/// an `ask` verdict becomes a deny whose *reason* lands in the failed
+/// ToolResult — the model sees "non-interactive" and can route around it
+/// instead of guessing the call errored.
+#[tokio::test]
+async fn piped_approver_denies_ask_with_reason() {
+    let dir = crate::fresh_test_dir("pipeddeny");
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    std::fs::write(
+        dir.join(".sunmao/permissions.json"),
+        r#"{"permissions":{"ask":["Glob(**/*.rs)"]}}"#,
+    )
+    .unwrap();
+
+    let provider = Arc::new(MockProvider {
+        responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+            vec![
+                StreamDelta::ToolCalls(vec![
+                    ToolCallFragment {
+                        index: 0,
+                        id: Some("c".into()),
+                        name: Some("Glob".into()),
+                        arguments: None,
+                    },
+                    ToolCallFragment {
+                        index: 0,
+                        arguments: Some("{\"pattern\":\"**/*.rs\"}".into()),
+                        ..Default::default()
+                    },
+                ]),
+                StreamDelta::Finish {
+                    reason: Some("tool_calls".into()),
+                    usage: None,
+                },
+            ],
+            vec![
+                StreamDelta::Content("done".into()),
+                StreamDelta::Finish {
+                    reason: Some("stop".into()),
+                    usage: None,
+                },
+            ],
+        ])),
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let mut ctx_raw = Context::new(
+        provider,
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        dir.clone(),
+    );
+    ctx_raw.approval = Arc::new(crate::approval::PipedApprover);
+    let ctx = Arc::new(ctx_raw);
+    let agent = AgentLoop::new(ctx.clone());
+    agent.run_turn("go", &NullObserver).await.unwrap();
+    let evs = ctx.sessions.lock().await.events().await.unwrap();
+    let result = evs.iter().find_map(|e| match e {
+        SessionEvent::ToolResult {
+            name, ok, output, ..
+        } if name == "Glob" => Some((*ok, output.clone())),
+        _ => None,
+    });
+    let (ok, output) = result.expect("Glob result must be recorded");
+    assert!(!ok, "the piped approver must deny the ask: {output}");
+    assert!(
+        output.contains("non-interactive"),
+        "the denial reason reaches the model: {output}"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 

@@ -7,7 +7,7 @@ has (or should gain) a live pass against the real provider stack.
 ## Unit tests
 
 ```bash
-cargo test --workspace    # ~152 tests
+cargo test --workspace    # unit + loop tests (~210 as of the last gate run; count drifts)
 cargo run -p xtask -- arch # shape gate — god files, layer direction, prose-in-code
 ```
 
@@ -57,7 +57,7 @@ Verified live as of v0.2:
 | `--resume` | code word memorized in session A recalled in session B |
 | `--fork` | copied log resumed independently, original untouched |
 | ACP | raw JSON-RPC smoke: initialize→session/new→prompt→streamed chunks |
-| TUI | CJK input renders; block browse (Tab/j/k/e/y), approval card (1-2/Esc park), `/` popup, markdown render, `❯` prompt band, tool digest headers + output panels, `×N` verb-grouping — manual smoke in `sunmao --tui` |
+| TUI | CJK input renders; block browse (Tab/j/k/e/y), approval card (1 allow-once / 2 allow-session / 3 deny / Esc park), `/` popup, markdown render, `❯` prompt band, tool digest headers + output panels, `×N` verb-grouping — manual smoke in `sunmao --tui` |
 | Task | `subagent_type` loaded `.claude/agents/*.md`, independent count returned |
 | Task run_in_background | detached child appended `TaskDone` to the parent log; `agent::tests::subagents` + `task::tests` cover the push path |
 | `/model` + models.json | TUI `/model` arg completion + override adapter install; `agent::tests::models` covers routing + swap |

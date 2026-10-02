@@ -8,6 +8,8 @@ disagree, **this file is right** — update SPEC or fix the code.
 
 ```text
 sunmao-llm   crates/llm/   provider dialects + wire primitives
+                           (oai / anthropic / responses — the latter
+                           chains previous_response_id per adapter)
 sunmao-core  crates/core/  the kernel — Context, AgentLoop, sessions, tools
 sunmao       crates/cli/   every user-facing surface (lib+bin — the GUI
                           shell reuses Cli + the serve host verbatim)
@@ -63,7 +65,7 @@ Prompt sections are named files (`assets/prompt/*.md` ← `~/.sunmao/` ←
 `.sunmao/`); same-named files replace earlier sections. The risk table is
 a text asset too (`assets/risky-patterns.txt`).
 
-## Native tool surface (10)
+## Native tool surface (11)
 
 ```text
 fs.rs      Read (line numbers) / Write / Edit (whitespace-normalized match)
@@ -81,7 +83,11 @@ task.rs     Task — nested AgentLoop, depth-capped at 2, own session log,
            `model` selector (@route/provider<id>) overrides both for
            multi-model orchestration; run_in_background detaches — the
            finished child appends TaskDone into the parent's session log
-           (push delivery)
+           (push delivery); bidirectional mid-run messaging — Task{steer}
+           is the parent→child downlink (folded at the child's next request
+           boundary, never interrupting), SendMessage the child→parent
+           uplink; a folded steer pairs with an audit Hook{steer} row so
+           --dataflow can tell injection from typed input
 models.rs  ModelResolver — .sunmao/models.json providers + @routes;
            agent model: selectors and /model swaps resolve through it
 ```
@@ -121,7 +127,7 @@ the project layer). Prompt sections order: built-in assets → user → project
 ```rust
 SessionEvent::Started | Message | ToolCall | ToolResult
                   | Compacted | Artifact | Usage | Hook | LocalShell
-                  | TaskDone | Todos
+                  | TaskDone | Todos | ModeChange | SessionMeta | Checkpoint
 ```
 
 Append-only JSONL; the visible transcript is a pure fold over them. `messages()`

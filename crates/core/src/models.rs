@@ -52,12 +52,18 @@ pub struct ModelsFile {
 
 /// Which files feed a resolver — `.sunmao/models.json` then `.claude/` for
 /// compat, both under `cwd`. `reload()` re-reads them after a GUI edit.
+/// The layers MERGE per key (a `.claude` provider/route overrides its
+/// same-named `.sunmao` twin) — wholesale replacement used to let an empty
+/// `.claude/models.json` wipe the project's whole routing table.
 fn read_models_file(cwd: &Path) -> ModelsFile {
     let mut file = ModelsFile::default();
     for dir in [cwd.join(".sunmao"), cwd.join(".claude")] {
         if let Ok(text) = std::fs::read_to_string(dir.join("models.json")) {
             match serde_json::from_str::<ModelsFile>(&text) {
-                Ok(f) => file = f,
+                Ok(f) => {
+                    file.providers.extend(f.providers);
+                    file.routes.extend(f.routes);
+                }
                 Err(e) => {
                     tracing::warn!("{}: ignoring invalid models.json — {e}", dir.display())
                 }
@@ -208,8 +214,25 @@ impl ModelResolver {
     }
 
     /// Build (or fetch from cache) the adapter for a resolved target.
+    /// The key carries the provider's identity, not just the endpoint —
+    /// two providers may share a base_url+model with different dialects or
+    /// credential sources. The literal key participates as a DefaultHasher
+    /// digest so the map never stores the secret itself.
     pub fn adapter(&self, t: &ModelTarget) -> Option<Arc<dyn ProviderAdapter>> {
-        let key = format!("{}\u{0}{}", t.provider.base_url, t.model);
+        let key_hash = t.provider.api_key.as_deref().map(|k| {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            k.hash(&mut h);
+            format!("{:x}", h.finish())
+        });
+        let key = format!(
+            "{}\u{0}{}\u{0}{}\u{0}{}\u{0}{}",
+            t.provider.base_url,
+            t.provider.dialect,
+            t.provider.api_key_env.as_deref().unwrap_or_default(),
+            key_hash.as_deref().unwrap_or_default(),
+            t.model,
+        );
         if let Some(a) = self.cache.lock_or_recover().get(&key) {
             return Some(a.clone());
         }
@@ -502,60 +525,4 @@ fn expand(selector: &str, file: &ModelsFile, depth: u8) -> Vec<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn resolver() -> ModelResolver {
-        let r = ModelResolver::load(
-            Path::new("."), // no .sunmao/models.json here — pure defaults
-            ProviderDef {
-                base_url: "http://local/v1".into(),
-                api_key_env: None,
-                api_key: None,
-                dialect: "openai".into(),
-                catalog: Vec::new(),
-            },
-            "default",
-        );
-        let mut file = r.file.write_or_recover();
-        file.providers.insert(
-            "big".into(),
-            ProviderDef {
-                base_url: "http://big/v1".into(),
-                api_key_env: Some("NOPE_NOT_SET".into()),
-                api_key: None,
-                dialect: "anthropic".into(),
-                catalog: Vec::new(),
-            },
-        );
-        file.routes.insert(
-            "smol".into(),
-            RouteValue::Chain(vec!["big/claude-haiku".into(), "tiny-1b".into()]),
-        );
-        drop(file);
-        r
-    }
-
-    #[test]
-    fn bare_model_uses_default_provider() {
-        let r = resolver();
-        let t = r.resolve("qwen-flash").unwrap();
-        assert_eq!(t.model, "qwen-flash");
-        assert_eq!(t.provider.base_url, "http://local/v1");
-    }
-
-    #[test]
-    fn route_alias_expands_chain_in_order() {
-        let r = resolver();
-        let t = r.resolve("@smol").unwrap();
-        assert_eq!(t.model, "claude-haiku");
-        assert_eq!(t.provider.dialect, "anthropic");
-    }
-
-    #[test]
-    fn unknown_selector_resolves_none() {
-        let r = resolver();
-        assert!(r.resolve("@nosuch").is_none());
-        assert!(r.resolve("ghost/model").is_none());
-    }
-}
+mod tests;

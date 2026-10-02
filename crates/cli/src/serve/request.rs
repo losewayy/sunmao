@@ -158,8 +158,10 @@ impl HostHandle {
         let s = &self.s;
         match (method, segs.as_slice()) {
             ("GET" | "HEAD", []) => HostResponse::html(super::INDEX),
-            ("GET" | "HEAD", ["tokens.css"]) => HostResponse::css(super::TOKENS_CSS),
-            ("GET" | "HEAD", ["app.css"]) => HostResponse::css(super::APP_CSS),
+            ("GET" | "HEAD", [name]) if name.ends_with(".css") => match css_asset(name) {
+                Some(s) => HostResponse::css(s),
+                None => HostResponse::err(404, "not found".into()),
+            },
             ("GET" | "HEAD", [name]) if name.ends_with(".js") => match js_asset(name) {
                 Some(s) => HostResponse::js(s),
                 None => HostResponse::err(404, "not found".into()),
@@ -271,6 +273,22 @@ impl HostHandle {
             _ => HostResponse::err(404, "not found".into()),
         }
     }
+}
+
+/// `GET /{name}.css` — the page's split stylesheet bundle, served off the
+/// same route table the Tauri scheme rides. New asset stylesheets need
+/// both the include_str! const in serve.rs and an arm here.
+fn css_asset(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "tokens.css" => super::TOKENS_CSS,
+        "app.css" => super::APP_CSS,
+        "transcript.css" => super::TRANSCRIPT_CSS,
+        "composer.css" => super::COMPOSER_CSS,
+        "dock.css" => super::DOCK_CSS,
+        "settings.css" => super::SETTINGS_CSS,
+        "overlay.css" => super::OVERLAY_CSS,
+        _ => return None,
+    })
 }
 
 /// `GET /{name}.js` — the page's split script bundle, served off the same

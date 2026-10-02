@@ -52,10 +52,17 @@ pub use request::HostResponse;
 const INDEX: &str = include_str!("serve/assets/index.html");
 
 /// Design tokens (custom properties + keyframes) and component styles —
-/// split per docs/DESIGN-SYSTEM.md §1; served on the shared route table
-/// so the Tauri `sunmao` scheme answers them identically.
+/// split per docs/DESIGN-SYSTEM.md §1 and again by responsibility
+/// (app = base, then transcript/composer/dock/settings/overlay), served
+/// on the shared route table so the Tauri `sunmao` scheme answers them
+/// identically.
 const TOKENS_CSS: &str = include_str!("serve/assets/tokens.css");
 const APP_CSS: &str = include_str!("serve/assets/app.css");
+const TRANSCRIPT_CSS: &str = include_str!("serve/assets/transcript.css");
+const COMPOSER_CSS: &str = include_str!("serve/assets/composer.css");
+const DOCK_CSS: &str = include_str!("serve/assets/dock.css");
+const SETTINGS_CSS: &str = include_str!("serve/assets/settings.css");
+const OVERLAY_CSS: &str = include_str!("serve/assets/overlay.css");
 
 /// The page's script surface — index.html's inline script split by
 /// responsibility (plain `<script src>` classic scripts, not modules: the

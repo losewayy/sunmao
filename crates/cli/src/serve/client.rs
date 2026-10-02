@@ -62,9 +62,18 @@ impl Client {
         let forward = {
             let out = out.clone();
             tokio::spawn(async move {
-                while let Ok(v) = live_rx.recv().await {
-                    if out.send(v.to_string()).is_err() {
-                        break;
+                loop {
+                    match live_rx.recv().await {
+                        // a slow tab skips the missed frames instead of
+                        // dying — Lagged is recoverable; dropping it used
+                        // to leave the client permanently deaf
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(_) => break,
+                        Ok(v) => {
+                            if out.send(v.to_string()).is_err() {
+                                break;
+                            }
+                        }
                     }
                 }
             })
@@ -503,5 +512,56 @@ impl Client {
             "ui_call" | "ui_read" | "ui_message" | "ui_audit" => self.handle_ui(v).await,
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A slow tab that lets the live bus lag used to die at the first
+    /// `Lagged` — every later frame (busy, approvals, live rows) never
+    /// reached it until reconnect. `Lagged` is recoverable: skip the gap.
+    #[tokio::test]
+    async fn lagged_bus_survives() {
+        let (live, _) = tokio::sync::broadcast::channel::<serde_json::Value>(4);
+        let (mgmt, _rx) = mpsc::unbounded_channel();
+        let s = Arc::new(Shared {
+            cwd: std::env::temp_dir(),
+            roots: Vec::new(),
+            live,
+            sessions: std::sync::Mutex::new(Default::default()),
+            factory: crate::serve::SessionFactory {
+                make: Box::new(|_, _, _| Box::pin(async { anyhow::bail!("test factory") })),
+            },
+            model_label: String::new(),
+            sandbox_port: 0,
+            prompt_override: None,
+            driver_override: None,
+            approval_ids: Arc::new(AtomicU64::new(0)),
+            mgmt,
+            adopt_lock: tokio::sync::Mutex::new(()),
+        });
+        let (out, mut rx) = mpsc::unbounded_channel::<String>();
+        let _client = Client::connect(s.clone(), out).await;
+        // the forwarder hasn't polled yet (this test runtime yields only
+        // when we await) — the burst wraps the ring → Lagged on next recv
+        for _ in 0..8 {
+            let _ = s.live.send(serde_json::json!({"type":"noise"}));
+        }
+        // drain the hello + lagged gap; the marker must still arrive
+        let _ = s.live.send(serde_json::json!({"type":"marker"}));
+        let mut seen = false;
+        for _ in 0..16 {
+            match tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await {
+                Ok(Some(v)) if v.contains("marker") => {
+                    seen = true;
+                    break;
+                }
+                Ok(Some(_)) => continue,
+                _ => break,
+            }
+        }
+        assert!(seen, "the forwarder must survive a Lagged gap");
     }
 }

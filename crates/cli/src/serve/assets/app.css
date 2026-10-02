@@ -20,8 +20,13 @@ code{font-family:var(--font-mono)}
 .chrome,.rail,.titlebar,.composer,.dock,.msg-h,.tool-h,.island-h,.acts{user-select:none}
 .scroll{scrollbar-width:thin;scrollbar-color:var(--c-scrollbar) transparent}
 /* ---------- glass ---------- */
+/* --ga is a registered property with a fixed initial value (tokens.css):
+   it ALWAYS has a value, so var(--ga, fallback) can never fall back —
+   .glass must assign --ga itself or every unlevelled surface pins to the
+   initial .56 regardless of --glass-a (panel-opacity slider). */
 .glass{
-  background-color:rgb(var(--glass-rgb) / var(--ga,var(--glass-base)));
+  --ga:var(--glass-base);
+  background-color:rgb(var(--glass-rgb) / var(--ga));
   background-image:var(--noise);
   -webkit-backdrop-filter:blur(var(--blur)) saturate(1.2);
   backdrop-filter:blur(var(--blur)) saturate(1.2);
@@ -144,8 +149,6 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:var(--ring-focu
 .back{display:flex;align-items:center;gap:var(--s-8);width:100%;height:var(--h-xl);padding:0 var(--s-10);border-radius:var(--r-md);font-size:var(--fs-sm);color:var(--c-text-2)}
 .back:hover{background:var(--c-fill-1);color:var(--c-text)}
 .snav{display:flex;flex-direction:column;gap:1px;margin-top:var(--s-10)}
-.rail-note{margin-top:auto;padding:var(--s-10);font-size:var(--fs-xs);line-height:var(--lh-ui);color:var(--c-text-3)}
-.rail-note code{font-size:var(--fs-2xs);color:var(--c-text-2)}
 .empty-hint{padding:var(--s-8) var(--s-10);font-size:var(--fs-xs);color:var(--c-text-3);line-height:var(--lh-ui)}
 .rail-search{display:flex;align-items:center;gap:var(--s-8);height:var(--h-lg);margin-top:var(--s-6);padding:0 var(--s-10);border-radius:var(--r-md);background:var(--c-sunken);box-shadow:var(--ring-1)}
 .rail-search .i{color:var(--c-text-3);flex:none}

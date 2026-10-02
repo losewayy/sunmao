@@ -5,8 +5,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-
-use tokio::sync::mpsc;
+use sunmao_core::context::MutexRecover;
 
 use sunmao_core::agent::{LiveEvent, Observer as _};
 
@@ -24,7 +23,7 @@ pub(crate) fn slash_candidates(s: &Shared) -> Vec<String> {
         .collect();
     // any live host's prompts complete — catalogs are process-shared, so
     // the first session's `srv:prompt` names describe every server's
-    if let Some(host) = s.sessions.lock().unwrap().values().next() {
+    if let Some(host) = s.sessions.lock_or_recover().values().next() {
         out.extend(host.agent.mcp_prompt_names());
     }
     out.sort();
@@ -71,11 +70,7 @@ async fn rewind_via_mgmt(
 /// The submission driver for ONE session host — one turn at a time,
 /// slash builtins resolved here, prompts stream LiveEvents tagged with
 /// this session's id.
-pub(super) async fn driver(
-    s: Arc<Shared>,
-    host: Arc<Host>,
-    mut rx: mpsc::UnboundedReceiver<Input>,
-) {
+pub(super) async fn driver(s: Arc<Shared>, host: Arc<Host>) {
     loop {
         // Leftover steering becomes follow-up input: a steer queued as the
         // turn ended would otherwise wait for the next prompt (or silently
@@ -89,6 +84,8 @@ pub(super) async fn driver(
             }));
             let obs = WsObserver::new(s.live.clone(), host.id.clone());
             for (client, text) in leftovers {
+                // same hook:steer the in-turn drain emits — it paints the
+                // user bubble AND lands on the audit spine
                 obs.on_event(&LiveEvent::Hook {
                     event: "steer".into(),
                     detail: text.clone(),
@@ -97,6 +94,7 @@ pub(super) async fn driver(
                     &s,
                     &host,
                     Input {
+                        id: 0, // leftover steers land at the front — no ticket needed
                         client,
                         text,
                         attachments: Vec::new(),
@@ -105,7 +103,19 @@ pub(super) async fn driver(
                 .await;
             }
         }
-        let Some(input) = rx.recv().await else { break };
+        // pop the head — a queue that's empty on entry parks until a push
+        // wakes it. `notify_one` wakes exactly one waiter; there's one.
+        // Classic pop-then-notified pattern: a push landing between the two
+        // lines stores a permit and notified() returns immediately — never
+        // lost, at worst one spurious wakeup.
+        let input = loop {
+            if let Some(i) = host.queue.lock_or_recover().pop_front() {
+                break i;
+            }
+            host.queue_notify.notified().await;
+        };
+        // chip gone the moment the turn claims it — and every tab sees it
+        let _ = s.live.send(super::host::input_queue_frame(&host));
         dispatch_input(&s, &host, input).await;
     }
 }
@@ -117,6 +127,7 @@ pub(super) async fn driver(
 /// `@img.png` still lands.
 async fn dispatch_input(s: &Arc<Shared>, host: &Arc<Host>, input: Input) {
     let Input {
+        id: ticket,
         client,
         text: input,
         attachments,
@@ -127,6 +138,22 @@ async fn dispatch_input(s: &Arc<Shared>, host: &Arc<Host>, input: Input) {
     };
     host.busy.fetch_add(1, Ordering::Relaxed);
     emit(serde_json::json!({"type":"busy","sess":sess,"busy":true}));
+    // the durable user message paints NOW — at the head of this input's own
+    // turn, not at queue time. A queued prompt that bubbled early would
+    // straddle the still-running turn's tool rows (the old client.rs echo
+    // did exactly that for busy submissions). id 0 = the driver replayed a
+    // leftover steer — the hook:steer live event already painted its bubble.
+    if ticket != 0 {
+        WsObserver::new(s.live.clone(), sess.clone()).on_event(
+            &sunmao_core::agent::LiveEvent::UserMessage {
+                content: std::iter::once(sunmao_llm::Content::Text {
+                    text: input.clone(),
+                })
+                .chain(attachments.iter().cloned())
+                .collect(),
+            },
+        );
+    }
     let cwd = host.agent.session_cwd();
     if let Some(cmd_line) = input.trim().strip_prefix('/') {
         if dispatch_builtin(s, host, cmd_line, client).await {
@@ -299,8 +326,40 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, cmd_line: &str, cli
             }
             true
         }
+        commands::Command::Export => {
+            let events = host.agent.session_events().await;
+            match commands::export_md(&host.agent.session_cwd(), &host.agent.session_id(), &events)
+            {
+                Ok(p) => note(format!("[exported → {p}]")),
+                Err(e) => note(format!("[export failed] {e:#}")),
+            }
+            true
+        }
+        commands::Command::ExportZip => {
+            let events = host.agent.session_events().await;
+            let log = host.agent.session_path().await;
+            match commands::export_zip(
+                &host.agent.session_cwd(),
+                &host.agent.session_id(),
+                &events,
+                &log,
+            ) {
+                Ok(p) => note(format!("[exported → {p}]")),
+                Err(e) => note(format!("[export failed] {e:#}")),
+            }
+            true
+        }
         commands::Command::Tasks => {
             note(commands::tasks_text(&host.agent.task_roster()));
+            true
+        }
+        commands::Command::Stop(id) => {
+            // slash-path kill — same `cancel_sub` the `task_cancel` ws
+            // frame and the roster popover's 终止 button call
+            note(match host.agent.cancel_sub(&id).await {
+                Ok(()) => format!("cancelled {id}"),
+                Err(e) => format!("[stop failed] {e}"),
+            });
             true
         }
         commands::Command::Todos => {

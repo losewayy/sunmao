@@ -3,15 +3,17 @@
 //! 适配器）共享的同一个宿主句柄；HTTP 本身只活在 `serve::http`。
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
+use sunmao_core::context::MutexRecover;
 
 use anyhow::{Context as _, Result};
 use sunmao_core::SessionEvent;
 use sunmao_core::SessionLog;
-use sunmao_core::agent::{AgentLoop, LiveEvent, Observer};
-use sunmao_core::approval::{Approval, Approver};
+use sunmao_core::agent::AgentLoop;
 use tokio::sync::{broadcast, mpsc, oneshot};
+
+mod approve;
 
 use super::client::Client;
 use super::driver;
@@ -22,6 +24,9 @@ use super::driver;
 /// carries image blocks uploaded ahead of the prompt (`POST /attachments`,
 /// then `attachments:[{path,mime}]` on the prompt frame).
 pub(crate) struct Input {
+    /// per-queue identity — chips in the GUI address a queued input by id,
+    /// never by position (reorder/edit all take `id` as the key).
+    pub(crate) id: u64,
     pub(crate) client: u64,
     pub(crate) text: String,
     pub(crate) attachments: Vec<sunmao_llm::Content>,
@@ -33,8 +38,16 @@ pub(crate) struct Input {
 pub(crate) struct Host {
     pub(crate) id: String,
     pub(crate) agent: AgentLoop,
-    /// The FIFO submission queue this session's driver drains.
-    pub(crate) input: mpsc::UnboundedSender<Input>,
+    /// The FIFO submission queue this session's driver drains — a real
+    /// `VecDeque` under a mutex so the GUI can list/reorder/edit queued
+    /// prompts (mpsc only offers recv-order teardown). `notify` pokes the
+    /// driver out of `recv()` when a push lands.
+    pub(crate) queue: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<Input>>>,
+    /// wakes the driver's dequeue loop — one notify per push, never a
+    /// channel. Stale notifies are harmless (the loop re-reads the queue).
+    pub(crate) queue_notify: std::sync::Arc<tokio::sync::Notify>,
+    /// next queue-entry id (wraps `client` → tickets are unique per queue)
+    pub(crate) queue_next_id: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// pending approval cards by id (reply oneshots)
     pub(crate) approvals: Arc<Pending>,
     /// submissions currently running (drives the busy badge + cancel)
@@ -141,12 +154,12 @@ impl Shared {
 
     /// The host for a session id, if it's live.
     pub(crate) fn host(&self, id: &str) -> Option<Arc<Host>> {
-        self.sessions.lock().unwrap().get(id).cloned()
+        self.sessions.lock_or_recover().get(id).cloned()
     }
 
     /// Live session ids (the rail merges these with dormant disk logs).
     pub(crate) fn live_ids(&self) -> Vec<String> {
-        self.sessions.lock().unwrap().keys().cloned().collect()
+        self.sessions.lock_or_recover().keys().cloned().collect()
     }
 
     /// Register `log` as a live session: fresh Pending + Context via the
@@ -182,19 +195,19 @@ impl Shared {
         let ctx = self.factory.build(log, approver, session_cwd).await?;
         let agent = AgentLoop::new(ctx.clone());
         agent.set_live_sink(Arc::new(WsObserver::new(self.live.clone(), id.clone())));
-        let (input_tx, input_rx) = mpsc::unbounded_channel::<Input>();
         let host = Arc::new(Host {
             id: id.clone(),
             agent,
-            input: input_tx,
+            queue: std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
+            queue_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+            queue_next_id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
             approvals: pending,
             busy: std::sync::atomic::AtomicUsize::new(0),
         });
         self.sessions
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .insert(id.clone(), host.clone());
-        tokio::spawn(driver::driver(self.clone(), host.clone(), input_rx));
+        tokio::spawn(driver::driver(self.clone(), host.clone()));
         // SessionStart fires on every adopt — same lifecycle a fresh
         // launch or TUI --resume produces; capture hooks see which path
         ctx.hooks
@@ -213,6 +226,62 @@ impl Shared {
     }
 }
 
+/// Queued inputs as the GUI renders them — `{id,text}` rows, stable order.
+/// `client`/`attachments` stay server-side; chips only need identity +
+/// editable text.
+pub(crate) fn queue_items(host: &Host) -> Vec<serde_json::Value> {
+    host.queue
+        .lock_or_recover()
+        .iter()
+        .map(|i| serde_json::json!({"id": i.id, "text": i.text}))
+        .collect()
+}
+
+/// `input_queue` live frame — broadcast after every mutation (push, pop,
+/// move, edit, remove) so every tab's chip row reflects kernel truth.
+pub(crate) fn input_queue_frame(host: &Host) -> serde_json::Value {
+    serde_json::json!({
+        "type": "input_queue",
+        "sess": host.id,
+        "items": queue_items(host),
+    })
+}
+
+/// Apply one queued-input control frame (`input_remove` / `input_move` /
+/// `input_edit`) to the FIFO — the mutation lives here next to the queue;
+/// the caller broadcasts `input_queue_frame` afterwards. Unknown ids and
+/// out-of-range moves clamp harmlessly instead of erroring: a chip click
+/// racing a pop is normal traffic, not a protocol fault.
+pub(crate) fn queue_op(host: &Host, v: &serde_json::Value) {
+    let Some(id) = v["id"].as_u64() else { return };
+    let mut q = host.queue.lock_or_recover();
+    match v["type"].as_str() {
+        Some("input_remove") => {
+            if let Some(p) = q.iter().position(|i| i.id == id) {
+                q.remove(p);
+            }
+        }
+        Some("input_move") => {
+            if let Some(p) = q.iter().position(|i| i.id == id) {
+                let dir = v["dir"].as_i64().unwrap_or(0);
+                let to = (p as i64 + dir).clamp(0, (q.len() as i64).saturating_sub(1)) as usize;
+                if to != p {
+                    let item = q.remove(p).unwrap();
+                    q.insert(to, item);
+                }
+            }
+        }
+        Some("input_edit") => {
+            if let Some(text) = v["text"].as_str()
+                && let Some(i) = q.iter_mut().find(|i| i.id == id)
+            {
+                i.text = text.to_string();
+            }
+        }
+        _ => {}
+    }
+}
+
 /// resume/fork = adopt the target (or its copy) as a live host and let the
 /// caller's tab switch views — the previous session keeps running in its
 /// own host instead of being swapped away mid-tab. A fork stays in the
@@ -228,10 +297,14 @@ pub(crate) async fn fork_or_resume(
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
-        let dst = src
-            .parent()
-            .unwrap_or(&s.cwd)
-            .join(format!("s-{ms}-fork.jsonl"));
+        let ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
+        let dst = src.parent().unwrap_or(&s.cwd).join(format!(
+            "s-{ms}-{:x}-fork.jsonl",
+            (std::process::id() as u64) << 20 | (ns as u64 >> 12)
+        ));
         std::fs::copy(&src, &dst).with_context(|| format!("copy {}", src.display()))?;
         dst
     } else {
@@ -277,14 +350,35 @@ pub(crate) async fn rewind_session(
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
-        let new_id = format!("s-{ms}-fork");
+        let ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
+        let new_id = format!(
+            "s-{ms}-{:x}-fork",
+            (std::process::id() as u64) << 20 | (ns as u64 >> 12)
+        );
         let dst = src
             .parent()
             .unwrap_or(&s.cwd)
             .join(format!("{new_id}.jsonl"));
         sunmao_core::checkpoints::copy_log_prefix(&src, &dst, boundary.line)?;
         sunmao_core::checkpoints::fork_checkpoints(&project, id, &new_id, upto_turn)?;
-        let log = sunmao_core::SessionLog::open_path(&dst).await?;
+        let mut log = sunmao_core::SessionLog::open_path(&dst).await?;
+        // the fork's prefix ends mid-story — stamp its provenance so a
+        // replay knows this is a rewind's continuation, not a session that
+        // happened to start at turn n
+        sunmao_core::checkpoints::stamp_rewind_provenance(
+            &mut log,
+            id,
+            upto_turn,
+            match mode {
+                RewindMode::Both => "both",
+                RewindMode::Session => "session",
+                RewindMode::Code => "code",
+            },
+        )
+        .await;
         let host = s.adopt(log, "rewind").await?;
         session = serde_json::Value::String(host.id.clone());
     }
@@ -336,108 +430,7 @@ pub(crate) async fn new_session(
     Ok(serde_json::json!({"session": host.id}))
 }
 
-/// One unanswered approval card — the reply oneshot plus the payload the
-/// card was raised with (a tab switching into a session re-renders cards
-/// from these, so a pending approval survives the view switch).
-pub(crate) struct PendingCard {
-    pub(crate) tx: oneshot::Sender<Approval>,
-    tool: String,
-    detail: String,
-    why: String,
-}
-
-/// Approval state for ONE session — `Context.approval` installs the
-/// approver holding this handle while the context is being built; the host
-/// adopts the same instance. The id space is process-global so a verdict
-/// can never hit the wrong session's card.
-pub(crate) struct Pending {
-    pub(crate) map: Mutex<HashMap<u64, PendingCard>>,
-    /// shared across hosts — ids are already unique per process, a counter
-    /// per session would collide cards from concurrent sessions
-    next: Arc<AtomicU64>,
-    /// approval requests go out over the same live bus as LiveEvents,
-    /// tagged with this session's id
-    live: broadcast::Sender<serde_json::Value>,
-    sess: String,
-}
-
-impl Pending {
-    fn new(live: broadcast::Sender<serde_json::Value>, next: Arc<AtomicU64>, sess: String) -> Self {
-        Self {
-            map: Mutex::new(HashMap::new()),
-            next,
-            live,
-            sess,
-        }
-    }
-
-    /// Cards still awaiting a verdict — replayed to a tab that starts
-    /// viewing this session.
-    pub(crate) fn cards(&self) -> Vec<serde_json::Value> {
-        self.map
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|(id, c)| {
-                serde_json::json!({"id": id, "tool": c.tool, "detail": c.detail, "why": c.why})
-            })
-            .collect()
-    }
-}
-
-/// Approver seam — the risky-call gate suspends on a oneshot while the
-/// browser shows the card. Same contract as TuiApprover.
-pub(crate) struct ServeApprover {
-    pub(crate) pending: Arc<Pending>,
-}
-
-#[async_trait::async_trait]
-impl Approver for ServeApprover {
-    async fn approve(&self, tool: &str, detail: &str, why: &str) -> Approval {
-        let id = self.pending.next.fetch_add(1, Ordering::Relaxed) + 1;
-        let (tx, rx) = oneshot::channel();
-        self.pending.map.lock().unwrap().insert(
-            id,
-            PendingCard {
-                tx,
-                tool: tool.to_string(),
-                detail: detail.to_string(),
-                why: why.to_string(),
-            },
-        );
-        let _ = self.pending.live.send(serde_json::json!({
-            "type": "approval", "id": id, "sess": self.pending.sess,
-            "tool": tool, "detail": detail, "why": why,
-        }));
-        // verdicts route through the map by id — ws ordering never decides
-        rx.await.unwrap_or(Approval::Deny { reason: None })
-    }
-}
-
-/// Observer → broadcast, tagged with its session id. LiveEvent serializes
-/// as the session-neutral wire shape (tagged enum) — frontends never see
-/// a second dialect; `sess` is the tab's routing key.
-pub(crate) struct WsObserver {
-    live: broadcast::Sender<serde_json::Value>,
-    sess: String,
-}
-impl WsObserver {
-    pub(crate) fn new(live: broadcast::Sender<serde_json::Value>, sess: impl Into<String>) -> Self {
-        Self {
-            live,
-            sess: sess.into(),
-        }
-    }
-}
-impl Observer for WsObserver {
-    fn on_event(&self, ev: &LiveEvent) {
-        let _ = self.live.send(serde_json::json!({
-            "type": "live",
-            "sess": self.sess,
-            "event": serde_json::to_value(ev).unwrap_or_default(),
-        }));
-    }
-}
+pub(crate) use approve::{Pending, ServeApprover, WsObserver};
 
 /// Windows `canonicalize` yields `\\?\`-prefixed verbatim paths — strip the
 /// prefix for display so the GUI shows `F:\…` (and `\\server\…` for the
@@ -553,7 +546,7 @@ fn register_project(launch_cwd: &std::path::Path, project: &std::path::Path) {
     // read-modify-write races under concurrent adopts — serialize the
     // whole cycle on a process-wide lock.
     static REG: Mutex<()> = Mutex::new(());
-    let _g = REG.lock().unwrap();
+    let _g = REG.lock_or_recover();
     let path = launch_cwd.join(".sunmao/projects.json");
     let mut list: Vec<String> = std::fs::read_to_string(&path)
         .ok()

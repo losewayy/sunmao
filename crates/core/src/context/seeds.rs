@@ -104,3 +104,25 @@ pub(super) fn seed_mode(path: &std::path::Path) -> crate::agent::ApprovalMode {
     }
     Default::default()
 }
+
+/// Rebuild the `RunCode` KV store a reopened log left behind — every
+/// `PtcStore` line folds in order so later writes win. Ephemeral logs and
+/// missing files seed empty.
+pub(super) fn seed_ptc_store(path: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    if path.as_os_str().is_empty() {
+        return out;
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return out;
+    };
+    for line in text.lines() {
+        if line.starts_with("{\"type\":\"ptc_store\"")
+            && let Ok(crate::session::SessionEvent::PtcStore { key, value }) =
+                serde_json::from_str::<crate::session::SessionEvent>(line)
+        {
+            out.insert(key, value);
+        }
+    }
+    out
+}

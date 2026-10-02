@@ -42,6 +42,7 @@ pub async fn report(session_path: &Path) -> anyhow::Result<Value> {
             | SessionEvent::ModeChange { .. }
             | SessionEvent::SessionMeta { .. }
             | SessionEvent::Checkpoint { .. }
+            | SessionEvent::PtcStore { .. }
             | SessionEvent::Hook { .. } => {}
             SessionEvent::LocalShell { command, .. } => {
                 shell_commands.push(command);

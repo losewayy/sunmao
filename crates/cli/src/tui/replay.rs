@@ -318,6 +318,12 @@ impl App {
                     lane,
                     call_id,
                 } => self.tool_done(name, *ok, output, *depth, *lane, Some(call_id)),
+                E::PtcStore { .. } => {
+                    // sandbox KV bookkeeping — durable fact, not a
+                    // transcript row (same posture as Goal/Todos are…
+                    // those DO render; PtcStore is pure state so it folds
+                    // silently like Usage does
+                }
                 E::Hook { event, detail } => {
                     self.push_audit(&format!("{event} — {detail}"));
                 }

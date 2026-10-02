@@ -334,3 +334,65 @@ async fn interrupt_hook_fires_on_running_turn_only() {
     assert!(fired, "cancel on a running turn must fire Interrupt");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A PreToolUse veto is a settled refusal like any other — it must leave
+/// the same `permission.denied` audit row a rule deny or card verdict
+/// produces, so auditors can tell one denial lane from another instead of
+/// seeing a bare failed ToolResult.
+#[tokio::test]
+async fn pretooluse_veto_records_permission_denied() {
+    let dir = crate::fresh_test_dir("veto-audit");
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    std::fs::write(dir.join("deny.txt"), "policy says no").unwrap();
+    std::fs::write(
+        dir.join(".sunmao/hooks.json"),
+        // exit 2 = block, stderr is the reason
+        r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"sh -c 'cat deny.txt >&2; exit 2'"}]}]}}"#,
+    )
+    .unwrap();
+    let provider = Arc::new(MockProvider {
+        responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+            vec![
+                StreamDelta::ToolCalls(vec![ToolCallFragment {
+                    index: 0,
+                    id: Some("c".into()),
+                    name: Some("Bash".into()),
+                    arguments: Some("{\"command\":\"echo hi\"}".into()),
+                }]),
+                StreamDelta::Finish {
+                    reason: Some("tool_calls".into()),
+                    usage: None,
+                },
+            ],
+            vec![
+                StreamDelta::Content("ok".into()),
+                StreamDelta::Finish {
+                    reason: Some("stop".into()),
+                    usage: None,
+                },
+            ],
+        ])),
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let ctx = Arc::new(Context::new(
+        provider,
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        dir.clone(),
+    ));
+    ctx.hooks
+        .trust_all
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let agent = AgentLoop::new(ctx.clone());
+    agent.run_turn("go", &NullObserver).await.unwrap();
+    let evs = ctx.sessions.lock().await.events().await.unwrap();
+    assert!(
+        evs.iter().any(|e| matches!(
+            e,
+            SessionEvent::Hook { event, detail }
+                if event == "permission.denied" && detail.contains("hook veto")
+        )),
+        "hook veto must leave a permission.denied audit row"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

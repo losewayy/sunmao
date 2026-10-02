@@ -341,7 +341,7 @@ pub(crate) async fn audit_fact(ctx: &Context, event: &str, detail: &str, observe
 /// verdict, cancel); listeners get the same `PreToolUse` payload shape
 /// plus a `denied_by` qualifier so a hook can tell a rule block from
 /// a human's "no".
-async fn fire_denied(
+pub(crate) async fn fire_denied(
     ctx: &Context,
     tool: &str,
     specifier: &str,

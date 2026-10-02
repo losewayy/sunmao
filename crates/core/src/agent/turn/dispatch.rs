@@ -90,7 +90,10 @@ impl AgentLoop {
         let result = if let Some(reason) = pre.block_reason {
             // a hook veto is an audit fact too — the transcript's
             // failed ToolResult shows *that* it was blocked, the
-            // Hook event keeps *why* durable
+            // Hook event keeps *why* durable. `fire_denied` rings the
+            // PermissionDenied union like every other refusal lane —
+            // the veto used to skip it, so a hook-blocked call was the
+            // one refusal no listener could see.
             {
                 let mut log = self.ctx.sessions.lock().await;
                 log.append_audit(&SessionEvent::Hook {
@@ -103,6 +106,14 @@ impl AgentLoop {
                 event: "PreToolUse.block".into(),
                 detail: format!("{}: {reason}", call.function.name),
             });
+            crate::agent::gate::fire_denied(
+                &self.ctx,
+                &call.function.name,
+                &crate::agent::specifier_for(&call.function.name, &args_value),
+                "hook veto",
+                observer,
+            )
+            .await;
             crate::tool::ToolResult {
                 output: format!("blocked by hook: {reason}"),
                 ok: false,

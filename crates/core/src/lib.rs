@@ -7,6 +7,7 @@ pub mod agent;
 pub mod agents;
 pub mod approval;
 pub mod checkpoints;
+pub mod console;
 pub mod context;
 pub mod ext;
 pub mod hooks;

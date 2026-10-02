@@ -100,7 +100,7 @@ impl ToolImpl for BashTool {
         // (agent/turn.rs::gate_call) — the hook's permissionDecision can only
         // interpose there; the tool itself just executes.
 
-        let run = match run_parsed(
+        let mut run = match run_parsed(
             list,
             ctx.cwd.clone(),
             a.timeout_secs.unwrap_or(120),
@@ -116,18 +116,8 @@ impl ToolImpl for BashTool {
                 });
             }
         };
-
-        // context-efficient output discipline: cap at ~8KB per side
-        let mut out = pre() + &trunc(run.stdout.trim_end());
-        if !run.stderr.trim().is_empty() {
-            out.push_str(&format!("\n[stderr]\n{}", trunc(run.stderr.trim())));
-        }
-        if let Some(e) = &run.ended {
-            out.push_str(&format!("\n[{e}]"));
-        }
-        if run.exit_code != 0 {
-            out.push_str(&format!("\n[exit code {}]", run.exit_code));
-        }
+        run.preflight = notes.join("\n");
+        let out = render_run(&run);
         Ok(ToolResult {
             output: out,
             ok: run.exit_code == 0,
@@ -229,12 +219,13 @@ async fn run_parsed(
                 let out_drain = tokio::task::spawn_blocking(move || {
                     let mut b = Vec::new();
                     out_reader.pipe_to(&mut b).ok();
-                    String::from_utf8_lossy(&b).into_owned()
+                    // OEM codepage, not always UTF-8 — console_text.rs
+                    crate::console::console_text(&b)
                 });
                 let err_drain = tokio::task::spawn_blocking(move || {
                     let mut b = Vec::new();
                     err_reader.pipe_to(&mut b).ok();
-                    String::from_utf8_lossy(&b).into_owned()
+                    crate::console::console_text(&b)
                 });
                 enum End {
                     Natural(i32),
@@ -452,7 +443,7 @@ impl ToolImpl for JobOutputTool {
         const CAP: usize = 8 * 1024;
         let start = (offset as usize).min(data.len());
         let end = (start + CAP).min(data.len());
-        let chunk = String::from_utf8_lossy(&data[start..end]);
+        let chunk = crate::console::console_text(&data[start..end]);
         let status = match std::fs::read_to_string(dir.join("exit.json")) {
             Ok(s) => s,
             Err(_) => "running".into(),

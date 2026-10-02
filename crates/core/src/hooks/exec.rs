@@ -64,12 +64,12 @@ pub(super) async fn run_hook_command(
             let out_drain = tokio::task::spawn_blocking(move || {
                 let mut b = Vec::new();
                 out_r.pipe_to(&mut b).ok();
-                String::from_utf8_lossy(&b).into_owned()
+                crate::console::console_text(&b)
             });
             let err_drain = tokio::task::spawn_blocking(move || {
                 let mut b = Vec::new();
                 err_r.pipe_to(&mut b).ok();
-                String::from_utf8_lossy(&b).into_owned()
+                crate::console::console_text(&b)
             });
             enum End {
                 Natural(i32),

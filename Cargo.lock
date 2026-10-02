@@ -5200,6 +5200,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

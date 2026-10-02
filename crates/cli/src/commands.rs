@@ -31,6 +31,7 @@ const BUILTINS: &[&str] = &[
     "artifacts",
     "clear",
     "compact",
+    "effort",
     "help",
     "mcp",
     "mode",
@@ -81,6 +82,9 @@ pub enum Command {
     Compact,
     /// /model [selector] — bare lists choices, arg swaps the adapter
     Model(Option<String>),
+    /// /effort [level] — bare lists the model's thinking levels + the
+    /// current override, arg sets it ("default" clears)
+    Effort(Option<String>),
     /// /mode [stance] — bare lists stances, arg switches approval mode
     Mode(Option<String>),
     /// /resume [id|path] — bare lists recent sessions
@@ -185,6 +189,7 @@ pub fn parse(cmd_line: &str) -> Command {
         "quit" | "exit" | "q" => Command::Quit,
         "compact" => Command::Compact,
         "model" => Command::Model(arg()),
+        "effort" => Command::Effort(arg()),
         "mode" => Command::Mode(arg()),
         "resume" => Command::Resume(arg()),
         "fork" => match arg() {
@@ -446,6 +451,11 @@ mod tests {
         assert!(matches!(
             parse("model default/qwen-flash"),
             Command::Model(Some(ref s)) if s == "default/qwen-flash"
+        ));
+        assert!(matches!(parse("effort"), Command::Effort(None)));
+        assert!(matches!(
+            parse("effort high"),
+            Command::Effort(Some(ref s)) if s == "high"
         ));
         assert!(matches!(
             parse("resume s-1"),

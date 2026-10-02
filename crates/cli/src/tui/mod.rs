@@ -65,6 +65,10 @@ enum Msg {
     Model(String),
     /// /mode switch landed — footer shows the new approval stance
     Mode(sunmao_core::agent::ApprovalMode),
+    /// effort override or level vocabulary changed — carries both so the
+    /// footer mark and the Args pool update together (a /model swap can
+    /// move the levels without touching the override)
+    Effort(Option<String>, Vec<String>),
     /// a queued `!` submission ran to completion — pop the queue head;
     /// `!` emits ToolDone but never a TurnEnd, so the queue would
     /// otherwise hold a phantom entry forever.
@@ -277,6 +281,8 @@ async fn run_inner(
     // the log's recorded stance wins — a resumed full_access session must
     // not look like it was auto all along
     app.approval_mode = agent.approval_mode();
+    app.effort = agent.reasoning_effort();
+    app.effort_levels = agent.effort_levels().await;
     if !replay.is_empty() {
         app.replay(&replay);
     }
@@ -395,6 +401,10 @@ async fn run_inner(
             Some(Msg::Branch(b)) => app.git_branch = b,
             Some(Msg::Model(label)) => app.model = label,
             Some(Msg::Mode(m)) => app.approval_mode = m,
+            Some(Msg::Effort(level, levels)) => {
+                app.effort = level;
+                app.effort_levels = levels;
+            }
             Some(Msg::QueuePop) => {
                 app.queue.pop_front();
             }

@@ -397,7 +397,10 @@ fn draw_status(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         sunmao_core::agent::ApprovalMode::ReadOnly => "ro",
         sunmao_core::agent::ApprovalMode::FullAccess => "full",
     };
-    let mode = format!("{mode}·{amode}");
+    let mode = match &app.effort {
+        Some(e) => format!("{mode}·{amode}·{e}"),
+        None => format!("{mode}·{amode}"),
+    };
     let branch = match &app.git_branch {
         Some(b) => format!("({b})"),
         None => String::new(),

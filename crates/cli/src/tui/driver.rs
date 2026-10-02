@@ -100,12 +100,41 @@ pub(super) fn spawn(
                             Some(label) => {
                                 agent.record_model_change(&sel, &label).await;
                                 let _ = tx_msg.send(Msg::Model(label.clone()));
+                                // the new model advertises a different level
+                                // vocabulary — the Args pool follows
+                                let _ = tx_msg.send(Msg::Effort(
+                                    agent.reasoning_effort(),
+                                    agent.effort_levels().await,
+                                ));
                                 let _ = tx_msg.send(Msg::Note(format!("[model → {label}]")));
                             }
                             None => {
                                 let _ = tx_msg.send(Msg::Note(commands::model_unknown(&sel)));
                             }
                         },
+                    }
+                    continue;
+                }
+                Submit::Effort(arg) => {
+                    match arg {
+                        None => {
+                            let _ = tx_msg.send(Msg::Note(commands::effort_text(
+                                agent.reasoning_effort().as_deref(),
+                                &agent.effort_levels().await,
+                            )));
+                        }
+                        Some(level) => {
+                            agent
+                                .set_reasoning_effort(Some(&level), &ChanObserver(tx_msg.clone()))
+                                .await;
+                            let _ = tx_msg.send(Msg::Effort(
+                                agent.reasoning_effort(),
+                                agent.effort_levels().await,
+                            ));
+                            let _ = tx_msg.send(Msg::Note(commands::effort_note(
+                                agent.reasoning_effort().as_deref(),
+                            )));
+                        }
                     }
                     continue;
                 }
@@ -264,6 +293,10 @@ pub(super) fn spawn(
                                     // — tell the footer before the replay,
                                     // else it keeps showing the old stance.
                                     let _ = tx_msg.send(Msg::Mode(agent.approval_mode()));
+                                    let _ = tx_msg.send(Msg::Effort(
+                                        agent.reasoning_effort(),
+                                        agent.effort_levels().await,
+                                    ));
                                     let _ = tx_msg.send(Msg::Replay(events));
                                 }
                                 Err(e) => {
@@ -285,6 +318,10 @@ pub(super) fn spawn(
                                 let _ =
                                     tx_msg.send(Msg::Note(format!("[forked {src} → {new_id}]")));
                                 let _ = tx_msg.send(Msg::Mode(agent.approval_mode()));
+                                let _ = tx_msg.send(Msg::Effort(
+                                    agent.reasoning_effort(),
+                                    agent.effort_levels().await,
+                                ));
                                 let _ = tx_msg.send(Msg::Replay(events));
                             }
                             Err(e) => {
@@ -317,6 +354,10 @@ pub(super) fn spawn(
                                 Ok(crate::rewind::Outcome::Forked { note, events }) => {
                                     let _ = tx_msg.send(Msg::Note(note));
                                     let _ = tx_msg.send(Msg::Mode(agent.approval_mode()));
+                                    let _ = tx_msg.send(Msg::Effort(
+                                        agent.reasoning_effort(),
+                                        agent.effort_levels().await,
+                                    ));
                                     let _ = tx_msg.send(Msg::Replay(events));
                                 }
                                 Ok(crate::rewind::Outcome::CodeOnly(note)) => {

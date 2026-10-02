@@ -11,7 +11,7 @@ use sunmao_core::tool::TodoItem;
 
 /// The backend-semantic command tail every frontend's `/help` shares;
 /// frontend-local names prepend via `help_text`'s `local` argument.
-const HELP_COMMANDS: &str = "/compact · /model [sel] · /mode [stance] · /resume [id] · /sessions · /search <q> · /fork <id> · /rewind [n] [session|code|both] · /export-md · /export-zip · /tasks · /todos · /goal [objective] · /mcp · /hooks · /status · /artifacts · /annotate <name> <note> · /help";
+const HELP_COMMANDS: &str = "/compact · /model [sel] · /effort [level] · /mode [stance] · /resume [id] · /sessions · /search <q> · /fork <id> · /rewind [n] [session|code|both] · /export-md · /export-zip · /tasks · /todos · /goal [objective] · /mcp · /hooks · /status · /artifacts · /annotate <name> <note> · /help";
 
 /// The `/help` commands line — `local` inserts frontend-only names
 /// (`"/multiline · /clear · "` for the TUI, `""` elsewhere) ahead of the
@@ -43,6 +43,40 @@ pub fn models_text(choices: &[String]) -> String {
 /// Rejected `/model <sel>` selector.
 pub fn model_unknown(sel: &str) -> String {
     format!("[unknown selector: {sel} — try /model for the list]")
+}
+
+/// Bare `/effort` — the current override plus the levels the active model
+/// advertises (`→` marks the override). An empty list just means the
+/// catalog never learned the vocabulary — any level still passes through.
+pub fn effort_text(current: Option<&str>, levels: &[String]) -> String {
+    let levels = if levels.is_empty() {
+        "  (catalog advertises none — provider vocabulary is authoritative)".to_string()
+    } else {
+        levels
+            .iter()
+            .map(|l| {
+                let mark = if current == Some(l.as_str()) {
+                    "→"
+                } else {
+                    " "
+                };
+                format!("  {mark} {l}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        "reasoning effort: {}\n{levels}\n  /effort default clears the override",
+        current.unwrap_or("default")
+    )
+}
+
+/// `/effort <level>` acknowledged — the note every frontend shows.
+pub fn effort_note(level: Option<&str>) -> String {
+    match level {
+        Some(l) => format!("[reasoning effort → {l}]"),
+        None => "[reasoning effort → default]".to_string(),
+    }
 }
 
 /// Bare `/mode` — the current stance plus the full list, `→` marking the

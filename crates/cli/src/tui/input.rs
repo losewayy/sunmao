@@ -250,13 +250,14 @@ pub(super) fn input_key(
                         return submit_app(app, tx_input);
                     }
                     menu::MenuKind::Args => {
+                        let c = cmd.as_deref().unwrap_or("model");
                         if name.ends_with('/') {
-                            app.input = format!("/model {name}");
+                            app.input = format!("/{c} {name}");
                             app.cursor = app.input.chars().count();
                             app.refresh_slash_menu();
                             return false;
                         }
-                        app.input = format!("/model {name}");
+                        app.input = format!("/{c} {name}");
                         app.cursor = app.input.chars().count();
                         return submit_app(app, tx_input);
                     }
@@ -267,7 +268,7 @@ pub(super) fn input_key(
                 // is the odd one out: it's "browse and pick", so Enter
                 // opens the same picker `/resume <frag>` serves instead
                 // of printing the flat list.
-                const TAKES_ARGS: &[&str] = &["model", "resume", "annotate", "fork"];
+                const TAKES_ARGS: &[&str] = &["model", "effort", "resume", "annotate", "fork"];
                 if name == "sessions" {
                     app.input = "/sessions ".to_string();
                     app.cursor = app.input.chars().count();
@@ -303,7 +304,8 @@ pub(super) fn input_key(
                             app.cursor = app.input.chars().count();
                         }
                         menu::MenuKind::Args => {
-                            app.input = format!("/model {name}");
+                            let c = cmd.as_deref().unwrap_or("model");
+                            app.input = format!("/{c} {name}");
                             app.cursor = app.input.chars().count();
                             app.refresh_slash_menu();
                         }
@@ -497,6 +499,9 @@ fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
         }
         Submit::Mode(arg) => {
             let _ = tx_input.send(Submit::Mode(arg));
+        }
+        Submit::Effort(arg) => {
+            let _ = tx_input.send(Submit::Effort(arg));
         }
         Submit::Tasks => {
             let _ = tx_input.send(Submit::Tasks);

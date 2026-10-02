@@ -455,3 +455,103 @@ async fn session_grant_covers_segment_in_later_chains() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A hook's `permissionDecision: allow` answers the call before an `ask`
+/// rule can prompt — the gate's own comment ("Standing answers — an allow
+/// rule, a session grant, a hook allow — stop every remaining ask")
+/// promised this, but the check used to run below the ask-rule prompt.
+/// deny still outranks it (covered by hook_allow_does_not_bypass_segment_deny).
+#[tokio::test]
+async fn hook_allow_answers_before_ask_rules() {
+    use crate::approval::{Approval, Approver};
+
+    struct CountApprovals(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+    #[async_trait::async_trait]
+    impl Approver for CountApprovals {
+        async fn approve(&self, _t: &str, _d: &str, _w: &str) -> Approval {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Approval::Deny { reason: None }
+        }
+    }
+
+    let dir = crate::fresh_test_dir("hookallow-ask");
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    // an ask rule that would prompt on this exact call…
+    std::fs::write(
+        dir.join(".sunmao/permissions.json"),
+        r#"{"permissions":{"ask":["Glob(**/*.rs)"]}}"#,
+    )
+    .unwrap();
+    // …and a PreToolUse hook that allows every call
+    std::fs::write(
+        dir.join("allow.json"),
+        r#"{"hookSpecificOutput":{"permissionDecision":"allow"}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join(".sunmao/hooks.json"),
+        r#"{"hooks":{"PreToolUse":[{"matcher":"Glob","hooks":[{"type":"command","command":"cat allow.json"}]}]}}"#,
+    )
+    .unwrap();
+    let provider = Arc::new(MockProvider {
+        responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+            vec![
+                StreamDelta::ToolCalls(vec![
+                    ToolCallFragment {
+                        index: 0,
+                        id: Some("c".into()),
+                        name: Some("Glob".into()),
+                        arguments: None,
+                    },
+                    ToolCallFragment {
+                        index: 0,
+                        arguments: Some("{\"pattern\":\"**/*.rs\"}".into()),
+                        ..Default::default()
+                    },
+                ]),
+                StreamDelta::Finish {
+                    reason: Some("tool_calls".into()),
+                    usage: None,
+                },
+            ],
+            vec![
+                StreamDelta::Content("done".into()),
+                StreamDelta::Finish {
+                    reason: Some("stop".into()),
+                    usage: None,
+                },
+            ],
+        ])),
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let mut ctx_raw = Context::new(
+        provider,
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        dir.clone(),
+    );
+    let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    ctx_raw.approval = Arc::new(CountApprovals(count.clone()));
+    let ctx = Arc::new(ctx_raw);
+    ctx.hooks
+        .trust_all
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let agent = AgentLoop::new(ctx.clone());
+    agent.run_turn("go", &NullObserver).await.unwrap();
+    let evs = ctx.sessions.lock().await.events().await.unwrap();
+    let result = evs.iter().find_map(|e| match e {
+        SessionEvent::ToolResult { name, ok, .. } if name == "Glob" => Some(*ok),
+        _ => None,
+    });
+    assert_eq!(
+        result,
+        Some(true),
+        "hook allow must answer the call — a prompt would have denied it"
+    );
+    assert_eq!(
+        count.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "the ask rule must not reach the prompt when a hook allowed"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

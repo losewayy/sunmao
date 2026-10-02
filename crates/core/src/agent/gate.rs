@@ -177,6 +177,15 @@ pub(crate) async fn gate_call(
     {
         return Ok(());
     }
+    // Standing answers now include the hook's `allow` — the gate's own
+    // comment (and the dialect's "skip the approval prompt" contract)
+    // promised it answers the call; it used to sit BELOW the ask-rule
+    // prompt, so a `tools: ask` user rule could re-prompt a call the hook
+    // already cleared. deny + segment deny + mode blocks all settled
+    // above, so this can't launder a refusal.
+    if let Some(H::Allow) = hook {
+        return Ok(());
+    }
     if mode == ApprovalMode::FullAccess {
         return Ok(());
     }
@@ -195,9 +204,6 @@ pub(crate) async fn gate_call(
         // multi-segment Bash already ran its ask/classifier pass per
         // segment — the whole string is only the concatenation of what
         // was just adjudicated
-        return Ok(());
-    }
-    if let Some(H::Allow) = hook {
         return Ok(());
     }
     // default: the risky-pattern classifier. Bash-shaped patterns only —

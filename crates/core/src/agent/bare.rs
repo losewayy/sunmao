@@ -64,7 +64,7 @@ impl AgentLoop {
                     messages.push(Message::user(crate::tool::todos_inject_text(&items)));
                 }
             }
-            let decls = self.ctx.tools.declarations();
+            let decls = self.ctx.advertised_tools();
             let req = ChatRequest {
                 messages: &messages,
                 tools: Some(&decls),

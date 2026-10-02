@@ -17,6 +17,7 @@ fn shared_at(cwd: std::path::PathBuf) -> Shared {
         model_label: String::new(),
         sandbox_port: 0,
         prompt_override: None,
+        driver_override: None,
         approval_ids: Arc::new(AtomicU64::new(0)),
         mgmt,
     }

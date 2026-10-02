@@ -91,8 +91,10 @@ pub struct Cli {
     /// presets layer after earlier ones. A leading `+` is decorative.
     #[arg(long)]
     preset: Vec<String>,
-    /// Loop driver override — `full` (contract loop) or `bare` (no hooks,
-    /// no gate, no auto-compaction). Wins over any manifest `loop:` key.
+    /// Loop driver override — `full` (contract loop), `bare` (no hooks,
+    /// no gate, no auto-compaction) or `ptc` (full loop, RunCode-only tool
+    /// surface — every other tool is reachable via the sandbox's `tools.*`).
+    /// Wins over any manifest `loop:` key.
     #[arg(long = "loop", value_parser = parse_driver)]
     driver: Option<sunmao_core::agent::LoopDriver>,
     /// Approval stance for the session: always_ask · auto · read_only ·
@@ -265,8 +267,10 @@ pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
             false,
         ),
     };
+    let mut sessions = sessions;
     let registry = builtin_registry();
     let mcp = sunmao_core::mcp::connect_all(&cwd, &preset_roots).await;
+    sunmao_core::mcp::audit_skips(&mcp.skipped, &mut sessions).await;
     for tool in mcp.tools {
         registry.register_boxed(tool);
     }
@@ -343,6 +347,7 @@ pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
     // --system as the complete override. All frontends share this path.
     let default_system = sunmao_core::prompt::PromptAssembler::new(&cwd)
         .with_extra_roots(&preset_roots)
+        .with_driver(ctx.loop_driver)
         .assemble(cli.system.as_deref());
 
     if !resumed {
@@ -453,6 +458,9 @@ async fn host_spec(cli: &Cli) -> anyhow::Result<serve::HostSpec> {
     let preset_roots = sunmao_core::presets::resolve(&cwd, &cli.preset)?;
     let llm = provider_adapter(cli);
     let mcp = sunmao_core::mcp::connect_all(&cwd, &preset_roots).await;
+    // untrusted-server skips audit into every session tab's own log —
+    // serve connects MCP process-wide before any session exists
+    let mcp_skips = mcp.skipped.clone();
     let first_log = open_first_log(cli).await?;
     let system_prompt = sunmao_core::prompt::PromptAssembler::new(&cwd)
         .with_extra_roots(&preset_roots)
@@ -471,10 +479,13 @@ async fn host_spec(cli: &Cli) -> anyhow::Result<serve::HostSpec> {
         make: Box::new(move |log, approver, cwd| {
             let llm = llm.clone();
             let mcp_servers = mcp.servers.clone();
+            let mcp_skips = mcp_skips.clone();
             let preset_roots = preset_roots.clone();
             let driver = driver_override;
             let default_provider = default_provider.clone();
             Box::pin(async move {
+                let mut log = log;
+                sunmao_core::mcp::audit_skips(&mcp_skips, &mut log).await;
                 let registry = builtin_registry();
                 for h in &mcp_servers {
                     for t in h.tool_impls() {
@@ -509,6 +520,7 @@ async fn host_spec(cli: &Cli) -> anyhow::Result<serve::HostSpec> {
         prompt_override: cli.system.as_ref().map(|_| system_prompt.clone()),
         model_label,
         first_log,
+        driver_override: cli.driver,
     })
 }
 

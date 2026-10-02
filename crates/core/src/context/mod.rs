@@ -440,7 +440,14 @@ impl Context {
     /// rest still come up.
     pub async fn connect_extensions(&mut self) {
         let session_id = self.session_id.read_or_recover().clone();
-        crate::ext::connect_all(&self.ext, &self.cwd, &session_id, &self.extra_plugin_roots).await;
+        crate::ext::connect_all(
+            &self.ext,
+            &self.cwd,
+            &session_id,
+            &self.extra_plugin_roots,
+            &self.sessions,
+        )
+        .await;
         for tool in self.ext.tools() {
             self.tools.register_arc(tool);
         }
@@ -507,6 +514,21 @@ impl Context {
             .unwrap()
             .clone()
             .unwrap_or_else(|| self.llm.clone())
+    }
+
+    /// The tool declarations the next request advertises. Under the `ptc`
+    /// loop driver the model's surface is `RunCode` alone — every other
+    /// tool stays registered (scripts reach them via `tools.*`) but nothing
+    /// else becomes a model-emittable tool_call.
+    pub fn advertised_tools(&self) -> Vec<sunmao_llm::types::Tool> {
+        let decls = self.tools.declarations();
+        if self.loop_driver == crate::agent::LoopDriver::Ptc {
+            return decls
+                .into_iter()
+                .filter(|t| t.function.name == "RunCode")
+                .collect();
+        }
+        decls
     }
 
     /// A prior `Approval::Session` covers this exact call?

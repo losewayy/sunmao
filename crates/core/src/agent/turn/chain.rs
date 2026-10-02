@@ -63,7 +63,10 @@ impl AgentLoop {
                 // between a turn's ToolCall and its ToolResult.
                 self.drain_mcp(observer).await;
                 let res = match self.ctx.loop_driver {
-                    crate::agent::LoopDriver::Full => {
+                    // PTC is the full loop with a RunCode-only advertised
+                    // surface — `advertised_tools` does the trim; hooks, the
+                    // gate and compaction all still run.
+                    crate::agent::LoopDriver::Full | crate::agent::LoopDriver::Ptc => {
                         self.run_turn_full(&prompt, &atts, observer).await
                     }
                     crate::agent::LoopDriver::Bare => {

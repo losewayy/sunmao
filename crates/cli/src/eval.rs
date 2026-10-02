@@ -157,9 +157,10 @@ async fn run_case_inner(
     .canonicalize()
     .context("bad case cwd")?;
 
-    let sessions = SessionLog::open(&cli.session_dir, session).await?;
+    let mut sessions = SessionLog::open(&cli.session_dir, session).await?;
     let registry = builtin_registry();
     let mcp = sunmao_core::mcp::connect_all(&case_cwd, preset_roots).await;
+    sunmao_core::mcp::audit_skips(&mcp.skipped, &mut sessions).await;
     for tool in mcp.tools {
         registry.register_boxed(tool);
     }
@@ -198,6 +199,7 @@ async fn run_case_inner(
 
     let system = sunmao_core::prompt::PromptAssembler::new(&case_cwd)
         .with_extra_roots(preset_roots)
+        .with_driver(ctx.loop_driver)
         .assemble(cli.system.as_deref());
     {
         let mut log = ctx.sessions.lock().await;

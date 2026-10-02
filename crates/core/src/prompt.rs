@@ -56,6 +56,10 @@ pub struct PromptAssembler {
     /// resolved the same way `Context::new` does, so sub-agent prompts
     /// (built without a Context) still match the session's backend.
     shell: crate::tool::ShellBackend,
+    /// The session's loop driver — under `ptc` the tool-guidance slot
+    /// carries the codemode contract (`RunCode` is the only callable tool)
+    /// instead of the default call-per-tool guidance.
+    driver: crate::agent::LoopDriver,
 }
 
 impl PromptAssembler {
@@ -65,6 +69,7 @@ impl PromptAssembler {
             shell: crate::tool::ShellBackend::resolve(&cwd),
             cwd,
             extra_roots: Vec::new(),
+            driver: crate::agent::LoopDriver::default(),
         }
     }
 
@@ -75,12 +80,19 @@ impl PromptAssembler {
         self
     }
 
+    /// The loop driver this prompt is assembled for — pass the Context's
+    /// resolved driver so the guidance matches the advertised surface.
+    pub fn with_driver(mut self, driver: crate::agent::LoopDriver) -> Self {
+        self.driver = driver;
+        self
+    }
+
     /// The session system prompt. `complete` (`--system`) wins outright.
     pub fn assemble(&self, complete: Option<&str>) -> String {
         if let Some(full) = complete {
             return full.to_string();
         }
-        let mut sections = builtin_sections(self.shell);
+        let mut sections = builtin_sections(self.shell, self.driver);
         apply_layer(&mut sections, &user_layer_dir(), 40);
         apply_layer(&mut sections, &self.cwd.join(".sunmao"), 50);
         let ctx = project_context(&self.cwd, &self.extra_roots);
@@ -157,7 +169,10 @@ impl PromptAssembler {
 /// literals. Baked in via `include_str!` so the binary stays self-contained.
 /// `shell` picks the dialect section — the model gets told which grammar
 /// `Bash` actually speaks, not whichever dialect the build defaults to.
-fn builtin_sections(shell: crate::tool::ShellBackend) -> Vec<Section> {
+/// `driver` picks the tool-guidance section: `ptc` advertises RunCode as
+/// the whole surface, so the default "prefer dedicated tools" guidance
+/// would describe a call shape the model can't emit.
+fn builtin_sections(shell: crate::tool::ShellBackend, driver: crate::agent::LoopDriver) -> Vec<Section> {
     let mk = |name: &str, order: u32, text: &str| Section {
         name: name.into(),
         order,
@@ -171,17 +186,19 @@ fn builtin_sections(shell: crate::tool::ShellBackend) -> Vec<Section> {
             include_str!("../assets/prompt/shell-dialect-pwsh.md")
         }
     };
+    // same section slot either way: a prompt.d/tool-guidance.md override
+    // replaces the driver's default too — cold-plug beats the driver pick.
+    let guidance = match driver {
+        crate::agent::LoopDriver::Ptc => include_str!("../assets/prompt/ptc-driver.md"),
+        _ => include_str!("../assets/prompt/tool-guidance.md"),
+    };
     vec![
         mk(
             names::IDENTITY,
             10,
             include_str!("../assets/prompt/identity.md"),
         ),
-        mk(
-            names::TOOL_GUIDANCE,
-            20,
-            include_str!("../assets/prompt/tool-guidance.md"),
-        ),
+        mk(names::TOOL_GUIDANCE, 20, guidance),
         mk(names::SHELL_DIALECT, 30, dialect),
         mk(names::PTC, 35, include_str!("../assets/prompt/ptc.md")),
     ]

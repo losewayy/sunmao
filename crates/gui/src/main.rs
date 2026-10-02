@@ -322,7 +322,30 @@ fn open_deep_link(app: &tauri::AppHandle, url: &str) {
     }
 }
 
+/// `windows_subsystem="windows"` gives us no console — so every
+/// `Command::new("pwsh")` / deno_task_shell child under us gets a FRESH
+/// console window in the user's face. Allocating one hidden console at
+/// startup gives children something to inherit (`STARTF_USESHOWWINDOW`
+/// isn't needed — inheritance alone suppresses the window when the
+/// parent's console is hidden). One-time, inert if a console already
+/// exists (a debug build launched from a terminal attaches to it).
+#[cfg(windows)]
+fn hide_child_console() {
+    use windows::Win32::System::Console::{AllocConsole, GetConsoleWindow};
+    use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, ShowWindow};
+    unsafe {
+        if AllocConsole().is_ok() {
+            let hwnd = GetConsoleWindow();
+            if !hwnd.is_invalid() {
+                let _ = ShowWindow(hwnd, SW_HIDE);
+            }
+        }
+    }
+}
+
 fn main() {
+    #[cfg(windows)]
+    hide_child_console();
     sunmao::init_tracing();
     // Provider/config resolve through the same Cli the CLI uses — argv is
     // real here: `--cwd`/`--model`/`--preset`/`--loop` etc. work on the

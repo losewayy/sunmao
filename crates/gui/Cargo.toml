@@ -22,3 +22,13 @@ tauri-plugin-updater = "2.13.1"
 tauri-plugin-window-state = "2.5.0"
 tokio.workspace = true
 tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# AllocConsole + ShowWindow: under `windows_subsystem="windows"` we have
+# no console — every shell child (deno_task_shell spawn, pwsh) would get
+# a FRESH console window in the user's face. Allocating one hidden
+# console gives children something to inherit without ever showing it.
+windows = { version = "0.62.2", features = [
+    "Win32_System_Console",
+    "Win32_UI_WindowsAndMessaging",
+] }

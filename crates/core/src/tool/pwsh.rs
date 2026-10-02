@@ -14,6 +14,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use base64::Engine as _;
 
+use crate::context::MutexRecover;
 use super::shell::ShellRun;
 
 /// `pwsh -NoProfile -NonInteractive -EncodedCommand <utf16le-b64>`.
@@ -66,16 +67,35 @@ pub async fn run_foreground(
 
     let mut out_pipe = child.stdout.take().unwrap();
     let mut err_pipe = child.stderr.take().unwrap();
-    let out_task = tokio::spawn(async move {
-        let mut buf = Vec::new();
-        let _ = tokio::io::AsyncReadExt::read_to_end(&mut out_pipe, &mut buf).await;
-        buf
-    });
-    let err_task = tokio::spawn(async move {
-        let mut buf = Vec::new();
-        let _ = tokio::io::AsyncReadExt::read_to_end(&mut err_pipe, &mut buf).await;
-        buf
-    });
+    // the buffers live outside the drain tasks: a detached grandchild
+    // keeps the pipe's write end open past exit, and `read_to_end` would
+    // hang forever — the timeout below keeps the partial bytes instead.
+    let out_buf = super::shell::SharedBuf::default();
+    let err_buf = super::shell::SharedBuf::default();
+    let out_task = {
+        let buf = out_buf.clone();
+        tokio::spawn(async move {
+            let mut chunk = [0u8; 8192];
+            loop {
+                match tokio::io::AsyncReadExt::read(&mut out_pipe, &mut chunk).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => buf.0.lock_or_recover().extend_from_slice(&chunk[..n]),
+                }
+            }
+        })
+    };
+    let err_task = {
+        let buf = err_buf.clone();
+        tokio::spawn(async move {
+            let mut chunk = [0u8; 8192];
+            loop {
+                match tokio::io::AsyncReadExt::read(&mut err_pipe, &mut chunk).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => buf.0.lock_or_recover().extend_from_slice(&chunk[..n]),
+                }
+            }
+        })
+    };
 
     let cancel_fut = async {
         match &cancel {
@@ -116,14 +136,27 @@ pub async fn run_foreground(
 
     // pwsh writes pipes in [Console]::OutputEncoding (the OEM codepage
     // unless the box opted into UTF-8) — console_text covers both.
-    let stdout = out_task
-        .await
-        .map(|b| crate::console::console_text(&b))
-        .unwrap_or_else(|_| String::new());
-    let stderr = err_task
-        .await
-        .map(|b| crate::console::console_text(&b))
-        .unwrap_or_else(|_| String::new());
+    // The join is bounded: a detached grandchild holding a pipe's write
+    // end would otherwise hang the run past pwsh's own exit.
+    let truncated = tokio::time::timeout(
+        super::shell::PIPE_DRAIN_TIMEOUT,
+        futures_util::future::join(out_task, err_task),
+    )
+    .await
+    .is_err();
+    let mut ended = ended;
+    if truncated {
+        let tag = format!(
+            "output truncated — pipes still held {}s after exit",
+            super::shell::PIPE_DRAIN_TIMEOUT.as_secs()
+        );
+        ended = Some(match ended {
+            Some(e) => format!("{e}; {tag}"),
+            None => tag,
+        });
+    }
+    let stdout = out_buf.text();
+    let stderr = err_buf.text();
 
     Ok(ShellRun {
         exit_code: code,

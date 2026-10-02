@@ -6,10 +6,15 @@ let ws = null, wsDelay = 800, wsTimer = 0;
 /* Under the Tauri shell the ws degrades to an IPC pair (GUI.md §8):
    session_events carries a JS Channel for host→page frames (parsed JSON
    objects on onmessage) and host_call carries page→host frames. */
-function wsSend(v) {
+function wsSend(v, onFail) {
   if (TAURI) {
     if (!connected) return false;
-    window.__TAURI_INTERNALS__.invoke('host_call', { msg: v }).catch(() => setConn(false));
+    // the invoke resolves as soon as the lane accepted the frame — a dead
+    // IPC only surfaces here, after the caller already returned true, so
+    // it can't hold the prompt. Callers that cleared a draft pass onFail
+    // to restore it.
+    window.__TAURI_INTERNALS__.invoke('host_call', { msg: v })
+      .catch(() => { setConn(false); if (onFail) onFail(); });
     return true;
   }
   if (ws && ws.readyState === 1) { ws.send(JSON.stringify(v)); return true; }
@@ -47,7 +52,13 @@ function route(v) {
   // messages (live/note/approval/replay) only apply when they name this
   // tab's viewed session; rail-facing frames (busy/approval_done/session/
   // sessions_changed) update every row.
-  const sess = typeof v.sess === 'string' ? v.sess : sessionId;
+  // A sess-scoped frame that arrives WITHOUT the tag must not be
+  // attributed to whatever this tab happens to be viewing (audit-gui #13)
+  // — every emitter tags, so an untagged one is already an anomaly:
+  // drop it to the event log rather than mis-draw it.
+  const SESS_TYPES = new Set(['live', 'note', 'approval', 'approval_done', 'steer_queue', 'input_queue', 'model', 'mode', 'busy']);
+  const sess = typeof v.sess === 'string' ? v.sess : null;
+  if (SESS_TYPES.has(v.type) && sess == null) { logEv('note', `untagged ${v.type} frame dropped`); return; }
   switch (v.type) {
     case 'hello':
       sessionId = v.session || '';
@@ -62,8 +73,12 @@ function route(v) {
       setApprovalMode(v.mode);
       sandboxPort = v.sandbox_port || 0;
       busySessions.clear(); (v.busy_sessions || []).forEach(id => busySessions.add(id));
-      steerQ = v.steer || []; renderSteerChips();
+      // re-attach mid-ask: rebuild the waiting badges + re-render any
+      // approval card still open — renderReplay just wiped the old DOM
+      waitingSessions.clear(); (v.waiting_sessions || []).forEach(id => waitingSessions.add(id));
+      steerQ = v.steer || []; inputQ = v.queue || []; renderQueueChips();
       renderReplay(v.replay || []);
+      (v.pending || []).forEach(c => approvalCard(c));
       setBusy(!!v.busy);
       refreshSessions(); refreshModels(); refreshProjects();
       refreshRoster(); refreshJobs();
@@ -98,7 +113,7 @@ function route(v) {
       setApprovalMode(v.mode);
       setBusy(!!v.busy);
       (v.pending || []).forEach(c => approvalCard(c));
-      steerQ = v.steer || []; renderSteerChips();
+      steerQ = v.steer || []; inputQ = v.queue || []; renderQueueChips();
       syncWait();
       refreshSessions(); refreshRoster(); refreshJobs(); renderCrumb();
       break;
@@ -108,8 +123,13 @@ function route(v) {
       if (sess === sessionId) { approvalCard(v); logEv('hook', `approval requested · ${v.tool}: ${(v.detail || '').slice(0, 80)}`); }
       else {
         // a background session raised an approval — surface it as a
-        // clickable toast that jumps the view to that session
+        // clickable toast that jumps the view to that session. One toast
+        // per session at a time: a polling tool loop re-raises the same
+        // approval, and stacking duplicates is pure noise
+        const dup = [...$('#toasts').querySelectorAll('.toast.jump')].some(x => x.dataset.ap === sess);
+        if (dup) break;
         const t = document.createElement('div'); t.className = 'toast glass jump';
+        t.dataset.ap = sess;
         t.innerHTML = ic('shield-check') + `<span>待审批 · <b>${esc(v.tool || '?')}</b> · ${esc(sess)}</span>` + ic('arrow-l', 'i xs');
         t.addEventListener('click', () => { resumeSession(sess); t.remove(); });
         $('#toasts').appendChild(t);
@@ -117,18 +137,42 @@ function route(v) {
       }
       renderRail();
       break;
-    case 'approval_done':
+    case 'approval_done': {
       waitingSessions.delete(sess);
+      // another tab answered first — the card here is unanswerable (the
+      // kernel already forgot the id), so collapse it instead of leaving
+      // a live card that would fake a verdict
+      const card = pendingApprovals.get(v.id);
+      if (card) {
+        pendingApprovals.delete(v.id);
+        const detail = $('.cmd', card) ? $('.cmd', card).textContent.trim() : '';
+        const why = v.why === 'cancelled' ? '已取消' : '已由其他窗口答复';
+        collapse(card, `<div class="ap-done">${stIcon('ok')}<b>已处理</b><code>${esc(detail)}</code><span>${why}</span></div>`);
+        syncWait();
+      }
       renderRail();
       break;
+    }
     case 'note':
       if (sess === sessionId) { addNote(v.text); logEv('note', v.text); }
       break;
     case 'session': {
       // a directed switch names the issuing client — only that tab moves;
-      // untagged frames (older kernels) fall back to the from-match
+      // untagged frames (older kernels) fall back to the from-match.
+      // The kernel still points `viewing` at the old session until we
+      // adopt — without this a `/resume` typed in the box relabels the
+      // UI but keeps prompts/approvals hitting the abandoned session.
       if (v.client != null ? v.client === clientId : (!v.from || v.from === sessionId)) {
         sessionId = v.id || sessionId;
+        // the frame itself carries no replay — clear the transcript +
+        // per-session caches NOW (renderReplay([]) tears islands down and
+        // wipes the DOM) so the old session's transcript / cards / chips
+        // can't render against the new id in the frame → replay gap.
+        // The replay repopulates everything.
+        renderReplay([]);
+        steerQ = []; inputQ = []; renderQueueChips();
+        modelLabel = ''; $('#cmp-model').textContent = '…';
+        wsSend({ type: 'view', id: sessionId });
         renderCrumb();
       }
       refreshSessions();
@@ -136,7 +180,10 @@ function route(v) {
     }
     case 'sessions_changed': refreshSessions(); break;
     case 'steer_queue':
-      if (sess === sessionId) { steerQ = v.items || []; renderSteerChips(); }
+      if (sess === sessionId) { steerQ = v.items || []; renderQueueChips(); }
+      break;
+    case 'input_queue':
+      if (sess === sessionId) { inputQ = v.items || []; renderQueueChips(); }
       break;
     case 'models_changed': refreshModels(); break;
     case 'model':
@@ -185,14 +232,17 @@ async function resumeSession(id) {
   if (!id || id === sessionId) return;
   try {
     await api(`/session/${encodeURIComponent(id)}/resume`, { method: 'POST' });
-    wsSend({ type: 'view', id }); // adopt → re-point this tab (replay follows)
+    // a dead socket leaves the host adopted but this tab still viewing the
+    // old session — surface it instead of silent drift
+    if (!wsSend({ type: 'view', id })) toast('已接入会话，但连接断开——重连后刷新视图', 'alert', 'warn');
   }
   catch (e) { toast(`resume 失败：${e.message}`, 'alert', 'warn'); }
 }
 async function forkSession(id) {
   try {
     const r = await api(`/session/${encodeURIComponent(id)}/fork`, { method: 'POST' });
-    if (r && r.session) wsSend({ type: 'view', id: r.session });
+    if (r && r.session && !wsSend({ type: 'view', id: r.session }))
+      toast('已分叉，但连接断开——重连后刷新视图', 'alert', 'warn');
     toast(`已分叉 ${id}`, 'fork');
   }
   catch (e) { toast(`fork 失败：${e.message}`, 'alert', 'warn'); }
@@ -225,53 +275,23 @@ async function deleteSession(id) {
     toast('已删除会话', 'trash');
   } catch (e) { toast(`删除失败：${e.message}`, 'alert', 'warn'); }
 }
-/* ---- export — fold the session's durable events into Markdown and
-   download it. Reads GET /session/{id}/events (not the live transcript)
-   so dormant sessions export identically. ---- */
-function mdToolArgs(call) {
-  try { const a = JSON.parse((call.function || {}).arguments || '{}'); return JSON.stringify(a, null, 2); }
-  catch { return String((call.function || {}).arguments || ''); }
-}
-function sessionMarkdown(id, events) {
-  let title = (SESSION_META[id] && SESSION_META[id].title) || '';
-  const out = [];
-  for (const ev of events || []) {
-    const t = ev.type;
-    if (t === 'session_meta' && ev.title) title = ev.title;
-    else if (t === 'message') {
-      const m = ev.message || {};
-      if (m.role === 'user') {
-        const c = msgText(m);
-        if (c.startsWith('[hook context]') || c.startsWith('<local-shell>')) continue;
-        out.push(`## user\n\n${c}\n`);
-        for (const b of msgParts(m)) if (b.type === 'image') out.push(`![image](${attBase(b.path)})\n`);
-      } else if (m.role === 'assistant' && msgText(m)) {
-        out.push(`## assistant\n\n${msgText(m)}\n`);
-      }
-    } else if (t === 'tool_call') {
-      const c = ev.call || {}, name = (c.function || {}).name || '?';
-      out.push(`\`\`\`tool-call\n${name} ${mdToolArgs(c).replace(/\n+/g, ' ')}\n\`\`\`\n`);
-    } else if (t === 'tool_result') {
-      out.push(`\`\`\`tool-result\n${ev.ok === false ? '[error] ' : ''}${ev.output || ''}\n\`\`\`\n`);
-    } else if (t === 'local_shell') {
-      out.push(`\`\`\`shell\n$ ${ev.command || ''}\n${ev.output || ''}\n[exit ${ev.exit_code}]\n\`\`\`\n`);
-    } else if (t === 'compacted') {
-      out.push(`> [context compacted] ${ev.summary || ''}\n`);
-    } else if (t === 'artifact') {
-      out.push(`> artifact: \`${ev.name}.html\` (${fmtBytes(ev.bytes || 0)})\n`);
-    }
-  }
-  return `# ${title || id}\n\n> session \`${id}\` — exported from the event log\n\n${out.join('\n')}`;
-}
+/* ---- export — a GET on the session's `/md` route gives us the server's
+   `commands::export::markdown` output (the SAME fold `/export-md` and the
+   debug bundle ride) so the download is byte-for-byte what REPL/TUI would
+   produce. The transcript the user scrolls is the folded live view; the
+   download is the durable event-source. ---- */
 async function exportSession(id) {
   try {
-    const v = await api(`/session/${encodeURIComponent(id)}/events`);
-    const md = sessionMarkdown(id, v.events || []);
+    const r = await fetch(`/session/${encodeURIComponent(id)}/md`);
+    if (!r.ok) throw new Error(`${r.status}`);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown' }));
+    a.href = URL.createObjectURL(new Blob([await r.text()], { type: 'text/markdown' }));
     a.download = `sunmao-${id}.md`;
     a.click();
-    URL.revokeObjectURL(a.href);
+    // revoke on a delay — engines that hand the blob to the download
+    // manager asynchronously (Firefox) read an empty file if we revoke
+    // in the same task
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
     toast(`已导出 ${id}.md`, 'download');
   } catch (e) { toast(`导出失败：${e.message}`, 'alert', 'warn'); }
 }
@@ -371,18 +391,7 @@ async function saveProviders(edit, ok) {
     if (view === 'settings' && setPage === 'providers') renderProviders();
   } catch (e) { toast(`保存失败：${e.message}`, 'alert', 'warn'); }
 }
-async function fetchCatalog(name) {
-  toast('正在拉取模型列表…', 'reset');
-  try {
-    const r = await api('/models/fetch', jpost({ provider: name }));
-    const cat = r.catalog || [];
-    if (!cat.length) return toast('该 provider 返回了空列表', 'alert', 'warn');
-    const cur = ((MODELS.providers[name] || {}).catalog) || [];
-    const merged = [...cat];
-    for (const m of cur) if (!merged.some(c => c.id === m.id)) merged.push(m);
-    await saveProviders({ name, base_url: MODELS.providers[name].base_url, dialect: MODELS.providers[name].dialect, keepKey: true, keepCatalog: false, setCatalog: merged }, `已拉取 ${cat.length} 个模型`);
-  } catch (e) { toast(`拉取失败：${e.message}`, 'alert', 'warn'); }
-}
+
 
 /* ================= dock ================= */
 function renderDock(d) {
@@ -512,5 +521,17 @@ function toggleDock() {
   app.dataset.dock = view === 'session' && dockOn ? 'on' : 'off';
   $('#dock-btn').classList.toggle('on', dockOn && view === 'session');
 }
+
+/* Dock tabs: pure view swap — every pane keeps its own scroll position and
+   render state; the active tab persists so the panel reopens where you left it. */
+function dockTab(name) {
+  const dock = $('#dock');
+  if (!dock) return;
+  dock.dataset.tab = name;
+  $$('.dock-tab', dock).forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
+  $$('.dock-pane', dock).forEach(p => { p.hidden = p.dataset.pane !== name; });
+  try { localStorage.setItem('sunmao.dock.tab', name); } catch {}
+}
+try { dockTab(localStorage.getItem('sunmao.dock.tab') || 'overview'); } catch {}
 
 

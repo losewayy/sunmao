@@ -35,6 +35,7 @@ failure, not a clean exit (`TurnOutcome::Cancelled` discriminates it).
 | `plugins/<name>/` | plugin dir | contributes `commands/`, `skills/`, `agents/` **and** merges its `plugin.json` (`hooks` + `mcpServers`, `${CLAUDE_PLUGIN_ROOT}` → the plugin dir); `sunmao plugin install|list|remove` manages this dir — install takes a local dir, a git URL, or `owner/repo` (clones via `git`, depth 1) |
 | `presets/<name>/` | plugin dir | same bundle shape as `plugins/<name>/` (plus `permissions.json`), but only active while named via `--preset <name>` — see "Presets" below |
 | `sessions/*.jsonl` | runtime state (gitignored) | session logs — `--resume`/`--fork`/`--dataflow` read these |
+| `shell.txt` | one word: `pwsh` / `powershell` / `posix` / `bash` / `deno` / `auto` | shell backend pin for `Bash` — see "Shell backend" below |
 | `checkpoints/{session_id}/` | runtime state | snapshot-before-write ledger — `{seq}-{hash}.bak` blobs + `manifest.jsonl`; `/rewind` restores files from the earliest entry at/after the target turn |
 | `jobs/{id}/` | runtime state | background `Bash` jobs — `output.log` + `exit.json` (on finish) |
 | `artifacts/` | runtime state | `HtmlArtifact` outputs — `{name}.html` plus `{name}.state.json` human-annotation sidecars |
@@ -51,6 +52,7 @@ failure, not a clean exit (`TurnOutcome::Cancelled` discriminates it).
 | `~/.codex/hooks.json` | user-level Codex hooks |
 | `~/.cursor/hooks.json` | user-level Cursor hooks |
 | `~/.sunmao/prompt.md` | user-level prompt section (applied before the project layer) |
+| `~/.sunmao/shell.txt` | user-level shell backend pin — the machine-wide default a project can override |
 | `~/.sunmao/prompt.d/<name>.md` | user-level section replacement, same naming rule |
 | `~/.sunmao/presets/<name>/` | user-level preset dir — searched when the project has no match |
 | `.claude/commands/*.md` | slash commands |
@@ -80,6 +82,28 @@ same deny>ask>allow table. For first-match surfaces (slash command names,
 agent defs) a preset fills gaps rather than shadowing project files.
 Sub-agents inherit the parent's presets. `sunmao --doctor` lists active and
 available presets.
+
+## Shell backend (`Bash` tool)
+
+`Bash` runs either on the embedded POSIX interpreter (`deno_task_shell` —
+identical syntax on every platform) or on a real PowerShell 7 via `pwsh
+-EncodedCommand`. Resolution order, first hit wins:
+
+```text
+1. SUNMAO_SHELL              (env var — the machine-wide default)
+2. <cwd>/.sunmao/shell.txt   (project pin)
+3. ~/.sunmao/shell.txt       (user pin)
+4. auto-detect               (no config at all)
+```
+
+Values: `pwsh`/`powershell` pick PowerShell, `posix`/`bash`/`deno` pin the
+embedded interpreter, `auto` forces detection past a lower layer's pin.
+`pwsh` resolves only when the `pwsh` binary is on PATH — `powershell.exe`
+is Windows PowerShell 5 and never counts. Auto-detect picks `pwsh` on
+Windows when it's on PATH, Posix everywhere else; a `pwsh` request on a box
+without the binary silently falls back rather than failing every `Bash`
+call (`sunmao doctor` flags that case). `sunmao doctor` reports the
+effective backend, which layer chose it, and `pwsh --version`.
 
 ## Provider config (env or flags)
 

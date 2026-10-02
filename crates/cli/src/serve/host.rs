@@ -92,6 +92,11 @@ pub(crate) struct Shared {
     /// and rustc can't close the Send proof); ops ride a oneshot reply
     /// through `mgmt_loop` instead
     pub(crate) mgmt: mpsc::UnboundedSender<SessionOp>,
+    /// Serializes `adopt`'s check-then-insert: `factory.build().await`
+    /// opens a window (MCP connects) where two concurrent resumes of one
+    /// session id would each build a Context and hold their own writer to
+    /// the same jsonl — the second adopter then finds the first's host.
+    pub(crate) adopt_lock: tokio::sync::Mutex<()>,
 }
 
 /// Host-management op — "make this session id live (possibly as a fork)"
@@ -177,6 +182,7 @@ impl Shared {
         log: SessionLog,
         source: &str,
     ) -> Result<Arc<Host>> {
+        let _guard = self.adopt_lock.lock().await;
         let id = log
             .path()
             .file_stem()

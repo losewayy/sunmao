@@ -34,7 +34,15 @@ impl OaiClient {
         model: impl Into<String>,
     ) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            // no whole-request timeout — SSE streams run long; the risk a
+            // default client carries is a *wedged* socket hanging the turn
+            // forever. connect_timeout bounds the handshake; tcp_keepalive
+            // surfaces dead connections between deltas.
+            http: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(30))
+                .tcp_keepalive(std::time::Duration::from_secs(60))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
             model: model.into(),
@@ -286,9 +294,13 @@ impl Chunk {
                 }));
             }
         }
-        // some providers send usage on the [DONE]-adjacent empty-choices chunk
-        if out.is_empty()
-            && let Some(usage) = self.usage
+        // usage can ride the last *content* chunk, not just the
+        // [DONE]-adjacent empty-choices one — emit it whenever present or
+        // the turn's token accounting silently drops to zero.
+        if let Some(usage) = self.usage
+            && out
+                .iter()
+                .all(|d| !matches!(d, Ok(StreamDelta::Finish { .. })))
         {
             out.push(Ok(StreamDelta::Finish {
                 reason: None,

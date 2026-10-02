@@ -246,8 +246,14 @@ impl Tool {
 /// `prompt_tokens_details.cached_tokens`, Anthropic's
 /// `cache_*_input_tokens`) — the custom Deserialize normalizes them all
 /// into the same two fields so frontends and the session log see one shape.
+/// Invariant after normalization: `prompt_tokens` is the *total input*
+/// (OpenAI's field already includes cached tokens; Anthropic's
+/// `input_tokens` excludes them, so cached+creation are folded in) — the
+/// cache-hit dial can simply divide `cache_read / prompt_tokens` on every
+/// dialect.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct Usage {
+    /// total input tokens — cached reads included
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
@@ -274,17 +280,33 @@ impl<'de> Deserialize<'de> for Usage {
                 .and_then(|x| x.as_u64())
                 .unwrap_or(0)
         };
+        let cache_read = num(&["cache_read_input_tokens", "prompt_cache_hit_tokens"])
+            + nested("prompt_tokens_details", "cached_tokens")
+            + nested("input_tokens_details", "cached_tokens");
+        let cache_write = num(&["cache_creation_input_tokens", "prompt_cache_miss_tokens"]);
+        // normalize to one shape: `prompt_tokens` is the TOTAL input,
+        // cached reads included. Anthropic reports input_tokens *without*
+        // the cached half; OpenAI (chat + Responses) reports prompt_tokens /
+        // input_tokens *with* it — folding cache_read+cache_creation into
+        // the former aligns both so the hit ratio is cache_read /
+        // prompt_tokens on every dialect. Anthropic is told apart by its
+        // flat cache_* fields: Responses uses `input_tokens_details` instead
+        // and must not be double-folded.
+        let anthropic_flat = v.get("input_tokens").is_some()
+            && (v.get("cache_read_input_tokens").is_some()
+                || v.get("cache_creation_input_tokens").is_some());
+        let prompt = num(&["prompt_tokens", "input_tokens"])
+            + if anthropic_flat {
+                cache_read + cache_write
+            } else {
+                0
+            };
         Ok(Usage {
-            prompt_tokens: num(&["prompt_tokens", "input_tokens"]),
+            prompt_tokens: prompt,
             completion_tokens: num(&["completion_tokens", "output_tokens"]),
             total_tokens: num(&["total_tokens"]),
-            cache_read_input_tokens: num(&["cache_read_input_tokens", "prompt_cache_hit_tokens"])
-                + nested("prompt_tokens_details", "cached_tokens")
-                + nested("input_tokens_details", "cached_tokens"),
-            cache_creation_input_tokens: num(&[
-                "cache_creation_input_tokens",
-                "prompt_cache_miss_tokens",
-            ]),
+            cache_read_input_tokens: cache_read,
+            cache_creation_input_tokens: cache_write,
         })
     }
 }
@@ -295,14 +317,17 @@ mod tests {
 
     /// Every provider's usage dialect must land in the same Usage shape —
     /// Anthropic's cache_*_input_tokens, DeepSeek/DashScope's flat
-    /// prompt_cache_*, OpenAI's nested prompt_tokens_details.
+    /// prompt_cache_*, OpenAI's nested prompt_tokens_details — with the one
+    /// invariant `prompt_tokens` = total input including the cached share.
     #[test]
     fn usage_deserializes_every_dialect() {
         let anthropic: Usage = serde_json::from_str(
             r#"{"input_tokens":1000,"output_tokens":50,"cache_read_input_tokens":800,"cache_creation_input_tokens":100}"#,
         )
         .unwrap();
-        assert_eq!(anthropic.prompt_tokens, 1000);
+        // Anthropic's input_tokens excludes the cached 900 — normalized to
+        // the full input so hit% = cache_read/prompt_tokens on every dialect
+        assert_eq!(anthropic.prompt_tokens, 1900);
         assert_eq!(anthropic.cache_read_input_tokens, 800);
         assert_eq!(anthropic.cache_creation_input_tokens, 100);
 
@@ -310,6 +335,9 @@ mod tests {
             r#"{"prompt_tokens":500,"completion_tokens":20,"total_tokens":520,"prompt_cache_hit_tokens":300,"prompt_cache_miss_tokens":200}"#,
         )
         .unwrap();
+        // DeepSeek's prompt_tokens already includes the cached share — no
+        // adjustment; hit% = 300/500, not the old 300/700
+        assert_eq!(deepseek.prompt_tokens, 500);
         assert_eq!(deepseek.cache_read_input_tokens, 300);
         assert_eq!(deepseek.cache_creation_input_tokens, 200);
 
@@ -317,6 +345,7 @@ mod tests {
             r#"{"prompt_tokens":2048,"completion_tokens":64,"total_tokens":2112,"prompt_tokens_details":{"cached_tokens":1024}}"#,
         )
         .unwrap();
+        assert_eq!(openai.prompt_tokens, 2048);
         assert_eq!(openai.cache_read_input_tokens, 1024);
 
         // a bare usage still parses — absent cache fields are zeros

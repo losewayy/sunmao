@@ -41,7 +41,13 @@ impl AnthropicClient {
         model: impl Into<String>,
     ) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            // SSE streams can outlive any whole-request timeout — bound the
+            // handshake + keepalive instead so a wedged socket still dies.
+            http: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(30))
+                .tcp_keepalive(std::time::Duration::from_secs(60))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
             model: model.into(),
@@ -67,16 +73,31 @@ impl AnthropicClient {
                     });
                 }
                 Role::User => {
-                    // tool_result messages fold into a user turn
+                    // tool_result messages fold into a user turn — and a
+                    // parallel tool_calls batch emits N consecutive results,
+                    // which Anthropic requires in ONE user message: merge
+                    // onto the previous turn if it already carries results.
                     if let Some(id) = &m.tool_call_id {
-                        out.push(json!({
-                            "role": "user",
-                            "content": [{
-                                "type": "tool_result",
-                                "tool_use_id": id,
-                                "content": m.content_text().unwrap_or_default(),
-                            }],
-                        }));
+                        let block = json!({
+                            "type": "tool_result",
+                            "tool_use_id": id,
+                            "content": m.content_text().unwrap_or_default(),
+                        });
+                        let merged = out.last_mut().and_then(|p| {
+                            if p["role"] == "user"
+                                && p["content"]
+                                    .as_array()
+                                    .map(|c| c.iter().all(|b| b["type"] == "tool_result"))
+                                    .unwrap_or(false)
+                            {
+                                p["content"].as_array_mut().map(|c| c.push(block.clone()))
+                            } else {
+                                None
+                            }
+                        });
+                        if merged.is_none() {
+                            out.push(json!({"role": "user", "content": [block]}));
+                        }
                     } else {
                         let mut content = Vec::new();
                         for b in m.content.iter().flatten() {
@@ -255,8 +276,22 @@ enum Ev {
         delta: MsgDelta,
         usage: Option<Usage>,
     },
+    /// Anthropic reports mid-stream failures as `{"type":"error",…}` — the
+    /// old `Other` catch-all swallowed it and the turn looked like a clean
+    /// finish. Surface it as an error so the loop reports, not silently
+    /// accepts, a truncated stream.
+    #[serde(rename = "error")]
+    Error { error: StreamError },
     #[serde(other)]
     Other,
+}
+
+#[derive(Deserialize)]
+struct StreamError {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    message: String,
 }
 
 #[derive(Deserialize)]
@@ -327,6 +362,11 @@ impl Ev {
                     usage,
                 })]
             }
+            Ev::Error { error } => vec![Err(anyhow::anyhow!(
+                "anthropic stream error {}: {}",
+                error.kind,
+                error.message
+            ))],
             _ => vec![],
         }
     }

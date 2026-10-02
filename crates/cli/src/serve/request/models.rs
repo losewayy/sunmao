@@ -19,7 +19,7 @@ fn models_host(s: &Arc<Shared>, sess: Option<String>) -> Option<Arc<Host>> {
     {
         return Some(h);
     }
-    s.live_ids().first().and_then(|id| s.host(id))
+    s.newest_live_id().and_then(|id| s.host(&id))
 }
 
 /// `GET /models?sess=` — providers (keys redacted) + routes + completable

@@ -79,7 +79,7 @@ impl Client {
             })
         };
 
-        let viewing = s.live_ids().into_iter().next().unwrap_or_default();
+        let viewing = s.newest_live_id().unwrap_or_default();
         let host = s.host(&viewing);
         let evs = match &host {
             Some(h) => h.agent.session_events().await,
@@ -516,52 +516,4 @@ impl Client {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A slow tab that lets the live bus lag used to die at the first
-    /// `Lagged` — every later frame (busy, approvals, live rows) never
-    /// reached it until reconnect. `Lagged` is recoverable: skip the gap.
-    #[tokio::test]
-    async fn lagged_bus_survives() {
-        let (live, _) = tokio::sync::broadcast::channel::<serde_json::Value>(4);
-        let (mgmt, _rx) = mpsc::unbounded_channel();
-        let s = Arc::new(Shared {
-            cwd: std::env::temp_dir(),
-            roots: Vec::new(),
-            live,
-            sessions: std::sync::Mutex::new(Default::default()),
-            factory: crate::serve::SessionFactory {
-                make: Box::new(|_, _, _| Box::pin(async { anyhow::bail!("test factory") })),
-            },
-            model_label: String::new(),
-            sandbox_port: 0,
-            prompt_override: None,
-            driver_override: None,
-            approval_ids: Arc::new(AtomicU64::new(0)),
-            mgmt,
-            adopt_lock: tokio::sync::Mutex::new(()),
-        });
-        let (out, mut rx) = mpsc::unbounded_channel::<String>();
-        let _client = Client::connect(s.clone(), out).await;
-        // the forwarder hasn't polled yet (this test runtime yields only
-        // when we await) — the burst wraps the ring → Lagged on next recv
-        for _ in 0..8 {
-            let _ = s.live.send(serde_json::json!({"type":"noise"}));
-        }
-        // drain the hello + lagged gap; the marker must still arrive
-        let _ = s.live.send(serde_json::json!({"type":"marker"}));
-        let mut seen = false;
-        for _ in 0..16 {
-            match tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await {
-                Ok(Some(v)) if v.contains("marker") => {
-                    seen = true;
-                    break;
-                }
-                Ok(Some(_)) => continue,
-                _ => break,
-            }
-        }
-        assert!(seen, "the forwarder must survive a Lagged gap");
-    }
-}
+mod tests;

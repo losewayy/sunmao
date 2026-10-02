@@ -3,7 +3,7 @@
 //! 适配器）共享的同一个宿主句柄；HTTP 本身只活在 `serve::http`。
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use sunmao_core::context::MutexRecover;
 
@@ -53,6 +53,10 @@ pub(crate) struct Host {
     pub(crate) approvals: Arc<Pending>,
     /// submissions currently running (drives the busy badge + cancel)
     pub(crate) busy: std::sync::atomic::AtomicUsize,
+    /// adoption order — reconnecting viewers land on the newest host;
+    /// HashMap iteration order can't answer "newest" (a resumed old log
+    /// should win over an untouched fresh one it out-sorts lexically)
+    pub(crate) adopted: u64,
 }
 
 /// The multi-session host: a registry of live sessions plus the global bus
@@ -97,6 +101,8 @@ pub(crate) struct Shared {
     /// session id would each build a Context and hold their own writer to
     /// the same jsonl — the second adopter then finds the first's host.
     pub(crate) adopt_lock: tokio::sync::Mutex<()>,
+    /// adoption-order counter — each adopted Host stamps its ticket
+    pub(crate) adopt_seq: AtomicU64,
 }
 
 /// Host-management op — "make this session id live (possibly as a fork)"
@@ -170,6 +176,16 @@ impl Shared {
         self.sessions.lock_or_recover().keys().cloned().collect()
     }
 
+    /// The most recently adopted live host's id — the deterministic
+    /// "newest" a reconnecting viewer lands on.
+    pub(crate) fn newest_live_id(&self) -> Option<String> {
+        self.sessions
+            .lock_or_recover()
+            .values()
+            .max_by_key(|h| h.adopted)
+            .map(|h| h.id.clone())
+    }
+
     /// Register `log` as a live session: fresh Pending + Context via the
     /// factory + its own driver task, then SessionStart fires with the
     /// adoption's `source` (same vocabulary as TUI --resume: startup /
@@ -212,6 +228,7 @@ impl Shared {
             queue_next_id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
             approvals: pending,
             busy: std::sync::atomic::AtomicUsize::new(0),
+            adopted: self.adopt_seq.fetch_add(1, Ordering::Relaxed) + 1,
         });
         self.sessions
             .lock_or_recover()

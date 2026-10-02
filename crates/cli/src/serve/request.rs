@@ -550,7 +550,7 @@ async fn paths_list(s: &Arc<Shared>, sess: Option<String>) -> HostResponse {
 async fn dataflow_current(s: &Arc<Shared>, sess: Option<String>) -> HostResponse {
     let p = match sess.as_deref().and_then(|id| s.host(id)) {
         Some(h) => h.agent.session_path().await,
-        None => match s.live_ids().first().and_then(|id| s.host(id)) {
+        None => match s.newest_live_id().and_then(|id| s.host(&id)) {
             Some(h) => h.agent.session_path().await,
             None => match crate::sessions::recent_sessions(&s.cwd, 1).first() {
                 Some(id) => match log_path(s, id) {

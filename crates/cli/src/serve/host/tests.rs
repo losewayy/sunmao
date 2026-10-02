@@ -21,6 +21,7 @@ fn shared_at(cwd: std::path::PathBuf) -> Shared {
         approval_ids: Arc::new(AtomicU64::new(0)),
         mgmt,
         adopt_lock: tokio::sync::Mutex::new(()),
+        adopt_seq: AtomicU64::new(0),
     }
 }
 
@@ -103,6 +104,7 @@ async fn concurrent_adopt_of_one_session_yields_one_host() {
         approval_ids: Arc::new(AtomicU64::new(0)),
         mgmt,
         adopt_lock: tokio::sync::Mutex::new(()),
+        adopt_seq: AtomicU64::new(0),
     });
     let log_a = SessionLog::open(&sdir, "sx").await.unwrap();
     let log_b = SessionLog::open(&sdir, "sx").await.unwrap();

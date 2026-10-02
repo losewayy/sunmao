@@ -93,17 +93,20 @@ impl ToolCallAssembler {
             } else {
                 call.name.clone()
             };
-            match serde_json::from_str::<serde_json::Value>(if call.args.trim().is_empty() {
-                "{}"
+            // tolerate an empty arguments buffer as `{}` — providers omit it
+            // for zero-arg functions (mirrors `finish`)
+            let args = if call.args.trim().is_empty() {
+                "{}".to_string()
             } else {
-                &call.args
-            }) {
+                call.args.clone()
+            };
+            match serde_json::from_str::<serde_json::Value>(&args) {
                 Ok(_) => out.push(ToolCall {
                     id,
                     kind: "function".into(),
                     function: FunctionCall {
                         name,
-                        arguments: call.args.clone(),
+                        arguments: args,
                     },
                 }),
                 Err(e) => {
@@ -178,5 +181,19 @@ mod tests {
         a.push(&frag(0, Some("c"), Some("TodoWrite"), None));
         let calls = a.finish().unwrap();
         assert_eq!(calls[0].function.arguments, "{}");
+    }
+
+    /// Lenient finish must apply the same empty→`{}` substitution as
+    /// `finish` — emitting the raw empty buffer produces a ToolCall whose
+    /// arguments string isn't parseable JSON downstream.
+    #[test]
+    fn finish_lenient_substitutes_empty_arguments() {
+        let mut a = ToolCallAssembler::new();
+        a.push(&frag(0, Some("c"), Some("TodoWrite"), None));
+        a.push(&frag(1, Some("c2"), Some("Bash"), Some("  ")));
+        let (calls, errors) = a.finish_lenient();
+        assert!(errors.is_empty());
+        assert_eq!(calls[0].function.arguments, "{}");
+        assert_eq!(calls[1].function.arguments, "{}");
     }
 }

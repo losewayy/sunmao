@@ -13,6 +13,7 @@
 //! elicitation requests get a protocol error (this client never prompts
 //! mid-tool) plus a session note.
 
+use crate::context::{MutexRecover, RwLockRecover};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -190,17 +191,17 @@ impl Clone for McpServerHandle {
 impl McpServerHandle {
     /// The advertised tool catalog (list_changed-fresh).
     pub fn tools(&self) -> Vec<McpToolInfo> {
-        self.shared.tools.read().unwrap().clone()
+        self.shared.tools.read_or_recover().clone()
     }
 
     /// The advertised prompt catalog.
     pub fn prompts(&self) -> Vec<McpPromptInfo> {
-        self.shared.prompts.read().unwrap().clone()
+        self.shared.prompts.read_or_recover().clone()
     }
 
     /// The advertised resource catalog.
     pub fn resources(&self) -> Vec<McpResourceInfo> {
-        self.shared.resources.read().unwrap().clone()
+        self.shared.resources.read_or_recover().clone()
     }
 
     /// Version the shared catalog reached — this Context's
@@ -226,7 +227,7 @@ impl McpServerHandle {
     /// Things worth a session note — elicitation declines, refresh
     /// failures. Drained at turn boundaries.
     pub(crate) fn drain_notices(&self) -> Vec<String> {
-        self.shared.notices.lock().unwrap().drain(..).collect()
+        self.shared.notices.lock_or_recover().drain(..).collect()
     }
 
     /// Roster row snapshot — reads off the live service state.
@@ -234,9 +235,9 @@ impl McpServerHandle {
         McpServerStatus {
             name: self.name.clone(),
             transport: self.transport,
-            tools: self.shared.tools.read().unwrap().len(),
-            prompts: self.shared.prompts.read().unwrap().len(),
-            resources: self.shared.resources.read().unwrap().len(),
+            tools: self.shared.tools.read_or_recover().len(),
+            prompts: self.shared.prompts.read_or_recover().len(),
+            resources: self.shared.resources.read_or_recover().len(),
             connected: !self.client.is_closed(),
         }
     }

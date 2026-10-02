@@ -6,6 +6,7 @@
 //! stdin; dead children (writer error, reader EOF) fail every parked and
 //! future request fast.
 
+use crate::context::MutexRecover;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -113,7 +114,7 @@ impl ExtChild {
             }
             mark_dead_with(&reader_state, &timeout_frame());
         });
-        state.lock().unwrap().write_tx = Some(write_tx);
+        state.lock_or_recover().write_tx = Some(write_tx);
 
         let mut this = Self {
             plugin: plugin.to_string(),
@@ -165,7 +166,7 @@ impl ExtChild {
     /// to an error so the caller degrades, never aborts.
     pub async fn send_request(&self, method: &str, params: Value) -> anyhow::Result<Value> {
         let (id, rx, tx) = {
-            let mut st = self.state.lock().unwrap();
+            let mut st = self.state.lock_or_recover();
             let Some(tx) = st.write_tx.clone() else {
                 anyhow::bail!("extension {} is dead", self.plugin);
             };
@@ -185,11 +186,11 @@ impl ExtChild {
             Ok(Ok(frame)) => super::proto::reply_result(frame),
             // the reader parked nothing / died mid-flight — same "gone" story
             Ok(Err(_)) => {
-                self.state.lock().unwrap().pending.remove(&id);
+                self.state.lock_or_recover().pending.remove(&id);
                 anyhow::bail!("extension {} is dead", self.plugin)
             }
             Err(_) => {
-                self.state.lock().unwrap().pending.remove(&id);
+                self.state.lock_or_recover().pending.remove(&id);
                 anyhow::bail!("extension {method} timed out")
             }
         }
@@ -198,7 +199,7 @@ impl ExtChild {
     /// Fire-and-forget — `ext/shutdown` is the only notification today.
     pub fn notify(&self, method: &str, params: Value) {
         let tx = {
-            let st = self.state.lock().unwrap();
+            let st = self.state.lock_or_recover();
             st.write_tx.clone()
         };
         if let Some(tx) = tx {
@@ -213,16 +214,16 @@ impl ExtChild {
     pub async fn shutdown(&self) {
         self.notify("ext/shutdown", json!({}));
         let child = {
-            let mut st = self.state.lock().unwrap();
+            let mut st = self.state.lock_or_recover();
             st.write_tx = None;
             self.mark_dead_locked(&mut st);
             st.child.take()
         };
         graceful_wait(child).await;
-        if let Some(h) = self.reader.lock().unwrap().take() {
+        if let Some(h) = self.reader.lock_or_recover().take() {
             h.abort();
         }
-        if let Some(h) = self.writer.lock().unwrap().take() {
+        if let Some(h) = self.writer.lock_or_recover().take() {
             h.abort();
         }
     }
@@ -245,13 +246,13 @@ impl ExtChild {
     fn terminate(&self) {
         self.notify("ext/shutdown", json!({}));
         let (child, reader, writer) = {
-            let mut st = self.state.lock().unwrap();
+            let mut st = self.state.lock_or_recover();
             st.write_tx = None;
             self.mark_dead_locked(&mut st);
             (
                 st.child.take(),
-                self.reader.lock().unwrap().take(),
-                self.writer.lock().unwrap().take(),
+                self.reader.lock_or_recover().take(),
+                self.writer.lock_or_recover().take(),
             )
         };
         if let Some(h) = reader {
@@ -287,7 +288,7 @@ impl Drop for ExtChild {
 /// oneshot; notifications and stray ids drop silently.
 fn dispatch(state: &Arc<Mutex<ChildState>>, frame: Value) {
     if let Some(id) = super::proto::reply_id(&frame) {
-        let tx = state.lock().unwrap().pending.remove(&id);
+        let tx = state.lock_or_recover().pending.remove(&id);
         if let Some(tx) = tx {
             let _ = tx.send(frame);
         }
@@ -297,7 +298,7 @@ fn dispatch(state: &Arc<Mutex<ChildState>>, frame: Value) {
 /// Drain every parked request with a synthetic error frame — EOF, write
 /// failure, shutdown: callers all see the same "extension is gone" shape.
 fn mark_dead_with(state: &Arc<Mutex<ChildState>>, frame: &Value) {
-    let mut st = state.lock().unwrap();
+    let mut st = state.lock_or_recover();
     for (_, tx) in st.pending.drain() {
         let _ = tx.send(frame.clone());
     }
@@ -419,16 +420,16 @@ impl ExtRegistry {
                     .cloned()
                     .unwrap_or_else(|| json!({"type": "object"})),
             };
-            self.tools.lock().unwrap().push(Arc::new(tool));
+            self.tools.lock_or_recover().push(Arc::new(tool));
         }
-        self.children.lock().unwrap().push(child);
+        self.children.lock_or_recover().push(child);
         Ok(())
     }
 
     /// Accumulated `ext__*` tools — sessions register them into their
     /// `ToolRegistry` next to the MCP results.
     pub fn tools(&self) -> Vec<Arc<dyn ToolImpl>> {
-        self.tools.lock().unwrap().clone()
+        self.tools.lock_or_recover().clone()
     }
 
     /// `ext/event` to every subscribed child — replies fold into the same
@@ -458,7 +459,7 @@ impl ExtRegistry {
 
     /// Graceful tail of every child — frontends call at session end.
     pub async fn shutdown(&self) {
-        let children = self.children.lock().unwrap().clone();
+        let children = self.children.lock_or_recover().clone();
         for child in children {
             child.shutdown().await;
         }

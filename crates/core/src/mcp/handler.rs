@@ -5,6 +5,7 @@
 //! answer with a protocol error + a user-visible notice instead of
 //! silently declining.
 
+use crate::context::{MutexRecover, RwLockRecover};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -58,7 +59,7 @@ impl Shared {
     }
 
     fn note(&self, text: String) {
-        self.notices.lock().unwrap().push_back(text);
+        self.notices.lock_or_recover().push_back(text);
     }
 }
 
@@ -107,15 +108,15 @@ impl SessionHandler {
         // guaranteed to see this listing, and a bootstrap write in
         // connect_one checking `version == 0` under the gate can never
         // slip between this write and its bump.
-        let _g = self.shared.write_gate.lock().unwrap();
+        let _g = self.shared.write_gate.lock_or_recover();
         if let Some(t) = tools {
-            *self.shared.tools.write().unwrap() = t;
+            *self.shared.tools.write_or_recover() = t;
         }
         if let Some(p) = prompts {
-            *self.shared.prompts.write().unwrap() = p;
+            *self.shared.prompts.write_or_recover() = p;
         }
         if let Some(r) = resources {
-            *self.shared.resources.write().unwrap() = r;
+            *self.shared.resources.write_or_recover() = r;
         }
         self.shared.version.fetch_add(1, Ordering::Relaxed);
     }

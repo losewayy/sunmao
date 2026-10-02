@@ -70,8 +70,8 @@ pub async fn run_foreground(
     // the buffers live outside the drain tasks: a detached grandchild
     // keeps the pipe's write end open past exit, and `read_to_end` would
     // hang forever — the timeout below keeps the partial bytes instead.
-    let out_buf = super::shell::SharedBuf::default();
-    let err_buf = super::shell::SharedBuf::default();
+    let out_buf = super::SharedBuf::default();
+    let err_buf = super::SharedBuf::default();
     let out_task = {
         let buf = out_buf.clone();
         tokio::spawn(async move {
@@ -139,7 +139,7 @@ pub async fn run_foreground(
     // The join is bounded: a detached grandchild holding a pipe's write
     // end would otherwise hang the run past pwsh's own exit.
     let truncated = tokio::time::timeout(
-        super::shell::PIPE_DRAIN_TIMEOUT,
+        super::PIPE_DRAIN_TIMEOUT,
         futures_util::future::join(out_task, err_task),
     )
     .await
@@ -148,7 +148,7 @@ pub async fn run_foreground(
     if truncated {
         let tag = format!(
             "output truncated — pipes still held {}s after exit",
-            super::shell::PIPE_DRAIN_TIMEOUT.as_secs()
+            super::PIPE_DRAIN_TIMEOUT.as_secs()
         );
         ended = Some(match ended {
             Some(e) => format!("{e}; {tag}"),

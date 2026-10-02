@@ -140,8 +140,10 @@ impl ShellBackend {
 
     /// `pwsh` must exist before we promise it — PATH lookup, no spawn.
     /// `pwsh` is the PowerShell 7+ binary name; Windows PowerShell 5 ships
-    /// as `powershell.exe` and never satisfies this check.
-    fn pwsh_on_path() -> bool {
+    /// as `powershell.exe` and never satisfies this check. Public because
+    /// frontends (GUI settings, doctor) report availability separately
+    /// from the resolved backend.
+    pub fn pwsh_on_path() -> bool {
         let Some(path_var) = std::env::var_os("PATH") else {
             return false;
         };

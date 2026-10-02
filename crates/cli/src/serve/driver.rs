@@ -414,6 +414,21 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, cmd_line: &str, cli
             note(commands::mcp_text(&host.agent.mcp_roster()));
             true
         }
+        commands::Command::Hooks(op) => {
+            match op {
+                commands::HookOp::List => {
+                    note(commands::hooks_text(&host.agent.context().hooks.roster()));
+                }
+                commands::HookOp::Trust(n) | commands::HookOp::Untrust(n) => {
+                    let trusted = matches!(op, commands::HookOp::Trust(_));
+                    note(match host.agent.set_hook_trust(n, trusted).await {
+                        Ok(d) => format!("[{d}]"),
+                        Err(e) => format!("[hooks: {e}]"),
+                    });
+                }
+            }
+            true
+        }
         commands::Command::Status => {
             note(commands::status_text(&host.agent.status().await));
             true

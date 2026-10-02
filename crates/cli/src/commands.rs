@@ -46,6 +46,7 @@ const BUILTINS: &[&str] = &[
     "sessions",
     "fork",
     "goal",
+    "hooks",
     "status",
     "tasks",
     "todos",
@@ -114,6 +115,9 @@ pub enum Command {
     GoalClear,
     /// /mcp — the connected MCP server roster
     Mcp,
+    /// /hooks [trust|untrust <n>] — the configured hook roster with trust
+    /// status; bare lists, the ops pin/revoke in trusted-hooks.json
+    Hooks(HookOp),
     /// /status — session vitals (model/provider/cwd/id/mode/tokens)
     Status,
     /// /artifacts — the .sunmao/artifacts listing
@@ -139,6 +143,18 @@ pub struct RewindSpec {
     /// 1-based turn ordinal — rewind to just before its boundary
     pub turn: u64,
     pub mode: crate::rewind::Mode,
+}
+
+/// `/hooks` sub-verbs — parsed here so every frontend executes the same
+/// grammar against `AgentLoop::set_hook_trust`.
+#[derive(Debug, Clone, Copy)]
+pub enum HookOp {
+    /// bare `/hooks` — list configured hooks with trust status
+    List,
+    /// pin roster row N into `.sunmao/trusted-hooks.json`
+    Trust(usize),
+    /// remove row N's pin
+    Untrust(usize),
 }
 
 /// `/rewind n [session|code|both]` → the spec, or the error note the
@@ -199,6 +215,25 @@ pub fn parse(cmd_line: &str) -> Command {
             other => Command::Goal(other.map(str::to_string)),
         },
         "mcp" => Command::Mcp,
+        "hooks" => {
+            let mut it = rest.split_whitespace();
+            let op = match it.next() {
+                None => Command::Hooks(HookOp::List),
+                Some(verb) => {
+                    let n = it.next().and_then(|t| t.parse::<usize>().ok());
+                    match (verb, n) {
+                        ("trust", Some(n)) => Command::Hooks(HookOp::Trust(n)),
+                        ("untrust" | "revoke", Some(n)) => Command::Hooks(HookOp::Untrust(n)),
+                        _ => Command::Note("[usage: /hooks [trust|untrust <n>]]".into()),
+                    }
+                }
+            };
+            if it.next().is_some() {
+                Command::Note("[usage: /hooks [trust|untrust <n>]]".into())
+            } else {
+                op
+            }
+        }
         "status" => Command::Status,
         "artifacts" => Command::Artifacts,
         "annotate" => {
@@ -362,7 +397,7 @@ pub fn scan_files(root: &Path) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, expand_command, parse};
+    use super::{Command, HookOp, expand_command, parse};
 
     /// `$ARGUMENTS` substitutes inline where the command author put it —
     /// not appended at the end. The ecosystem contract (Claude Code
@@ -424,6 +459,17 @@ mod tests {
             Command::Search(ref q) if q == "helo wrld"
         ));
         assert!(matches!(parse("mcp"), Command::Mcp));
+        assert!(matches!(parse("hooks"), Command::Hooks(HookOp::List)));
+        assert!(matches!(
+            parse("hooks trust 2"),
+            Command::Hooks(HookOp::Trust(2))
+        ));
+        assert!(matches!(
+            parse("hooks untrust 3"),
+            Command::Hooks(HookOp::Untrust(3))
+        ));
+        assert!(matches!(parse("hooks trust"), Command::Note(_)));
+        assert!(matches!(parse("hooks frobnicate 1"), Command::Note(_)));
         assert!(matches!(parse("status"), Command::Status));
         assert!(matches!(parse("mode auto"), Command::Mode(Some(_))));
         assert!(matches!(parse("h"), Command::Help));

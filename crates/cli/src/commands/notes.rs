@@ -11,7 +11,7 @@ use sunmao_core::tool::TodoItem;
 
 /// The backend-semantic command tail every frontend's `/help` shares;
 /// frontend-local names prepend via `help_text`'s `local` argument.
-const HELP_COMMANDS: &str = "/compact · /model [sel] · /mode [stance] · /resume [id] · /sessions · /search <q> · /fork <id> · /rewind [n] [session|code|both] · /export-md · /export-zip · /tasks · /todos · /goal [objective] · /mcp · /status · /artifacts · /annotate <name> <note> · /help";
+const HELP_COMMANDS: &str = "/compact · /model [sel] · /mode [stance] · /resume [id] · /sessions · /search <q> · /fork <id> · /rewind [n] [session|code|both] · /export-md · /export-zip · /tasks · /todos · /goal [objective] · /mcp · /hooks · /status · /artifacts · /annotate <name> <note> · /help";
 
 /// The `/help` commands line — `local` inserts frontend-only names
 /// (`"/multiline · /clear · "` for the TUI, `""` elsewhere) ahead of the
@@ -111,6 +111,41 @@ pub fn goal_text(goal: Option<&sunmao_core::tool::GoalState>) -> String {
         ),
         None => "[no goal — /goal <objective> sets one; the agent keeps working it until complete/blocked]".to_string(),
     }
+}
+
+/// `/hooks` — every loaded command hook with its trust status. `untrusted`
+/// rows are skipped at fire time (fail-closed — a cloned repo's SessionStart
+/// must not exec before review); `pinned` came from trusted-hooks.json;
+/// `user` is implicitly trusted (~/.claude etc. are the user's own files).
+/// Numbering matches `engine.roster()` — `/hooks trust <n>` pins row n.
+pub fn hooks_text(rows: &[sunmao_core::hooks::trust::HookRow]) -> String {
+    if rows.is_empty() {
+        return "[no hooks configured — .sunmao/hooks.json, .claude/settings*.json, .cursor/hooks.json, plugins]".to_string();
+    }
+    let rows_text = rows
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            format!(
+                "  {:>2}. {:<9} {} [{}]\n       {}\n       ← {}",
+                i + 1,
+                r.status,
+                r.event,
+                if r.matcher.is_empty() {
+                    "*"
+                } else {
+                    r.matcher.as_str()
+                },
+                r.command,
+                r.source.display().to_string().replace("\\\\?\\", ""),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "hooks ({}):\n{rows_text}\n  trust: /hooks trust <n> · revoke: /hooks untrust <n> — ledger: .sunmao/trusted-hooks.json",
+        rows.len()
+    )
 }
 
 /// `/mcp` — the configured MCP server roster: name, transport, how many

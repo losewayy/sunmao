@@ -4,6 +4,7 @@ annotate	给 artifact 追加一条批注
 artifacts	列出 .sunmao/artifacts 下的产物
 clear	清空当前对话视图（前端本地）
 compact	把当前对话压缩进事件日志
+effort	查看或设置思考强度（reasoning effort）
 export-md	导出会话为 Markdown 文件
 export-zip	导出调试包（转录 + 原始事件日志压缩包）
 fork	复制该会话日志，新开一支继续

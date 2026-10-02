@@ -268,6 +268,23 @@ pub async fn run(
                     }
                     continue;
                 }
+                crate::commands::Command::Effort(arg) => {
+                    match arg {
+                        None => println!(
+                            "{}",
+                            crate::commands::effort_text(
+                                agent.reasoning_effort().as_deref(),
+                                &agent.effort_levels().await,
+                            )
+                        ),
+                        Some(level) => {
+                            agent.set_reasoning_effort(Some(&level), &*observer.0).await;
+                            let cur = agent.reasoning_effort();
+                            println!("{}", crate::commands::effort_note(cur.as_deref()));
+                        }
+                    }
+                    continue;
+                }
                 // /sessions <id> is the REPL's resume-by-id — same arm as
                 // /resume, the bare listing stays for the empty form.
                 crate::commands::Command::Sessions(None)

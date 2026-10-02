@@ -121,6 +121,11 @@ pub struct App {
     /// the session's approval stance (SPEC §4.6) — footer-visible so
     /// read_only/full_access are never silently active
     pub approval_mode: sunmao_core::agent::ApprovalMode,
+    /// the session's reasoning-effort override (`/effort`) — the footer
+    /// mark and the Args menu's rows. The driver refreshes it on submit,
+    /// on `/model` swaps (the new model's levels differ) and on resume.
+    pub effort: Option<String>,
+    pub effort_levels: Vec<String>,
     /// the session's standing goal — footer chip + `/goal` display; live
     /// `Goal` events and session replay both keep it current
     pub goal: Option<sunmao_core::tool::GoalState>,
@@ -185,6 +190,9 @@ pub enum Submit {
     Flush(usize),
     /// /model [selector] — None lists choices, Some swaps the active adapter
     Model(Option<String>),
+    /// /effort [level] — None lists levels, Some sets the session override
+    /// ("default" clears back to the provider's own)
+    Effort(Option<String>),
     /// /tasks — the live sub-agent roster
     Tasks,
     /// /stop <sub-…-lN> — cancel one running sub-agent
@@ -251,6 +259,8 @@ impl App {
             file_pool: Vec::new(),
             session_ids: Vec::new(),
             approval_mode: sunmao_core::agent::ApprovalMode::Auto,
+            effort: None,
+            effort_levels: Vec::new(),
             goal: None,
         };
         let mut banner = Block::new(BlockKind::Note);
@@ -438,6 +448,7 @@ impl App {
                     crate::commands::Command::Fork(id) => Submit::Fork(id),
                     crate::commands::Command::Rewind(spec) => Submit::Rewind(spec),
                     crate::commands::Command::Model(arg) => Submit::Model(arg),
+                    crate::commands::Command::Effort(arg) => Submit::Effort(arg),
                     crate::commands::Command::Mode(arg) => Submit::Mode(arg),
                     crate::commands::Command::Tasks => Submit::Tasks,
                     crate::commands::Command::Stop(id) => Submit::Stop(id),

@@ -37,9 +37,10 @@ pub struct SlashMenu {
     /// the fragment that produced `matches` (drives the Search row)
     pub fragment: String,
     pub kind: MenuKind,
-    /// Sessions kind only: which builtin opened the picker — `resume`,
-    /// `fork`, or `sessions` (alias of resume). Decides what Enter
-    /// submits; the session row is the arg, not the command.
+    /// Sessions and Args kinds: which builtin opened the picker — `resume`,
+    /// `fork`, or `sessions` (alias of resume) for sessions; `model` or
+    /// `effort` for args. Decides what Enter submits; the highlighted row
+    /// is the arg, not the command.
     pub cmd: Option<String>,
 }
 
@@ -58,7 +59,7 @@ impl App {
         // refused those whitespace variants the submit parser accepts.
         if let Some((name, tail)) = rest.split_once(char::is_whitespace) {
             match name {
-                "model" => return Some((MenuKind::Args, tail.trim_start())),
+                "model" | "effort" => return Some((MenuKind::Args, tail.trim_start())),
                 "resume" | "sessions" | "fork" => {
                     return Some((MenuKind::Sessions, tail.trim_start()));
                 }
@@ -209,8 +210,26 @@ impl App {
                 }
             }
             Some((kind, frag)) => {
-                let pool = match kind {
-                    MenuKind::Args => self.model_selectors.clone(),
+                // Args rows depend on which builtin owns the argument —
+                // `/model` completes selectors, `/effort` completes the
+                // catalog's thinking levels plus the `default` reset.
+                let (pool, owner) = match kind {
+                    MenuKind::Args => {
+                        let cmd = self
+                            .input
+                            .strip_prefix('/')
+                            .and_then(|r| r.split_whitespace().next())
+                            .unwrap_or("model")
+                            .to_string();
+                        let pool = if cmd == "effort" {
+                            std::iter::once("default".to_string())
+                                .chain(self.effort_levels.iter().cloned())
+                                .collect()
+                        } else {
+                            self.model_selectors.clone()
+                        };
+                        (pool, Some(cmd))
+                    }
                     _ => {
                         // MCP `/srv:prompt` names complete like file
                         // commands — the snapshot is fine, a pushed
@@ -219,7 +238,7 @@ impl App {
                         pool.extend(self.mcp_prompts.iter().cloned());
                         pool.sort();
                         pool.dedup();
-                        pool
+                        (pool, None)
                     }
                 };
                 let matches: Vec<String> = pool
@@ -239,7 +258,7 @@ impl App {
                         selected: sel,
                         fragment: frag.to_string(),
                         kind,
-                        cmd: None,
+                        cmd: owner,
                     });
                 }
             }

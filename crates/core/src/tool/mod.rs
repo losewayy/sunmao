@@ -41,12 +41,19 @@ pub struct ToolRegistry {
     /// live Context (Arc<Context> means no `&mut` anywhere).
     /// Never hold a guard across `.await` — `call` clones the Arc first.
     tools: std::sync::RwLock<BTreeMap<String, Arc<dyn ToolImpl>>>,
+    /// The `tools:` whitelist a filtered registry was built from — bulk
+    /// refresh (`replace_prefixed`, the MCP `list_changed` path) inserts
+    /// only names on it; an unfiltered registry refreshes unrestricted.
+    /// Without it a child def's whitelist held until the first catalog
+    /// bump, then the drain re-registered the server's whole surface.
+    allow: Option<std::collections::BTreeSet<String>>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: std::sync::RwLock::new(BTreeMap::new()),
+            allow: None,
         }
     }
 
@@ -77,11 +84,16 @@ impl ToolRegistry {
     /// Swap the tools one prefix exposes — an MCP `list_changed` refresh
     /// drops the old `mcp__{server}__*` entries and registers the fresh
     /// catalog in one pass (removed tools really go away, they don't
-    /// linger as stale declarations).
+    /// linger as stale declarations). A filtered registry only takes the
+    /// names its `tools:` whitelist allowed — otherwise a bump would
+    /// smuggle the whole catalog past the child def's surface.
     pub fn replace_prefixed(&self, prefix: &str, tools: Vec<Box<dyn ToolImpl>>) {
         let mut map = self.tools.write_or_recover();
         map.retain(|k, _| !k.starts_with(prefix));
         for t in tools {
+            if self.allow.as_ref().is_some_and(|a| !a.contains(t.name())) {
+                continue;
+            }
             map.insert(t.name().to_string(), t.into());
         }
     }
@@ -96,9 +108,14 @@ impl ToolRegistry {
     }
 
     /// A registry with only `names` — agent `tools:` whitelists trim a
-    /// child's surface to exactly what the def allows.
+    /// child's surface to exactly what the def allows. The whitelist rides
+    /// along on `allow` so a later bulk refresh (MCP `list_changed`) can't
+    /// re-add names the def never permitted.
     pub fn filtered(&self, names: &[String]) -> ToolRegistry {
-        let r = ToolRegistry::new();
+        let r = ToolRegistry {
+            tools: std::sync::RwLock::new(BTreeMap::new()),
+            allow: Some(names.iter().cloned().collect()),
+        };
         let map = self.tools.read_or_recover();
         for n in names {
             if let Some(t) = map.get(n) {
@@ -422,6 +439,48 @@ mod tests {
             )
             .await;
         assert!(!bad.ok);
+    }
+
+    /// A `tools:`-filtered registry must keep its whitelist through an MCP
+    /// catalog refresh — `replace_prefixed` used to skip the whitelist check
+    /// and insert the server's whole surface into a restricted child's
+    /// registry the moment the server pushed a `list_changed`.
+    #[test]
+    fn filtered_registry_keeps_whitelist_across_mcp_refresh() {
+        struct FakeMcp(&'static str);
+        #[async_trait::async_trait]
+        impl crate::tool::ToolImpl for FakeMcp {
+            fn name(&self) -> &'static str {
+                self.0
+            }
+            fn decl(&self) -> Tool {
+                Tool::function(self.0, "fake mcp tool", json!({}))
+            }
+            async fn call(&self, _a: Value, _c: &Arc<Context>) -> anyhow::Result<ToolResult> {
+                anyhow::bail!("unused")
+            }
+        }
+        let reg = builtin_registry().filtered(&["Glob".into(), "mcp__srv__a".into()]);
+        reg.replace_prefixed(
+            "mcp__srv__",
+            vec![
+                Box::new(FakeMcp("mcp__srv__a")),
+                Box::new(FakeMcp("mcp__srv__b")),
+            ],
+        );
+        let names: Vec<String> = reg
+            .declarations()
+            .iter()
+            .map(|t| t.function.name.clone())
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "mcp__srv__a"),
+            "whitelisted MCP tool survives a refresh — {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n == "mcp__srv__b"),
+            "a name outside the def's tools: list must not enter via refresh — {names:?}"
+        );
     }
 
     /// A file-backed log's last Todos event seeds Context::new — resume

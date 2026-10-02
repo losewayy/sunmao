@@ -7,83 +7,9 @@ use sunmao_llm::types::Message;
 use sunmao_llm::{ChatRequest, StreamDelta};
 
 impl AgentLoop {
-    /// Run one turn: `input` is the user's message; returns when the model
-    /// stops calling tools or we hit the iteration ceiling.
-    ///
-    /// Turns serialize on `ctx.turn_lock` — a second concurrent run_turn
-    /// queues instead of interleaving facts into the session log. That's
-    /// the replay fence: one turn's ToolCall/ToolResult events can never
-    /// straddle a predecessor's, so the fold the next request sees is
-    /// always a well-formed transcript.
-    ///
-    /// Frontends depend on TurnEnd to unwind their "working" state — this
-    /// wrapper emits it on every exit (success, veto, cancel, Err), so an
-    /// early return inside a driver can never strand a frontend. The
-    /// `cancelled` flag resets here too: a stale flag must not survive
-    /// into the next turn regardless of how this one ended.
-    ///
-    /// `ctx.loop_driver` picks the driver (SPEC §4.5): `Full` runs the
-    /// contract loop below; `Bare` runs `run_turn_bare` — same session log
-    /// and observer, no hooks/gate/compaction.
-    pub async fn run_turn(
-        &self,
-        input: &str,
-        observer: &dyn Observer,
-    ) -> anyhow::Result<TurnOutcome> {
-        self.run_turn_blocks(input, &[], observer).await
-    }
-
-    /// A turn whose user message carries attachment blocks (images) after
-    /// the prompt text. Empty `attachments` behaves exactly like
-    /// `run_turn` — `Message::user_blocks` degenerates to one text block.
-    pub async fn run_turn_blocks(
-        &self,
-        input: &str,
-        attachments: &[sunmao_llm::Content],
-        observer: &dyn Observer,
-    ) -> anyhow::Result<TurnOutcome> {
-        let _turn_permit = self.ctx.turn_lock.lock().await;
-        // MCP push traffic lands here — inside the fence, before the
-        // driver runs, so a catalog bump can never swap the registry
-        // between a turn's ToolCall and its ToolResult.
-        self.drain_mcp(observer).await;
-        let res = match self.ctx.loop_driver {
-            crate::agent::LoopDriver::Full => {
-                self.run_turn_full(input, attachments, observer).await
-            }
-            crate::agent::LoopDriver::Bare => {
-                self.run_turn_bare(input, attachments, observer).await
-            }
-        };
-        // cancelled resets at turn END on *every* exit path — an Err or an
-        // early-returned outcome must not leak the flag into the next turn
-        // (a stale flag would make the next turn short-circuit forever).
-        self.ctx
-            .cancelled
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        // A cancelled turn ends in partial messages only — indistinguishable
-        // from a crash mid-stream on replay. Stamp the terminal fact so the
-        // log can answer "this was stopped, not broken."
-        if matches!(res, Ok(TurnOutcome::Cancelled)) {
-            let mut log = self.ctx.sessions.lock().await;
-            log.append_audit(&SessionEvent::Hook {
-                event: "cancelled".into(),
-                detail: String::new(),
-            })
-            .await;
-        }
-        // TurnEnd is the frontend's "unwind working state" signal — emit it
-        // here so every inner exit (early returns included) produces exactly
-        // one, with Stop/StopFailure already fired inside the driver.
-        match &res {
-            Ok(o) => observer.on_event(&LiveEvent::TurnEnd { outcome: o.clone() }),
-            Err(e) => observer.on_event(&LiveEvent::TurnEnd {
-                outcome: TurnOutcome::Other(format!("error: {e:#}")),
-            }),
-        }
-        res
-    }
-
+    /// One round of the contract loop (SPEC §4.5 `full` driver): hooks,
+    /// approval gate, compaction, the whole envelope — `turn/chain.rs`
+    /// owns the outer loop that re-enters this per goal continuation.
     async fn run_turn_full(
         &self,
         input: &str,
@@ -284,6 +210,14 @@ impl AgentLoop {
                     // tool_call/tool_result pairing rules.
                     messages.push(Message::user(crate::tool::todos_inject_text(&items)));
                 }
+            }
+            // same synthetic-tail discipline for the standing goal — the
+            // model sees objective + round budget even after compaction,
+            // without a durable copy duplicating once per UpdateGoal write
+            if let Some(g) = self.ctx.goal.lock_or_recover().clone()
+                && g.status == crate::tool::GoalStatus::InProgress
+            {
+                messages.push(Message::user(g.inject_text()));
             }
             let decls = self.ctx.tools.declarations();
             let req = ChatRequest {
@@ -550,4 +484,5 @@ impl AgentLoop {
     }
 }
 
+mod chain;
 mod dispatch;

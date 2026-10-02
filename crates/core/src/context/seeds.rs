@@ -64,6 +64,27 @@ pub(crate) fn tool_timeout_table(cwd: &std::path::Path) -> std::collections::Has
     table
 }
 
+/// The goal a reopened log left behind — last `Goal` event wins; a log
+/// without one seeds `None` (a fresh session simply has no goal yet).
+/// Same line-scan trick as `seed_todos`: cheap suffix read, no full fold.
+pub(super) fn seed_goal(path: &std::path::Path) -> Option<crate::tool::GoalState> {
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return None;
+    };
+    for line in text.lines().rev() {
+        if line.starts_with(crate::tool::GOAL_LINE_PREFIX)
+            && let Ok(crate::session::SessionEvent::Goal { goal }) =
+                serde_json::from_str::<crate::session::SessionEvent>(line)
+        {
+            return Some(goal);
+        }
+    }
+    None
+}
+
 /// The approval stance a reopened log left behind — last `ModeChange` wins.
 /// Same line-scan trick as `seed_todos`: cheap suffix read, no full fold.
 pub(super) fn seed_mode(path: &std::path::Path) -> crate::agent::ApprovalMode {

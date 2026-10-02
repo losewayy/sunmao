@@ -9,6 +9,7 @@ use sunmao_llm::{ChatRequest, DeltaStream, ProviderAdapter, StreamDelta, ToolCal
 mod approval_modes;
 mod approvals;
 mod driver;
+mod goal;
 mod hooks;
 mod models;
 mod subagents;
@@ -87,6 +88,9 @@ fn live_event_wire_shape_is_stable() {
             rev: 1,
         },
         LiveEvent::Usage(Usage::default()),
+        LiveEvent::Goal {
+            goal: crate::tool::GoalState::new("ship it".into()),
+        },
         LiveEvent::TurnEnd {
             outcome: TurnOutcome::Completed,
         },
@@ -125,6 +129,7 @@ impl Observer for RecObserver {
             LiveEvent::Usage(_) => "Usage".into(),
             LiveEvent::Compacted { .. } => "Compacted".into(),
             LiveEvent::Todos { .. } => "Todos".into(),
+            LiveEvent::Goal { .. } => "Goal".into(),
             LiveEvent::TaskDone { .. } => "TaskDone".into(),
             LiveEvent::UserMessage { .. } => "UserMessage".into(),
         };

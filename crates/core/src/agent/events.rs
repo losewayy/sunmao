@@ -95,6 +95,12 @@ pub enum LiveEvent {
     Todos {
         items: Vec<crate::tool::TodoItem>,
     },
+    /// The session goal changed or advanced a round — mirrors
+    /// `SessionEvent::Goal` so a live frontend renders the same state a
+    /// replay would fold (objective / status / round budget).
+    Goal {
+        goal: crate::tool::GoalState,
+    },
     /// A detached sub-agent finished and wrote back — mirrors
     /// `SessionEvent::TaskDone`. Foreground `Task` results already arrive
     /// as `ToolDone`; only the push-style detached path needs this.

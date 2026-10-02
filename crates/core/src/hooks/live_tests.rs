@@ -259,6 +259,34 @@ async fn preset_dir_fires_its_hooks() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// An Interrupt hook receives its event name on stdin like any other — the
+/// detached spawn in `AgentLoop::cancel` is a delivery detail; this proves
+/// the event round-trips through load/match/fire like its siblings. No
+/// tool_name is set: cancel happens outside tool dispatch, so the hook's
+/// payload legitimately carries `"tool_name": null`.
+#[tokio::test]
+async fn interrupt_event_reaches_the_hook() {
+    let dir = crate::fresh_test_dir("irq");
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    std::fs::write(
+        dir.join(".sunmao/hooks.json"),
+        r#"{"hooks":{"Interrupt":[{"hooks":[{"type":"command","command":"cat > interrupt.json"}]}]}}"#,
+    )
+    .unwrap();
+    let engine = HookEngine::load(&dir, "test", &[]);
+    let out = engine
+        .fire(HookEvent::Interrupt, &dir, &HookInput::default())
+        .await;
+    assert!(out.block_reason.is_none());
+    let payload: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("interrupt.json")).unwrap())
+            .unwrap();
+    assert_eq!(payload["hook_event_name"], "Interrupt");
+    assert!(payload["tool_name"].is_null());
+    assert!(payload["tool_input"].is_null());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 struct MockProvider;
 #[async_trait::async_trait]
 impl sunmao_llm::ProviderAdapter for MockProvider {

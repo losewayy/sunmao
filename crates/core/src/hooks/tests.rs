@@ -1,3 +1,4 @@
+use super::dialect::apply_result;
 use super::*;
 
 #[test]

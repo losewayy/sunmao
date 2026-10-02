@@ -165,6 +165,7 @@ pub(crate) async fn spawn_host(spec: HostSpec, sandbox_port: u16) -> Result<Host
         approval_ids: Arc::new(AtomicU64::new(0)),
         mgmt: mgmt_tx,
         adopt_lock: tokio::sync::Mutex::new(()),
+        adopt_seq: AtomicU64::new(0),
     });
     tokio::spawn(host::mgmt_loop(shared.clone(), mgmt_rx));
 

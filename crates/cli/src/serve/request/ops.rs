@@ -16,7 +16,7 @@ pub(super) fn tasks_list(s: &Arc<Shared>, sess: Option<String>) -> HostResponse 
     let host = sess
         .as_deref()
         .and_then(|id| s.host(id))
-        .or_else(|| s.live_ids().first().and_then(|id| s.host(id)));
+        .or_else(|| s.newest_live_id().and_then(|id| s.host(&id)));
     let tasks = host
         .map(|h| {
             h.agent
@@ -46,7 +46,7 @@ pub(super) fn hooks_list(s: &Arc<Shared>, sess: Option<String>) -> HostResponse 
     let host = sess
         .as_deref()
         .and_then(|id| s.host(id))
-        .or_else(|| s.live_ids().first().and_then(|id| s.host(id)));
+        .or_else(|| s.newest_live_id().and_then(|id| s.host(&id)));
     let hooks = host
         .map(|h| {
             h.agent

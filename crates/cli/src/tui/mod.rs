@@ -6,6 +6,7 @@ mod app;
 #[cfg(test)]
 mod app_tests;
 mod blocks;
+mod browse;
 mod driver;
 mod input;
 mod md;
@@ -355,6 +356,23 @@ async fn run_inner(
                     app.push_note(&format!("[context compacted] {summary}"));
                 }
                 LiveEvent::Todos { .. } => {} // tool echo already carries it
+                LiveEvent::Goal { goal } => {
+                    // status transitions and round milestones read as notes;
+                    // the footer chip (app.goal) carries the steady state.
+                    // Round bumps stay quiet — the chip's counter advances.
+                    let transitioned = app
+                        .goal
+                        .as_ref()
+                        .is_none_or(|g| g.status != goal.status || g.objective != goal.objective);
+                    app.goal = Some(goal.clone());
+                    if transitioned {
+                        app.push_note(&format!(
+                            "[goal {} — {}]",
+                            sunmao_core::tool::status_name(goal.status),
+                            goal.objective
+                        ));
+                    }
+                }
                 // serve-only live mirror of the durable user message — the
                 // TUI prints its own prompt on submit, so it never lands
                 LiveEvent::UserMessage { .. } => {}
@@ -398,6 +416,9 @@ async fn run_inner(
                 app.selected = 0;
                 app.scroll_back = 0;
                 app.render_cache.clear();
+                // the swapped session's goal is its own — a log without a
+                // Goal event clears the chip rather than wearing the old one
+                app.goal = None;
                 app.replay(&events);
                 app.push_note("[session resumed]");
             }

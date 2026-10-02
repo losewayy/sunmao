@@ -425,6 +425,26 @@ fn draw_status(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         }
         None => format!("{} · {short_cwd} {branch} · {mode}", app.model),
     };
+    // standing goal rides the same line — objective + status + the round
+    // budget, truncated so it can't crowd the model/cwd readout
+    let goal_chip = match &app.goal {
+        Some(g) => {
+            let obj: String = g.objective.chars().take(18).collect();
+            let ellip = if g.objective.chars().count() > 18 {
+                "…"
+            } else {
+                ""
+            };
+            format!(
+                " · ◎{obj}{ellip} {} r{}/{}",
+                sunmao_core::tool::status_name(g.status),
+                g.rounds,
+                g.max_rounds
+            )
+        }
+        None => String::new(),
+    };
+    let ctx = format!("{ctx}{goal_chip}");
 
     let (state, scol) = if app.busy {
         let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(0);

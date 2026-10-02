@@ -260,6 +260,25 @@ impl App {
                         ));
                     }
                 }
+                E::Goal { goal } => {
+                    // durable state, not transcript — the last event seeds
+                    // the footer chip. Round bumps alone aren't worth a row
+                    // each (a long chain would read as 30 identical notes);
+                    // objective/status changes are.
+                    let prev = self.goal.as_ref();
+                    let changed = prev
+                        .is_none_or(|p| p.status != goal.status || p.objective != goal.objective);
+                    self.goal = Some(goal.clone());
+                    if changed {
+                        self.push_note(&format!(
+                            "[goal {} — {} · round {}/{}]",
+                            sunmao_core::tool::status_name(goal.status),
+                            goal.objective,
+                            goal.rounds,
+                            goal.max_rounds
+                        ));
+                    }
+                }
                 E::Message { message } => match message.role {
                     Role::User => {
                         if let Some(c) = message.content_text() {

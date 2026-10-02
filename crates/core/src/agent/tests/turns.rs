@@ -1,4 +1,5 @@
 use super::*;
+use crate::context::MutexRecover;
 
 #[tokio::test]
 async fn error_path_still_emits_turn_end() {
@@ -20,7 +21,7 @@ async fn error_path_still_emits_turn_end() {
     let rec = RecObserver(std::sync::Mutex::new(Vec::new()));
     let res = agent.run_turn("hi", &rec).await;
     assert!(res.is_err(), "stream failure must propagate");
-    let events = rec.0.lock().unwrap();
+    let events = rec.0.lock_or_recover();
     assert!(
         events.iter().any(|t| t.starts_with("TurnEnd:Other")),
         "frontends need TurnEnd even on error — got {events:?}"
@@ -67,7 +68,7 @@ async fn hook_veto_still_emits_turn_end() {
         matches!(outcome, TurnOutcome::Other(ref s) if s.contains("vetoed")),
         "expected veto, got {outcome:?}"
     );
-    let events = rec.0.lock().unwrap();
+    let events = rec.0.lock_or_recover();
     assert_eq!(
         events.iter().filter(|t| t.starts_with("TurnEnd")).count(),
         1,
@@ -211,7 +212,7 @@ async fn malformed_tool_args_become_failed_result() {
     // the malformed call still surfaces on the live stream — transcript
     // parity with replay (which renders it from the ToolCall/ToolResult pair)
     {
-        let events = rec.0.lock().unwrap();
+        let events = rec.0.lock_or_recover();
         assert_eq!(
             events.iter().filter(|t| *t == "ToolStart").count(),
             1,
@@ -336,10 +337,20 @@ async fn cancel_flag_breaks_loop() {
     ));
     ctx.cancelled
         .store(true, std::sync::atomic::Ordering::Relaxed);
-    let agent = AgentLoop::new(ctx);
+    let agent = AgentLoop::new(ctx.clone());
     let outcome = agent.run_turn("go", &NullObserver).await.unwrap();
-    assert!(matches!(outcome, TurnOutcome::Other(ref s) if s == "cancelled"));
+    assert!(matches!(outcome, TurnOutcome::Cancelled));
     assert_eq!(provider.calls.load(std::sync::atomic::Ordering::Relaxed), 0);
+    // the terminal fact lands on the log — a cancelled turn reads as
+    // "stopped," not "crashed mid-stream" on replay
+    let events = ctx.sessions.lock().await.events().await.expect("read log");
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            crate::session::SessionEvent::Hook { event, .. } if event == "cancelled"
+        )),
+        "cancelled turn must leave a `cancelled` audit row"
+    );
 }
 
 /// The turn fence: a context's turns serialize — a second run_turn queues
@@ -399,7 +410,7 @@ async fn steer_folds_into_running_turn() {
                 // mid-first-request the user queues a steer; this call also
                 // emits a tool call so the turn keeps looping — the boundary
                 // drain folds the steer before request #2
-                if let Some(ctx) = self.ctx.lock().unwrap().take() {
+                if let Some(ctx) = self.ctx.lock_or_recover().take() {
                     ctx.steer
                         .lock()
                         .unwrap()
@@ -437,7 +448,7 @@ async fn steer_folds_into_running_turn() {
         builtin_registry(),
         std::env::temp_dir(),
     ));
-    *provider.ctx.lock().unwrap() = Some(ctx.clone());
+    *provider.ctx.lock_or_recover() = Some(ctx.clone());
     let agent = AgentLoop::new(ctx.clone());
     let outcome = agent.run_turn("hi", &NullObserver).await.unwrap();
     assert!(matches!(outcome, TurnOutcome::Completed));
@@ -465,7 +476,7 @@ async fn steer_folds_into_running_turn() {
         "steer rides the same turn — no third request"
     );
     assert!(
-        ctx.steer.lock().unwrap().is_empty(),
+        ctx.steer.lock_or_recover().is_empty(),
         "the drain consumes the queue"
     );
 }

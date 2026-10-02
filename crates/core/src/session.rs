@@ -26,7 +26,7 @@ pub enum SessionEvent {
         #[serde(default)]
         depth: u8,
         #[serde(default)]
-        lane: u8,
+        lane: u16,
     },
     /// A tool call resolved (ok/fail recorded for replay fidelity).
     ToolResult {
@@ -37,7 +37,7 @@ pub enum SessionEvent {
         #[serde(default)]
         depth: u8,
         #[serde(default)]
-        lane: u8,
+        lane: u16,
     },
     /// Compaction boundary: earlier events are summarized away.
     Compacted { summary: String },
@@ -119,7 +119,9 @@ pub struct SessionLog {
     file: Option<tokio::fs::File>,
     /// in-memory buffer for ephemeral logs — the file-backed path replays
     /// from disk, this one replays from memory; same fold either way.
-    mem: Vec<SessionEvent>,
+    /// Shared so `fork_writer` can hand a detached child a handle that
+    /// keeps appending to THIS log after the parent swaps sessions.
+    mem: std::sync::Arc<tokio::sync::Mutex<Vec<SessionEvent>>>,
 }
 
 impl SessionLog {
@@ -140,7 +142,7 @@ impl SessionLog {
         Ok(Self {
             path,
             file: Some(file),
-            mem: Vec::new(),
+            mem: std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new())),
         })
     }
 
@@ -176,7 +178,7 @@ impl SessionLog {
         Ok(Self {
             path: path.to_path_buf(),
             file: Some(file),
-            mem: Vec::new(),
+            mem: std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new())),
         })
     }
 
@@ -185,13 +187,35 @@ impl SessionLog {
         Self {
             path: PathBuf::new(),
             file: None,
-            mem: Vec::new(),
+            mem: std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new())),
         }
+    }
+
+    /// A second writer onto THIS log — a detached sub-agent's TaskDone
+    /// lands on the session it spawned into, not whatever `swap_session`
+    /// later installs. File-backed gets a fresh append handle on the same
+    /// path; ephemeral shares the buffer.
+    pub async fn fork_writer(&self) -> anyhow::Result<Self> {
+        let file = match &self.path {
+            p if p.as_os_str().is_empty() => None,
+            p => Some(
+                tokio::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(p)
+                    .await?,
+            ),
+        };
+        Ok(Self {
+            path: self.path.clone(),
+            file,
+            mem: self.mem.clone(),
+        })
     }
 
     pub async fn append(&mut self, event: &SessionEvent) -> anyhow::Result<()> {
         if self.file.is_none() {
-            self.mem.push(event.clone());
+            self.mem.lock().await.push(event.clone());
             return Ok(());
         }
         if let Some(file) = &mut self.file {
@@ -203,11 +227,23 @@ impl SessionLog {
         Ok(())
     }
 
+    /// Append an audit fact that MUST surface on failure but must not abort
+    /// the turn — Hook facts, Usage, Todos, ModeChange, TaskDone. The
+    /// transcript's Message/ToolCall path propagates `?` (a lost turn is
+    /// worse than a failed one); audit rows only lose observability, so we
+    /// warn instead of erroring — a full disk now leaves a trace instead of
+    /// silently swallowing the spine.
+    pub async fn append_audit(&mut self, event: &SessionEvent) {
+        if let Err(e) = self.append(event).await {
+            tracing::warn!("session-log audit append failed: {e:#}");
+        }
+    }
+
     /// The full event vector — for transcript replay (TUI resume renders
     /// blocks from these) and any consumer that wants facts, not the fold.
     pub async fn events(&self) -> anyhow::Result<Vec<SessionEvent>> {
         if self.file.is_none() {
-            return Ok(self.mem.clone());
+            return Ok(self.mem.lock().await.clone());
         }
         let file = tokio::fs::File::open(&self.path).await?;
         let mut lines = tokio::io::BufReader::new(file).lines();
@@ -232,7 +268,7 @@ impl SessionLog {
         let mut out = Vec::new();
         if self.file.is_none() {
             // ephemeral: fold the in-memory buffer through the same reduce
-            for ev in &self.mem {
+            for ev in self.mem.lock().await.iter() {
                 reduce_event(&mut out, ev);
             }
             return Ok(repair_dangling_calls(out));

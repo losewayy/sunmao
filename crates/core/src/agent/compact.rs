@@ -91,6 +91,11 @@ impl AgentLoop {
             call_id: None,
             elapsed_ms: 0,
         });
+        // the durable Compacted event wipes the transcript on replay — the
+        // live mirror does the same for a session that's mid-watch
+        observer.on_event(&LiveEvent::Compacted {
+            summary: summary.clone(),
+        });
         Ok(summary)
     }
 }

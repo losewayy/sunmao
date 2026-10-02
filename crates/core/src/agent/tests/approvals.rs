@@ -1,4 +1,5 @@
 use super::*;
+use crate::context::MutexRecover;
 
 /// Session grant: the first ask-rule hit prompts; a Session verdict is
 /// recorded and the *identical* call passes without prompting again.
@@ -159,7 +160,7 @@ async fn segment_classifier_prompts_for_piped_shell() {
     #[async_trait::async_trait]
     impl Approver for Saw {
         async fn approve(&self, _t: &str, d: &str, _w: &str) -> Approval {
-            *self.0.lock().unwrap() = Some(d.to_string());
+            *self.0.lock_or_recover() = Some(d.to_string());
             Approval::Deny { reason: None }
         }
     }

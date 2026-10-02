@@ -32,7 +32,7 @@ pub enum LiveEvent {
         name: String,
         summary: String,
         depth: u8,
-        lane: u8,
+        lane: u16,
         call_id: Option<String>,
         #[serde(default)]
         args: serde_json::Value,
@@ -46,7 +46,7 @@ pub enum LiveEvent {
         ok: bool,
         output: String,
         depth: u8,
-        lane: u8,
+        lane: u16,
         call_id: Option<String>,
         /// Wall time from ToolStart to done — frontends render it; replayed
         /// transcripts (SessionEvent::ToolResult) can't carry it, so frontends
@@ -59,6 +59,17 @@ pub enum LiveEvent {
     Hook {
         event: String,
         detail: String,
+    },
+    /// The kernel accepted a user prompt as a queued/started turn — mirrors
+    /// the durable `SessionEvent::Message{role:user}` the turn is about to
+    /// commit. Emitted so a live frontend can draw the bubble itself instead
+    /// of optimistically appending one that the kernel-side steer/queue
+    /// decision might later contradict (audit-gui #4): the kernel is the
+    /// truth on busy-vs-idle, so it owns the bubble. `content` is the same
+    /// `Content[]` the prompt carries — text plus any image attachments —
+    /// so the live row renders thumbs exactly like the replayed message.
+    UserMessage {
+        content: Vec<sunmao_llm::Content>,
     },
     /// An HTML artifact landed on disk — emitted by `HtmlArtifact` through
     /// `ctx.live_sink`. Frontends that can render (or link) surfaces it;
@@ -73,6 +84,25 @@ pub enum LiveEvent {
     /// Token accounting for one completed LLM request — mirrors the durable
     /// `SessionEvent::Usage` so footers can show context pressure live.
     Usage(sunmao_llm::types::Usage),
+    /// The transcript was compacted — mirrors `SessionEvent::Compacted`.
+    /// A live frontend clears its rendered messages exactly like a replay
+    /// does; without this the live view keeps rows the kernel just dropped.
+    Compacted {
+        summary: String,
+    },
+    /// The durable todo list changed — mirrors `SessionEvent::Todos` so a
+    /// live frontend sees the same list a replay would fold.
+    Todos {
+        items: Vec<crate::tool::TodoItem>,
+    },
+    /// A detached sub-agent finished and wrote back — mirrors
+    /// `SessionEvent::TaskDone`. Foreground `Task` results already arrive
+    /// as `ToolDone`; only the push-style detached path needs this.
+    TaskDone {
+        id: String,
+        ok: bool,
+        output: String,
+    },
     TurnEnd {
         outcome: TurnOutcome,
     },
@@ -83,6 +113,10 @@ pub enum LiveEvent {
 pub enum TurnOutcome {
     Completed,
     LengthLimited,
+    /// User- or host-initiated stop — distinct from `Other` because
+    /// `Task`'s spawn wrapper must treat "killed" as `ok: false`, and the
+    /// discriminant can't live in a free-form string.
+    Cancelled,
     Other(String),
 }
 

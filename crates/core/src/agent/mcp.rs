@@ -25,12 +25,11 @@ impl AgentLoop {
             for notice in srv.drain_notices() {
                 {
                     let mut log = self.ctx.sessions.lock().await;
-                    let _ = log
-                        .append(&SessionEvent::Hook {
-                            event: "mcp.notice".into(),
-                            detail: notice.clone(),
-                        })
-                        .await;
+                    log.append_audit(&SessionEvent::Hook {
+                        event: "mcp.notice".into(),
+                        detail: notice.clone(),
+                    })
+                    .await;
                 }
                 observer.on_event(&LiveEvent::Hook {
                     event: "mcp.notice".into(),
@@ -48,12 +47,11 @@ impl AgentLoop {
             let detail = format!("{}: catalog refreshed — {n} tools", srv.name);
             {
                 let mut log = self.ctx.sessions.lock().await;
-                let _ = log
-                    .append(&SessionEvent::Hook {
-                        event: "mcp.refresh".into(),
-                        detail: detail.clone(),
-                    })
-                    .await;
+                log.append_audit(&SessionEvent::Hook {
+                    event: "mcp.refresh".into(),
+                    detail: detail.clone(),
+                })
+                .await;
             }
             observer.on_event(&LiveEvent::Hook {
                 event: "mcp.refresh".into(),

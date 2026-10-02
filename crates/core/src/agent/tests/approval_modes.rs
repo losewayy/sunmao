@@ -1,4 +1,5 @@
 use super::*;
+use crate::context::RwLockRecover;
 
 // ── approval modes (SPEC §4.6) ──────────────────────────────────────────
 
@@ -63,7 +64,7 @@ fn one_call_ctx(
         dir.to_path_buf(),
     );
     ctx_raw.approval = approver.clone();
-    *ctx_raw.approval_mode.write().unwrap() = mode;
+    *ctx_raw.approval_mode.write_or_recover() = mode;
     (std::sync::Arc::new(ctx_raw), approver)
 }
 
@@ -302,7 +303,7 @@ async fn mode_switch_is_durable_and_reseeds() {
         dir.clone(),
     );
     assert_eq!(
-        *ctx2.approval_mode.read().unwrap(),
+        *ctx2.approval_mode.read_or_recover(),
         ApprovalMode::FullAccess
     );
     drop(ctx2);

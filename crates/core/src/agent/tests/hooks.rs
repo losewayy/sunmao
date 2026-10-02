@@ -219,20 +219,101 @@ async fn failure_and_notification_events_fire_on_the_right_edges() {
     let agent = AgentLoop::new(ctx.clone());
     agent.run_turn("go", &NullObserver).await.unwrap();
 
-    // every hook payload lands on stdin; `cat >> flag` appends each firing
-    let posts = std::fs::read_to_string(dir.join("post-flag.txt")).unwrap();
-    assert_eq!(
-        posts.lines().count(),
-        2,
-        "PostToolUse fires for both outcomes"
+    // every hook payload lands on stdin; `cat >> flag` appends each firing.
+    // Notification + PostToolUseFailure are detached fires — poll for the
+    // flag files rather than asserting synchronously after turn end.
+    async fn flag_lines(dir: &std::path::Path, name: &str) -> usize {
+        for _ in 0..60 {
+            if let Ok(text) = std::fs::read_to_string(dir.join(name)) {
+                return text.lines().count();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        0
+    }
+    let posts = flag_lines(&dir, "post-flag.txt").await;
+    assert_eq!(posts, 2, "PostToolUse fires for both outcomes");
+    let fails = flag_lines(&dir, "fail-flag.txt").await;
+    assert_eq!(fails, 1, "PostToolUseFailure fires only on the denied call");
+    let bell = flag_lines(&dir, "bell-flag.txt").await;
+    assert_eq!(bell, 1, "one ask prompt → one Notification");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Cancelling a RUNNING turn must deliver the Interrupt hook (audit sees
+/// the interruption), while cancelling an idle session must not — the
+/// turn_lock gate separates a real interrupt from noise. The provider
+/// streams a never-ending response; only `cancel_notify` ends the turn.
+#[tokio::test]
+async fn interrupt_hook_fires_on_running_turn_only() {
+    /// Streams nothing, forever — the turn dies only via cancel_notify.
+    struct Stalled;
+    #[async_trait::async_trait]
+    impl ProviderAdapter for Stalled {
+        async fn stream(&self, _req: ChatRequest<'_>) -> anyhow::Result<DeltaStream> {
+            Ok(Box::pin(stream::pending()))
+        }
+    }
+
+    let dir = crate::fresh_test_dir("irq2");
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    std::fs::write(
+        dir.join(".sunmao/hooks.json"),
+        r#"{"hooks":{"Interrupt":[{"matcher":"","hooks":[{"type":"command","command":"echo 1 >> irq-flag.txt"}]}]}}"#,
+    )
+    .unwrap();
+    // idle cancel — a separate Context with no running turn; the flag file
+    // must stay absent (the interrupt gate is turn_lock, not the caller)
+    let idle = AgentLoop::new(Arc::new(Context::new(
+        Arc::new(Stalled),
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        dir.clone(),
+    )));
+    idle.cancel();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !dir.join("irq-flag.txt").exists(),
+        "idle cancel must not fire Interrupt"
     );
-    let fails = std::fs::read_to_string(dir.join("fail-flag.txt")).unwrap();
-    assert_eq!(
-        fails.lines().count(),
-        1,
-        "PostToolUseFailure fires only on the denied call"
-    );
-    let bell = std::fs::read_to_string(dir.join("bell-flag.txt")).unwrap();
-    assert_eq!(bell.lines().count(), 1, "one ask prompt → one Notification");
+
+    // running turn — the stream parks forever; cancel both aborts it
+    // (cancel_notify) and fires the hook (detached spawn). Fresh Context:
+    // a cancel on THIS one would persist into the next turn's first
+    // iteration (cancelled resets at turn END, not start).
+    let ctx = Arc::new(Context::new(
+        Arc::new(Stalled),
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        dir.clone(),
+    ));
+    let agent = Arc::new(AgentLoop::new(ctx.clone()));
+    let t = tokio::spawn({
+        let agent = agent.clone();
+        async move { agent.run_turn("go", &NullObserver).await }
+    });
+    // let the turn actually reach the stream wait before cancelling —
+    // busy-wait on the lock so a slow scheduler can't fake "not running"
+    let mut held = false;
+    for _ in 0..100 {
+        if ctx.turn_lock.try_lock().is_err() {
+            held = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(held, "turn must be holding turn_lock by now");
+    agent.cancel();
+    t.await.unwrap().ok();
+    // the detached hook races the test — poll for the flag
+    let mut fired = false;
+    for _ in 0..40 {
+        if dir.join("irq-flag.txt").exists() {
+            fired = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(fired, "cancel on a running turn must fire Interrupt");
     std::fs::remove_dir_all(&dir).ok();
 }

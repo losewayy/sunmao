@@ -1,4 +1,5 @@
 use super::*;
+use crate::context::MutexRecover;
 
 use futures_util::StreamExt;
 use sunmao_llm::assemble::ToolCallAssembler;
@@ -60,6 +61,17 @@ impl AgentLoop {
         self.ctx
             .cancelled
             .store(false, std::sync::atomic::Ordering::Relaxed);
+        // A cancelled turn ends in partial messages only — indistinguishable
+        // from a crash mid-stream on replay. Stamp the terminal fact so the
+        // log can answer "this was stopped, not broken."
+        if matches!(res, Ok(TurnOutcome::Cancelled)) {
+            let mut log = self.ctx.sessions.lock().await;
+            log.append_audit(&SessionEvent::Hook {
+                event: "cancelled".into(),
+                detail: String::new(),
+            })
+            .await;
+        }
         // TurnEnd is the frontend's "unwind working state" signal — emit it
         // here so every inner exit (early returns included) produces exactly
         // one, with Stop/StopFailure already fired inside the driver.
@@ -144,7 +156,7 @@ impl AgentLoop {
         // Compacted boundary folds the just-submitted question into a
         // summary and the model never sees it as a live user message.
         // The loop-head check below still catches growth mid-turn.
-        if self.est_tokens().await > self.compact_threshold {
+        if self.est_tokens().await > self.effective_threshold() {
             observer.on_event(&LiveEvent::ToolStart {
                 name: "compact".into(),
                 summary: String::new(),
@@ -185,16 +197,30 @@ impl AgentLoop {
         // the turn's ordinal is set once the user prompt is durable —
         // snapshot writes below stamp manifest entries with it, so
         // /rewind's turn numbering == the prompt ordinals users count.
-        self.ctx.checkpoints.lock().unwrap().turn += 1;
+        self.ctx.checkpoints.lock_or_recover().turn += 1;
 
         let mut outcome = TurnOutcome::Completed;
-        for _ in 0..self.max_iterations {
+        // doom-loop guard: a model repeating the identical (name, args)
+        // call past a small run is stuck, not patient — the Nth call
+        // settles as a failed ToolResult naming the loop so the model
+        // reads WHY it was refused, and a `doom_loop` hook fact lands in
+        // the transcript. Counter resets per turn: a long turn may
+        // legitimately re-run a cheap probe many iterations apart.
+        // doom-loop guard: the identical (name, args) call N times in a ROW
+        // is a stuck model, not patient iteration — the streak resets the
+        // moment a different call intervenes, so `test → edit → test`
+        // never trips it. The Nth call settles failed with a reason the
+        // model can read, and a `doom_loop` hook fact lands in the log.
+        let mut repeat_key: Option<(String, String)> = None;
+        let mut repeat_streak: u32 = 0;
+        const REPEAT_LIMIT: u32 = 3;
+        for iter_n in 0..self.max_iterations {
             if self
                 .ctx
                 .cancelled
                 .load(std::sync::atomic::Ordering::Relaxed)
             {
-                outcome = TurnOutcome::Other("cancelled".into());
+                outcome = TurnOutcome::Cancelled;
                 break;
             }
             // Steering drain: user messages queued while this turn ran fold
@@ -210,11 +236,19 @@ impl AgentLoop {
                 });
                 let mut log = self.ctx.sessions.lock().await;
                 log.append(&SessionEvent::Message {
-                    message: Message::user(steered),
+                    message: Message::user(steered.clone()),
                 })
                 .await?;
+                // attribution: the folded message looks identical to a typed
+                // user message — without this audit row, `--dataflow` and
+                // resume readers can't tell steer-injection from typed input
+                log.append_audit(&SessionEvent::Hook {
+                    event: "steer".into(),
+                    detail: steered,
+                })
+                .await;
             }
-            if self.est_tokens().await > self.compact_threshold {
+            if self.est_tokens().await > self.effective_threshold() {
                 observer.on_event(&LiveEvent::ToolStart {
                     name: "compact".into(),
                     summary: String::new(),
@@ -239,7 +273,7 @@ impl AgentLoop {
             let messages = self.ctx.sessions.lock().await.messages().await?;
             let mut messages = messages;
             {
-                let items = self.ctx.todos.lock().unwrap().clone();
+                let items = self.ctx.todos.lock_or_recover().clone();
                 if !items.is_empty() {
                     // the durable Todos fact lives in the log; the model
                     // needs it *in* the transcript — synthetic tail-of-
@@ -259,14 +293,37 @@ impl AgentLoop {
                 temperature: None,
             };
 
-            let mut stream = self.ctx.active_llm().stream(req).await?;
+            // cancel during stream ESTABLISHMENT: a slow/hung `stream()`
+            // is outside the delta-select below — without this arm a kill
+            // waits for the provider's own timeout (connect hangs can be
+            // minutes on a bad route). Bind the adapter Arc first — the
+            // temporary would drop before `select!` could borrow it.
+            let llm = self.ctx.active_llm();
+            let mut stream = tokio::select! {
+                s = llm.stream(req) => s?,
+                () = self.ctx.cancel_notify.notified() => {
+                    return Ok(TurnOutcome::Cancelled);
+                }
+            };
 
             let mut content = String::new();
             let mut reasoning = String::new();
             let mut assembler = ToolCallAssembler::new();
             let mut finish_reason: Option<String> = None;
+            // cancel mid-stream: dropping `stream` aborts the HTTP body —
+            // without this `select!` a queued cancel only lands after the
+            // provider finishes generating (the "stop didn't work" bug).
+            let mut cancelled_mid_stream = false;
 
-            while let Some(delta) = stream.next().await {
+            loop {
+                let delta = tokio::select! {
+                    d = stream.next() => d,
+                    () = self.ctx.cancel_notify.notified() => {
+                        cancelled_mid_stream = true;
+                        None
+                    }
+                };
+                let Some(delta) = delta else { break };
                 match delta? {
                     StreamDelta::Content(c) => {
                         observer.on_event(&LiveEvent::Content { text: c.clone() });
@@ -284,7 +341,10 @@ impl AgentLoop {
                     StreamDelta::Finish { reason, usage } => {
                         if let Some(u) = &usage {
                             let mut log = self.ctx.sessions.lock().await;
-                            let _ = log.append(&SessionEvent::Usage { usage: u.clone() }).await;
+                            // audit facts must fail loudly — a swallowed
+                            // Usage append silently zeroes token accounting
+                            log.append(&SessionEvent::Usage { usage: u.clone() })
+                                .await?;
                             drop(log);
                             observer.on_event(&LiveEvent::Usage(u.clone()));
                         }
@@ -309,15 +369,42 @@ impl AgentLoop {
             }
 
             if tool_calls.is_empty() {
-                outcome = match finish_reason.as_deref() {
-                    Some("length") => TurnOutcome::LengthLimited,
-                    Some("stop") | Some("end_turn") | None => TurnOutcome::Completed,
-                    Some(other) => TurnOutcome::Other(other.to_string()),
+                // a cancel racing any finish reads as a user stop — never
+                // as length-truncation or a clean end
+                outcome = if cancelled_mid_stream {
+                    TurnOutcome::Cancelled
+                } else {
+                    match finish_reason.as_deref() {
+                        Some("length") => TurnOutcome::LengthLimited,
+                        Some("stop") | Some("end_turn") | None => TurnOutcome::Completed,
+                        Some(other) => TurnOutcome::Other(other.to_string()),
+                    }
                 };
                 break;
             }
 
+            let had_calls = !tool_calls.is_empty();
             for call in tool_calls {
+                // Cancel between sibling calls: settle the remaining calls
+                // as failed ToolResults so tool_call/tool_result pairing
+                // stays legal, then the loop-head check exits the turn.
+                if self
+                    .ctx
+                    .cancelled
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    let mut log = self.ctx.sessions.lock().await;
+                    log.append(&SessionEvent::ToolResult {
+                        call_id: call.id.clone(),
+                        name: call.function.name.clone(),
+                        ok: false,
+                        output: "cancelled by user".into(),
+                        depth: self.ctx.depth,
+                        lane: self.ctx.lane,
+                    })
+                    .await?;
+                    continue;
+                }
                 // malformed JSON args → failed result fed back, no dispatch
                 if let Some(err) = malformed.get(&call.id) {
                     let result = crate::tool::ToolResult {
@@ -346,20 +433,17 @@ impl AgentLoop {
                         call_id: Some(call.id.clone()),
                         elapsed_ms: 0,
                     });
-                    let _ = self
-                        .ctx
-                        .hooks
-                        .fire(
-                            HookEvent::PostToolUseFailure,
-                            &self.ctx.cwd,
-                            &crate::hooks::HookInput {
-                                tool_name: Some(&call.function.name),
-                                tool_use_id: Some(&call.id),
-                                tool_response: Some(&result.output),
-                                ..Default::default()
-                            },
-                        )
-                        .await;
+                    crate::hooks::HookEngine::fire_detached(
+                        &self.ctx.hooks,
+                        HookEvent::PostToolUseFailure,
+                        &self.ctx.cwd,
+                        &crate::hooks::HookInput {
+                            tool_name: Some(&call.function.name),
+                            tool_use_id: Some(&call.id),
+                            tool_response: Some(&result.output),
+                            ..Default::default()
+                        },
+                    );
                     let mut log = self.ctx.sessions.lock().await;
                     log.append(&SessionEvent::ToolCall {
                         call: call.clone(),
@@ -382,186 +466,67 @@ impl AgentLoop {
                     .await?;
                     continue;
                 }
-                let mut args_value: serde_json::Value =
-                    serde_json::from_str(&call.function.arguments)
-                        .unwrap_or(serde_json::Value::Null);
-
-                // PreToolUse: a hook may veto the call outright, rewrite its
-                // input (updatedInput — rtk's transparent command rewrite),
-                // or hand the gate a permissionDecision verdict.
-                let pre = self
-                    .ctx
-                    .hooks
-                    .fire(
-                        HookEvent::PreToolUse,
+                // same (tool, args) the Nth time this turn → doom loop:
+                // settle it failed without dispatching. The model still
+                // sees the call's ToolResult — transcript stays legal.
+                let key = (call.function.name.clone(), call.function.arguments.clone());
+                if repeat_key.as_ref() == Some(&key) {
+                    repeat_streak += 1;
+                } else {
+                    repeat_key = Some(key);
+                    repeat_streak = 1;
+                }
+                let n = repeat_streak;
+                if n >= REPEAT_LIMIT {
+                    let detail = format!(
+                        "identical {} call x{} — refusing a repeat loop",
+                        call.function.name, n
+                    );
+                    observer.on_event(&LiveEvent::Hook {
+                        event: "doom_loop".into(),
+                        detail: detail.clone(),
+                    });
+                    crate::hooks::HookEngine::fire_detached(
+                        &self.ctx.hooks,
+                        HookEvent::PostToolUseFailure,
                         &self.ctx.cwd,
                         &crate::hooks::HookInput {
                             tool_name: Some(&call.function.name),
                             tool_use_id: Some(&call.id),
-                            tool_input: Some(&args_value),
+                            tool_response: Some(&detail),
                             ..Default::default()
                         },
-                    )
-                    .await;
-
-                // Apply the rewrite before logging ToolCall: the log records
-                // what actually ran; the rewrite itself is a durable Hook fact
-                // — and a live one: audit must be visible, not just durable.
-                if let Some(updated) = pre.updated_input {
-                    let detail = format!(
-                        "{}: {} → {}",
-                        call.function.name, call.function.arguments, updated
                     );
-                    {
-                        let mut log = self.ctx.sessions.lock().await;
-                        let _ = log
-                            .append(&SessionEvent::Hook {
-                                event: "PreToolUse.updatedInput".into(),
-                                detail: detail.clone(),
-                            })
-                            .await;
-                    }
-                    observer.on_event(&LiveEvent::Hook {
-                        event: "hook rewrite".into(),
-                        detail,
-                    });
-                    args_value = updated;
-                }
-
-                {
                     let mut log = self.ctx.sessions.lock().await;
-                    let mut call = call.clone();
-                    call.function.arguments = args_value.to_string();
                     log.append(&SessionEvent::ToolCall {
-                        call,
+                        call: call.clone(),
                         depth: self.ctx.depth,
                         lane: self.ctx.lane,
                     })
                     .await?;
-                }
-
-                observer.on_event(&LiveEvent::ToolStart {
-                    name: call.function.name.clone(),
-                    summary: call_summary(&call.function.name, &args_value),
-                    depth: self.ctx.depth,
-                    lane: self.ctx.lane,
-                    call_id: Some(call.id.clone()),
-                    // the effective args — post-hook-rewrite, the same value
-                    // the ToolCall fact and the dispatch below see
-                    args: args_value.clone(),
-                });
-                let t0 = std::time::Instant::now();
-
-                let result = if let Some(reason) = pre.block_reason {
-                    // a hook veto is an audit fact too — the transcript's
-                    // failed ToolResult shows *that* it was blocked, the
-                    // Hook event keeps *why* durable
-                    {
-                        let mut log = self.ctx.sessions.lock().await;
-                        let _ = log
-                            .append(&SessionEvent::Hook {
-                                event: "PreToolUse.block".into(),
-                                detail: format!("{}: {reason}", call.function.name),
-                            })
-                            .await;
-                    }
-                    observer.on_event(&LiveEvent::Hook {
-                        event: "PreToolUse.block".into(),
-                        detail: format!("{}: {reason}", call.function.name),
-                    });
-                    crate::tool::ToolResult {
-                        output: format!("blocked by hook: {reason}"),
+                    log.append(&SessionEvent::ToolResult {
+                        call_id: call.id.clone(),
+                        name: call.function.name.clone(),
                         ok: false,
-                    }
-                } else {
-                    // Dispatch gate: declarative rules first (deny is a hard
-                    // refusal), then the hook's permissionDecision, then the
-                    // risky-pattern classifier as the default prompt.
-                    let specifier = specifier_for(&call.function.name, &args_value);
-                    match self
-                        .gate_call(
-                            &call.function.name,
-                            &args_value,
-                            &specifier,
-                            pre.permission_decision,
-                            observer,
-                        )
-                        .await
-                    {
-                        Ok(()) => {
-                            self.ctx
-                                .tools
-                                .call(&call.function.name, &args_value.to_string(), &self.ctx)
-                                .await
-                        }
-                        Err(denial) => crate::tool::ToolResult {
-                            output: denial,
-                            ok: false,
-                        },
-                    }
-                };
-                observer.on_event(&LiveEvent::ToolDone {
-                    name: call.function.name.clone(),
-                    ok: result.ok,
-                    output: truncate_output(&result.output),
-                    depth: self.ctx.depth,
-                    lane: self.ctx.lane,
-                    call_id: Some(call.id.clone()),
-                    elapsed_ms: t0.elapsed().as_millis() as u64,
-                });
-
-                // PostToolUse: hooks may inject context for the next turn.
-                let post = self
-                    .ctx
-                    .hooks
-                    .fire(
-                        HookEvent::PostToolUse,
-                        &self.ctx.cwd,
-                        &crate::hooks::HookInput {
-                            tool_name: Some(&call.function.name),
-                            tool_use_id: Some(&call.id),
-                            tool_input: Some(&args_value),
-                            tool_response: Some(&result.output),
-                            ..Default::default()
-                        },
-                    )
-                    .await;
-                // the union event — failure listeners only run on settled
-                // bad results (deny, error, crash), after the general hook
-                if !result.ok {
-                    let _ = self
-                        .ctx
-                        .hooks
-                        .fire(
-                            HookEvent::PostToolUseFailure,
-                            &self.ctx.cwd,
-                            &crate::hooks::HookInput {
-                                tool_name: Some(&call.function.name),
-                                tool_use_id: Some(&call.id),
-                                tool_input: Some(&args_value),
-                                tool_response: Some(&result.output),
-                                ..Default::default()
-                            },
-                        )
-                        .await;
-                }
-
-                let mut log = self.ctx.sessions.lock().await;
-                log.append(&SessionEvent::ToolResult {
-                    call_id: call.id.clone(),
-                    name: call.function.name.clone(),
-                    ok: result.ok,
-                    output: result.output.clone(),
-                    depth: self.ctx.depth,
-                    lane: self.ctx.lane,
-                })
-                .await?;
-                for extra in post.extra_context {
-                    log.append(&SessionEvent::Message {
-                        message: Message::user(format!("[hook context] {extra}")),
+                        output: format!(
+                            "doom-loop guard: identical call repeated {n} times this turn — vary the call or report the blocker"
+                        ),
+                        depth: self.ctx.depth,
+                        lane: self.ctx.lane,
                     })
                     .await?;
+                    continue;
                 }
+                self.dispatch_tool_call(&call, observer).await?;
+            }
+            // the ceiling consumed its last iteration while tool calls were
+            // still pending — a `Completed` outcome + Stop hook would read
+            // as a normal finish; surface the truncation instead.
+            if iter_n + 1 == self.max_iterations && had_calls {
+                outcome = TurnOutcome::Other(format!(
+                    "hit {}-iteration ceiling with tool calls pending",
+                    self.max_iterations
+                ));
             }
         }
         // TurnEnd + the cancelled reset moved to run_turn() — every exit
@@ -584,3 +549,5 @@ impl AgentLoop {
         Ok(outcome)
     }
 }
+
+mod dispatch;

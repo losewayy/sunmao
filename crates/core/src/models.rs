@@ -10,6 +10,7 @@
 //! Keys never live in the file: `api_key_env` names the environment
 //! variable to read at resolve time.
 
+use crate::context::{MutexRecover, RwLockRecover};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -27,7 +28,7 @@ pub struct ProviderDef {
     /// config files should prefer `api_key_env` (no secrets in files).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
-    /// "openai" (default) | "anthropic"
+    /// "openai" (default) | "openai-responses" | "anthropic"
     #[serde(default = "default_dialect")]
     pub dialect: String,
     /// the provider's model catalog — filled by `POST /models/fetch` or by
@@ -176,8 +177,8 @@ impl ModelResolver {
             def.catalog = catalog;
         }
         file.providers.insert(self.default_provider.clone(), def);
-        *self.file.write().unwrap() = file;
-        self.cache.lock().unwrap().clear();
+        *self.file.write_or_recover() = file;
+        self.cache.lock_or_recover().clear();
     }
 
     /// Bind a selector to a ready-made adapter — overrides file resolution.
@@ -191,7 +192,7 @@ impl ModelResolver {
     /// file) try each member in order; the first resolvable one wins.
     /// `None` = nothing matched — callers fall back, never hard-fail.
     pub fn resolve(&self, selector: &str) -> Option<ModelTarget> {
-        let file = self.file.read().unwrap();
+        let file = self.file.read_or_recover();
         for sel in expand(selector, &file, 0) {
             if let Some(t) = self.resolve_one(&file, &sel) {
                 return Some(t);
@@ -203,7 +204,7 @@ impl ModelResolver {
     /// Build (or fetch from cache) the adapter for a resolved target.
     pub fn adapter(&self, t: &ModelTarget) -> Option<Arc<dyn ProviderAdapter>> {
         let key = format!("{}\u{0}{}", t.provider.base_url, t.model);
-        if let Some(a) = self.cache.lock().unwrap().get(&key) {
+        if let Some(a) = self.cache.lock_or_recover().get(&key) {
             return Some(a.clone());
         }
         let key_str = t
@@ -219,14 +220,38 @@ impl ModelResolver {
                 key_str,
                 &t.model,
             )),
+            "openai-responses" => Arc::new(sunmao_llm::ResponsesClient::new(
+                &t.provider.base_url,
+                key_str,
+                &t.model,
+            )),
             _ => Arc::new(sunmao_llm::OaiClient::new(
                 &t.provider.base_url,
                 key_str,
                 &t.model,
             )),
         };
-        self.cache.lock().unwrap().insert(key, adapter.clone());
+        self.cache.lock_or_recover().insert(key, adapter.clone());
         Some(adapter)
+    }
+
+    /// Resolved context window for a selector — the provider catalog's
+    /// `context_length` when a `/models` fetch (or a hand-written entry)
+    /// advertised one. `None` = unknown; callers fall back to a session
+    /// default. Used to size auto-compaction against the model the turn
+    /// is *actually* on, not a global constant.
+    pub fn context_length_for(&self, selector: &str) -> Option<u64> {
+        let t = self.resolve(selector)?;
+        let file = self.file.read_or_recover();
+        let provider = file
+            .providers
+            .values()
+            .find(|p| p.base_url == t.provider.base_url && p.dialect == t.provider.dialect)?;
+        provider
+            .catalog
+            .iter()
+            .find(|e| e.id == t.model)
+            .and_then(|e| e.context_length)
     }
 
     /// Selector → ready adapter, or `None` (caller inherits parent's).
@@ -255,14 +280,14 @@ impl ModelResolver {
     /// Read-access to the merged config — the GUI's settings page renders
     /// this; mutation goes through the file + `reload()`, never in place.
     pub fn file(&self) -> ModelsFile {
-        self.file.read().unwrap().clone()
+        self.file.read_or_recover().clone()
     }
 
     /// What `/model` offers: `@route` aliases, catalog entries as concrete
     /// `provider/id` selectors, and `provider/` prefixes for anything not
     /// catalogued yet.
     pub fn describe(&self) -> Vec<String> {
-        let file = self.file.read().unwrap();
+        let file = self.file.read_or_recover();
         let mut out: Vec<String> = file
             .routes
             .iter()
@@ -284,7 +309,7 @@ impl ModelResolver {
     /// names, concrete catalog ids, and `provider/` prefixes (a model id
     /// that isn't catalogued still resolves — the provider may know it).
     pub fn selectors(&self) -> Vec<String> {
-        let file = self.file.read().unwrap();
+        let file = self.file.read_or_recover();
         let mut out: Vec<String> = file.routes.keys().map(|r| format!("@{r}")).collect();
         for (name, p) in &file.providers {
             out.push(format!("{name}/"));
@@ -436,7 +461,7 @@ mod tests {
             },
             "default",
         );
-        let mut file = r.file.write().unwrap();
+        let mut file = r.file.write_or_recover();
         file.providers.insert(
             "big".into(),
             ProviderDef {

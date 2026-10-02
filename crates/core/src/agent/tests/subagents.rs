@@ -1,4 +1,5 @@
 use super::*;
+use crate::context::MutexRecover;
 
 #[tokio::test]
 async fn subagent_tool_events_reach_live_sink_at_depth() {
@@ -22,9 +23,10 @@ async fn subagent_tool_events_reach_live_sink_at_depth() {
                     .lock()
                     .unwrap()
                     .push(format!("done:{name}:{ok}:d{depth}")),
-                LiveEvent::TurnEnd { outcome } => {
-                    self.0.lock().unwrap().push(format!("turnend:{outcome:?}"))
-                }
+                LiveEvent::TurnEnd { outcome } => self
+                    .0
+                    .lock_or_recover()
+                    .push(format!("turnend:{outcome:?}")),
                 _ => {}
             }
         }
@@ -107,7 +109,7 @@ async fn subagent_tool_events_reach_live_sink_at_depth() {
     let outcome = agent.run_turn("go", &NullObserver).await.unwrap();
     assert!(matches!(outcome, TurnOutcome::Completed));
 
-    let events = sink.0.lock().unwrap();
+    let events = sink.0.lock_or_recover();
     assert!(
         events.iter().any(|e| e == "start:Glob:d1"),
         "inner tool start must surface at depth=1 — got {events:?}"
@@ -215,7 +217,7 @@ async fn batch_tasks_fan_out_on_distinct_lanes() {
     // two children → two distinct lanes. The roster is the durable fact —
     // relayed ToolStarts only appear if a child happens to call a tool
     // (response-queue scheduling decides that, not lane assignment).
-    let lanes: Vec<u8> = ctx
+    let lanes: Vec<u16> = ctx
         .live_tasks
         .lock()
         .unwrap()

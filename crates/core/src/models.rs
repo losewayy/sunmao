@@ -108,6 +108,12 @@ pub struct CatalogEntry {
     /// providers don't agree on a vocabulary
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub thinking: Vec<String>,
+    /// listing signals reasoning support without naming levels —
+    /// `supported_parameters`/capabilities containing `reasoning` (the
+    /// OpenRouter spelling) or a `reasoning` field. Readers may offer the
+    /// canonical low/medium/high trio on this hint.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reasoning: bool,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -252,6 +258,38 @@ impl ModelResolver {
             .iter()
             .find(|e| e.id == t.model)
             .and_then(|e| e.context_length)
+    }
+
+    /// Thinking levels a selector's model advertises — the catalog's
+    /// declared `thinking` list, or the canonical low/medium/high trio
+    /// when the listing signaled reasoning support without naming levels
+    /// (`reasoning` flag). Empty = the model doesn't advertise thinking —
+    /// frontends should hide the picker rather than invent levels.
+    pub fn thinking_levels(&self, selector: &str) -> Vec<String> {
+        let Some(t) = self.resolve(selector) else {
+            return Vec::new();
+        };
+        let file = self.file.read_or_recover();
+        let Some(provider) = file
+            .providers
+            .values()
+            .find(|p| p.base_url == t.provider.base_url && p.dialect == t.provider.dialect)
+        else {
+            return Vec::new();
+        };
+        let Some(entry) = provider.catalog.iter().find(|e| e.id == t.model) else {
+            return Vec::new();
+        };
+        if !entry.thinking.is_empty() {
+            return entry.thinking.clone();
+        }
+        if entry.reasoning {
+            return ["low", "medium", "high"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+        }
+        Vec::new()
     }
 
     /// Selector → ready adapter, or `None` (caller inherits parent's).
@@ -419,11 +457,29 @@ fn catalog_entry(row: &serde_json::Value, id: &str) -> CatalogEntry {
             }
         }
     }
+    // reasoning support without a level vocabulary: OpenRouter's
+    // `supported_parameters` names it, Anthropic-style listings carry a
+    // `reasoning` field — either flag lets callers offer the canonical
+    // low/medium/high trio rather than a silently-absent picker.
+    let reasoning = get(&[
+        "/supported_parameters",
+        "/reasoning",
+        "/capabilities/reasoning",
+    ])
+    .map(|v| match v {
+        serde_json::Value::Array(a) => a.iter().any(
+            |m| matches!(m.as_str(), Some(s) if s.contains("reasoning") || s.contains("thinking")),
+        ),
+        serde_json::Value::Bool(b) => *b,
+        _ => true, // a non-boolean `reasoning` value exists = supported
+    })
+    .unwrap_or(false);
     CatalogEntry {
         id: id.to_string(),
         vision,
         context_length,
         thinking,
+        reasoning,
     }
 }
 

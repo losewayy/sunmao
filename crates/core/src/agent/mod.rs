@@ -19,6 +19,7 @@ use crate::session::{SessionEvent, SessionLog};
 mod bare;
 mod cancel;
 mod compact;
+mod effort;
 mod gate;
 mod goal;
 mod mcp;
@@ -455,6 +456,7 @@ impl AgentLoop {
         self.ctx.reseed_todos(&events);
         self.ctx.reseed_goal(&events);
         self.ctx.reseed_ptc_store(&events);
+        self.ctx.reseed_effort(&events);
         let mode = events
             .iter()
             .rev()

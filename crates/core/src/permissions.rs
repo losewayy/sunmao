@@ -125,28 +125,104 @@ pub struct Permissions {
     rules: HashMap<String, RuleSet>,
 }
 
+/// Permission-rule source files in load order — shared by `load` (which
+/// gates project-layer `allow` on the trust ledger) and the `/hooks`
+/// roster (which lists them so `trust <n>` can pin one).
+/// (path, layer) — project/plugin/preset layers need pins, the user layer
+/// (~/.claude) is implicitly trusted like user-level hook files.
+fn rule_files(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<(PathBuf, crate::hooks::trust::Layer)> {
+    use crate::hooks::trust::Layer;
+    let mut out = vec![
+        (cwd.join(".sunmao").join("permissions.json"), Layer::Project),
+        (cwd.join(".claude").join("settings.json"), Layer::Project),
+        (
+            cwd.join(".claude").join("settings.local.json"),
+            Layer::Project,
+        ),
+    ];
+    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+        out.push((
+            Path::new(&home).join(".claude").join("settings.json"),
+            Layer::User,
+        ));
+    }
+    // preset dirs merge last — a `permissions.json` in an enabled preset
+    // adds rules like any other layer (deny>ask>allow applies on check,
+    // not on load order). Presets are a project-layer trust surface.
+    for root in extra_roots {
+        out.push((root.join("permissions.json"), Layer::Project));
+    }
+    out
+}
+
+/// Project-layer `allow` rules as `/hooks` rows — an `allow` short-circuits
+/// the approval gate, so like hook commands it executes only once pinned.
+/// `deny`/`ask` never widen a session and aren't listed or gated.
+pub(crate) fn permission_rows(
+    cwd: &Path,
+    extra_roots: &[PathBuf],
+) -> Vec<crate::hooks::trust::HookRow> {
+    use crate::hooks::trust::{HookRow, Layer, RowKind, digest, is_trusted};
+    let mut rows = Vec::new();
+    for (path, layer) in rule_files(cwd, extra_roots) {
+        if layer != Layer::Project {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(f) = serde_json::from_str::<PermsFile>(&text) else {
+            continue;
+        };
+        for rule in &f.permissions.allow {
+            let status = if is_trusted(cwd, layer, &path, rule) {
+                "pinned"
+            } else {
+                "untrusted"
+            };
+            rows.push(HookRow {
+                kind: RowKind::Perm,
+                event: "permissions.allow".into(),
+                matcher: path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "permissions.json".into()),
+                digest: digest(&path, rule),
+                command: rule.clone(),
+                source: path.clone(),
+                status,
+            });
+        }
+    }
+    rows
+}
+
 impl Permissions {
     pub fn load(cwd: &Path, extra_roots: &[PathBuf]) -> Self {
-        let mut paths = vec![
-            cwd.join(".sunmao").join("permissions.json"),
-            cwd.join(".claude").join("settings.json"),
-            cwd.join(".claude").join("settings.local.json"),
-        ];
-        if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
-            paths.push(Path::new(&home).join(".claude").join("settings.json"));
-        }
-        // preset dirs merge last — a `permissions.json` in an enabled preset
-        // adds rules like any other layer (deny>ask>allow applies on check,
-        // not on load order).
-        for root in extra_roots {
-            paths.push(root.join("permissions.json"));
-        }
         let mut merged = Perms::default();
-        for p in paths {
+        for (p, layer) in rule_files(cwd, extra_roots) {
             if let Ok(text) = std::fs::read_to_string(&p)
                 && let Ok(f) = serde_json::from_str::<PermsFile>(&text)
             {
-                merged.allow.extend(f.permissions.allow);
+                // `allow` short-circuits the approval gate — a checked-out
+                // repo could carry one, so project-layer allows apply only
+                // once pinned in the trust ledger (same gate hook commands
+                // pass). deny/ask always merge: they only refuse more.
+                if layer == crate::hooks::trust::Layer::User {
+                    merged.allow.extend(f.permissions.allow);
+                } else {
+                    for rule in f.permissions.allow {
+                        if crate::hooks::trust::is_trusted(cwd, layer, &p, &rule) {
+                            merged.allow.push(rule);
+                        } else {
+                            tracing::warn!(
+                                "permissions: unpinned allow rule {rule:?} in {} skipped — \
+                                 /hooks trust to enable",
+                                p.display()
+                            );
+                        }
+                    }
+                }
                 merged.ask.extend(f.permissions.ask);
                 merged.deny.extend(f.permissions.deny);
             }
@@ -407,5 +483,53 @@ mod overlay_tests {
         assert_eq!(child.check("Bash", "git status"), Verdict::PreApproved);
         assert_eq!(child.check("Bash", "cargo publish"), Verdict::Ask);
         assert_eq!(child.check("Bash", "cargo test"), Verdict::PreApproved);
+    }
+}
+
+#[cfg(test)]
+mod trust_gate_tests {
+    use super::*;
+
+    /// An `allow` rule short-circuits the approval gate — a checked-out
+    /// repo could carry one, so project-layer allows apply only once
+    /// pinned in the trust ledger. deny/ask always merge: refusing more
+    /// never widens the surface.
+    #[test]
+    fn project_allow_rules_need_a_trust_pin() {
+        use crate::hooks::trust::{Layer, is_trusted, set_pin};
+        let dir = crate::fresh_test_dir("perm-trust");
+        let pdir = dir.join(".sunmao");
+        std::fs::create_dir_all(&pdir).unwrap();
+        let file = pdir.join("permissions.json");
+        std::fs::write(
+            &file,
+            r#"{"permissions":{"allow":["Bash(rm *)"],"deny":["Bash(curl *)"],"ask":["Write"]}}"#,
+        )
+        .unwrap();
+        // unpinned: the allow is skipped (the call stays gated), while
+        // deny/ask still apply — they only narrow the surface
+        let p = Permissions::load(&dir, &[]);
+        assert_eq!(p.check("Bash", "rm -rf x"), Verdict::Default);
+        assert_eq!(p.check("Bash", "curl x"), Verdict::Deny);
+        assert_eq!(p.check("Write", "a.rs"), Verdict::Ask);
+        // the roster carries the rule so /hooks trust can pin it
+        let rows = permission_rows(&dir, &[]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, "untrusted");
+        // pinned: the digest covers (canonical source, rule text)
+        set_pin(&dir, &file, "Bash(rm *)", true).unwrap();
+        assert!(is_trusted(&dir, Layer::Project, &file, "Bash(rm *)"));
+        let p = Permissions::load(&dir, &[]);
+        assert_eq!(p.check("Bash", "rm -rf x"), Verdict::PreApproved);
+        // a neighbouring rule isn't covered by this pin
+        std::fs::write(
+            &file,
+            r#"{"permissions":{"allow":["Bash(rm *)","Bash(del *)"]}}"#,
+        )
+        .unwrap();
+        let p = Permissions::load(&dir, &[]);
+        assert_eq!(p.check("Bash", "rm -rf x"), Verdict::PreApproved);
+        assert_eq!(p.check("Bash", "del x"), Verdict::Default);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

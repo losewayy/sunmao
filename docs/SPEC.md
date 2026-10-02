@@ -3,7 +3,7 @@
 > This file is the design contract — what we build, and the lines we
 > deliberately don't cross.
 
-> 状态：v0.2 在库进行中。已落地：SSE/协议栈（OAI + Anthropic 双方言）、事件溯源会话（resume/fork/dataflow）、十原生工具 + Task 子代理、Read-before-Write 闸门、deno_task_shell Bash + 后台 job、compaction、Claude 契约 hooks（含 `.claude/settings*.json` 兼容加载）、MCP client（stdio + HTTP）、ACP v2 server、TUI（CJK 原生、块式 transcript、审批卡、slash 菜单、markdown、tokyonight 主题）、审批闸（风险命令分级问询）、PromptAssembler 分层提示词、shell/preflight（spawnfate 预判）、AGENTS.md/skills 生态加载。
+> 状态：v0.2 在库进行中。已落地：SSE/协议栈（OAI + Anthropic + Responses 三方言）、事件溯源会话（resume/fork/dataflow）、十二原生工具 + Task 子代理（steer 下行 + SendMessage 上行双向消息）、Read-before-Write 闸门、deno_task_shell Bash + 后台 job、compaction、Claude 契约 hooks（含 `.claude/settings*.json` 兼容加载）、MCP client（stdio + HTTP）、ACP v2 server、TUI（CJK 原生、块式 transcript、审批卡、slash 菜单、markdown、tokyonight 主题）、审批闸（风险命令分级问询）、PromptAssembler 分层提示词、shell/preflight（spawnfate 预判）、AGENTS.md/skills 生态加载。
 > **sunmao（榫卯）** — joinery by seams; the repo is the contract.
 
 ## 1. 定位
@@ -30,7 +30,8 @@
 
 ```text
 ┌────────────────────────── frontends ──────────────────────────┐
-│  TUI(内置, ratatui)   Electron GUI(后)   第三方 ACP client(白送) │
+│ TUI(ratatui)  serve host(HTTP+WS)  Tauri 壳(同 host, 零 TCP)    │
+│                     第三方 ACP client(白送)                      │
 └──────────────┬───────────────────┬────────────────────────────┘
                │ 同一协议           │ ACP server (JSON-RPC/stdio)
 ┌──────────────▼───────────────────▼──────── seams(ctx 服务) ────┐
@@ -73,12 +74,12 @@
 - 首发方言：**OpenAI Chat Completions 兼容**（DeepSeek/Kimi/国产端点一套通吃）
 - 手写 SSE 解析 + delta 累积 + `tool_calls` 碎片重组（本项目立身之本：裸写协议栈）
 - 缝定义：`trait ProviderAdapter { stream(req) -> Stream<Chunk> }`——第二 provider（Anthropic）是 v0.4+ 的另一个方言插件
-- **已定方向：OpenAI Responses API 方言**（`models.json` 的 `dialect` 预留 `"openai-responses"` 值位）——o 系/gpt-5 系的 reasoning effort 与内置工具只在 Responses 面开放，直连官方端点时必需；排队在现有面收敛之后做（v0.6 级），需要新增 `response.output_item.delta` / `reasoning_summary` 事件映射与 `previous_response_id` 链式状态
+- **已落地：OpenAI Responses API 方言**（`models.json` `dialect: "openai-responses"`）——`response.*` SSE 事件映射、`instructions` 顶层系统词、`call_id` 配对、item 数组重放全做；**缓存优化双件套**：`prompt_cache_key`（per-adapter 稳定键喂服务端前缀缓存）+ `previous_response_id` 链式增量（已发 item 列表严格前缀成立才发尾部增量；压缩/倒带/换会话全部自动退化为全量重发，陈旧 `prev_id` 兜底重试一次）。reasoning effort 参数面尚未暴露（`ChatRequest` 无该字段）
 - 宽容序列化：第三方端点的脏 payload（`tool_calls` 收 null、`finish_reason` 未知值兜底）——实测教训沉淀
 
 ### 4.3 `tools` — 作用域注册表 + 受控执行管线
 
-- 内置工具命名**强制对齐主流词表**：`Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob`、`WebFetch`、`JobOutput`、`HtmlArtifact`、`Task`、`TodoWrite`——hook matcher 免费命中
+- 内置工具命名**强制对齐主流词表**：`Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob`、`WebFetch`、`JobOutput`、`HtmlArtifact`、`Task`、`TodoWrite`、`SendMessage`——hook matcher 免费命中；`SendMessage` 是子→父上行（推上父 steer 队列），与父→子 `Task{steer}`/`steer_sub` 构成双向 agent 通信
 - MCP 工具命名空间：`mcp__{server}__{tool}`——`mcp__*` matcher 免费命中
 - 执行管线串缝：`pre`(hooks+审批) → `exec` → `post`(hooks) —— 拦截点全部公开给 `ctx.audit` 与 `ctx.hooks`
 
@@ -197,12 +198,14 @@ hook engine（核心）
 | v0.2 | trustworthy | 审批缝 + transcript 工件 + 上下文窗口管理 + 错误恢复/中断续跑 + 审计流 | 子进程崩溃不炸 agent | ✅ 大部分落地——审批闸三前端、compaction、resume/fork、审计事件流；进程崩溃容忍只验过 hook veto |
 | v0.3 | ecosystem citizen | MCP client + hooks 引擎 + claude-dialect + 格式加载器 + ACP server | rtk/context-mode 实测 | ✅ 落地（MCP 双 transport、hooks 13 事件全并集——含 PostToolUseFailure/StopFailure/Notification、agents/commands/skills/plugin.json、ACP v2）；rtk/context-mode 实测通过 |
 | v0.4 | distributed | plugin.json 安装 + 扩展协议宿主 + presets + eval + HTML 工件 | 发布 | ✅ 全部落地——plugin.json 安装（`sunmao plugin`，git URL/`owner/repo` 源）、presets（`--preset` 层叠）、eval（`sunmao eval` 断言会话事实）、HTML 工件（HtmlArtifact）、扩展协议宿主（`ext/` 提前落地）；发布待放行 |
-| v0.5+ | open frontier | JS 扩展宿主、第二 provider 方言、GUI、subagents | — | 🟡 Anthropic 方言提前落地（v0.2）、Task 子代理已上线（`spawns:`/`tools:` 白名单 + `run_in_background` 异步扇出 + `model:` 路由）、**扩展协议宿主落地**（Rust `ext/` crate——子进程扩展注册工具/订阅事件，回复按 hooks 语义合并；曾有的 JS 侧车经生态盘点后移除）、**loop 可替换**（manifest `loop:` + `--loop`，full/bare 双驱动）、hook 事件并集已齐（13 事件）、**GUI 阶段 1 上线**（`sunmao serve`：多会话宿主 + ws/replay + 审批卡 + artifact 岛屿/版本链 + MCP Apps 岛桥；Tauri 壳属阶段 2） |
+| v0.5+ | open frontier | JS 扩展宿主、第二 provider 方言、GUI、subagents | — | 🟡 Anthropic 方言提前落地（v0.2）、Task 子代理已上线（`spawns:`/`tools:` 白名单 + `run_in_background` 异步扇出 + `model:` 路由）、**扩展协议宿主落地**（Rust `ext/` crate——子进程扩展注册工具/订阅事件，回复按 hooks 语义合并；曾有的 JS 侧车经生态盘点后移除）、**loop 可替换**（manifest `loop:` + `--loop`，full/bare 双驱动）、hook 事件并集已齐（13 事件）、**GUI 阶段 1 上线**（`sunmao serve`：多会话宿主 + ws/replay + 审批卡 + artifact 岛屿/版本链 + MCP Apps 岛桥；Tauri 壳属阶段 2）、steer 双向补齐（运行中子代理可被 `steer` 重定向，`SendMessage` 上行反问，打完边界即折叠成 user 消息不中断执行） |
 
 ## 7. 非目标（v1 明确不做）
 
 - in-process 脚本扩展（那是 pi 的路，与进程边界立场冲突）
-- GUI（Electron 前端属 v0.5+，且需干净重写）
+- ~~GUI~~（修订：已在 v0.5 落地为 `sunmao serve` 传输无关宿主 +
+  Tauri scheme 壳——没走 Electron，前端只是同一 host 上可替换的
+  observer，与原"前端是替换品"纲领一致；本条作废归档）
 - MCP server 模式（让我们被别的 agent 调用——v0.5+ 再议）
 - plan mode（学 pi 的纪律：能做扩展的不进核心——subagents 已在 v0.2
   以 Task + agents/*.md 声明式落地，本条作废修订：核心只留机制不留模式）

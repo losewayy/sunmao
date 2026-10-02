@@ -18,6 +18,18 @@ per-key where merging applies (hooks/permissions/mcp).
 | `commands/*.md` | markdown | `/name` injects file body as prompt; `/name args` substitutes `$ARGUMENTS` / positional `$1`..`$9` where the body placed them — bodies with no placeholder get args appended |
 | `skills/*/SKILL.md` | frontmatter `name`/`description` + body | indexed; body read on demand. `SKILL.html` is the alternate skill body (`<title>`/`<meta name="description">` supply the index fields; `SKILL.md` wins when both exist). Bundled `*.html` files count as resources and surface in the index line |
 | `agents/*.md` | frontmatter `name`/`description`/`model`/`tools`/`spawns` + body | `Task` tool `subagent_type` picks; body = sub-agent system prompt; `model` routes the spawn (see below); `tools` (CSV/list) trims the child's tool registry; `spawns` (CSV/list, `*`=all) whitelists what it may itself spawn — a restricted parent's omitted `subagent_type` defaults to the first entry, self-recursion is refused |
+
+**Sub-agent message channels** — `Task{steer:"sub-…-lN", message:"…"}` injects
+a mid-run user message into a running child (folded at its next request
+boundary; the steer queues, it doesn't interrupt). `SendMessage` is the
+child-side uplink: pushes a `<sub-agent-message id=… lane=…>`-tagged user
+message onto the parent's steer queue, same fold semantics in reverse —
+a background child can ask mid-run instead of waiting for `task_done`.
+Foreground `Task` returns `[task:sub-…-lN]` so the next call has a handle.
+The roster's cancel control (`task_cancel` ws frame → `cancel_sub`) is the
+surgical version of `agent.cancel()`: it trips that ONE child's flag+notify
+and its own finish path records `done=false` — a cancelled child is a
+failure, not a clean exit (`TurnOutcome::Cancelled` discriminates it).
 | `models.json` | `{"providers": {"p": {"base_url","api_key_env","dialect"}}, "routes": {"r": "sel" \| ["sel",...]}}` | model routing — `model:` selectors resolve `provider/model`, bare `model` (session provider), or `@route` chains; unresolvable → inherit parent |
 | `plugin/` | same tree as a plugin root | "this project is a plugin" convention |
 | `plugins/<name>/` | plugin dir | contributes `commands/`, `skills/`, `agents/` **and** merges its `plugin.json` (`hooks` + `mcpServers`, `${CLAUDE_PLUGIN_ROOT}` → the plugin dir); `sunmao plugin install|list|remove` manages this dir — install takes a local dir, a git URL, or `owner/repo` (clones via `git`, depth 1) |
@@ -93,7 +105,11 @@ order  source
 Same stem = same section: a later file named `identity.md` replaces the
 identity section in place. `--doctor` prints the assembled byte count and
 first line. `Task` resolves `subagent_type` against `agents/*.md`, else the
-`subagent-default` section (replaceable the same way).
+`subagent-default` section (replaceable the same way). The reserved builtin
+stems are `identity`, `tool-guidance`, `shell-dialect`, `compact`,
+`subagent-default`, `project-context` — a `prompt.d/` file under one of
+these names silently *replaces* the builtin rather than adding a section,
+so give custom sections distinct names.
 
 ## Event vocabulary (what lands in `sessions/*.jsonl`)
 
@@ -107,11 +123,23 @@ first line. `Task` resolves `subagent_type` against `agents/*.md`, else the
 {"type":"usage","usage":{prompt_tokens,completion_tokens,total_tokens}}
 {"type":"hook","event":"PreToolUse.updatedInput","detail":"…"}  // audit-only, skipped by the message fold
 {"type":"task_done","id":"sub-…-l2","ok":true,"output":"…"}  // background Task finished — folds into the message stream as a <task-result> user message; full transcript at sessions/<id>.jsonl
+// a Task{steer} mid-run injection lands as a plain
+//   {"type":"message","message":{"role":"user",…}} (folded at the child's
+//   next request boundary) PLUS an audit-only {"type":"hook","event":"steer"}
+//   row — the folded message is byte-identical to typed input, the hook row
+//   is the attribution trail.
+// a child's SendMessage uplink lands on the PARENT side the same way — a
+//   tagged user message <sub-agent-message id=… lane=…> folded at the
+//   parent's next boundary, again paired with the steer hook row.
+{"type":"mode_change","mode":"accept_edits"}  // approval stance changed — audit-only; a resumed session reseeds Context.approval_mode from the last one
+{"type":"session_meta","title":"…"}  // serve rename — audit-only; readers take the LAST one as the rail/title, overriding first-prompt derivation
 {"type":"checkpoint","turn":N,"files":["a.txt",...]}  // pre-write bytes snapshotted into checkpoints/{session_id}/ — audit-only, skipped by the fold; /rewind folds the manifest back
 ```
 
 `--dataflow <file>` folds these into a JSON report (files read/written,
-shell commands, tool calls/failures, compactions, token totals).
+shell commands, tool calls/failures, compactions, token totals,
+`sub_agent_uplinks`/`sub_agent_downlinks` — the SendMessage/steer channel
+traffic listed under `data_flow`).
 
 ## Model routing (`models.json`)
 
@@ -133,6 +161,11 @@ a cheap/fast model for scout-style agents, session model otherwise:
 - `agents/*.md` `model:` pins any of these; absent or unresolvable → the
   sub-agent inherits the parent's adapter. Keys come from `api_key_env`
   (an env var name), never the file itself.
+- `dialect`: `"openai"` (chat completions, default), `"openai-responses"`
+  (OpenAI `/responses` — required for o-series/GPT-5 reasoning; the
+  adapter chains `previous_response_id` + `prompt_cache_key` so repeat
+  requests send only new items while provider prefix caching stays warm),
+  `"anthropic"` (`/messages`).
 - `/model [selector]` in the TUI switches the *session's* active adapter
   mid-run (next request onward); bare `/model` lists routes + providers.
 

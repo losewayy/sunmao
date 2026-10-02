@@ -153,7 +153,10 @@
 
 /* motion preference (§8.6): reduce zeroes displacement, scale, slow
    durations, and loop pulses — fades and the spinner stay (state info).
-   The global *{…!important} override is gone. */
+   The global *{…!important} override is gone.
+   The wallpaper crossfade is the exception: a collapsed-scene fade (140ms
+   off 560ms) reads as a flicker, not a transition — reduce snaps it
+   instead of pretending to animate it. */
 @media (prefers-reduced-motion:reduce){
   :root:not([data-motion="full"]){
     --move-1:0px;--move-2:0px;--move-hover:0px;--move-join:0px;
@@ -161,6 +164,7 @@
     --dur-slow:var(--dur-fast);--dur-scene:var(--dur-fast);
     --loop-breathe:0s;--loop-breathe-busy:0s;--stagger:0ms;
   }
+  html:not([data-motion="full"]) #wall canvas{transition:none}
 }
 :root[data-motion="reduce"]{
   --move-1:0px;--move-2:0px;--move-hover:0px;--move-join:0px;
@@ -168,6 +172,7 @@
   --dur-slow:var(--dur-fast);--dur-scene:var(--dur-fast);
   --loop-breathe:0s;--loop-breathe-busy:0s;--stagger:0ms;
 }
+:root[data-motion="reduce"] #wall canvas{transition:none}
 
 /* --ga is a registered numeric custom property so glass levels animate
    (§8.5). Components set --ga: var(--glass-*); never a raw number. */

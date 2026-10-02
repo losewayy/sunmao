@@ -23,6 +23,8 @@ use super::host::{
     queue_items,
 };
 
+mod ui;
+
 /// Process-global client ids — a `session` switch frame names its issuer
 /// so only that tab follows (`0` = the caller opted out of the tag).
 static CLIENT_IDS: AtomicU64 = AtomicU64::new(0);
@@ -95,6 +97,10 @@ impl Client {
                 .collect::<Vec<_>>(),
             "models": host.as_ref().map(|h| h.agent.model_choices()).unwrap_or_default(),
             "mode": host.as_ref().map(|h| h.agent.approval_mode().as_str()).unwrap_or("auto"),
+            // the effort override + the model's level vocabulary — seeds the
+            // composer chip and its picker before any replay lands
+            "effort": match &host { Some(h) => h.agent.reasoning_effort(), None => None },
+            "effort_levels": match &host { Some(h) => h.agent.effort_levels().await, None => Vec::new() },
             "sandbox_port": client.s.sandbox_port,
             "busy": host.as_ref().map(|h| h.busy.load(Ordering::Relaxed) > 0).unwrap_or(false),
             "busy_sessions": client.s.sessions.lock_or_recover().values()
@@ -136,6 +142,8 @@ impl Client {
             "cwd": display_path(&host.agent.session_cwd()),
             "busy": host.busy.load(Ordering::Relaxed) > 0,
             "mode": host.agent.approval_mode().as_str(),
+            "effort": host.agent.reasoning_effort(),
+            "effort_levels": host.agent.effort_levels().await,
             // pending approval cards re-render — a tab arriving mid-ask
             // must see the card, not a frozen transcript; queued steers
             // surface as chips the same way
@@ -442,6 +450,7 @@ impl Client {
                             let _ = self.s.live.send(serde_json::json!({
                                 "type":"model","sess":h.id,"label":label,
                             }));
+                            let _ = self.s.live.send(super::host::effort_frame(&h).await);
                         }
                         None => {
                             self.emit(serde_json::json!({
@@ -450,6 +459,20 @@ impl Client {
                             }));
                         }
                     }
+                }
+            }
+            // {type:"effort", level} — the composer chip's picker; "default"
+            // (or an empty level) clears back to the provider's own.
+            "effort" => {
+                let level = v["level"].as_str().unwrap_or("default");
+                if let Some(h) = self.viewing_host() {
+                    h.agent
+                        .set_reasoning_effort(
+                            Some(level),
+                            &WsObserver::new(self.s.live.clone(), h.id.clone()),
+                        )
+                        .await;
+                    let _ = self.s.live.send(super::host::effort_frame(&h).await);
                 }
             }
             "mode" => {
@@ -476,115 +499,8 @@ impl Client {
                     }
                 }
             }
-            // ── MCP Apps bridge (SEP-1865 / GUI.md §5) ──
-            // island → host requests, forwarded as `ui_result` replies keyed
-            // by the request's `id`. Every call goes through the gate —
-            // the UI surface is never a permissions bypass.
-            "ui_call" => {
-                let name = v["name"].as_str().unwrap_or("");
-                let (server, tool) = name
-                    .strip_prefix("mcp__")
-                    .and_then(|r| r.split_once("__"))
-                    .unwrap_or(("", ""));
-                let reply = match self.viewing_host() {
-                    Some(h) => match h
-                        .agent
-                        .mcp_app_call(
-                            server,
-                            tool,
-                            v["args"].clone(),
-                            &WsObserver::new(self.s.live.clone(), h.id.clone()),
-                        )
-                        .await
-                    {
-                        Ok(result) => {
-                            serde_json::json!({"type":"ui_result","sess":h.id,"id":v["id"],"name":name,"result":result})
-                        }
-                        Err(e) => {
-                            serde_json::json!({"type":"ui_result","sess":h.id,"id":v["id"],"name":name,"error":e})
-                        }
-                    },
-                    None => {
-                        serde_json::json!({"type":"ui_result","id":v["id"],"name":name,"error":"no session"})
-                    }
-                };
-                self.emit(reply);
-            }
-            "ui_read" => {
-                let reply = match self.viewing_host() {
-                    Some(h) => match h
-                        .agent
-                        .mcp_resource_read(
-                            v["server"].as_str().unwrap_or(""),
-                            v["uri"].as_str().unwrap_or(""),
-                            &WsObserver::new(self.s.live.clone(), h.id.clone()),
-                        )
-                        .await
-                    {
-                        Ok(result) => {
-                            serde_json::json!({"type":"ui_result","sess":h.id,"id":v["id"],"name":v["name"],"result":result})
-                        }
-                        Err(e) => {
-                            serde_json::json!({"type":"ui_result","sess":h.id,"id":v["id"],"name":v["name"],"error":e})
-                        }
-                    },
-                    None => {
-                        serde_json::json!({"type":"ui_result","id":v["id"],"name":v["name"],"error":"no session"})
-                    }
-                };
-                self.emit(reply);
-            }
-            // `ui/message`: the View's prompt becomes a normal user prompt —
-            // same input queue of the session the island lives in.
-            "ui_message" => {
-                let text = v["text"].as_str().unwrap_or("").to_string();
-                if !text.trim().is_empty()
-                    && let Some(h) = self.viewing_host()
-                {
-                    h.agent
-                        .audit_ui_event(
-                            "mcp.ui_message",
-                            &text,
-                            &WsObserver::new(self.s.live.clone(), h.id.clone()),
-                        )
-                        .await;
-                    // same queue path as the composer prompt — the island's
-                    // prompt is a real user turn; the bubble paints when the
-                    // driver picks it up, not ahead of a running turn
-                    let id = h
-                        .queue_next_id
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    h.queue.lock_or_recover().push_back(Input {
-                        id,
-                        client: self.id,
-                        text,
-                        attachments: Vec::new(),
-                    });
-                    // same pending bookkeeping as `prompt` — a queued island
-                    // message interleaves a goal chain too
-                    h.agent
-                        .context()
-                        .input_pending
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    h.queue_notify.notify_one();
-                    let _ = self.s.live.send(input_queue_frame(&h));
-                }
-                self.emit(serde_json::json!({"type":"ui_result","id":v["id"],"result":{}}));
-            }
-            // island-side events worth a durable fact (open-link, logs,
-            // context updates) — visible on the audit spine.
-            "ui_audit" => {
-                if let Some(h) = self.viewing_host() {
-                    h.agent
-                        .audit_ui_event(
-                            v["event"].as_str().unwrap_or("mcp.ui"),
-                            v["detail"].as_str().unwrap_or(""),
-                            &WsObserver::new(self.s.live.clone(), h.id.clone()),
-                        )
-                        .await;
-                }
-                self.emit(serde_json::json!({"type":"ui_result","id":v["id"],"result":{}}));
-            }
+            // ── MCP Apps bridge (SEP-1865 / GUI.md §5) — `client/ui.rs` ──
+            "ui_call" | "ui_read" | "ui_message" | "ui_audit" => self.handle_ui(v).await,
             _ => {}
         }
     }

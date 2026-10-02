@@ -78,6 +78,17 @@ function setApprovalMode(m) {
   $('#cmp-mode').textContent = MODE_LABELS[m] || m;
   $('#mode-ic').setAttribute('href', '#i-' + (MODE_ICONS[m] || 'shield'));
 }
+/* reasoning-effort override — kernel truth arrives on hello/replay/effort
+   frames; null means "follow the provider's own". effortLevels is the
+   active model's advertised vocabulary (empty = catalog never learned it;
+   the picker still offers 默认). */
+let effortLevel = null, effortLevels = [];
+function setEffort(level, levels) {
+  effortLevel = level || null;
+  if (Array.isArray(levels)) effortLevels = levels;
+  $('#cmp-effort').textContent = effortLevel || '默认';
+  $('#effort-btn').classList.toggle('lit', !!effortLevel);
+}
 let SESSION_IDS = [], SESSION_META = {};
 const EVLOG = [];
 

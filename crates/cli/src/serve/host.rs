@@ -250,6 +250,18 @@ pub(crate) fn input_queue_frame(host: &Host) -> serde_json::Value {
     })
 }
 
+/// `effort` live frame — the session's reasoning-effort override plus the
+/// level vocabulary the active model advertises. Broadcast on `/effort`
+/// and after a `/model` swap (the picker follows the new vocabulary).
+pub(crate) async fn effort_frame(host: &Host) -> serde_json::Value {
+    serde_json::json!({
+        "type": "effort",
+        "sess": host.id,
+        "level": host.agent.reasoning_effort(),
+        "levels": host.agent.effort_levels().await,
+    })
+}
+
 /// Apply one queued-input control frame (`input_remove` / `input_move` /
 /// `input_edit`) to the FIFO — the mutation lives here next to the queue;
 /// the caller broadcasts `input_queue_frame` afterwards. Unknown ids and

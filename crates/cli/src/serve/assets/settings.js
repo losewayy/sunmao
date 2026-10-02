@@ -117,7 +117,7 @@ function motionPop(anchor) {
 const ctxLen = n => typeof n === 'number' && Number.isFinite(n)
   ? (n >= 1000 ? Math.round(n / 1000) + 'k' : String(n))
   : (n ? String(n) : '');
-const mbadge = m => `${m.vision ? '<span class="tag">图</span>' : ''}${m.context_length ? `<span class="tag">${esc(ctxLen(m.context_length))}</span>` : ''}${(m.thinking || []).length ? `<span class="tag">思:${esc((m.thinking || []).map(t => String(t)).join('/'))}</span>` : ''}`;
+const mbadge = m => `${m.vision ? '<span class="tag">图</span>' : ''}${m.context_length ? `<span class="tag">${esc(ctxLen(m.context_length))}</span>` : ''}${(m.thinking || []).length ? `<span class="tag">思:${esc((m.thinking || []).map(t => String(t)).join('/'))}</span>` : ''}${m.reasoning && !(m.thinking || []).length ? '<span class="tag">思</span>' : ''}`;
 function renderModelRows(p, q) {
   q = (q || '').toLowerCase();
   const rows = [];
@@ -158,6 +158,20 @@ function modelPop(el) {
   } });
 }
 
+/* effort picker — the session-scoped override for the ACTIVE session.
+   Rows: 默认 (clears) + whatever levels the model's catalog advertises;
+   an empty vocabulary still offers 默认 — freeform stays a slash affair
+   (`/effort <anything>` passes through verbatim). */
+function effortPop(el) {
+  const items = [
+    { label: '思考强度' },
+    { v: 'default', t: '默认', d: '跟随模型/provider 自己的设置', on: !effortLevel },
+    ...effortLevels.map(l => ({ v: l, t: l, mono: true, on: l === effortLevel })),
+  ];
+  if (!effortLevels.length) items.push({ v: 'default', t: 'catalog 未声明思考档位', d: '仍可用 /effort <level> 直接设置' });
+  menuPop(el, items, v => wsSend({ type: 'effort', level: v }), { place: 'top', align: 'end' });
+}
+
 const mono = t => `<span class="pill plain">${esc(t)}</span>`;
 const row = (b, s, ctl) => `<div class="cr"><div class="l"><b>${b}</b>${s ? `<span>${s}</span>` : ''}</div>${ctl}</div>`;
 const card = rows => `<div class="card glass cfg">${rows.join('')}</div>`;
@@ -195,13 +209,21 @@ function renderProviders() {
         + `<span class="tag">${p.api_key_set ? 'key 已配置' : '无 key'}</span>${n === MODELS.default_provider ? '<span class="tag">本会话</span>' : ''}`
         + `<div class="pv-acts"><button class="btn ghost sm" data-pv="edit" data-n="${esc(n)}" data-tip="编辑">${ic('pen', 'i sm')}</button><button class="btn ghost sm" data-pv="del" data-n="${esc(n)}" data-tip="删除">${ic('trash', 'i sm')}</button></div></div>`
         + (cat.length
-          ? `<div class="pv-cat">${cat.slice(0, 8).map(m => `<span class="tag" data-tip="${esc(n + '/' + m.id)}">${esc(m.id)}${m.vision ? ' ·图' : ''}${m.context_length ? ' ·' + esc(ctxLen(m.context_length)) : ''}</span>`).join('')}${cat.length > 8 ? `<span class="tag">等 ${cat.length} 个</span>` : ''}</div>`
+          ? `<div class="pv-cat">${cat.slice(0, 8).map(m => `<span class="tag" data-tip="${esc(n + '/' + m.id)}">${esc(m.id)}${m.vision ? ' ·图' : ''}${m.context_length ? ' ·' + esc(ctxLen(m.context_length)) : ''}${(m.thinking || []).length || m.reasoning ? ' ·思' : ''}</span>`).join('')}${cat.length > 8 ? `<span class="tag">等 ${cat.length} 个</span>` : ''}</div>`
           : '');
     }
     html += `<div class="card glass cfg pv">${body}</div>`;
   }
   html += `<div class="card glass cfg pv">${pvEdit && pvEdit.name === null ? provForm('', null) : `<button class="btn ghost sm" data-pv="add">${ic('plus')}添加 provider</button>`}</div>`;
   host.innerHTML = html;
+  // thinking-levels inputs write straight into pvEdit.cands — the save path
+  // serializes them verbatim into catalog entries (comma-separated levels)
+  host.oninput = e => {
+    const i = e.target.closest('.pv-tk');
+    if (!i || !pvEdit) return;
+    const c = pvEdit.cands.find(m => m.id === i.dataset.tk);
+    if (c) c.thinking = i.value.split(',').map(s => s.trim()).filter(Boolean);
+  };
   const am = host.querySelector('[data-f="addmodel"]');
   if (am) am.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); providerAction('addmodel', am); } });
 }
@@ -210,7 +232,7 @@ function provForm(n, p) {
   const val = (k, d) => esc(v[k] != null ? v[k] : (p && p[k] != null ? p[k] : d || ''));
   const cands = v.cands || [];
   const list = cands.length
-    ? `<div class="pv-ckl scroll">${cands.map(m => `<button class="pv-ck" data-mc="${esc(m.id)}">${ic(v.sel && v.sel.has(m.id) ? 'square-check' : 'square', 'i sm')}<span class="mono">${esc(m.id)}</span>${m.vision ? '<span class="tag">图</span>' : ''}${m.context_length ? `<span class="tag">${esc(ctxLen(m.context_length))}</span>` : ''}</button>`).join('')}</div>`
+    ? `<div class="pv-ckl scroll">${cands.map(m => `<div class="pv-ckr"><button class="pv-ck" data-mc="${esc(m.id)}">${ic(v.sel && v.sel.has(m.id) ? 'square-check' : 'square', 'i sm')}<span class="mono">${esc(m.id)}</span>${m.vision ? '<span class="tag">图</span>' : ''}${m.context_length ? `<span class="tag">${esc(ctxLen(m.context_length))}</span>` : ''}</button><input class="pv-tk" data-tk="${esc(m.id)}" value="${esc((m.thinking || []).join(','))}" placeholder="思考档位 low,medium,high" spellcheck="false" data-tip="逗号分隔 — 该模型可选的思考强度；空 = 不声明"></div>`).join('')}</div>`
     : `<div class="pv-empty">${v.fetching ? '拉取中…' : '未拉取 — 也可在下方直接填 model id'}</div>`;
   return `<div class="pv-form">
     <label>名称<input data-f="name" value="${esc(n)}" ${n ? 'disabled' : ''} placeholder="如 default、deepseek"></label>

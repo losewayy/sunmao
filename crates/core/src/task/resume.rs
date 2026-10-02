@@ -4,6 +4,7 @@
 //! context over it (id kept, lane re-claimed), stamp the `resumed` audit
 //! fact, and drive one turn — foreground or detached, same as a spawn.
 
+use crate::context::MutexRecover;
 use std::sync::Arc;
 
 use sunmao_llm::ProviderAdapter;
@@ -12,7 +13,8 @@ use crate::context::Context;
 use crate::session::{SessionEvent, SessionLog};
 use crate::tool::ToolResult;
 
-use super::spawn::{build_sub_ctx, detach, finish_task, run_spawn};
+use super::parts::build_sub_ctx;
+use super::spawn::{detach, finish_task, run_spawn};
 
 /// Resume bookkeeping: a finished entry reopens (new lane + steer handle,
 /// `done` reset — the agent def name survives so a later resume can
@@ -21,17 +23,18 @@ use super::spawn::{build_sub_ctx, detach, finish_task, run_spawn};
 fn roster_reopen(
     ctx: &Context,
     sub_id: &str,
-    lane: u8,
+    lane: u16,
     prompt: &str,
     agent: Option<&str>,
     steer: &crate::context::SteerQueue,
+    cancel: &crate::context::SubCancel,
 ) {
     let mut digest: String = prompt.chars().take(60).collect();
     if prompt.chars().count() > 60 {
         digest.push('…');
     }
     let digest = digest.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut tasks = ctx.live_tasks.lock().unwrap();
+    let mut tasks = ctx.live_tasks.lock_or_recover();
     if let Some(e) = tasks.iter_mut().find(|t| t.id == sub_id) {
         e.lane = lane;
         e.done = None;
@@ -40,6 +43,7 @@ fn roster_reopen(
             e.agent = Some(a.to_string());
         }
         e.prompt = digest;
+        e.cancel = Some(cancel.clone());
     } else {
         tasks.push(crate::context::TaskEntry {
             id: sub_id.to_string(),
@@ -48,6 +52,7 @@ fn roster_reopen(
             prompt: digest,
             done: None,
             steer: Some(steer.clone()),
+            cancel: Some(cancel.clone()),
         });
     }
     drop(tasks);
@@ -76,7 +81,7 @@ pub(super) async fn resume_sub(
         );
     }
     {
-        let tasks = ctx.live_tasks.lock().unwrap();
+        let tasks = ctx.live_tasks.lock_or_recover();
         if tasks.iter().any(|t| t.id == sub_id && t.done.is_none()) {
             anyhow::bail!("{sub_id} is still running — steer it, don't resume");
         }
@@ -93,16 +98,24 @@ pub(super) async fn resume_sub(
     // audit seam: who picked up the baton at this breakpoint stays durable
     {
         let mut l = sub_ctx.sessions.lock().await;
-        let _ = l
-            .append(&SessionEvent::Hook {
-                event: "resumed".into(),
-                detail: format!("{sub_id} continued: {prompt}"),
-            })
-            .await;
+        l.append_audit(&SessionEvent::Hook {
+            event: "resumed".into(),
+            detail: format!("{sub_id} continued: {prompt}"),
+        })
+        .await;
     }
     let agent_name = def.map(|d| d.name.as_str());
     let steer = sub_ctx.steer.clone();
-    roster_reopen(ctx, sub_id, sub_ctx.lane, prompt, agent_name, &steer);
+    let cancel = crate::context::SubCancel::new(&sub_ctx);
+    roster_reopen(
+        ctx,
+        sub_id,
+        sub_ctx.lane,
+        prompt,
+        agent_name,
+        &steer,
+        &cancel,
+    );
     if detached {
         detach(
             ctx,
@@ -110,7 +123,8 @@ pub(super) async fn resume_sub(
             sub_ctx,
             prompt.to_string(),
             "subagent-resume",
-        );
+        )
+        .await;
         Ok(ToolResult {
             output: format!("resumed {sub_id} in the background"),
             ok: true,

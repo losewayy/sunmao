@@ -13,6 +13,7 @@
 //! call returns task ids immediately and each finished child pushes its
 //! result into the parent session as a `TaskDone` fact — no polling.
 
+use crate::context::MutexRecover;
 use std::sync::Arc;
 
 use anyhow::bail;
@@ -23,6 +24,7 @@ use sunmao_llm::types::Tool;
 use crate::context::Context;
 use crate::tool::{ToolImpl, ToolResult};
 
+mod parts;
 mod resume;
 mod spawn;
 use resume::resume_sub;
@@ -61,7 +63,9 @@ impl ToolImpl for TaskTool {
              session as a tagged message. `steer` + `message` injects a mid-run \
              user message into a named running sub-agent. `resume` + `prompt` \
              continues a finished sub-agent on its own transcript (optionally \
-             re-routed via `model`). Use for parallelizable or scope-isolated \
+             re-routed via `model`). The reverse channel exists too: a child \
+             calls `SendMessage` to deliver a tagged user message back into \
+             this session mid-run. Use for parallelizable or scope-isolated \
              work; sub-agents cannot spawn further sub-agents beyond the depth cap.",
             json!({
                 "type": "object",
@@ -158,7 +162,7 @@ impl ToolImpl for TaskTool {
             // the roster never knew — a process restart left only the log —
             // resumes as a generic sub-agent.
             let agent_name = {
-                let tasks = ctx.live_tasks.lock().unwrap();
+                let tasks = ctx.live_tasks.lock_or_recover();
                 tasks
                     .iter()
                     .find(|t| t.id == sub_id)
@@ -359,5 +363,7 @@ fn resolve_spawn_def(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_cancel;
 #[cfg(test)]
 mod tests_steer_resume;

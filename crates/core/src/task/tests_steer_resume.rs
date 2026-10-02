@@ -3,6 +3,7 @@
 //! child on its own log (`resume`, incl. `model` re-route).
 
 use super::*;
+use crate::context::MutexRecover;
 use crate::session::SessionLog;
 use crate::tool::builtin_registry;
 use futures_util::stream;
@@ -38,7 +39,7 @@ impl ProviderAdapter for RecProvider {
     async fn stream(&self, req: ChatRequest<'_>) -> anyhow::Result<DeltaStream> {
         self.calls
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.seen.lock().unwrap().push(
+        self.seen.lock_or_recover().push(
             req.messages
                 .iter()
                 .filter(|m| matches!(m.role, sunmao_llm::types::Role::User))
@@ -125,10 +126,10 @@ async fn steer_into_running_sub_turn() {
                     .filter(|m| matches!(m.role, sunmao_llm::types::Role::User))
                     .filter_map(|m| m.content_text())
                     .collect();
-                self.seen.lock().unwrap().push(users);
+                self.seen.lock_or_recover().push(users);
             }
             let nth = {
-                let mut n = self.nth.lock().unwrap();
+                let mut n = self.nth.lock_or_recover();
                 *n += 1;
                 *n
             };
@@ -154,12 +155,15 @@ async fn steer_into_running_sub_turn() {
         seen: std::sync::Mutex::new(Vec::new()),
         nth: std::sync::Mutex::new(0),
     });
-    let ctx = Context::new(
+    let ctx = Arc::new(Context::new(
         provider.clone(),
         SessionLog::ephemeral(),
         builtin_registry(),
         dir.clone(),
-    );
+    ));
+    // steer via AgentLoop so the `task.steer` audit row lands too — the
+    // parent's log keeps *who pushed what*, the child's keeps the text
+    let agent = crate::agent::AgentLoop::new(ctx.clone());
 
     let res = TaskTool
         .call(
@@ -179,7 +183,9 @@ async fn steer_into_running_sub_turn() {
     // wait for the child's first request, then push the steer while the
     // child is mid-turn (its second request is parked on `release`)
     req1_done.notified().await;
-    ctx.steer_sub(&sub_id, "switch to plan B".into())
+    agent
+        .steer_sub(&sub_id, "switch to plan B".into())
+        .await
         .expect("running sub-agent must accept a steer");
     release.notify_one();
 
@@ -204,12 +210,32 @@ async fn steer_into_running_sub_turn() {
     let result_pos = text.find("\"tool_result\"").expect("tool result precedes");
     assert!(steer_pos > result_pos, "steer folds after the settled pair");
     // and the model's second request carried it
-    let seen = provider.seen.lock().unwrap();
+    let seen = provider.seen.lock_or_recover().clone();
     assert_eq!(seen.len(), 2, "gate releases exactly the second request");
     assert!(
         seen[1].iter().any(|u| u.contains("switch to plan B")),
         "the next request saw the steer — {seen:?}"
     );
+    // the parent's log attributes the push — a steer is an action on the
+    // parent session, not just a child fact
+    {
+        let events = ctx
+            .sessions
+            .lock()
+            .await
+            .events()
+            .await
+            .expect("read parent log");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                crate::session::SessionEvent::Hook { event, detail }
+                    if event == "task.steer" && detail.contains(&sub_id)
+                        && detail.contains("plan B")
+            )),
+            "task.steer audit row must name the child + the text"
+        );
+    }
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -239,7 +265,7 @@ async fn resume_finished_sub_continues_log() {
         .unwrap();
     assert!(res.ok, "{}", res.output);
     let (sub_id, lane1) = {
-        let tasks = ctx.live_tasks.lock().unwrap();
+        let tasks = ctx.live_tasks.lock_or_recover();
         let e = tasks.iter().find(|t| t.done.is_some()).expect("spawn done");
         (e.id.clone(), e.lane)
     };
@@ -270,7 +296,7 @@ async fn resume_finished_sub_continues_log() {
     );
     // roster: same entry reopened — new lane, done flipped again
     {
-        let tasks = ctx.live_tasks.lock().unwrap();
+        let tasks = ctx.live_tasks.lock_or_recover();
         assert_eq!(tasks.len(), 1, "resume reopens, not duplicates");
         let e = &tasks[0];
         assert_ne!(e.lane, lane1, "the continuation claims a fresh lane");
@@ -279,7 +305,7 @@ async fn resume_finished_sub_continues_log() {
     }
     // transcript continuity: the continuation's request folded the first
     // leg's prompt — same log, same conversation.
-    let seen = provider.seen.lock().unwrap();
+    let seen = provider.seen.lock_or_recover();
     assert_eq!(seen.len(), 2);
     assert!(
         seen[1].iter().any(|u| u.contains("first leg"))
@@ -330,7 +356,7 @@ async fn resume_with_model_reroutes_adapter() {
         .await
         .unwrap();
     assert!(res.ok, "{}", res.output);
-    let sub_id = ctx.live_tasks.lock().unwrap()[0].id.clone();
+    let sub_id = ctx.live_tasks.lock_or_recover()[0].id.clone();
 
     let res = TaskTool
         .call(
@@ -364,7 +390,7 @@ async fn steer_to_finished_sub_errors() {
         .await
         .unwrap();
     assert!(res.ok);
-    let sub_id = ctx.live_tasks.lock().unwrap()[0].id.clone();
+    let sub_id = ctx.live_tasks.lock_or_recover()[0].id.clone();
 
     let res = TaskTool
         .call(json!({"steer": sub_id, "message": "too late"}), &ctx)
@@ -467,5 +493,59 @@ async fn resume_running_sub_errors() {
         .expect("running sub refuses resume");
     assert!(err.to_string().contains("still running"), "{err}");
     gate.notify_one();
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Child→parent uplink end-to-end: the child's scripted first request
+/// emits a `SendMessage` tool call, the child's dispatch pushes onto the
+/// parent's steer queue, and — because the call happened before the turn
+/// boundary — the parent's next request carries the tagged message as a
+/// user fact. The second request ends the turn.
+#[tokio::test]
+async fn sendmessage_from_child_reaches_parent_steers() {
+    let dir = crate::fresh_test_dir("uplink");
+    std::fs::create_dir_all(&dir).unwrap();
+    let provider = RecProvider {
+        responses: std::sync::Mutex::new(
+            vec![
+                tool_call_delta(
+                    "c1",
+                    "SendMessage",
+                    r#"{"message":"halfway — need sign-off"}"#,
+                ),
+                text_delta("uplink sent"),
+            ]
+            .into(),
+        ),
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        seen: std::sync::Mutex::new(Vec::new()),
+    };
+    let ctx = Context::new(
+        Arc::new(provider),
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        dir.clone(),
+    );
+    // foreground spawn — the child's whole lifetime sits inside this call;
+    // its SendMessage push is what we're asserting.
+    let res = TaskTool
+        .call(json!({"prompt": "probe then report"}), &ctx)
+        .await
+        .unwrap();
+    assert!(res.ok, "{:?}", res.output);
+    // the child's message sat on the parent's steer queue (nothing drained
+    // it — the parent's own turn never ran; Task.call is a tool result,
+    // not a turn). The queue is the proof of the uplink seam: had the
+    // child tried to write the parent's log directly it would have had to
+    // take the turn fence and produce an out-of-band append.
+    let queued = ctx.steer.lock_or_recover();
+    let items: Vec<&String> = queued.iter().map(|(_, t)| t).collect();
+    assert_eq!(items.len(), 1, "one uplink message queued");
+    assert!(items[0].contains("sub-agent-message"), "tag: {}", items[0]);
+    assert!(
+        items[0].contains("halfway — need sign-off"),
+        "body: {}",
+        items[0]
+    );
     std::fs::remove_dir_all(&dir).ok();
 }

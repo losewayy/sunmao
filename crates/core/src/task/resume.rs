@@ -130,6 +130,10 @@ pub(super) async fn resume_sub(
             ok: true,
         })
     } else {
+        // same drop-guard as drive_foreground — a cancelled foreground
+        // resume would otherwise leave the reopened row stuck at
+        // done: None, refusing every later resume as "still running"
+        let _roster = super::spawn::RosterGuard::new(&ctx.live_tasks, sub_id);
         let res = run_spawn(
             Arc::new(sub_ctx),
             prompt.to_string(),

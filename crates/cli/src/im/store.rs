@@ -115,7 +115,10 @@ impl Store {
 
     pub fn route_put(&self, key: &str, session_id: &str) -> anyhow::Result<()> {
         self.conn.lock().unwrap().execute(
-            "INSERT OR REPLACE INTO routes(session_key, session_id, created) VALUES(?1,?2,?3)",
+            concat!(
+                "INSERT OR REPLACE INTO routes(",
+                "session_key, session_id, created) VALUES(?1,?2,?3)"
+            ),
             rusqlite::params![key, session_id, now()],
         )?;
         Ok(())
@@ -138,14 +141,13 @@ impl Store {
 
     /// `sunmao pairing approve <code>` — admit the sender, returning the
     /// role they got (`owner` when no owner existed yet — bootstrap rule).
-    pub fn allow_add(
-        &self,
-        channel: &str,
-        sender: &str,
-    ) -> anyhow::Result<String> {
+    pub fn allow_add(&self, channel: &str, sender: &str) -> anyhow::Result<String> {
         let role = if self.has_owner() { "user" } else { "owner" };
         self.conn.lock().unwrap().execute(
-            "INSERT OR REPLACE INTO allowlist(channel, sender, role, created) VALUES(?1,?2,?3,?4)",
+            concat!(
+                "INSERT OR REPLACE INTO allowlist(",
+                "channel, sender, role, created) VALUES(?1,?2,?3,?4)"
+            ),
             rusqlite::params![channel, sender, role, now()],
         )?;
         Ok(role.to_string())
@@ -245,7 +247,10 @@ impl Store {
 
     pub fn pairing_insert(&self, row: &PairingRow) -> anyhow::Result<()> {
         self.conn.lock().unwrap().execute(
-            "INSERT OR REPLACE INTO pairing(channel, sender, code, created, expires) VALUES(?1,?2,?3,?4,?5)",
+            concat!(
+                "INSERT OR REPLACE INTO pairing(",
+                "channel, sender, code, created, expires) VALUES(?1,?2,?3,?4,?5)"
+            ),
             rusqlite::params![row.channel, row.sender, row.code, row.created, row.expires],
         )?;
         Ok(())
@@ -260,7 +265,13 @@ impl Store {
             .query_row(
                 "SELECT channel, sender, expires FROM pairing WHERE code=?1",
                 [code],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)),
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                },
             )
             .ok()?;
         if row.2 <= now() {
@@ -277,15 +288,14 @@ impl Store {
 
     /// Record an outbound reply before the first send — the ledger is
     /// what turns a crash mid-send into a redelivery instead of a loss.
-    pub fn deliver_pending(
-        &self,
-        channel: &str,
-        chat: &str,
-        text: &str,
-    ) -> anyhow::Result<i64> {
+    pub fn deliver_pending(&self, channel: &str, chat: &str, text: &str) -> anyhow::Result<i64> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO delivery(channel, chat, text, state, attempts, created, updated) VALUES(?1,?2,?3,'pending',0,?4,?4)",
+            concat!(
+                "INSERT INTO delivery(",
+                "channel, chat, text, state, attempts, created, updated) ",
+                "VALUES(?1,?2,?3,'pending',0,?4,?4)"
+            ),
             rusqlite::params![channel, chat, text, now()],
         )?;
         Ok(conn.last_insert_rowid())
@@ -295,7 +305,10 @@ impl Store {
     /// have gone out; the replayer marks those with the ♻️ prefix.
     pub fn deliver_attempting(&self, id: i64) -> anyhow::Result<()> {
         self.conn.lock().unwrap().execute(
-            "UPDATE delivery SET state='attempting', attempts=attempts+1, updated=?2 WHERE id=?1",
+            concat!(
+                "UPDATE delivery SET state='attempting', ",
+                "attempts=attempts+1, updated=?2 WHERE id=?1"
+            ),
             rusqlite::params![id, now()],
         )?;
         Ok(())
@@ -342,9 +355,7 @@ impl Store {
         self.conn
             .lock()
             .unwrap()
-            .query_row("SELECT value FROM meta WHERE key=?1", [key], |r| {
-                r.get(0)
-            })
+            .query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0))
             .ok()
     }
 
@@ -362,7 +373,14 @@ mod tests {
     use super::*;
 
     fn store() -> (Store, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("sunmao-im-store-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let dir = std::env::temp_dir().join(format!(
+            "sunmao-im-store-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         (Store::open(&dir).unwrap(), dir)
     }

@@ -47,7 +47,10 @@ pub(crate) fn pairing(op: &PairingOp) -> Result<()> {
         PairingOp::List => {
             for row in store.pairing_all() {
                 let mins = ((row.expires - super::store::now()) / 60).max(0);
-                println!("{}\t{}:{} \t({mins}m left)", row.code, row.channel, row.sender);
+                println!(
+                    "{}\t{}:{} \t({mins}m left)",
+                    row.code, row.channel, row.sender
+                );
             }
             for (ch, sender, role) in store.allow_list() {
                 println!("{ch}:{sender}\t{role}");
@@ -112,7 +115,10 @@ struct Gateway {
 /// `im-main.jsonl` is the dmScope=main anchor — resume-safe because the
 /// id is deterministic; `seed` runs exactly once (the Started+system pair
 /// a fresh log needs before a turn can fold).
-async fn open_main_log(workspace: &std::path::Path, model: &str) -> Result<sunmao_core::SessionLog> {
+async fn open_main_log(
+    workspace: &std::path::Path,
+    model: &str,
+) -> Result<sunmao_core::SessionLog> {
     let dir = workspace.join(".sunmao/sessions");
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{MAIN_SESSION_ID}.jsonl"));
@@ -124,8 +130,7 @@ async fn open_main_log(workspace: &std::path::Path, model: &str) -> Result<sunma
             cwd: workspace.display().to_string(),
         })
         .await?;
-        let prompt = sunmao_core::prompt::PromptAssembler::new(workspace)
-            .assemble(None);
+        let prompt = sunmao_core::prompt::PromptAssembler::new(workspace).assemble(None);
         log.append(&sunmao_core::SessionEvent::Message {
             message: sunmao_llm::types::Message::system(prompt),
         })
@@ -181,8 +186,7 @@ pub(crate) async fn run(cli: &Cli) -> Result<()> {
     let mut deliveries: Vec<Arc<Delivery>> = Vec::new();
 
     if let Some(tg) = cfg.telegram() {
-        let adapter: Arc<dyn ChannelAdapter> =
-            Arc::new(TelegramAdapter::new(tg, store.clone())?);
+        let adapter: Arc<dyn ChannelAdapter> = Arc::new(TelegramAdapter::new(tg, store.clone())?);
         let delivery = Arc::new(Delivery::new(store.clone(), adapter.clone()));
         delivery.resend_outstanding().await;
         let prog = progress::run(
@@ -283,12 +287,16 @@ impl Gateway {
                 .host
                 .queue_next_id
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            self.host.queue.lock().unwrap().push_back(crate::serve::host::Input {
-                id,
-                client: IM_CLIENT,
-                text: prompt,
-                attachments: Vec::new(),
-            });
+            self.host
+                .queue
+                .lock()
+                .unwrap()
+                .push_back(crate::serve::host::Input {
+                    id,
+                    client: IM_CLIENT,
+                    text: prompt,
+                    attachments: Vec::new(),
+                });
             self.host
                 .agent
                 .context()
@@ -301,12 +309,7 @@ impl Gateway {
 
     /// Control commands — `/stop` and the owner's `/pairing` mgmt. All
     /// replies are ledgered final-style sends (plain text).
-    async fn control(
-        &self,
-        src: &ImSource,
-        cmd: &str,
-        deliveries: &[Arc<Delivery>],
-    ) -> Result<()> {
+    async fn control(&self, src: &ImSource, cmd: &str, deliveries: &[Arc<Delivery>]) -> Result<()> {
         let reply = match cmd.split_whitespace().next().unwrap_or("") {
             "stop" => {
                 // main-agent stop only — sub-agents keep running (owner

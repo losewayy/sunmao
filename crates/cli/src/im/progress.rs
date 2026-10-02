@@ -74,10 +74,7 @@ pub fn expect_reply(state: &Shared, key: ChatKey) {
 
 /// The draft's body — status text only, no answer fragments.
 fn draft_text(st: &ProgressState) -> String {
-    let elapsed = st
-        .turn_started
-        .map(|t| t.elapsed().as_secs())
-        .unwrap_or(0);
+    let elapsed = st.turn_started.map(|t| t.elapsed().as_secs()).unwrap_or(0);
     let last = if st.last_tool.is_empty() {
         "thinking".to_string()
     } else {
@@ -204,7 +201,8 @@ async fn tick(state: &Shared, adapter: &Arc<dyn ChannelAdapter>) {
             let d = st.drafts.get(&key);
             (
                 d.and_then(|d| d.message_id.clone()),
-                d.and_then(|d| d.last_edit).is_none_or(|t| t.elapsed() >= EDIT_INTERVAL),
+                d.and_then(|d| d.last_edit)
+                    .is_none_or(|t| t.elapsed() >= EDIT_INTERVAL),
             )
         };
         if !due {
@@ -283,9 +281,11 @@ mod tests {
 
     #[test]
     fn draft_line_has_elapsed() {
-        let mut st = ProgressState::default();
-        st.turn_started = Some(Instant::now());
-        st.last_tool = "Bash".into();
+        let st = ProgressState {
+            turn_started: Some(Instant::now()),
+            last_tool: "Bash".into(),
+            ..Default::default()
+        };
         let t = draft_text(&st);
         assert!(t.contains("Bash") && t.contains('s'));
     }

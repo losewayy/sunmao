@@ -123,6 +123,13 @@ crates/cli     every frontend + flag plumbing. Thin by design — heavy logic
                │   ├── theme.rs  semantic palette + legacy-glyph fallbacks
                │   └── *_tests.rs / tests.rs — state + render fixtures
                ├── acp/         ACP v2 server — mod.rs wire, observer.rs outbound adapters
+               ├── im/          IM gateway — `sunmao im` daemon: channels/*
+               │                (telegram getUpdates adapter), config.rs
+               │                (channels.json), authz.rs (pairing/
+               │                allowlist), route.rs (session keys),
+               │                store.rs (SQLite ledger), progress.rs
+               │                (draft edits + final fan-out), deliver.rs
+               │                (at-least-once), runtime.rs (inbound loop)
                ├── dataflow.rs   session-log → audit report
                ├── eval.rs       `sunmao eval` case runner + assertion pass
                └── doctor.rs     env self-check

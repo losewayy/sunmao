@@ -70,16 +70,16 @@ impl Delivery {
                 continue;
             }
             let text = if row.state == "attempting" {
-                format!(
-                    "{}{}",
-                    super::messages::get("redelivery_prefix"),
-                    row.text
-                )
+                format!("{}{}", super::messages::get("redelivery_prefix"), row.text)
             } else {
                 row.text
             };
             if let Err(e) = self.attempt(row.id, &row.chat, &text).await {
-                tracing::warn!("im delivery replay {} (attempt {}): {e:#}", row.id, row.attempts);
+                tracing::warn!(
+                    "im delivery replay {} (attempt {}): {e:#}",
+                    row.id,
+                    row.attempts
+                );
             }
         }
     }
@@ -118,8 +118,14 @@ mod tests {
     }
 
     fn store() -> (Arc<Store>, std::path::PathBuf) {
-        let dir =
-            std::env::temp_dir().join(format!("sunmao-im-dlv-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let dir = std::env::temp_dir().join(format!(
+            "sunmao-im-dlv-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         (Arc::new(Store::open(&dir).unwrap()), dir)
     }
@@ -161,11 +167,15 @@ mod tests {
             sends: Mutex::new(Vec::new()),
             fail_next: Mutex::new(0),
         });
-        Delivery::new(s.clone(), a.clone()).resend_outstanding().await;
+        Delivery::new(s.clone(), a.clone())
+            .resend_outstanding()
+            .await;
         let sent = a.sends.lock().await;
         assert_eq!(sent.len(), 1);
         assert!(
-            sent[0].1.starts_with(&crate::im::messages::get("redelivery_prefix")),
+            sent[0]
+                .1
+                .starts_with(&crate::im::messages::get("redelivery_prefix")),
             "attempting rows replay with the ♻️ marker"
         );
         std::fs::remove_dir_all(dir).ok();
@@ -179,7 +189,9 @@ mod tests {
             sends: Mutex::new(Vec::new()),
             fail_next: Mutex::new(0),
         });
-        Delivery::new(s.clone(), a.clone()).resend_outstanding().await;
+        Delivery::new(s.clone(), a.clone())
+            .resend_outstanding()
+            .await;
         assert_eq!(a.sends.lock().await[0].1, "out");
         std::fs::remove_dir_all(dir).ok();
     }

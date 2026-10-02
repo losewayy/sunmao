@@ -95,9 +95,6 @@ mod tests {
 
     #[test]
     fn prompt_carries_attribution() {
-        assert_eq!(
-            prompt_text(&src(), "hi"),
-            "[im:telegram from ada] hi"
-        );
+        assert_eq!(prompt_text(&src(), "hi"), "[im:telegram from ada] hi");
     }
 }

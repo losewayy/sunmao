@@ -41,12 +41,14 @@ pub fn admitted(cfg: &ChannelsConfig, store: &Store, src: &ImSource) -> bool {
     let in_list = |list: &[String]| list.iter().any(|e| e == "*" || e == &entry);
     let mut allowlist = in_list(&cfg.allowlist);
     let mut policy = cfg.dm_policy;
-    if let Some(super::config::ChannelSpec::Telegram(tg)) = cfg
-        .channels
-        .iter()
-        .find(|c| c.kind_name() == src.channel)
+    if let Some(super::config::ChannelSpec::Telegram(tg)) =
+        cfg.channels.iter().find(|c| c.kind_name() == src.channel)
     {
-        if tg.allowlist.iter().any(|e| e == &src.sender_id || e == &entry) {
+        if tg
+            .allowlist
+            .iter()
+            .any(|e| e == &src.sender_id || e == &entry)
+        {
             allowlist = true;
         }
         if let Some(p) = tg.dm_policy {
@@ -112,9 +114,7 @@ fn pair_reply(cfg: &ChannelsConfig, store: &Store, src: &ImSource) -> Verdict {
         created: super::store::now(),
         expires: super::store::now() + CODE_TTL_SECS,
     });
-    Verdict::Reply(
-        super::messages::get("pairing_offer").replace("{code}", &code),
-    )
+    Verdict::Reply(super::messages::get("pairing_offer").replace("{code}", &code))
 }
 
 /// Inbound admission: admitted senders pass, strangers get the pairing
@@ -175,8 +175,14 @@ mod tests {
     }
 
     fn store() -> (Store, std::path::PathBuf) {
-        let dir =
-            std::env::temp_dir().join(format!("sunmao-im-authz-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let dir = std::env::temp_dir().join(format!(
+            "sunmao-im-authz-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         (Store::open(&dir).unwrap(), dir)
     }

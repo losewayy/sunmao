@@ -6,10 +6,10 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block as WBlock, Borders, Paragraph, Wrap};
 
-use super::app::{self, App, ApprovalCard, Focus};
+use super::app::{App, ApprovalCard, Focus};
 use super::menu::{MenuKind, SlashMenu};
 use super::theme::{self, THEME};
-use super::wrap;
+use super::wrap::{self, char_to_byte};
 
 pub fn draw(f: &mut ratatui::Frame, app: &mut App) {
     // Full-screen viewer takes over the whole frame — long outputs (diffs,
@@ -303,7 +303,7 @@ fn draw_input(f: &mut ratatui::Frame, app: &App, area: Rect) {
         .wrap(Wrap { trim: false });
     f.render_widget(input, area);
     // cursor: row = newlines before cursor; col = width of last-line prefix
-    let byte_idx = app::char_to_byte(&app.input, app.cursor);
+    let byte_idx = char_to_byte(&app.input, app.cursor);
     let before = &app.input[..byte_idx];
     let row = before.matches('\n').count() as u16;
     let col = before
@@ -392,7 +392,7 @@ fn draw_status(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
                 let pct = u
                     .cache_read_input_tokens
                     .checked_mul(100)
-                    .and_then(|n| n.checked_div(u.prompt_tokens + u.cache_read_input_tokens))
+                    .and_then(|n| n.checked_div(u.prompt_tokens)) // prompt_tokens already totals input
                     .unwrap_or(0);
                 format!(" · ⚡{pct}%")
             } else {
@@ -477,4 +477,13 @@ fn human_tokens(n: u64) -> String {
     } else {
         n.to_string()
     }
+}
+
+/// OSC 52 clipboard write — works over SSH/most modern terminals.
+pub fn osc52_copy(text: &str) -> bool {
+    use base64::Engine;
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    let payload = base64::engine::general_purpose::STANDARD.encode(text);
+    write!(out, "\x1b]52;c;{payload}\x07").is_ok() && out.flush().is_ok()
 }

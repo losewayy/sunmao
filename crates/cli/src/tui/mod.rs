@@ -64,6 +64,10 @@ enum Msg {
     Model(String),
     /// /mode switch landed — footer shows the new approval stance
     Mode(sunmao_core::agent::ApprovalMode),
+    /// a queued `!` submission ran to completion — pop the queue head;
+    /// `!` emits ToolDone but never a TurnEnd, so the queue would
+    /// otherwise hold a phantom entry forever.
+    QueuePop,
 }
 
 /// A risky tool call suspended on user verdict.
@@ -343,6 +347,23 @@ async fn run_inner(
                     app.push_note(&format!("[artifact '{name}' → {path} ({bytes} B{v})]"));
                 }
                 LiveEvent::Usage(u) => app.last_usage = Some(u),
+                // the durable facts' live mirrors — the TUI renders them as
+                // the same notes a replay of the log would produce
+                LiveEvent::Compacted { summary } => {
+                    app.blocks.clear();
+                    app.render_cache.clear();
+                    app.push_note(&format!("[context compacted] {summary}"));
+                }
+                LiveEvent::Todos { .. } => {} // tool echo already carries it
+                // serve-only live mirror of the durable user message — the
+                // TUI prints its own prompt on submit, so it never lands
+                LiveEvent::UserMessage { .. } => {}
+                LiveEvent::TaskDone { id, ok, .. } => {
+                    app.push_note(&format!(
+                        "[sub-agent {id} {}]",
+                        if ok { "done" } else { "failed" }
+                    ));
+                }
                 LiveEvent::TurnEnd { outcome } => {
                     app.close_turn();
                     // one queued submission moved from waiting → running
@@ -356,6 +377,9 @@ async fn run_inner(
             Some(Msg::Branch(b)) => app.git_branch = b,
             Some(Msg::Model(label)) => app.model = label,
             Some(Msg::Mode(m)) => app.approval_mode = m,
+            Some(Msg::QueuePop) => {
+                app.queue.pop_front();
+            }
             Some(Msg::Wheel(d)) => {
                 // wheel: scrolls transcript; in the viewer it scrolls that.
                 if app.focus == Focus::Viewer {
@@ -373,6 +397,7 @@ async fn run_inner(
                 app.blocks.clear();
                 app.selected = 0;
                 app.scroll_back = 0;
+                app.render_cache.clear();
                 app.replay(&events);
                 app.push_note("[session resumed]");
             }

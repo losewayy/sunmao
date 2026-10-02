@@ -49,7 +49,7 @@ pub struct ToolBlock {
     pub depth: u8,
     /// which concurrent child this came from — parallel batch children
     /// share depth but must never alias each other's blocks.
-    pub lane: u8,
+    pub lane: u16,
     /// the provider's tool_call id — the exact start↔done join key; None on
     /// replayed calls and synthetic rows (local `!` shell).
     pub call_id: Option<String>,
@@ -103,7 +103,7 @@ impl Block {
         name: &str,
         summary: &str,
         depth: u8,
-        lane: u8,
+        lane: u16,
         call_id: Option<String>,
     ) -> Self {
         let mut b = Self::new(BlockKind::Tool);
@@ -126,7 +126,7 @@ impl Block {
     /// ToolDone? Depth+lane are part of the match — a parent's call, a
     /// sub-agent's call, and a parallel sibling's same-named call are all
     /// different blocks.
-    pub fn is_running_tool(&self, name: &str, depth: u8, lane: u8) -> bool {
+    pub fn is_running_tool(&self, name: &str, depth: u8, lane: u16) -> bool {
         self.kind == BlockKind::Tool
             && self.tool.as_ref().is_some_and(|t| {
                 t.name == name && t.depth == depth && t.lane == lane && t.done.is_none()

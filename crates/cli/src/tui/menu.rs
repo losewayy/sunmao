@@ -5,7 +5,8 @@
 //! themselves are shared logic: `commands::{candidates, scan_files}`,
 //! `sessions::recent_sessions`.
 
-use super::app::{App, char_to_byte};
+use super::app::App;
+use super::wrap::char_to_byte;
 use crate::commands;
 use crate::sessions;
 
@@ -51,16 +52,19 @@ impl App {
             return None;
         }
         let rest = self.input.strip_prefix('/')?;
-        if let Some(frag) = rest.strip_prefix("model ") {
-            return Some((MenuKind::Args, frag));
-        }
-        for name in ["resume ", "sessions ", "fork "] {
-            if let Some(frag) = rest.strip_prefix(name) {
-                return Some((MenuKind::Sessions, frag));
+        // Split the command name at the FIRST whitespace, then trim the
+        // fragment — `/resume  s-1` (double space) and `/model\tx` land the
+        // same arg menu as a single space; the old literal `"name "` prefix
+        // refused those whitespace variants the submit parser accepts.
+        if let Some((name, tail)) = rest.split_once(char::is_whitespace) {
+            match name {
+                "model" => return Some((MenuKind::Args, tail.trim_start())),
+                "resume" | "sessions" | "fork" => {
+                    return Some((MenuKind::Sessions, tail.trim_start()));
+                }
+                // unknown command + args → not a completable fragment
+                _ => return None,
             }
-        }
-        if rest.chars().any(char::is_whitespace) {
-            return None;
         }
         Some((MenuKind::Command, rest))
     }

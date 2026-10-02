@@ -192,6 +192,7 @@ function route(v) {
     case 'models_changed': refreshModels(); break;
     case 'ui_changed': loadUi(); break;
     case 'shell_changed': refreshShell(); break;
+    case 'wallpaper_changed': loadCustom(true); break;
     case 'model':
       if (sess === sessionId) { modelLabel = v.label || modelLabel; $('#cmp-model').textContent = modelLabel; toast(`模型切换为 ${v.label}`, 'cpu'); }
       break;

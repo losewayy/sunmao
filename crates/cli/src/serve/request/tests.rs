@@ -74,6 +74,7 @@ fn shared_at(cwd: std::path::PathBuf) -> super::super::host::Shared {
         model_label: String::new(),
         sandbox_port: 0,
         prompt_override: None,
+        driver_override: None,
         approval_ids: Arc::new(AtomicU64::new(0)),
         mgmt,
     }
@@ -301,5 +302,103 @@ async fn shell_route_writes_project_pin() {
         serde_json::from_slice(&h.request("GET", "/shell", b"").await.body).unwrap();
     assert!(matches!(v["backend"].as_str().unwrap(), "pwsh" | "posix"));
     assert!(v["pwsh_on_path"].is_boolean());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `PUT|GET /wallpaper` — a data URL lands as `.sunmao/wallpapers/
+/// custom.{ext}` and reads back with the sniffed Content-Type; junk data
+/// URLs and non-whitelisted bytes are rejected, and a second upload rotates
+/// the file out instead of accumulating.
+#[tokio::test]
+async fn wallpaper_route_roundtrips_and_rotates() {
+    use base64::Engine;
+    let root = std::env::temp_dir().join(format!("sunmao-wall-{}", std::process::id()));
+    std::fs::create_dir_all(root.join(".sunmao/sessions")).unwrap();
+    let s = std::sync::Arc::new(shared_at(root.clone()));
+    let mut rx = s.live.subscribe();
+    let h = super::HostHandle { s };
+    let b64 = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
+
+    // nothing stored yet
+    assert_eq!(h.request("GET", "/wallpaper", b"").await.status, 404);
+
+    // bad data URLs and non-image bytes get refused, nothing written
+    assert_eq!(h.request("PUT", "/wallpaper", b"data:").await.status, 400);
+    assert_eq!(
+        h.request("PUT", "/wallpaper", b"data:image/jpeg;base64,!!!")
+            .await
+            .status,
+        400
+    );
+    assert_eq!(
+        h.request("PUT", "/wallpaper", b"data:text/plain;base64,aGVsbG8=")
+            .await
+            .status,
+        400
+    );
+    let gif = format!("data:image/gif;base64,{}", b64(b"GIF89a\0\0\0\0"));
+    assert_eq!(
+        h.request("PUT", "/wallpaper", gif.as_bytes()).await.status,
+        400
+    );
+    assert!(!root.join(".sunmao/wallpapers").exists());
+
+    // png data URL round-trips; the stored extension drives the GET mime
+    let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3];
+    let put = h
+        .request(
+            "PUT",
+            "/wallpaper",
+            format!("data:image/png;base64,{}", b64(&png)).as_bytes(),
+        )
+        .await;
+    assert_eq!(put.status, 200);
+    assert!(root.join(".sunmao/wallpapers/custom.png").exists());
+    assert_eq!(
+        rx.try_recv().unwrap()["type"].as_str().unwrap(),
+        "wallpaper_changed"
+    );
+    let got = h.request("GET", "/wallpaper", b"").await;
+    assert_eq!(got.status, 200);
+    assert_eq!(got.body, png);
+    let ctype = got
+        .headers
+        .iter()
+        .find(|(k, _)| k == "content-type")
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
+    assert_eq!(ctype, "image/png");
+
+    // a jpeg upload (raw bytes, no data URL) rotates the png out — the dir
+    // still holds exactly one file and GET serves the new bytes
+    let jpg = [0xFF, 0xD8, 0xFF, 0xE0, 9, 9];
+    let put2 = h.request("PUT", "/wallpaper", &jpg).await;
+    assert_eq!(put2.status, 200);
+    assert!(!root.join(".sunmao/wallpapers/custom.png").exists());
+    assert!(root.join(".sunmao/wallpapers/custom.jpg").exists());
+    let got2 = h.request("GET", "/wallpaper", b"").await;
+    assert_eq!(got2.body, jpg);
+    assert_eq!(
+        got2.headers
+            .iter()
+            .find(|(k, _)| k == "content-type")
+            .map(|(_, v)| v.as_str())
+            .unwrap_or(""),
+        "image/jpeg"
+    );
+    let files: Vec<_> = std::fs::read_dir(root.join(".sunmao/wallpapers"))
+        .unwrap()
+        .flatten()
+        .collect();
+    assert_eq!(files.len(), 1);
+
+    // oversized upload is refused and the stored wallpaper survives
+    let big = {
+        let mut v = vec![0xFF, 0xD8, 0xFF];
+        v.resize(super::ui::WALL_MAX + 1, 0u8);
+        v
+    };
+    assert_eq!(h.request("PUT", "/wallpaper", &big).await.status, 413);
+    assert_eq!(h.request("GET", "/wallpaper", b"").await.body, jpg);
     let _ = std::fs::remove_dir_all(&root);
 }

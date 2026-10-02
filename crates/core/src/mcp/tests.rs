@@ -476,3 +476,26 @@ async fn list_changed_refreshes_registry_at_turn_boundary() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `${VAR}` must not leak its closing brace into the header value —
+/// the name-end offset was measured inside the braces but applied to the
+/// un-braced remainder, so every `${VAR}` expansion emitted `…}`.
+#[test]
+fn expand_env_consumes_the_closing_brace() {
+    unsafe { std::env::set_var("SUNMAO_TEST_TOK", "sekrit") };
+    assert_eq!(
+        super::spec::expand_env("Bearer ${SUNMAO_TEST_TOK}"),
+        "Bearer sekrit"
+    );
+    assert_eq!(
+        super::spec::expand_env("k=${SUNMAO_TEST_TOK}&x=1"),
+        "k=sekrit&x=1"
+    );
+    assert_eq!(super::spec::expand_env("$SUNMAO_TEST_TOK-x"), "sekrit-x");
+    // unset collapses to empty, unterminated braces expand to end,
+    // non-name `$` stays literal
+    assert_eq!(super::spec::expand_env("${NOPE_VAR_ZZ}"), "");
+    assert_eq!(super::spec::expand_env("${SUNMAO_TEST_TOK"), "sekrit");
+    assert_eq!(super::spec::expand_env("a$b c"), "a c");
+    unsafe { std::env::remove_var("SUNMAO_TEST_TOK") };
+}

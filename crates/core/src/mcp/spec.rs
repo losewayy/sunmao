@@ -47,15 +47,23 @@ pub(crate) struct ServerSpec {
 
 /// `${VAR}`/`$VAR` expansion in header values — the mcp.json convention
 /// for env-sourced request headers. Unset vars expand to empty.
-fn expand_env(value: &str) -> String {
+// crate-visible for the sibling tests module — the function itself stays
+// out of the public API
+pub(crate) fn expand_env(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     let mut rest = value;
     while let Some(i) = rest.find('$') {
         out.push_str(&rest[..i]);
         rest = &rest[i + 1..];
-        let (name, braced) = if let Some(r) = rest.strip_prefix('{') {
-            let end = r.find('}').unwrap_or(r.len());
-            (&r[..end], end + 1)
+        // `consumed` counts bytes past the '$' — the brace lives in `rest`,
+        // not in `r`, so it must be part of the skip (a name-only skip used
+        // to leave the closing `}` in the output)
+        let (name, consumed) = if let Some(r) = rest.strip_prefix('{') {
+            match r.find('}') {
+                Some(end) => (&r[..end], end + 2),
+                // unterminated — the tail is the name, '$' and '{' are eaten
+                None => (r, r.len() + 1),
+            }
         } else {
             let end = rest
                 .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
@@ -63,16 +71,13 @@ fn expand_env(value: &str) -> String {
             (&rest[..end], end)
         };
         if name.is_empty() {
+            // `$` not followed by a name — keep it literal and rescan the
+            // remainder (`${}` and `$$x` both survive untouched)
             out.push('$');
-            rest = &rest[if braced > 0 {
-                braced.min(rest.len())
-            } else {
-                0
-            }..];
             continue;
         }
         out.push_str(&std::env::var(name).unwrap_or_default());
-        rest = &rest[braced..];
+        rest = &rest[consumed..];
     }
     out.push_str(rest);
     out

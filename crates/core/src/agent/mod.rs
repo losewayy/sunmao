@@ -35,6 +35,7 @@ mod events;
 mod summary;
 
 pub use events::{LiveEvent, Observer, TurnOutcome};
+pub(crate) use gate::{audit_fact, gate_call};
 pub use summary::call_summary;
 pub(crate) use summary::{specifier_for, tool_timeout_for, truncate_output};
 

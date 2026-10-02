@@ -443,7 +443,12 @@ mod tests {
 
     #[test]
     fn builtin_sections_all_present_in_order() {
-        let s = PromptAssembler::new(scratch()).assemble(None);
+        let dir = scratch();
+        // dialect section varies by backend — pin posix so the assertion
+        // doesn't depend on whether this box has pwsh on PATH
+        std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+        std::fs::write(dir.join(".sunmao/shell.txt"), "posix").unwrap();
+        let s = PromptAssembler::new(&dir).assemble(None);
         let id = s.find("You are sunmao").unwrap();
         let tg = s.find("Prefer dedicated tools").unwrap();
         let sd = s.find("deno_task_shell").unwrap();
@@ -462,6 +467,7 @@ mod tests {
         let sd = dir.join(".sunmao");
         std::fs::create_dir_all(&sd).unwrap();
         std::fs::write(sd.join("prompt.md"), "PROJECT RULE: be nice").unwrap();
+        std::fs::write(sd.join("shell.txt"), "posix").unwrap();
         let s = PromptAssembler::new(&dir).assemble(None);
         assert!(s.contains("deno_task_shell"));
         assert!(s.contains("PROJECT RULE: be nice"));

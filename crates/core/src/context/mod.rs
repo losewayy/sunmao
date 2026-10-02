@@ -77,7 +77,8 @@ pub struct Context {
     /// where the loop already checks.
     pub cancel_notify: std::sync::Arc<tokio::sync::Notify>,
     /// Which shell executes `Bash` — resolved once from `SUNMAO_SHELL` /
-    /// `.sunmao/shell.txt` at context build (see `tool::ShellBackend`).
+    /// `.sunmao/shell.txt` / `~/.sunmao/shell.txt` / platform auto-detect at
+    /// context build (see `tool::ShellBackend`).
     pub shell: crate::tool::ShellBackend,
     /// Per-tool watchdog seconds (`assets/tool-timeouts.txt` merged with
     /// `.sunmao/tool-timeouts.txt` + plugin dirs). A listed tool's call is

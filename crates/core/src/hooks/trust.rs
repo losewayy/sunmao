@@ -95,13 +95,15 @@ pub(crate) fn set_pin(cwd: &Path, source: &Path, command: &str, set: bool) -> Re
     let path = ledger_path(cwd);
     let mut doc: serde_json::Value = std::fs::read_to_string(&path)
         .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_else(|| serde_json::json!({"trusted": {}}));
-    let map = doc
-        .as_object_mut()
-        .and_then(|o| o.get_mut("trusted"))
-        .and_then(|t| t.as_object_mut())
-        .ok_or_else(|| "trusted-hooks.json: 'trusted' is not an object".to_string())?;
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| serde_json::json!({}));
+    // missing or wrong-shaped "trusted" key heals to an object — a
+    // hand-edited ledger shouldn't wedge the pin path
+    if !doc["trusted"].is_object() {
+        doc["trusted"] = serde_json::json!({});
+    }
+    let map = doc["trusted"].as_object_mut().unwrap();
     let key = digest(source, command);
     if set {
         map.insert(
@@ -258,6 +260,12 @@ mod tests {
         set_pin(&dir, &src, "echo hi", false).unwrap();
         assert!(!is_trusted(&dir, Layer::Project, &src, "echo hi"));
         assert!(!ledger_path(&dir).exists());
+
+        // a hand-broken ledger heals instead of wedging the pin path
+        std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+        std::fs::write(ledger_path(&dir), r#"{"trusted": 5}"#).unwrap();
+        set_pin(&dir, &src, "echo hi", true).unwrap();
+        assert!(is_trusted(&dir, Layer::Project, &src, "echo hi"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

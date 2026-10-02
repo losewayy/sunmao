@@ -20,6 +20,33 @@ impl ProviderAdapter for MockProvider {
     }
 }
 
+/// Scripted provider — each queued Vec is one response replayed in order,
+/// falling back to a plain "done" reply once the queue drains (shared with
+/// sub-agents: the child dequeues the same queue).
+struct QueuedProvider {
+    responses: std::sync::Mutex<std::collections::VecDeque<Vec<StreamDelta>>>,
+}
+#[async_trait::async_trait]
+impl ProviderAdapter for QueuedProvider {
+    async fn stream(&self, _req: ChatRequest<'_>) -> anyhow::Result<DeltaStream> {
+        let deltas = self
+            .responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| {
+                vec![
+                    StreamDelta::Content("done".into()),
+                    StreamDelta::Finish {
+                        reason: Some("stop".into()),
+                        usage: None,
+                    },
+                ]
+            });
+        Ok(Box::pin(stream::iter(deltas.into_iter().map(Ok))))
+    }
+}
+
 /// run_in_background returns a task id at once, and the finished child
 /// pushes a TaskDone fact into the *parent's* session log — the fold
 /// then surfaces it as a tagged user message (push delivery, no polling).
@@ -257,5 +284,110 @@ async fn call_site_model_routes_and_unknown_selector_fails() {
         .unwrap();
     assert!(res.ok, "{}", res.output);
     assert!(res.output.contains("bg done"), "{}", res.output);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `permissions:` frontmatter reaches the child's dispatch gate
+/// end-to-end: a `deny:Write` def's own Write call refuses inside the
+/// spawn — a durable `permission.denied` row lands in the CHILD's log and
+/// the file never exists. The overlay also outranks the shared session
+/// grant (gate checks deny before grants — `build_sub_ctx`'s session_grants
+/// comment is the contract): granting `Write` on the parent must not leak
+/// into the restricted child.
+#[tokio::test]
+async fn subagent_deny_rule_hard_refuses_inside_the_spawn() {
+    let dir = crate::fresh_test_dir("perms");
+    let agents = dir.join(".sunmao/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(
+        agents.join("writer.md"),
+        "---\nname: writer\ndescription: w\npermissions: deny:Write\n---\nyou write",
+    )
+    .unwrap();
+    let ctx = Arc::new(Context::new(
+        Arc::new(QueuedProvider {
+            responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                // the child's first turn: try to Write
+                vec![
+                    StreamDelta::ToolCalls(vec![
+                        sunmao_llm::ToolCallFragment {
+                            index: 0,
+                            id: Some("w".into()),
+                            name: Some("Write".into()),
+                            arguments: None,
+                        },
+                        sunmao_llm::ToolCallFragment {
+                            index: 0,
+                            arguments: Some(
+                                "{\"path\":\"child-wrote.txt\",\"content\":\"x\"}".into(),
+                            ),
+                            ..Default::default()
+                        },
+                    ]),
+                    StreamDelta::Finish {
+                        reason: Some("tool_calls".into()),
+                        usage: None,
+                    },
+                ],
+                // the child's second turn: accept the refusal and finish
+                vec![
+                    StreamDelta::Content("can't write, done".into()),
+                    StreamDelta::Finish {
+                        reason: Some("stop".into()),
+                        usage: None,
+                    },
+                ],
+            ])),
+        }),
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        dir.clone(),
+    ));
+    // a standing grant on the PARENT — the child's deny must still win
+    ctx.grant_session("Write", "child-wrote.txt");
+    assert_eq!(
+        ctx.permissions.check("Write", "child-wrote.txt"),
+        crate::permissions::Verdict::Default,
+        "the parent has no Write rule — denial can only come from the def"
+    );
+
+    let res = TaskTool
+        .call(
+            json!({"prompt": "write the file", "subagent_type": "writer"}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(res.ok, "child should recover and finish: {}", res.output);
+    assert!(res.output.contains("can't write"), "{}", res.output);
+    // the deny never let the write execute
+    assert!(
+        !dir.join("child-wrote.txt").exists(),
+        "denied Write must not create the file"
+    );
+    // and the refusal is durable in the child's own log — the overlay is
+    // provably on the child's Context, not just the parent's view of it
+    let sessions_dir = dir.join(".sunmao/sessions");
+    let mut denied = None;
+    for e in crate::sorted_entries(&sessions_dir) {
+        let p = e.path();
+        if !p
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with("sub-"))
+        {
+            continue;
+        }
+        let log = SessionLog::open_path(&p).await.unwrap();
+        if log.events().await.unwrap().iter().any(|e| {
+            matches!(e, SessionEvent::Hook { event, detail }
+                if event == "permission.denied" && detail.contains("Write"))
+        }) {
+            denied = Some(p);
+        }
+    }
+    assert!(
+        denied.is_some(),
+        "child log must carry a permission.denied row for Write"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }

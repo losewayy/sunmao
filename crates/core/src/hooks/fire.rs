@@ -9,6 +9,12 @@
 //! Everything whose outcome flows back into the loop — PreToolUse veto,
 //! UserPromptSubmit injection, PostToolUse context, the permissionDecision
 //! verdict — still awaits every hook before returning.
+//!
+//! Trust pinning is enforced at plan time (`hooks/trust.rs`): an
+//! unpinned project/plugin command never becomes a PlannedHook — there is
+//! no path from config file to exec that skips the gate. The skip itself
+//! is a `hook.untrusted` audit fact (durable row + live ⚙ line + tracing),
+//! so "the hook that didn't run" is reconstructible from the log alone.
 
 use std::path::Path;
 
@@ -30,20 +36,31 @@ pub(super) struct PlannedHook {
     normalize: cursor::Dialect,
 }
 
+/// A command the trust gate refused — the audit trail's `detail` half is
+/// assembled once here so the durable row and the live line say the same
+/// thing.
+struct SkippedHook {
+    detail: String,
+}
+
 impl HookEngine {
     /// One command hook frozen for async execution — resolves the command
     /// string and serializes the dialect payload up front, so the detached
-    /// path never borrows `HookInput` past the call frame.
+    /// path never borrows `HookInput` past the call frame. The trust gate
+    /// lives here: `command_trusted` is the ONLY check, and an unpinned
+    /// command returns a skip record instead of a plan — no second code
+    /// path can reach exec without passing it.
     fn planned_hooks(
         &self,
         event: HookEvent,
         cwd: &Path,
         input: &HookInput<'_>,
-    ) -> Vec<PlannedHook> {
+    ) -> (Vec<PlannedHook>, Vec<SkippedHook>) {
         let base = self.payload(event, cwd, input);
         let mut planned = Vec::new();
+        let mut skipped = Vec::new();
         let Some(groups) = self.groups.get(event.as_str()) else {
-            return planned;
+            return (planned, skipped);
         };
         for group in groups {
             // cursor matchers filter on THEIR tool names (Shell, MCP:<t>)
@@ -57,6 +74,17 @@ impl HookEngine {
             }
             for hook in &group.hooks {
                 if hook.kind != "command" {
+                    continue;
+                }
+                if !self.command_trusted(hook) {
+                    skipped.push(SkippedHook {
+                        detail: format!(
+                            "{}: {} (from {})",
+                            event.as_str(),
+                            hook.command,
+                            hook.origin.display().to_string().replace("\\\\?\\", "")
+                        ),
+                    });
                     continue;
                 }
                 // cursor commands read a cursor-shaped payload — their
@@ -85,19 +113,47 @@ impl HookEngine {
                 });
             }
         }
-        planned
+        (planned, skipped)
+    }
+
+    /// One audit fact per skip: durable row (the log is the source of
+    /// truth — `--dataflow` and replay see it), live ⚙ line for the
+    /// frontend that installed a sink, tracing for stderr-only runs.
+    async fn audit_skips(&self, skipped: &[SkippedHook]) {
+        for s in skipped {
+            tracing::warn!("untrusted hook skipped: {}", s.detail);
+            if let Some(log) = &self.sessions {
+                log.lock()
+                    .await
+                    .append_audit(&crate::session::SessionEvent::Hook {
+                        event: "hook.untrusted".into(),
+                        detail: s.detail.clone(),
+                    })
+                    .await;
+            }
+            if let Some(sink) = self.live.read_or_recover().as_ref() {
+                sink.on_event(&crate::agent::LiveEvent::Hook {
+                    event: "hook.untrusted".into(),
+                    detail: s.detail.clone(),
+                });
+            }
+        }
     }
 
     /// Run a frozen plan — the async half both `fire` and `fire_detached`
     /// share. `base` feeds extension children (identical dialect payload).
+    /// `skipped` is emitted first so the audit row precedes whatever the
+    /// trusted hooks do.
     async fn run_planned(
         &self,
         event: HookEvent,
         cwd: &Path,
         planned: &[PlannedHook],
+        skipped: &[SkippedHook],
         base: Value,
         outcome: &mut HookOutcome,
     ) {
+        self.audit_skips(skipped).await;
         for hook in planned {
             tracing::debug!(event = event.as_str(), command = %hook.command, "firing hook");
             match run_hook_command(&hook.command, &hook.payload, cwd, hook.timeout).await {
@@ -131,10 +187,10 @@ impl HookEngine {
     /// Fire one lifecycle event and await every hook — outcomes fold into
     /// the returned `HookOutcome` (gates, injections, vetoes).
     pub async fn fire(&self, event: HookEvent, cwd: &Path, input: &HookInput<'_>) -> HookOutcome {
-        let planned = self.planned_hooks(event, cwd, input);
+        let (planned, skipped) = self.planned_hooks(event, cwd, input);
         let base = self.payload(event, cwd, input);
         let mut outcome = HookOutcome::default();
-        self.run_planned(event, cwd, &planned, base, &mut outcome)
+        self.run_planned(event, cwd, &planned, &skipped, base, &mut outcome)
             .await;
         outcome
     }
@@ -146,16 +202,17 @@ impl HookEngine {
     /// against the kernel.
     ///
     /// No-ops (nothing planned AND no extensions) return false instead of
-    /// spawning. Off-runtime callers return false too — detached fire
-    /// needs a tokio handle to land anywhere.
+    /// spawning — untrusted skips still earn the spawn since their audit
+    /// row lands inside `run_planned`. Off-runtime callers return false
+    /// too — detached fire needs a tokio handle to land anywhere.
     pub fn fire_detached(
         engine: &std::sync::Arc<Self>,
         event: HookEvent,
         cwd: &Path,
         input: &HookInput<'_>,
     ) -> bool {
-        let planned = engine.planned_hooks(event, cwd, input);
-        if planned.is_empty() && engine.ext.is_none() {
+        let (planned, skipped) = engine.planned_hooks(event, cwd, input);
+        if planned.is_empty() && skipped.is_empty() && engine.ext.is_none() {
             return false;
         }
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
@@ -166,7 +223,7 @@ impl HookEngine {
         let me = engine.clone();
         handle.spawn(async move {
             let mut outcome = HookOutcome::default();
-            me.run_planned(event, &cwd, &planned, base, &mut outcome)
+            me.run_planned(event, &cwd, &planned, &skipped, base, &mut outcome)
                 .await;
         });
         true

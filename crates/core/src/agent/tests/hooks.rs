@@ -58,6 +58,9 @@ async fn pretooluse_updated_input_rewrites_dispatch() {
         builtin_registry(),
         dir.clone(),
     ));
+    ctx.hooks
+        .trust_all
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let agent = AgentLoop::new(ctx.clone());
     let outcome = agent.run_turn("run it", &NullObserver).await.unwrap();
     assert!(matches!(outcome, TurnOutcome::Completed));
@@ -120,6 +123,9 @@ async fn pretooluse_permission_deny_blocks() {
         builtin_registry(),
         dir.clone(),
     ));
+    ctx.hooks
+        .trust_all
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let agent = AgentLoop::new(ctx.clone());
     agent.run_turn("go", &NullObserver).await.unwrap();
     let msgs = ctx.sessions.lock().await.messages().await.unwrap();
@@ -216,6 +222,9 @@ async fn failure_and_notification_events_fire_on_the_right_edges() {
     );
     ctx_raw.approval = Arc::new(AlwaysOnce);
     let ctx = Arc::new(ctx_raw);
+    ctx.hooks
+        .trust_all
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let agent = AgentLoop::new(ctx.clone());
     agent.run_turn("go", &NullObserver).await.unwrap();
 
@@ -264,12 +273,17 @@ async fn interrupt_hook_fires_on_running_turn_only() {
     .unwrap();
     // idle cancel — a separate Context with no running turn; the flag file
     // must stay absent (the interrupt gate is turn_lock, not the caller)
-    let idle = AgentLoop::new(Arc::new(Context::new(
+    let idle_ctx = Arc::new(Context::new(
         Arc::new(Stalled),
         SessionLog::ephemeral(),
         builtin_registry(),
         dir.clone(),
-    )));
+    ));
+    idle_ctx
+        .hooks
+        .trust_all
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let idle = AgentLoop::new(idle_ctx);
     idle.cancel();
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     assert!(
@@ -287,6 +301,9 @@ async fn interrupt_hook_fires_on_running_turn_only() {
         builtin_registry(),
         dir.clone(),
     ));
+    ctx.hooks
+        .trust_all
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let agent = Arc::new(AgentLoop::new(ctx.clone()));
     let t = tokio::spawn({
         let agent = agent.clone();

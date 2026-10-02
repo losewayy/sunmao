@@ -355,6 +355,9 @@ async fn hook_allow_does_not_bypass_segment_deny() {
         builtin_registry(),
         dir.clone(),
     ));
+    ctx.hooks
+        .trust_all
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let agent = AgentLoop::new(ctx.clone());
     agent.run_turn("go", &NullObserver).await.unwrap();
     let evs = ctx.sessions.lock().await.events().await.unwrap();

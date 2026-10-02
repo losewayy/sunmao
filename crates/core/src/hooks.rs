@@ -25,6 +25,14 @@
 //! `${CLAUDE_PLUGIN_ROOT}` in plugin-bundled commands expands to the plugin
 //! directory the hook was loaded from.
 //!
+//! Trust pinning (`hooks/trust.rs`): every command hook carries its source
+//! file and layer. User-level files (`~/.claude`, `~/.codex`, `~/.cursor`)
+//! are implicitly trusted; project/plugin/preset commands must be pinned in
+//! `.sunmao/trusted-hooks.json` (`/hooks trust <n>`) or they're skipped —
+//! fail-closed, since clone-and-run would otherwise exec a stranger's
+//! SessionStart before the first prompt. Skips land in the session log as
+//! `hook.untrusted` audit facts.
+//!
 //! Second dialect on board: **Cursor** (`hooks/cursor.rs`) — `.cursor/hooks.json`
 //! flat entries, camelCase events, `permission`/`updated_input`/`additional_context`
 //! replies normalize into the same `HookOutcome`. Codex's `.codex/hooks.json`
@@ -35,6 +43,7 @@ mod cursor;
 mod dialect;
 mod exec;
 mod fire;
+pub mod trust;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -182,6 +191,14 @@ struct HookCommand {
     /// `${CLAUDE_PLUGIN_ROOT}` expansion. None for non-plugin sources.
     #[serde(skip)]
     plugin_root: Option<PathBuf>,
+    /// The file that declared this command — the trust pin's identity half
+    /// (the other half is `command` itself, verbatim).
+    #[serde(skip)]
+    origin: PathBuf,
+    /// User-layer sources are implicitly trusted; project/plugin/preset
+    /// sources must be pinned in `.sunmao/trusted-hooks.json`.
+    #[serde(skip)]
+    layer: trust::Layer,
     /// Dialect tag drives payload shaping + reply normalization.
     #[serde(skip)]
     dialect: cursor::Dialect,
@@ -204,9 +221,26 @@ pub struct HookEngine {
     /// Session log path — payload field `transcript_path` (the dialect
     /// requires it to be a real file; ours is the JSONL event log).
     transcript_path: std::sync::RwLock<PathBuf>,
+    /// The project dir the ledger (`trusted-hooks.json`) is read against —
+    /// a `/resume` into another project's log still trusts *this* project's
+    /// pins (the commands were loaded from this project).
+    cwd: PathBuf,
     /// Extension children attached after `load` — they fire *after*
     /// command hooks in the same event and fold into the same outcome.
     ext: Option<std::sync::Arc<crate::ext::ExtRegistry>>,
+    /// The session log for `hook.untrusted` audit rows — attached by the
+    /// Context constructor (engine load happens before the log's Arc
+    /// exists there). Absent in bare `HookEngine::load` callers (tests
+    /// that never trusted anything see skips only via tracing).
+    sessions: Option<std::sync::Arc<tokio::sync::Mutex<crate::session::SessionLog>>>,
+    /// Live audit sink — the ⚙ line a mid-session skip raises. Installed
+    /// with the frontend's `live_sink` (`AgentLoop::set_live_sink`); a
+    /// None sink still leaves the durable row + tracing warn.
+    live: std::sync::RwLock<Option<std::sync::Arc<dyn crate::agent::Observer>>>,
+    /// Test bypass: trusts every command regardless of the ledger. The
+    /// gate itself stays exercised — the bypass only answers "trusted".
+    #[cfg(test)]
+    pub(crate) trust_all: std::sync::atomic::AtomicBool,
 }
 
 impl HookEngine {
@@ -225,28 +259,32 @@ impl HookEngine {
     pub fn load(cwd: &Path, session_id: &str, extra_roots: &[PathBuf]) -> Self {
         let transcript_path = crate::session::session_log_path(cwd, session_id);
         let mut groups: HashMap<String, Vec<MatcherGroup>> = HashMap::new();
-        let mut paths = vec![
+        for path in [
             cwd.join(".sunmao").join("hooks.json"),
             cwd.join(".codex").join("hooks.json"),
             cwd.join(".claude").join("settings.json"),
             cwd.join(".claude").join("settings.local.json"),
-        ];
-        if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
-            paths.push(Path::new(&home).join(".claude").join("settings.json"));
-            paths.push(Path::new(&home).join(".codex").join("hooks.json"));
+        ] {
+            merge_hooks_file(&mut groups, &path, None, trust::Layer::Project);
         }
-        for path in paths {
-            merge_hooks_file(&mut groups, &path, None);
+        // user-level config is implicitly trusted — the user wrote it
+        if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+            for path in [
+                Path::new(&home).join(".claude").join("settings.json"),
+                Path::new(&home).join(".codex").join("hooks.json"),
+            ] {
+                merge_hooks_file(&mut groups, &path, None, trust::Layer::User);
+            }
         }
         // cursor files keep their own parser — flat {command, matcher}
         // entries tagged Dialect::Cursor so payloads/replies normalize.
-        cursor::merge_cursor_file(&mut groups, &cwd.join(".cursor").join("hooks.json"), None);
+        {
+            let path = cwd.join(".cursor").join("hooks.json");
+            cursor::merge_cursor_file(&mut groups, &path, None, trust::Layer::Project);
+        }
         if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
-            cursor::merge_cursor_file(
-                &mut groups,
-                &Path::new(&home).join(".cursor").join("hooks.json"),
-                None,
-            );
+            let path = Path::new(&home).join(".cursor").join("hooks.json");
+            cursor::merge_cursor_file(&mut groups, &path, None, trust::Layer::User);
         }
         // plugin manifests — a plugin dir bundles hooks/mcp/skills/commands;
         // we merge its hooks section here (mcp/skills handled by their loaders)
@@ -264,11 +302,8 @@ impl HookEngine {
         // manifest, exactly like an installed bundle's
         {
             let root = cwd.join(".sunmao").join("plugin");
-            merge_hooks_file(
-                &mut groups,
-                &root.join("hooks").join("hooks.json"),
-                Some(&root),
-            );
+            let path = root.join("hooks").join("hooks.json");
+            merge_hooks_file(&mut groups, &path, Some(&root), trust::Layer::Project);
         }
         // plugin bundles installed under .sunmao/plugins/<name>/ and
         // .claude/plugins/<name>/: read their manifest plus the conventional
@@ -283,22 +318,16 @@ impl HookEngine {
                     continue;
                 }
                 merge_plugin_manifest(&mut groups, &root.join("plugin.json"), &root);
-                merge_hooks_file(
-                    &mut groups,
-                    &root.join("hooks").join("hooks.json"),
-                    Some(&root),
-                );
+                let path = root.join("hooks").join("hooks.json");
+                merge_hooks_file(&mut groups, &path, Some(&root), trust::Layer::Project);
             }
         }
         // preset dirs are plugin bundles too — appended last in CLI layering
         // order so `--preset a --preset b` runs b's hooks after a's.
         for root in extra_roots {
             merge_plugin_manifest(&mut groups, &root.join("plugin.json"), root);
-            merge_hooks_file(
-                &mut groups,
-                &root.join("hooks").join("hooks.json"),
-                Some(root),
-            );
+            let path = root.join("hooks").join("hooks.json");
+            merge_hooks_file(&mut groups, &path, Some(root), trust::Layer::Project);
         }
         if !groups.is_empty() {
             let total: usize = groups.values().map(|g| g.len()).sum();
@@ -308,7 +337,12 @@ impl HookEngine {
             groups,
             session_id: std::sync::RwLock::new(session_id.to_string()),
             transcript_path: std::sync::RwLock::new(transcript_path),
+            cwd: cwd.to_path_buf(),
             ext: None,
+            sessions: None,
+            live: std::sync::RwLock::new(None),
+            #[cfg(test)]
+            trust_all: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -325,6 +359,92 @@ impl HookEngine {
     /// `HookOutcome` (extensions see the identical dialect payload).
     pub fn attach_ext(&mut self, exts: std::sync::Arc<crate::ext::ExtRegistry>) {
         self.ext = Some(exts);
+    }
+
+    /// Attach the session log — `hook.untrusted` skips become durable
+    /// audit facts. Called by the Context constructor; the Arc identity
+    /// survives `swap_session` (the swap replaces the log *inside* it).
+    pub fn attach_sessions(
+        &mut self,
+        sessions: std::sync::Arc<tokio::sync::Mutex<crate::session::SessionLog>>,
+    ) {
+        self.sessions = Some(sessions);
+    }
+
+    /// The frontend's live sink — trust-skip audit lines land on it the
+    /// same way gate decisions do. Installed alongside `live_sink`.
+    pub fn set_live(&self, sink: std::sync::Arc<dyn crate::agent::Observer>) {
+        *self.live.write_or_recover() = Some(sink);
+    }
+
+    /// The gate one command must pass to plan. `#[cfg(test)]` bypass is
+    /// the test harness's pre-approved world — every shipped behavior
+    /// (pin lookup, skip, audit) still runs under it.
+    fn command_trusted(&self, hook: &HookCommand) -> bool {
+        #[cfg(test)]
+        if self.trust_all.load(std::sync::atomic::Ordering::Relaxed) {
+            return true;
+        }
+        trust::is_trusted(&self.cwd, hook.layer, &hook.origin, &hook.command)
+    }
+
+    /// Every loaded command hook as `/hooks` rows — deterministic order
+    /// (event → source → command) so `/hooks trust <n>` and the listing
+    /// agree. Status is read live from the ledger, so a trust/untrust is
+    /// visible on the next render.
+    pub fn roster(&self) -> Vec<trust::HookRow> {
+        let mut rows = Vec::new();
+        for (event, groups) in &self.groups {
+            for g in groups {
+                for h in &g.hooks {
+                    if h.kind != "command" {
+                        continue;
+                    }
+                    rows.push(trust::HookRow {
+                        event: event.clone(),
+                        matcher: g.matcher.clone(),
+                        command: h.command.clone(),
+                        source: h.origin.clone(),
+                        status: if h.layer == trust::Layer::User {
+                            "user"
+                        } else if self.command_trusted(h) {
+                            "pinned"
+                        } else {
+                            "untrusted"
+                        },
+                        digest: trust::digest(&h.origin, &h.command),
+                    });
+                }
+            }
+        }
+        rows.sort_by(|a, b| {
+            (&a.event, &a.source, &a.command).cmp(&(&b.event, &b.source, &b.command))
+        });
+        rows
+    }
+
+    /// `/hooks trust|untrust <n>` — pin or revoke the roster row's digest.
+    /// Returns the audit-worthy description (event + command + action) for
+    /// the caller to log; the ledger write is the side effect.
+    pub fn set_row_trust(&self, index: usize, trust_it: bool) -> Result<String, String> {
+        if index == 0 {
+            return Err("hook numbers are 1-based — /hooks for the list".into());
+        }
+        let rows = self.roster();
+        let Some(row) = rows.get(index - 1) else {
+            return Err(format!("no hook #{index} — /hooks for the list"));
+        };
+        if row.status == "user" {
+            return Err(format!("hook #{index} is user-level — implicitly trusted"));
+        }
+        trust::set_pin(&self.cwd, &row.source, &row.command, trust_it)?;
+        Ok(format!(
+            "{} {} ({} · {})",
+            if trust_it { "trusted" } else { "revoked" },
+            row.command,
+            row.event,
+            row.source.display()
+        ))
     }
 
     /// The dialect payload both channels share — command hooks read it
@@ -348,11 +468,13 @@ impl HookEngine {
 
 /// Merge a `{"hooks": {...}}`-shaped file into the group map. `plugin_root`
 /// stamps commands loaded from a plugin bundle so `${CLAUDE_PLUGIN_ROOT}`
-/// can expand at fire time.
+/// can expand at fire time; the file itself is the trust pin's origin and
+/// `layer` decides the default trust.
 fn merge_hooks_file(
     groups: &mut HashMap<String, Vec<MatcherGroup>>,
     path: &Path,
     plugin_root: Option<&Path>,
+    layer: trust::Layer,
 ) {
     let Ok(text) = std::fs::read_to_string(path) else {
         return;
@@ -383,11 +505,11 @@ fn merge_hooks_file(
         return;
     };
     for (event, mut gs) in file.hooks {
-        if let Some(root) = plugin_root {
-            for g in &mut gs {
-                for h in &mut g.hooks {
-                    h.plugin_root = Some(root.to_path_buf());
-                }
+        for g in &mut gs {
+            for h in &mut g.hooks {
+                h.plugin_root = plugin_root.map(|p| p.to_path_buf());
+                h.origin = path.to_path_buf();
+                h.layer = layer;
             }
         }
         groups.entry(event).or_default().append(&mut gs);
@@ -396,7 +518,10 @@ fn merge_hooks_file(
 
 /// Merge a plugin manifest's inline `hooks` section. A plugin is a directory
 /// containing `plugin.json` — the bundle format both Claude and sunmao speak;
-/// `${CLAUDE_PLUGIN_ROOT}` resolves to that directory.
+/// `${CLAUDE_PLUGIN_ROOT}` resolves to that directory. Plugin commands are
+/// project-layer for trust: a bundle the project carries is exactly what
+/// pinning exists to review. The manifest file is the origin — its `hooks`
+/// key is what the user reviews.
 fn merge_plugin_manifest(
     groups: &mut HashMap<String, Vec<MatcherGroup>>,
     manifest: &Path,
@@ -416,6 +541,8 @@ fn merge_plugin_manifest(
             for g in &mut gs {
                 for h in &mut g.hooks {
                     h.plugin_root = Some(root.to_path_buf());
+                    h.origin = manifest.to_path_buf();
+                    h.layer = trust::Layer::Project;
                 }
             }
             groups.entry(event).or_default().append(&mut gs);

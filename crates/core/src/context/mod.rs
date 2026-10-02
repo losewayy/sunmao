@@ -344,13 +344,18 @@ impl Context {
         let readonly_verbs = crate::agent::mode::readonly_verbs(&verb_extra);
         let shell = crate::tool::ShellBackend::resolve(&cwd);
         let tool_timeouts = std::sync::Arc::new(tool_timeout_table(&cwd));
+        let sessions = Arc::new(tokio::sync::Mutex::new(sessions));
+        let mut hook_engine = HookEngine::load(&cwd, &session_id, &[]);
+        // the engine audits trust-pin skips into this log — the Arc
+        // identity survives swap_session (which replaces the log inside)
+        hook_engine.attach_sessions(sessions.clone());
         Self {
             llm,
             llm_override: std::sync::RwLock::new(None),
             active_selector: std::sync::RwLock::new(None),
-            sessions: Arc::new(tokio::sync::Mutex::new(sessions)),
+            sessions,
             tools,
-            hooks: Arc::new(HookEngine::load(&cwd, &session_id, &[])),
+            hooks: Arc::new(hook_engine),
             cwd,
             session_id: std::sync::RwLock::new(session_id),
             permissions,
@@ -457,11 +462,13 @@ impl Context {
         self.extra_plugin_roots = roots;
         self.permissions =
             crate::permissions::Permissions::load(&self.cwd, &self.extra_plugin_roots);
-        self.hooks = Arc::new(HookEngine::load(
+        let mut hook_engine = HookEngine::load(
             &self.cwd,
             self.session_id.read_or_recover().as_str(),
             &self.extra_plugin_roots,
-        ));
+        );
+        hook_engine.attach_sessions(self.sessions.clone());
+        self.hooks = Arc::new(hook_engine);
         // preset risky-patterns.txt files merge into the resolved table —
         // tightening the gate is additive; wholesale replacement stays a
         // project-file privilege.

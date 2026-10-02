@@ -184,16 +184,32 @@ async fn open_first_log(cli: &Cli) -> anyhow::Result<Option<(SessionLog, &'stati
 /// logging init — every process entry point (bin, gui shell) calls this
 /// once before `run`/`serve_main`.
 pub fn init_tracing() {
+    init_tracing_to(std::io::stdout);
+}
+
+/// Sink-parametrized init — ACP owns stdout for JSON-RPC, so it routes
+/// tracing to stderr; anything else keeps the default stdout sink.
+fn init_tracing_to(
+    w: impl for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
+) {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
         )
+        .with_writer(w)
         .init();
 }
 
 /// The CLI entry point — `main` is `sunmao::run(Cli::parse())`.
 pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
-    init_tracing();
+    // ACP protocol stdout must stay JSON-RPC-only — a stray warn! on
+    // stdout corrupts the wire, so that branch gets its own sink before
+    // any log line can be emitted.
+    if cli.acp {
+        init_tracing_to(std::io::stderr);
+    } else {
+        init_tracing();
+    }
 
     // `--session-dir` is relative to `--cwd`, not the shell's cwd — the
     // default `.sunmao/sessions` MUST land inside the project being

@@ -100,15 +100,9 @@ impl ResponsesClient {
         &self.model
     }
 
-    /// One request establishment, with the same retry policy as OAI:
-    /// 3 attempts, 300/600ms backoff, transport + 429/5xx only.
-    async fn send(
-        &self,
-        req: &ChatRequest<'_>,
-        instructions: &str,
-        split: &Split,
-    ) -> anyhow::Result<impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static>
-    {
+    /// The wire body for one request — assembled separately from the retry
+    /// loop so the dialect's field spellings stay unit-testable.
+    fn request_body(&self, req: &ChatRequest<'_>, instructions: &str, split: &Split) -> Value {
         let mut body = json!({
             "model": self.model,
             "input": split.input,
@@ -146,7 +140,24 @@ impl ResponsesClient {
         if let Some(t) = req.temperature {
             body["temperature"] = t.into();
         }
+        if let Some(e) = req.reasoning_effort {
+            // reasoning effort lives on `reasoning` here — the Responses API
+            // doesn't accept chat-completions' flat `reasoning_effort` key
+            body["reasoning"] = json!({ "effort": e });
+        }
+        body
+    }
 
+    /// One request establishment, with the same retry policy as OAI:
+    /// 3 attempts, 300/600ms backoff, transport + 429/5xx only.
+    async fn send(
+        &self,
+        req: &ChatRequest<'_>,
+        instructions: &str,
+        split: &Split,
+    ) -> anyhow::Result<impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static>
+    {
+        let body = self.request_body(req, instructions, split);
         let mut last_err = None;
         for attempt in 0..3 {
             match self

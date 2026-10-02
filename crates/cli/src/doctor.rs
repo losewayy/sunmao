@@ -24,6 +24,7 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
         tools: None,
         max_tokens: Some(1),
         temperature: None,
+        reasoning_effort: None,
     };
     match llm.stream(probe).await {
         Ok(_) => println!("OK"),

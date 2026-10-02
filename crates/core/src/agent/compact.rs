@@ -51,6 +51,10 @@ impl AgentLoop {
             tools: None,
             max_tokens: Some(2048),
             temperature: None,
+            // compaction is an internal housekeeping request — it keeps the
+            // provider default rather than spending the session's effort on
+            // a summarization call
+            reasoning_effort: None,
         };
         let mut stream = self.ctx.active_llm().stream(req).await?;
         let mut summary = String::new();

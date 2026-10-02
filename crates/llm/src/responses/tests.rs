@@ -172,7 +172,7 @@ async fn stale_prev_id_clears_chain_and_resends_full_input() {
     use futures_util::StreamExt;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let client = ResponsesClient::new(&format!("http://{addr}"), "k", "m");
+    let client = ResponsesClient::new(format!("http://{addr}"), "k", "m");
 
     // the full logical list = sent prefix + one tail item; build it from
     // real Messages so item shapes match map_items' output
@@ -226,7 +226,7 @@ async fn stale_prev_id_clears_chain_and_resends_full_input() {
 async fn failed_rescue_leaves_no_dead_link() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let client = ResponsesClient::new(&format!("http://{addr}"), "k", "m");
+    let client = ResponsesClient::new(format!("http://{addr}"), "k", "m");
     let msgs = [Message::user("hi"), Message::tool_result("call_1", "out")];
     {
         let mut chain = client.chain.lock().unwrap();

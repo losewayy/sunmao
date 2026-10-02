@@ -106,6 +106,13 @@ pub struct Context {
     /// switch mid-session takes effect for a child that's already running.
     /// Durable via `SessionEvent::ModeChange`; seeded from the log on open.
     pub approval_mode: std::sync::Arc<std::sync::RwLock<crate::agent::ApprovalMode>>,
+    /// The session's reasoning-effort override (`/effort`, GUI chip, ACP
+    /// ThoughtLevel) — the turn loops read it into `ChatRequest` each
+    /// request, so a mid-session change applies to the next stream.
+    /// `Arc` shared with sub-agents for the same reason as `approval_mode`;
+    /// durable as a `Hook{event:"effort.change"}` fact (detail = level,
+    /// or "default" for back-to-provider-default), seeded on open/resume.
+    pub reasoning_effort: std::sync::Arc<std::sync::RwLock<Option<String>>>,
     /// Bash verbs `read_only` mode still permits — builtin list extended by
     /// `.sunmao/readonly-verbs.txt` and plugin dirs at context build.
     pub readonly_verbs: std::sync::Arc<std::collections::HashSet<String>>,
@@ -312,6 +319,7 @@ impl Context {
         let todos = seed_todos(sessions.path());
         let goal = seed_goal(sessions.path());
         let approval_mode = seed_mode(sessions.path());
+        let effort = seed_effort(sessions.path());
         let ptc_store = seed_ptc_store(sessions.path());
         // checkpoints: rebuild `taken`/`seq` from any existing manifest so a
         // resumed session doesn't re-snapshot already-preserved files, and
@@ -375,6 +383,7 @@ impl Context {
                 std::collections::HashSet::new(),
             )),
             approval_mode: std::sync::Arc::new(std::sync::RwLock::new(approval_mode)),
+            reasoning_effort: std::sync::Arc::new(std::sync::RwLock::new(effort)),
             readonly_verbs: std::sync::Arc::new(readonly_verbs),
             live_sink: std::sync::OnceLock::new(),
             models: None,
@@ -392,43 +401,6 @@ impl Context {
             parent_steer: None,
             turn_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         }
-    }
-
-    /// Re-point the task-list snapshot at the events of a swapped-in log
-    /// (`/resume`). Last `Todos` fact wins; a log without one clears it.
-    pub fn reseed_todos(&self, events: &[crate::session::SessionEvent]) {
-        let items = events
-            .iter()
-            .rev()
-            .find_map(|ev| match ev {
-                crate::session::SessionEvent::Todos { items } => Some(items.clone()),
-                _ => None,
-            })
-            .unwrap_or_default();
-        *self.todos.lock_or_recover() = items;
-    }
-
-    /// Re-point the `RunCode` KV snapshot at a swapped-in log — every
-    /// `PtcStore` fact folds in order, later writes win.
-    pub fn reseed_ptc_store(&self, events: &[crate::session::SessionEvent]) {
-        let mut store = std::collections::BTreeMap::new();
-        for ev in events {
-            if let crate::session::SessionEvent::PtcStore { key, value } = ev {
-                store.insert(key.clone(), value.clone());
-            }
-        }
-        *self.ptc_store.lock_or_recover() = store;
-    }
-
-    /// Re-point the goal snapshot at a swapped-in log — last `Goal` fact
-    /// wins, a log without one clears it (a rewound/replaced session
-    /// must not drag the old session's continuation loop along).
-    pub fn reseed_goal(&self, events: &[crate::session::SessionEvent]) {
-        let goal = events.iter().rev().find_map(|ev| match ev {
-            crate::session::SessionEvent::Goal { goal } => Some(goal.clone()),
-            _ => None,
-        });
-        *self.goal.lock_or_recover() = goal;
     }
 
     /// Spawn every extension the plugin manifests declare: resolve specs,
@@ -568,27 +540,11 @@ impl Context {
         }
         Ok(())
     }
-
-    /// Rebuild checkpoint state for a swapped-in session — the new log's id
-    /// selects its own manifest, and its boundary count seeds `turn` so a
-    /// resumed/forked session writes entries under correct ordinals
-    /// (`/resume`, `/fork`, `/rewind` all route through `swap_session`).
-    /// `events` are the log's already-folded events — the same classifier
-    /// `turn_boundaries` applies to raw lines.
-    pub(crate) fn reseed_checkpoints(&self, events: &[crate::session::SessionEvent]) {
-        let id = self.session_id.read_or_recover().clone();
-        let mut st = crate::checkpoints::load(&self.cwd, &id);
-        st.turn = events
-            .iter()
-            .filter(|e| crate::checkpoints::is_turn_boundary(e))
-            .count() as u64;
-        *self.checkpoints.lock_or_recover() = st;
-    }
 }
 
 mod seeds;
 pub(crate) use seeds::tool_timeout_table;
-use seeds::{seed_goal, seed_mode, seed_ptc_store, seed_todos};
+use seeds::{seed_effort, seed_goal, seed_mode, seed_ptc_store, seed_todos};
 
 mod sub_agent;
 pub(crate) use sub_agent::SubCancel;

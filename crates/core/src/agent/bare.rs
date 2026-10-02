@@ -17,7 +17,7 @@
 //! observer stream, and Stop-free TurnEnd emission.
 
 use super::*;
-use crate::context::MutexRecover;
+use crate::context::{MutexRecover, RwLockRecover};
 
 use futures_util::StreamExt;
 use sunmao_llm::assemble::ToolCallAssembler;
@@ -65,12 +65,13 @@ impl AgentLoop {
                 }
             }
             let decls = self.ctx.advertised_tools();
+            let effort = self.ctx.reasoning_effort.read_or_recover().clone();
             let req = ChatRequest {
                 messages: &messages,
                 tools: Some(&decls),
                 max_tokens: None,
                 temperature: None,
-                reasoning_effort: None,
+                reasoning_effort: effort.as_deref(),
             };
             // same cancel-during-establishment arm as the turn loop — a
             // hung stream() must not wait out its provider timeout. Bind

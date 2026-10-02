@@ -1,5 +1,5 @@
 use super::*;
-use crate::context::MutexRecover;
+use crate::context::{MutexRecover, RwLockRecover};
 
 use futures_util::StreamExt;
 use sunmao_llm::assemble::ToolCallAssembler;
@@ -220,12 +220,13 @@ impl AgentLoop {
                 messages.push(Message::user(g.inject_text()));
             }
             let decls = self.ctx.advertised_tools();
+            let effort = self.ctx.reasoning_effort.read_or_recover().clone();
             let req = ChatRequest {
                 messages: &messages,
                 tools: Some(&decls),
                 max_tokens: None,
                 temperature: None,
-                reasoning_effort: None,
+                reasoning_effort: effort.as_deref(),
             };
 
             // cancel during stream ESTABLISHMENT: a slow/hung `stream()`

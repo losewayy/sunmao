@@ -189,6 +189,9 @@ pub(super) async fn build_sub_ctx(
         // the session's stance is shared, not copied — a mid-session /mode
         // switch applies to children already running
         approval_mode: ctx.approval_mode.clone(),
+        // same sharing rule as approval_mode — /effort applies to the
+        // whole session, children included
+        reasoning_effort: ctx.reasoning_effort.clone(),
         readonly_verbs: ctx.readonly_verbs.clone(),
         live_sink: std::sync::OnceLock::new(),
         models: ctx.models.clone(),

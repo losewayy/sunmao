@@ -2,6 +2,10 @@
 //! per-tool watchdog table. Split from `mod.rs` so the context struct
 //! and its constructor stay the file's single story. These are all
 //! cold reads: they run once per Context build, never per turn.
+//! The `reseed_*` methods do the same job against a swapped-in log's
+//! folded events (`/resume`/`/fork`/`/rewind`).
+
+use super::{Context, MutexRecover, RwLockRecover};
 
 /// Recover the task list a persisted log ended on: scan for `Todos`
 /// event lines (prefiltered by the serializer's literal prefix) and take
@@ -125,4 +129,100 @@ pub(super) fn seed_ptc_store(path: &std::path::Path) -> std::collections::BTreeM
         }
     }
     out
+}
+
+/// The reasoning-effort override a reopened log ended on — the last
+/// `effort.change` hook fact wins; its `detail` is the level, with
+/// `"default"` spelling the cleared state (no override on the wire).
+/// Same line-scan trick as `seed_mode`.
+pub(super) fn seed_effort(path: &std::path::Path) -> Option<String> {
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return None;
+    };
+    for line in text.lines().rev() {
+        if line.contains("\"effort.change\"")
+            && let Ok(crate::session::SessionEvent::Hook { detail, .. }) =
+                serde_json::from_str::<crate::session::SessionEvent>(line)
+        {
+            return match detail.as_str() {
+                "default" => None,
+                level => Some(level.to_string()),
+            };
+        }
+    }
+    None
+}
+
+impl Context {
+    /// Re-point the task-list snapshot at the events of a swapped-in log
+    /// (`/resume`). Last `Todos` fact wins; a log without one clears it.
+    pub fn reseed_todos(&self, events: &[crate::session::SessionEvent]) {
+        let items = events
+            .iter()
+            .rev()
+            .find_map(|ev| match ev {
+                crate::session::SessionEvent::Todos { items } => Some(items.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        *self.todos.lock_or_recover() = items;
+    }
+
+    /// Re-point the `RunCode` KV snapshot at a swapped-in log — every
+    /// `PtcStore` fact folds in order, later writes win.
+    pub fn reseed_ptc_store(&self, events: &[crate::session::SessionEvent]) {
+        let mut store = std::collections::BTreeMap::new();
+        for ev in events {
+            if let crate::session::SessionEvent::PtcStore { key, value } = ev {
+                store.insert(key.clone(), value.clone());
+            }
+        }
+        *self.ptc_store.lock_or_recover() = store;
+    }
+
+    /// Re-point the goal snapshot at a swapped-in log — last `Goal` fact
+    /// wins, a log without one clears it (a rewound/replaced session
+    /// must not drag the old session's continuation loop along).
+    pub fn reseed_goal(&self, events: &[crate::session::SessionEvent]) {
+        let goal = events.iter().rev().find_map(|ev| match ev {
+            crate::session::SessionEvent::Goal { goal } => Some(goal.clone()),
+            _ => None,
+        });
+        *self.goal.lock_or_recover() = goal;
+    }
+
+    /// Re-point the effort override at a swapped-in log — last
+    /// `effort.change` fact wins; `"default"` (or no fact) clears it.
+    /// A resumed session must not carry the abandoned log's level.
+    pub fn reseed_effort(&self, events: &[crate::session::SessionEvent]) {
+        let level = events.iter().rev().find_map(|ev| match ev {
+            crate::session::SessionEvent::Hook { event, detail } if event == "effort.change" => {
+                match detail.as_str() {
+                    "default" => Some(None),
+                    level => Some(Some(level.to_string())),
+                }
+            }
+            _ => None,
+        });
+        *self.reasoning_effort.write_or_recover() = level.flatten();
+    }
+
+    /// Rebuild checkpoint state for a swapped-in session — the new log's id
+    /// selects its own manifest, and its boundary count seeds `turn` so a
+    /// resumed/forked session writes entries under correct ordinals
+    /// (`/resume`, `/fork`, `/rewind` all route through `swap_session`).
+    /// `events` are the log's already-folded events — the same classifier
+    /// `turn_boundaries` applies to raw lines.
+    pub(crate) fn reseed_checkpoints(&self, events: &[crate::session::SessionEvent]) {
+        let id = self.session_id.read_or_recover().clone();
+        let mut st = crate::checkpoints::load(&self.cwd, &id);
+        st.turn = events
+            .iter()
+            .filter(|e| crate::checkpoints::is_turn_boundary(e))
+            .count() as u64;
+        *self.checkpoints.lock_or_recover() = st;
+    }
 }

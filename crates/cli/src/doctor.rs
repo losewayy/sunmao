@@ -58,6 +58,10 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
         ok = false;
         println!("  pwsh requested but not on PATH — fell back to POSIX");
     }
+    if let Some(v) = &res.unrecognized_value {
+        ok = false;
+        println!("  unrecognized shell value `{v}` — ignored (pwsh/posix/auto)");
+    }
     print!("pwsh --version ... ");
     match std::process::Command::new("pwsh").arg("--version").output() {
         Ok(p) if p.status.success() => {

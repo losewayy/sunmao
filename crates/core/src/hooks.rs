@@ -31,7 +31,13 @@
 //! `.sunmao/trusted-hooks.json` (`/hooks trust <n>`) or they're skipped —
 //! fail-closed, since clone-and-run would otherwise exec a stranger's
 //! SessionStart before the first prompt. Skips land in the session log as
-//! `hook.untrusted` audit facts.
+//! `hook.untrusted` audit facts. The same ledger gates the other
+//! "a config file names a command we would exec" surfaces: a plugin
+//! manifest's `extensions` spec and an `mcpServers` `command:` entry
+//! (url transports don't spawn and aren't gated) pin on
+//! `sha256(source + serialized {command,args,env})` — unpinned specs skip
+//! at connect time as `ext.untrusted`/`mcp.untrusted` rows, and `/hooks`
+//! lists every surface under one numbering.
 //!
 //! Second dialect on board: **Cursor** (`hooks/cursor.rs`) — `.cursor/hooks.json`
 //! flat entries, camelCase events, `permission`/`updated_input`/`additional_context`
@@ -225,6 +231,9 @@ pub struct HookEngine {
     /// a `/resume` into another project's log still trusts *this* project's
     /// pins (the commands were loaded from this project).
     cwd: PathBuf,
+    /// Preset plugin dirs layered after the always-on sources — the spawn
+    /// roster (`spawn_rows`) re-scans them at call time.
+    extra_roots: Vec<PathBuf>,
     /// Extension children attached after `load` — they fire *after*
     /// command hooks in the same event and fold into the same outcome.
     ext: Option<std::sync::Arc<crate::ext::ExtRegistry>>,
@@ -338,6 +347,7 @@ impl HookEngine {
             session_id: std::sync::RwLock::new(session_id.to_string()),
             transcript_path: std::sync::RwLock::new(transcript_path),
             cwd: cwd.to_path_buf(),
+            extra_roots: extra_roots.to_vec(),
             ext: None,
             sessions: None,
             live: std::sync::RwLock::new(None),
@@ -377,6 +387,10 @@ impl HookEngine {
         *self.live.write_or_recover() = Some(sink);
     }
 
+    /// The roster + `set_row_trust` impl lives in `hooks/trust.rs` — that
+    /// module owns the row shape and the ledger; the impl needs the
+    /// engine's private fields, which a descendant module can reach.
+    ///
     /// The gate one command must pass to plan. `#[cfg(test)]` bypass is
     /// the test harness's pre-approved world — every shipped behavior
     /// (pin lookup, skip, audit) still runs under it.
@@ -386,68 +400,6 @@ impl HookEngine {
             return true;
         }
         trust::is_trusted(&self.cwd, hook.layer, &hook.origin, &hook.command)
-    }
-
-    /// Every loaded command hook as `/hooks` rows — deterministic order
-    /// (event → source → command) so `/hooks trust <n>` and the listing
-    /// agree. Status is read live from the ledger, so a trust/untrust is
-    /// visible on the next render.
-    pub fn roster(&self) -> Vec<trust::HookRow> {
-        let mut rows = Vec::new();
-        for (event, groups) in &self.groups {
-            for g in groups {
-                for h in &g.hooks {
-                    if h.kind != "command" {
-                        continue;
-                    }
-                    rows.push(trust::HookRow {
-                        event: event.clone(),
-                        matcher: g.matcher.clone(),
-                        command: h.command.clone(),
-                        source: h.origin.clone(),
-                        status: if h.layer == trust::Layer::User {
-                            "user"
-                        } else if trust::is_trusted(&self.cwd, h.layer, &h.origin, &h.command) {
-                            // ledger truth, not command_trusted — the
-                            // review surface reports what the pin file
-                            // says, never the test bypass
-                            "pinned"
-                        } else {
-                            "untrusted"
-                        },
-                        digest: trust::digest(&h.origin, &h.command),
-                    });
-                }
-            }
-        }
-        rows.sort_by(|a, b| {
-            (&a.event, &a.source, &a.command).cmp(&(&b.event, &b.source, &b.command))
-        });
-        rows
-    }
-
-    /// `/hooks trust|untrust <n>` — pin or revoke the roster row's digest.
-    /// Returns the audit-worthy description (event + command + action) for
-    /// the caller to log; the ledger write is the side effect.
-    pub fn set_row_trust(&self, index: usize, trust_it: bool) -> Result<String, String> {
-        if index == 0 {
-            return Err("hook numbers are 1-based — /hooks for the list".into());
-        }
-        let rows = self.roster();
-        let Some(row) = rows.get(index - 1) else {
-            return Err(format!("no hook #{index} — /hooks for the list"));
-        };
-        if row.status == "user" {
-            return Err(format!("hook #{index} is user-level — implicitly trusted"));
-        }
-        trust::set_pin(&self.cwd, &row.source, &row.command, trust_it)?;
-        Ok(format!(
-            "{} {} ({} · {})",
-            if trust_it { "trusted" } else { "revoked" },
-            row.command,
-            row.event,
-            row.source.display()
-        ))
     }
 
     /// The dialect payload both channels share — command hooks read it

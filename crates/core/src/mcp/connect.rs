@@ -199,21 +199,19 @@ impl McpTool {
     }
 }
 
-/// Connect to every configured server, collect tools + server handles.
-/// Failures degrade to a warning — one bad server must not brick the session.
-/// `extra_roots` are enabled preset dirs, layered after the installed
-/// plugins — a same-named preset server overrides an installed one.
-/// `McpConnected.servers` feeds `Context.mcp_servers`: the MCP Apps island
-/// bridge proxies `tools/call`/`resources/read` through these handles, and
-/// app-only tools (visibility `["app"]`) never reach the model registry.
-pub async fn connect_all(cwd: &Path, extra_roots: &[PathBuf]) -> McpConnected {
-    // merge mcpServers from .sunmao/mcp.json + plugin manifests — the
-    // plugin.json bundle format contributes MCP servers the same way.
-    // `${CLAUDE_PLUGIN_ROOT}` inside a manifest's command/args/env expands
-    // to the plugin's own directory.
-    let mut servers: std::collections::HashMap<String, ServerSpec> = Default::default();
-    // project mcp.json first — the manifest layers below override it, as
-    // PROTOCOLS documents
+/// Merge every `mcpServers` layer — project file first, then plugin
+/// manifests, then preset roots (later layers override a same-named
+/// server). Each surviving spec carries the file it was loaded from —
+/// the trust pin's source half, so moving or editing the declaring file
+/// invalidates the pin exactly like a hook command's does.
+/// `${CLAUDE_PLUGIN_ROOT}` inside a manifest's command/args/env expands
+/// to the plugin's own directory *before* the spec is digested — the pin
+/// covers the command line that would actually exec.
+pub(crate) fn resolve_servers(
+    cwd: &Path,
+    extra_roots: &[PathBuf],
+) -> std::collections::HashMap<String, (ServerSpec, PathBuf)> {
+    let mut servers: std::collections::HashMap<String, (ServerSpec, PathBuf)> = Default::default();
     let project_spec = cwd.join(".sunmao").join("mcp.json");
     let layered: Vec<(PathBuf, PathBuf)> = std::iter::once(project_spec)
         .map(|p| (p, cwd.join(".sunmao")))
@@ -234,13 +232,59 @@ pub async fn connect_all(cwd: &Path, extra_roots: &[PathBuf]) -> McpConnected {
             for spec in m.values_mut() {
                 spec.expand_plugin_root(&root);
             }
-            servers.extend(m);
+            for (name, spec) in m {
+                servers.insert(name, (spec, p.clone()));
+            }
         }
     }
+    servers
+}
 
+/// One `mcp.untrusted` audit row per skipped spec — callers append them
+/// into the session log once it exists (`connect_all` runs before the
+/// Context owns a log; the detail strings are pre-assembled so the durable
+/// row matches the tracing line verbatim).
+pub async fn audit_skips(skipped: &[String], log: &mut crate::session::SessionLog) {
+    for detail in skipped {
+        log.append_audit(&crate::session::SessionEvent::Hook {
+            event: "mcp.untrusted".into(),
+            detail: detail.clone(),
+        })
+        .await;
+    }
+}
+
+/// Connect to every configured server, collect tools + server handles.
+/// Failures degrade to a warning — one bad server must not brick the session.
+/// `extra_roots` are enabled preset dirs, layered after the installed
+/// plugins — a same-named preset server overrides an installed one.
+/// `McpConnected.servers` feeds `Context.mcp_servers`: the MCP Apps island
+/// bridge proxies `tools/call`/`resources/read` through these handles, and
+/// app-only tools (visibility `["app"]`) never reach the model registry.
+///
+/// Trust gate (same ledger as hooks, `.sunmao/trusted-hooks.json`): a
+/// stdio `command:` spec whose digest isn't pinned never spawns — it lands
+/// in `McpConnected.skipped` for the caller to audit. `url` transports
+/// don't exec and aren't gated. Fail-closed by construction: there is no
+/// interactive approval path — the session must come up unattended (ACP /
+/// serve spawn sessions without a human at a prompt).
+pub async fn connect_all(cwd: &Path, extra_roots: &[PathBuf]) -> McpConnected {
     let mut tools: Vec<Box<dyn ToolImpl>> = Vec::new();
     let mut handles: Vec<McpServerHandle> = Vec::new();
-    for (name, spec) in servers {
+    let mut skipped: Vec<String> = Vec::new();
+    for (name, (spec, source)) in resolve_servers(cwd, extra_roots) {
+        if let Some(command) = &spec.command {
+            let text = crate::hooks::trust::spec_text(command, &spec.args, &spec.env);
+            if !crate::hooks::trust::spawn_trusted(cwd, &source, &text) {
+                let detail = format!(
+                    "mcp {name}: {text} (from {})",
+                    source.display().to_string().replace("\\\\?\\", "")
+                );
+                tracing::warn!("untrusted mcp server skipped: {detail}");
+                skipped.push(detail);
+                continue;
+            }
+        }
         match connect_one(&name, &spec).await {
             Ok((handle, t)) => {
                 handles.push(handle);
@@ -252,6 +296,7 @@ pub async fn connect_all(cwd: &Path, extra_roots: &[PathBuf]) -> McpConnected {
     McpConnected {
         tools,
         servers: handles,
+        skipped,
     }
 }
 

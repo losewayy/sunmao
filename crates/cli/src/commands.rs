@@ -115,8 +115,9 @@ pub enum Command {
     GoalClear,
     /// /mcp — the connected MCP server roster
     Mcp,
-    /// /hooks [trust|untrust <n>] — the configured hook roster with trust
-    /// status; bare lists, the ops pin/revoke in trusted-hooks.json
+    /// /hooks [trust|untrust <n>] — the configured hook + spawn-spec
+    /// roster (ext children, MCP stdio servers) with trust status; bare
+    /// lists, the ops pin/revoke in trusted-hooks.json
     Hooks(HookOp),
     /// /status — session vitals (model/provider/cwd/id/mode/tokens)
     Status,
@@ -149,7 +150,7 @@ pub struct RewindSpec {
 /// grammar against `AgentLoop::set_hook_trust`.
 #[derive(Debug, Clone, Copy)]
 pub enum HookOp {
-    /// bare `/hooks` — list configured hooks with trust status
+    /// bare `/hooks` — list configured hooks and spawn specs with trust status
     List,
     /// pin roster row N into `.sunmao/trusted-hooks.json`
     Trust(usize),

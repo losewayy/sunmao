@@ -113,23 +113,32 @@ pub fn goal_text(goal: Option<&sunmao_core::tool::GoalState>) -> String {
     }
 }
 
-/// `/hooks` — every loaded command hook with its trust status. `untrusted`
-/// rows are skipped at fire time (fail-closed — a cloned repo's SessionStart
-/// must not exec before review); `pinned` came from trusted-hooks.json;
-/// `user` is implicitly trusted (~/.claude etc. are the user's own files).
+/// `/hooks` — every loaded command hook AND every spawn spec (ext
+/// children, MCP stdio servers) with its trust status. `untrusted`
+/// rows are skipped at fire/connect time (fail-closed — a cloned repo's
+/// SessionStart must not exec before review); `pinned` came from
+/// trusted-hooks.json; `user` is implicitly trusted (~/.claude etc. are
+/// the user's own files). `kind` distinguishes `hook` from `mcp:connect`
+/// / `ext:spawn` rows.
 /// Numbering matches `engine.roster()` — `/hooks trust <n>` pins row n.
 pub fn hooks_text(rows: &[sunmao_core::hooks::trust::HookRow]) -> String {
     if rows.is_empty() {
-        return "[no hooks configured — .sunmao/hooks.json, .claude/settings*.json, .cursor/hooks.json, plugins]".to_string();
+        return "[no hooks or spawned servers configured — .sunmao/hooks.json, .claude/settings*.json, .cursor/hooks.json, mcp.json, plugins]".to_string();
     }
     let rows_text = rows
         .iter()
         .enumerate()
         .map(|(i, r)| {
+            let kind = match r.kind {
+                sunmao_core::hooks::trust::RowKind::Hook => "hook",
+                sunmao_core::hooks::trust::RowKind::Mcp => "mcp ",
+                sunmao_core::hooks::trust::RowKind::Ext => "ext ",
+            };
             format!(
-                "  {:>2}. {:<9} {} [{}]\n       {}\n       ← {}",
+                "  {:>2}. {:<9} {} {} [{}]\n       {}\n       ← {}",
                 i + 1,
                 r.status,
+                kind,
                 r.event,
                 if r.matcher.is_empty() {
                     "*"

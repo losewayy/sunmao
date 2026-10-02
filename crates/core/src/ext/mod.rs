@@ -20,12 +20,16 @@ pub use registry::{ExtChild, ExtInit, ExtRegistry};
 /// Per-child failures warn and continue; the session must survive a
 /// broken plugin. `cwd`/`session_id`/`transcript_path` become the
 /// `ext/initialize` params — the extension sees the same session facts
-/// hooks do.
+/// hooks do. Untrusted specs (no pin in `.sunmao/trusted-hooks.json`,
+/// checked on the expanded `{command,args,env}` text) fail closed: skip +
+/// `ext.untrusted` audit row, never a prompt — the gate runs before any
+/// frontend exists to answer one.
 pub(crate) async fn connect_all(
     reg: &ExtRegistry,
     cwd: &std::path::Path,
     session_id: &str,
     extra_roots: &[std::path::PathBuf],
+    sessions: &std::sync::Arc<tokio::sync::Mutex<crate::session::SessionLog>>,
 ) {
     let transcript_path = crate::session::session_log_path(cwd, session_id)
         .display()
@@ -36,7 +40,24 @@ pub(crate) async fn connect_all(
         session_id: session_id.to_string(),
         transcript_path,
     };
-    for (spec, plugin_name) in resolve_specs(cwd, extra_roots) {
+    for (manifest, spec, plugin_name) in resolve_specs(cwd, extra_roots) {
+        let text = crate::hooks::trust::spec_text(&spec.command, &spec.args, &spec.env);
+        if !crate::hooks::trust::spawn_trusted(cwd, &manifest, &text) {
+            let detail = format!(
+                "ext {plugin_name}: {text} (from {})",
+                manifest.display().to_string().replace("\\\\?\\", "")
+            );
+            tracing::warn!("untrusted extension skipped: {detail}");
+            sessions
+                .lock()
+                .await
+                .append_audit(&crate::session::SessionEvent::Hook {
+                    event: "ext.untrusted".into(),
+                    detail,
+                })
+                .await;
+            continue;
+        }
         if let Err(e) = reg.connect(&spec, &init, &plugin_name).await {
             tracing::warn!("extension {plugin_name} failed: {e:#}");
         }
@@ -44,11 +65,12 @@ pub(crate) async fn connect_all(
 }
 
 /// The `{"extensions": [...]}` entries across every plugin manifest,
-/// paired with the plugin's tool-namespace name.
-fn resolve_specs(
+/// each paired with its manifest path (the trust pin's source half) and
+/// the plugin's tool-namespace name.
+pub(crate) fn resolve_specs(
     cwd: &std::path::Path,
     extra_roots: &[std::path::PathBuf],
-) -> Vec<(ExtSpec, String)> {
+) -> Vec<(std::path::PathBuf, ExtSpec, String)> {
     let mut specs = Vec::new();
     for (manifest, root) in crate::mcp::plugin_manifests(cwd, extra_roots) {
         let Ok(text) = std::fs::read_to_string(&manifest) else {
@@ -66,8 +88,10 @@ fn resolve_specs(
             continue;
         };
         for mut spec in entries {
+            // `${CLAUDE_PLUGIN_ROOT}` expands BEFORE the trust digest —
+            // the pin covers the exact command line that would exec.
             spec.expand_plugin_root(&root.display().to_string().replace("\\\\?\\", ""));
-            specs.push((spec, name.clone()));
+            specs.push((manifest.clone(), spec, name.clone()));
         }
     }
     specs

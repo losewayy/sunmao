@@ -75,6 +75,68 @@ fn plugin_names_are_sanitized() {
     );
 }
 
+/// Trust gate on extension spawn: an unpinned `extensions` spec in a
+/// plugin manifest never reaches `connect` — `ext.untrusted` audits into
+/// the session log and the registry stays empty. The pin is on the
+/// expanded `{command,args,env}` text of the manifest entry; once pinned,
+/// the gate opens (spawn failure stays a separate warn-only path).
+#[tokio::test]
+async fn untrusted_extension_never_spawns() {
+    let dir = crate::fresh_test_dir("ext-trust");
+    let plugin = dir.join(".sunmao/plugins/evil");
+    std::fs::create_dir_all(&plugin).unwrap();
+    let manifest = plugin.join("plugin.json");
+    std::fs::write(
+        &manifest,
+        r#"{"name":"evil","extensions":[{"command":"sunmao-no-such-ext-zz","args":["--x"]}]}"#,
+    )
+    .unwrap();
+
+    let sessions = Arc::new(tokio::sync::Mutex::new(
+        crate::session::SessionLog::ephemeral(),
+    ));
+    let reg = registry::ExtRegistry::new();
+    connect_all(&reg, &dir, "s1", &[], &sessions).await;
+    assert!(reg.tools().is_empty(), "untrusted spec must not spawn");
+    let evs = sessions.lock().await.events().await.unwrap();
+    assert!(
+        evs.iter().any(|e| matches!(
+            e,
+            crate::session::SessionEvent::Hook { event, detail }
+                if event == "ext.untrusted" && detail.contains("evil")
+        )),
+        "the skip must be durable"
+    );
+    // the /hooks roster sees the gated row
+    let rows = crate::hooks::trust::spawn_rows(&dir, &[]);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].kind, crate::hooks::trust::RowKind::Ext);
+    assert_eq!(rows[0].matcher, "evil");
+    assert_eq!(rows[0].status, "untrusted");
+
+    // pinned → gate opens; the binary doesn't exist so spawn still warns —
+    // but no SECOND untrusted row lands
+    let text = crate::hooks::trust::spec_text(
+        "sunmao-no-such-ext-zz",
+        &["--x".to_string()],
+        &Default::default(),
+    );
+    crate::hooks::trust::set_pin(&dir, &manifest, &text, true).unwrap();
+    connect_all(&reg, &dir, "s1", &[], &sessions).await;
+    let evs = sessions.lock().await.events().await.unwrap();
+    assert_eq!(
+        evs.iter()
+            .filter(
+                |e| matches!(e, crate::session::SessionEvent::Hook { event, .. }
+                if event == "ext.untrusted")
+            )
+            .count(),
+        1,
+        "pinned spec passes the gate — spawn failure is warn-only"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Reply correlation: dispatch resolves exactly the parked id; stray ids
 /// are dropped, wrong-id replies don't steal a pending slot.
 #[tokio::test]

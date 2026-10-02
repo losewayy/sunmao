@@ -16,7 +16,7 @@ impl ToolImpl for BashTool {
     fn decl(&self) -> Tool {
         Tool::function(
             "Bash",
-            "Run a bash command (cross-platform; works identically on Windows). \
+            "Run a shell command (cross-platform; works identically on Windows). \
              Use for builds, tests, git, and anything without a dedicated tool. \
              Commands are preflighted before they run: a '[preflight]' block in \
              the result predicts spawn failures and mangled argv — fix the \
@@ -24,7 +24,7 @@ impl ToolImpl for BashTool {
             json!({
                 "type": "object",
                 "properties": {
-                    "command": {"type": "string", "description": "Bash command line"},
+                    "command": {"type": "string", "description": "Shell command line"},
                     "timeout_secs": {"type": "integer", "description": "Kill after N seconds (default 120)"},
                     "background": {"type": "boolean", "description": "Run detached; returns a job id readable via JobOutput"}
                 },
@@ -42,6 +42,32 @@ impl ToolImpl for BashTool {
             background: bool,
         }
         let a: Args = serde_json::from_value(args)?;
+
+        // pwsh backend: no POSIX parse/preflight — the command runs as real
+        // PowerShell text. The dispatch gate already classified it via the
+        // pwsh mutates/segments path.
+        if ctx.shell == crate::tool::ShellBackend::Pwsh {
+            if a.background {
+                return pwsh::spawn_background(&a.command, ctx).await;
+            }
+            let run = pwsh::run_foreground(
+                &a.command,
+                ctx.cwd.clone(),
+                a.timeout_secs.unwrap_or(120),
+                Some(ctx.cancel_notify.clone()),
+            )
+            .await;
+            return Ok(match run {
+                Ok(r) => ToolResult {
+                    output: render_run(&r),
+                    ok: r.exit_code == 0,
+                },
+                Err(msg) => ToolResult {
+                    output: msg,
+                    ok: false,
+                },
+            });
+        }
 
         // Parse once up front — a malformed command is reported before any
         // permission prompt, and the same AST feeds both preflight and exec.
@@ -74,7 +100,14 @@ impl ToolImpl for BashTool {
         // (agent/turn.rs::gate_call) — the hook's permissionDecision can only
         // interpose there; the tool itself just executes.
 
-        let run = match run_parsed(list, ctx.cwd.clone(), a.timeout_secs.unwrap_or(120)).await {
+        let run = match run_parsed(
+            list,
+            ctx.cwd.clone(),
+            a.timeout_secs.unwrap_or(120),
+            Some(ctx.cancel_notify.clone()),
+        )
+        .await
+        {
             Ok(r) => r,
             Err(msg) => {
                 return Ok(ToolResult {
@@ -88,6 +121,9 @@ impl ToolImpl for BashTool {
         let mut out = pre() + &trunc(run.stdout.trim_end());
         if !run.stderr.trim().is_empty() {
             out.push_str(&format!("\n[stderr]\n{}", trunc(run.stderr.trim())));
+        }
+        if let Some(e) = &run.ended {
+            out.push_str(&format!("\n[{e}]"));
         }
         if run.exit_code != 0 {
             out.push_str(&format!("\n[exit code {}]", run.exit_code));
@@ -108,75 +144,138 @@ pub struct ShellRun {
     pub stderr: String,
     /// spawnfate advisories ("" when clean) — surfaced, never blocking.
     pub preflight: String,
+    /// How the run ended when it didn't exit on its own —
+    /// `"cancelled by user"` / `"timed out"`; None on a natural exit.
+    /// Timeout/cancel now keep their partial output (previously the `Err`
+    /// path discarded it and leaked the children).
+    pub ended: Option<String>,
 }
 
 /// Parse + preflight + execute `command` in `cwd`. `Err(String)` is a
 /// legible failure (parse error, timeout, spawn panic), not an anyhow —
 /// callers render it as output, same contract as `ToolResult{ok:false}`.
+/// `cancel` wakes the run's kill path (the turn loop's `cancel_notify`).
 pub async fn run_foreground(
     command: &str,
     cwd: std::path::PathBuf,
     timeout_secs: u64,
+    shell: crate::tool::ShellBackend,
+    cancel: Option<std::sync::Arc<tokio::sync::Notify>>,
 ) -> Result<ShellRun, String> {
+    if shell == crate::tool::ShellBackend::Pwsh {
+        return pwsh::run_foreground(command, cwd, timeout_secs, cancel).await;
+    }
     let list = deno_task_shell::parser::parse(command)
         .map_err(|e| format!("cannot parse command: {e}"))?;
     let preflight = crate::preflight::advisories(&list, &cwd).join("\n");
-    let mut run = run_parsed(list, cwd, timeout_secs).await?;
+    let mut run = run_parsed(list, cwd, timeout_secs, cancel).await?;
     run.preflight = preflight;
     Ok(run)
 }
 
 /// Execute an already-parsed command list. `deno_task_shell`'s internals are
 /// `!Send` (`Rc<Cell>` exit-code cells) — every !Send value is constructed
-/// *inside* the blocking closure, never moved in.
+/// *inside* the blocking closure, never moved in. The `KillSignal` is cloned
+/// from `ShellState` before `execute_with_pipes` consumes it — timeout and
+/// cancel both send SIGKILL (which cascades to tracked children) and then
+/// *reap* the exec future, so neither path leaks a running pipeline.
 async fn run_parsed(
     list: deno_task_shell::parser::SequentialList,
     cwd: std::path::PathBuf,
     timeout_secs: u64,
+    cancel: Option<std::sync::Arc<tokio::sync::Notify>>,
 ) -> Result<ShellRun, String> {
     let env_vars: std::collections::HashMap<std::ffi::OsString, std::ffi::OsString> =
         std::env::vars_os().collect();
 
-    let outcome = tokio::task::spawn_blocking(move || -> Result<(i32, String, String), String> {
-        let state =
-            deno_task_shell::ShellState::new(env_vars, cwd, Default::default(), Default::default());
-        let (out_reader, out_writer) = deno_task_shell::pipe();
-        let (err_reader, err_writer) = deno_task_shell::pipe();
-        // empty stdin: tools must never block on the REPL's stdin
-        let (stdin_reader, stdin_writer) = std::io::pipe().map_err(|e| e.to_string())?;
-        drop(stdin_writer);
-        let exec = deno_task_shell::execute_with_pipes(
-            list,
-            state,
-            deno_task_shell::ShellPipeReader::from_raw(stdin_reader),
-            out_writer,
-            err_writer,
-        );
-        let rt = tokio::runtime::Handle::current();
-        let code = rt
-            .block_on(tokio::time::timeout(
-                std::time::Duration::from_secs(timeout_secs),
-                exec,
-            ))
-            .map_err(|_| format!("command timed out after {timeout_secs}s"))?;
-        let mut out_buf = Vec::new();
-        let mut err_buf = Vec::new();
-        out_reader.pipe_to(&mut out_buf).ok();
-        err_reader.pipe_to(&mut err_buf).ok();
-        Ok((
-            code,
-            String::from_utf8_lossy(&out_buf).into_owned(),
-            String::from_utf8_lossy(&err_buf).into_owned(),
-        ))
-    })
+    let outcome = tokio::task::spawn_blocking(
+        move || -> Result<(i32, String, String, Option<String>), String> {
+            let state = deno_task_shell::ShellState::new(
+                env_vars,
+                cwd,
+                Default::default(),
+                Default::default(),
+            );
+            // clone before `execute_with_pipes` takes ownership — the signal
+            // is the only handle that reaches deno's per-child KillSignals.
+            let kill = state.kill_signal().clone();
+            let (out_reader, out_writer) = deno_task_shell::pipe();
+            let (err_reader, err_writer) = deno_task_shell::pipe();
+            // empty stdin: tools must never block on the REPL's stdin
+            let (stdin_reader, stdin_writer) = std::io::pipe().map_err(|e| e.to_string())?;
+            drop(stdin_writer);
+            let exec = deno_task_shell::execute_with_pipes(
+                list,
+                state,
+                deno_task_shell::ShellPipeReader::from_raw(stdin_reader),
+                out_writer,
+                err_writer,
+            );
+            let rt = tokio::runtime::Handle::current();
+            // Pinned so the abort arms can still await it — SIGKILL stops
+            // the children but the future must resolve (aborted code) to
+            // keep the pipe readers and JoinHandles drained.
+            let mut exec = std::pin::pin!(exec);
+            let cancel_fut = async {
+                match &cancel {
+                    Some(n) => n.notified().await,
+                    None => std::future::pending::<()>().await,
+                }
+            };
+            let (code, stdout, stderr, ended) = rt.block_on(async {
+                // Readers drain *while* the pipeline runs — waiting for exec
+                // to finish first deadlocks any child that fills the pipe
+                // buffer (>64KB on Windows before anyone reads).
+                let out_drain = tokio::task::spawn_blocking(move || {
+                    let mut b = Vec::new();
+                    out_reader.pipe_to(&mut b).ok();
+                    String::from_utf8_lossy(&b).into_owned()
+                });
+                let err_drain = tokio::task::spawn_blocking(move || {
+                    let mut b = Vec::new();
+                    err_reader.pipe_to(&mut b).ok();
+                    String::from_utf8_lossy(&b).into_owned()
+                });
+                enum End {
+                    Natural(i32),
+                    Timeout,
+                    Cancelled,
+                }
+                let end = tokio::select! {
+                    c = &mut exec => End::Natural(c),
+                    () = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs)) => End::Timeout,
+                    () = cancel_fut => End::Cancelled,
+                };
+                let (code, ended) = match end {
+                    End::Natural(c) => (c, None),
+                    End::Timeout => {
+                        kill.send(deno_task_shell::SignalKind::SIGKILL);
+                        let c = (&mut exec).await;
+                        (c, Some(format!("timed out after {timeout_secs}s — killed")))
+                    }
+                    End::Cancelled => {
+                        kill.send(deno_task_shell::SignalKind::SIGKILL);
+                        let c = (&mut exec).await;
+                        (c, Some("cancelled by user — killed".to_string()))
+                    }
+                };
+                // writer handles drop with exec → drains see EOF and return.
+                let stdout = out_drain.await.unwrap_or_default();
+                let stderr = err_drain.await.unwrap_or_default();
+                (code, stdout, stderr, ended)
+            });
+            Ok((code, stdout, stderr, ended))
+        },
+    )
     .await;
 
     match outcome {
-        Ok(Ok((code, stdout, stderr))) => Ok(ShellRun {
+        Ok(Ok((code, stdout, stderr, ended))) => Ok(ShellRun {
             exit_code: code,
             stdout,
             stderr,
             preflight: String::new(),
+            ended,
         }),
         Ok(Err(msg)) => Err(msg),
         Err(e) => Err(format!("shell task panicked: {e}")),
@@ -184,10 +283,15 @@ async fn run_parsed(
 }
 
 /// Cap one side's output at ~8KB — the same discipline the tool result uses.
+/// CAP isn't char-aligned for CJK/emoji output; step back to a boundary.
 fn trunc(s: &str) -> String {
     const CAP: usize = 8 * 1024;
     if s.len() > CAP {
-        format!("{}…[{} bytes truncated]", &s[..CAP], s.len() - CAP)
+        let mut end = CAP;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…[{} bytes truncated]", &s[..end], s.len() - end)
     } else {
         s.to_string()
     }
@@ -208,6 +312,9 @@ pub fn render_run(r: &ShellRun) -> String {
     if !r.stderr.trim().is_empty() {
         out.push_str(&format!("\n[stderr]\n{}", trunc(r.stderr.trim())));
     }
+    if let Some(e) = &r.ended {
+        out.push_str(&format!("\n[{e}]"));
+    }
     if r.exit_code != 0 {
         out.push_str(&format!("\n[exit code {}]", r.exit_code));
     }
@@ -218,7 +325,8 @@ pub fn render_run(r: &ShellRun) -> String {
 
 /// A background job is `.sunmao/jobs/{id}/` containing output.log and,
 /// once finished, exit.json. No in-memory registry — the log dir is truth.
-fn jobs_dir(ctx: &crate::context::Context) -> std::path::PathBuf {
+/// `pub(crate)` so the pwsh backend writes the same layout.
+pub(crate) fn jobs_dir(ctx: &crate::context::Context) -> std::path::PathBuf {
     ctx.cwd.join(".sunmao").join("jobs")
 }
 
@@ -227,8 +335,14 @@ async fn spawn_background(
     ctx: &crate::context::Context,
     preamble: String,
 ) -> anyhow::Result<ToolResult> {
+    // `j-<ms>` alone collided when two `background:true` calls landed in the
+    // same millisecond — the per-Context seq makes the id (and its log dir)
+    // unique without a shared registry
+    let seq = ctx
+        .job_seq
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let id = format!(
-        "j-{}",
+        "j-{}-{seq}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

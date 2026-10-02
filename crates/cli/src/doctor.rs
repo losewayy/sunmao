@@ -43,6 +43,38 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
         }
     }
 
+    // 2b. shell backend — SUNMAO_SHELL decides whether the Bash tool uses
+    // the embedded POSIX shell or a real `pwsh`; a wrong value fails EVERY
+    // Bash call, not just this check.
+    print!("shell backend ... ");
+    match std::env::var_os("SUNMAO_SHELL") {
+        None => println!("embedded POSIX shell (deno_task_shell)"),
+        Some(v) => {
+            let name = v.to_string_lossy();
+            if name.eq_ignore_ascii_case("pwsh") {
+                match std::process::Command::new("pwsh")
+                    .arg("-NoProfile")
+                    .arg("-Command")
+                    .arg("1")
+                    .output()
+                {
+                    Ok(p) if p.status.success() => println!("pwsh OK"),
+                    _ => {
+                        ok = false;
+                        println!(
+                            "FAIL (SUNMAO_SHELL=pwsh but `pwsh` won't run — unset it or fix PATH)"
+                        );
+                    }
+                }
+            } else {
+                ok = false;
+                println!(
+                    "FAIL (SUNMAO_SHELL={name} — only `pwsh` is a valid opt-in; anything else falls back but signals a typo)"
+                );
+            }
+        }
+    }
+
     // 3. session dir writable
     print!("session dir {} ... ", cli.session_dir.display());
     match std::fs::create_dir_all(&cli.session_dir) {
@@ -51,6 +83,17 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
             ok = false;
             println!("FAIL ({e})");
         }
+    }
+
+    // 3b. git — not required to run, but `git`-shaped tool calls (and half
+    // the risky-pattern watch list) assume it; warn, don't fail.
+    print!("git ... ");
+    match std::process::Command::new("git").arg("--version").output() {
+        Ok(p) if p.status.success() => {
+            let v = String::from_utf8_lossy(&p.stdout);
+            println!("OK ({})", v.trim());
+        }
+        _ => println!("not found — git commands will fail (non-fatal)"),
     }
 
     // 4. config files present
@@ -107,7 +150,7 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
         );
     }
 
-    // 5. MCP servers: list without connecting (connection smoke is live-tested)
+    // 6. MCP servers: list without connecting (connection smoke is live-tested)
     let mcp_path = cli.cwd.join(".sunmao/mcp.json");
     if let Ok(text) = std::fs::read_to_string(&mcp_path)
         && let Ok(v) = serde_json::from_str::<serde_json::Value>(&text)
@@ -118,7 +161,7 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
         }
     }
 
-    // 6. model routing: models.json parses, agents dir counted
+    // 7. model routing: models.json parses, agents dir counted
     let models_path = cli.cwd.join(".sunmao/models.json");
     if models_path.exists() {
         print!("models.json ... ");
@@ -133,6 +176,21 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
             }
         }
     }
+    // 7b. prompt.d files that shadow a kernel section — the override is by
+    //     design, but a same-stem file the user forgot (or one a *future*
+    //     builtin claims) silently becomes a replacement. Info, not failure.
+    for dir in [
+        sunmao_core::prompt::user_layer_dir(),
+        cli.cwd.join(".sunmao"),
+    ] {
+        for (stem, path) in sunmao_core::prompt::shadowed_builtins(&dir) {
+            println!(
+                "prompt.d: {} shadows builtin section `{}` (replaces it in place)",
+                path.display(),
+                stem
+            );
+        }
+    }
     if let Ok(entries) = std::fs::read_dir(cli.cwd.join(".sunmao/agents")) {
         let n = entries
             .flatten()
@@ -143,7 +201,7 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
         }
     }
 
-    // 7. extensions: plugin manifests must parse (binary/script children
+    // 8. extensions: plugin manifests must parse (binary/script children
     //    are the manifest's own responsibility — `--doctor` only counts)
     let mut ext_specs = 0usize;
     let mut manifests = vec![cli.cwd.join(".sunmao/plugin.json")];

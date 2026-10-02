@@ -70,7 +70,7 @@ impl ApprovalMode {
 /// the file IS the policy surface, same convention as risky-patterns.txt).
 pub fn readonly_verbs(extra: &[String]) -> std::collections::HashSet<String> {
     let mut set: std::collections::HashSet<String> =
-        include_str!("../../assets/readonly-verbs.txt")
+        include_str!("../../../assets/readonly-verbs.txt")
             .lines()
             .filter(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
             .map(|l| l.trim().to_string())
@@ -82,19 +82,27 @@ pub fn readonly_verbs(extra: &[String]) -> std::collections::HashSet<String> {
 /// Would running this tool call mutate anything outside the transcript?
 /// Read-only tools (Read/Grep/Glob/WebFetch/JobOutput) pass; everything
 /// write-shaped — files, artifacts, the task list, sub-agents — mutates.
-/// `Bash` walks the parsed command list. Unknown tools (MCP, ext) are
-/// mutations: read-only mode must not guess at a surface it can't see.
+/// `Bash` walks the parsed command list (or the pwsh segment scan under
+/// `ShellBackend::Pwsh`). Unknown tools (MCP, ext) are mutations:
+/// read-only mode must not guess at a surface it can't see.
 pub fn call_mutates(
     tool: &str,
     args: &serde_json::Value,
     verbs: &std::collections::HashSet<String>,
+    shell: crate::tool::ShellBackend,
 ) -> bool {
     match tool {
         "Read" | "Grep" | "Glob" | "WebFetch" | "JobOutput" => false,
         "Bash" => args
             .get("command")
             .and_then(|v| v.as_str())
-            .map(|cmd| bash_mutates(cmd, verbs))
+            .map(|cmd| {
+                if shell == crate::tool::ShellBackend::Pwsh {
+                    pwsh_mutates(cmd, verbs)
+                } else {
+                    bash_mutates(cmd, verbs)
+                }
+            })
             .unwrap_or(true),
         _ => true,
     }
@@ -359,6 +367,9 @@ fn static_word_text(w: &deno_task_shell::parser::Word) -> Option<String> {
     Some(out)
 }
 
+mod pwsh;
+pub(crate) use pwsh::{pwsh_mutates, pwsh_segments};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -438,26 +449,78 @@ mod tests {
     #[test]
     fn tool_classification() {
         let v = verbs();
+        let posix = crate::tool::ShellBackend::Posix;
         let no_args = serde_json::json!({});
-        assert!(!call_mutates("Read", &no_args, &v));
-        assert!(!call_mutates("Grep", &no_args, &v));
-        assert!(call_mutates("Write", &no_args, &v));
-        assert!(call_mutates("Edit", &no_args, &v));
-        assert!(call_mutates("Task", &no_args, &v));
-        assert!(call_mutates("TodoWrite", &no_args, &v));
-        assert!(call_mutates("HtmlArtifact", &no_args, &v));
-        assert!(call_mutates("mcp__x__y", &no_args, &v));
+        assert!(!call_mutates("Read", &no_args, &v, posix));
+        assert!(!call_mutates("Grep", &no_args, &v, posix));
+        assert!(call_mutates("Write", &no_args, &v, posix));
+        assert!(call_mutates("Edit", &no_args, &v, posix));
+        assert!(call_mutates("Task", &no_args, &v, posix));
+        assert!(call_mutates("TodoWrite", &no_args, &v, posix));
+        assert!(call_mutates("HtmlArtifact", &no_args, &v, posix));
+        assert!(call_mutates("mcp__x__y", &no_args, &v, posix));
         assert!(!call_mutates(
             "Bash",
             &serde_json::json!({"command":"ls"}),
-            &v
+            &v,
+            posix
         ));
         assert!(call_mutates(
             "Bash",
             &serde_json::json!({"command":"rm x"}),
-            &v
+            &v,
+            posix
         ));
         // no command arg → can't inspect → mutating
-        assert!(call_mutates("Bash", &no_args, &v));
+        assert!(call_mutates("Bash", &no_args, &v, posix));
+    }
+
+    #[test]
+    fn pwsh_classification() {
+        let v = verbs();
+        let pwsh = crate::tool::ShellBackend::Pwsh;
+        let bash = |c: &str| serde_json::json!({"command": c});
+        // pure reads pass
+        for cmd in [
+            "Get-Content foo.txt",
+            "gc foo.txt",
+            "ls -la",
+            "Get-ChildItem src",
+            "pwd",
+            "echo hi",
+            "Write-Host 'ok'",
+            "Get-Process | Select-Object -First 5",
+            "git status",
+            "Get-Content a.txt; pwd",
+        ] {
+            assert!(
+                !call_mutates("Bash", &bash(cmd), &v, pwsh),
+                "{cmd} should be read-only"
+            );
+        }
+        // mutations caught
+        for cmd in [
+            "Remove-Item x",
+            "Set-Content f.txt 'x'",
+            "echo hi > file.txt",
+            "ls; touch f",
+            "New-Item -ItemType Directory out",
+            "$x = 5",
+            "$env:FOO = '1'",
+            "ls | Tee-Object log.txt",
+            "Invoke-Expression 'rm x'",
+            "mkdir out",
+            "cat $(rm x).txt",
+            "[Environment]::SetEnvironmentVariable('A','B')",
+        ] {
+            assert!(
+                call_mutates("Bash", &bash(cmd), &v, pwsh),
+                "{cmd} should be mutating"
+            );
+        }
+        // quoted `>` is text, not a redirect
+        assert!(!call_mutates("Bash", &bash("echo 'a > b'"), &v, pwsh));
+        // a pipeline segment mutating makes the whole call mutating
+        assert!(call_mutates("Bash", &bash("ls | rm"), &v, pwsh));
     }
 }

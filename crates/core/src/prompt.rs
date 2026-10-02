@@ -46,12 +46,18 @@ pub struct PromptAssembler {
     /// Preset plugin roots — their `skills/` subdirs join the skills index
     /// and their `agents/` defs are resolvable by `assemble_subagent`.
     extra_roots: Vec<PathBuf>,
+    /// The shell dialect the `shell-dialect` section should describe —
+    /// resolved the same way `Context::new` does, so sub-agent prompts
+    /// (built without a Context) still match the session's backend.
+    shell: crate::tool::ShellBackend,
 }
 
 impl PromptAssembler {
     pub fn new(cwd: impl Into<PathBuf>) -> Self {
+        let cwd = cwd.into();
         Self {
-            cwd: cwd.into(),
+            shell: crate::tool::ShellBackend::resolve(&cwd),
+            cwd,
             extra_roots: Vec::new(),
         }
     }
@@ -68,7 +74,7 @@ impl PromptAssembler {
         if let Some(full) = complete {
             return full.to_string();
         }
-        let mut sections = builtin_sections();
+        let mut sections = builtin_sections(self.shell);
         apply_layer(&mut sections, &user_layer_dir(), 40);
         apply_layer(&mut sections, &self.cwd.join(".sunmao"), 50);
         let ctx = project_context(&self.cwd, &self.extra_roots);
@@ -131,11 +137,21 @@ impl PromptAssembler {
 
 /// Kernel-owned prompt text lives in `assets/prompt/` — files, not string
 /// literals. Baked in via `include_str!` so the binary stays self-contained.
-fn builtin_sections() -> Vec<Section> {
+/// `shell` picks the dialect section — the model gets told which grammar
+/// `Bash` actually speaks, not whichever dialect the build defaults to.
+fn builtin_sections(shell: crate::tool::ShellBackend) -> Vec<Section> {
     let mk = |name: &str, order: u32, text: &str| Section {
         name: name.into(),
         order,
         text: text.trim().to_string(),
+    };
+    let dialect = match shell {
+        crate::tool::ShellBackend::Posix => {
+            include_str!("../assets/prompt/shell-dialect.md")
+        }
+        crate::tool::ShellBackend::Pwsh => {
+            include_str!("../assets/prompt/shell-dialect-pwsh.md")
+        }
     };
     vec![
         mk(
@@ -148,16 +164,49 @@ fn builtin_sections() -> Vec<Section> {
             20,
             include_str!("../assets/prompt/tool-guidance.md"),
         ),
-        mk(
-            names::SHELL_DIALECT,
-            30,
-            include_str!("../assets/prompt/shell-dialect.md"),
-        ),
+        mk(names::SHELL_DIALECT, 30, dialect),
     ]
 }
 
+/// `prompt.d` stems that shadow kernel-owned sections. A same-stem file
+/// *replaces* the baked text in place (the designed override) — the trap is
+/// silence: a file the user dropped under an innocent name turns into a
+/// builtin replacement the moment a new section claims that stem. `doctor`
+/// surfaces the collision; CONFIG.md names the reserved set.
+pub const RESERVED_STEMS: &[&str] = &[
+    names::IDENTITY,
+    names::TOOL_GUIDANCE,
+    names::SHELL_DIALECT,
+    names::SUBAGENT_DEFAULT,
+    names::COMPACT,
+    names::PROJECT_CONTEXT,
+];
+
+/// `prompt.d/*.md` files in `dir` whose stem shadows a kernel section —
+/// `(stem, path)` pairs for `doctor` to report. Empty dir / unreadable dir
+/// reports nothing (same posture as `apply_layer`).
+pub fn shadowed_builtins(dir: &Path) -> Vec<(String, PathBuf)> {
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir.join("prompt.d")) {
+        for p in entries.flatten().map(|e| e.path()) {
+            if !p.extension().map(|x| x == "md").unwrap_or(false) {
+                continue;
+            }
+            let stem = p
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            if RESERVED_STEMS.contains(&stem.as_str()) {
+                out.push((stem, p));
+            }
+        }
+    }
+    out
+}
+
 /// `~/.sunmao/` — the user-level layer.
-fn user_layer_dir() -> PathBuf {
+pub fn user_layer_dir() -> PathBuf {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)

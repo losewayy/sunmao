@@ -275,6 +275,10 @@ impl HostHandle {
             ("PUT", ["ui"]) => ui::put(s, query_arg(query, "sess"), body).await,
             ("GET", ["shell"]) => ui::shell_view(s, query_arg(query, "sess")),
             ("PUT", ["shell"]) => ui::shell_put(s, query_arg(query, "sess"), body),
+            // custom wallpaper image — `.sunmao/wallpapers/custom.{ext}`;
+            // `ui.json`'s wallpaper:"custom" only names it, the bytes live here
+            ("GET", ["wallpaper"]) => ui::wallpaper_view(s, query_arg(query, "sess")),
+            ("PUT", ["wallpaper"]) => ui::wallpaper_put(s, query_arg(query, "sess"), body),
             _ => HostResponse::err(404, "not found".into()),
         }
     }

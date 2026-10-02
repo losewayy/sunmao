@@ -119,8 +119,16 @@ function paintWall(force) {
 function setCustom(url, select) {
   const im = new Image();
   im.onload = () => { customImg = im; if (select) { S.wallpaper = 'custom'; commit(); toast('已更换壁纸', 'image'); } else if (S.wallpaper === 'custom') paintWall(true); renderWallGrid(); };
+  /* the server having no image while ui.json still says "custom" must not
+     leave a blank canvas — paintWall's customImg-null guard draws the
+     default instead */
+  im.onerror = () => { if (S.wallpaper === 'custom') paintWall(true); };
   im.src = url;
 }
+const wallUrl = () => `/wallpaper?${sessionId ? 'sess=' + encodeURIComponent(sessionId) + '&' : ''}t=${Date.now()}`;
+/* pull the stored image — skips the fetch once an upload is already
+   loaded; `wallpaper_changed` passes force so a sibling tab's upload shows */
+function loadCustom(force) { if (!customImg || force) setCustom(wallUrl(), false); }
 $('#file-wall').addEventListener('change', e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
   const img = new Image();
@@ -129,8 +137,12 @@ $('#file-wall').addEventListener('change', e => {
     c.width = Math.round(img.naturalWidth * s); c.height = Math.round(img.naturalHeight * s);
     c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
     const url = c.toDataURL('image/jpeg', .86);
-    try { localStorage.setItem('sunmao.wall.custom', url); } catch {}
-    URL.revokeObjectURL(img.src); setCustom(url, true);
+    URL.revokeObjectURL(img.src);
+    /* the file on disk is the source of truth — only select "custom" once
+       the PUT lands (a failed upload must not persist a phantom choice) */
+    fetch(wallUrl(), { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: url })
+      .then(r => { if (!r.ok) throw new Error(r.status); setCustom(url, true); })
+      .catch(() => toast('壁纸保存失败', 'alert', 'warn'));
   };
   img.onerror = () => toast('无法读取这张图片', 'alert', 'warn');
   img.src = URL.createObjectURL(f);

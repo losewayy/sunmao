@@ -88,7 +88,7 @@ const INITIAL = Object.assign(clone(DEFAULTS), { wallpaper: 'dusk-ridge', dim: 0
    while the fetch is in flight). A failed fetch keeps the cached state. */
 const mergeUi = v => (v && typeof v === 'object') ? Object.assign(clone(INITIAL), v, { fonts: Object.assign({}, INITIAL.fonts, v.fonts || {}) }) : clone(INITIAL);
 let S = (() => { try { return mergeUi(JSON.parse(localStorage.getItem('sunmao.ui'))); } catch { return clone(INITIAL); } })();
-async function loadUi() { try { const v = await api('/ui'); if (v && v.ui) { S = mergeUi(v.ui); apply(); } } catch {} }
+async function loadUi() { try { const v = await api('/ui'); if (v && v.ui) { S = mergeUi(v.ui); apply(); if (S.wallpaper === 'custom') loadCustom(); } } catch {} }
 let uiSaveT = 0;
 const save = () => {
   try { localStorage.setItem('sunmao.ui', JSON.stringify(S)); } catch {}

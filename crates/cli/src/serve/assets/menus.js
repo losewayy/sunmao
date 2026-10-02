@@ -66,7 +66,7 @@ async function submitNote(name, btn) {
   const wrap = btn.closest('.notes'), inp = $('input', wrap), v = inp.value.trim();
   if (!v) return inp.focus();
   try {
-    const r = await api(`/artifacts/${encodeURIComponent(name)}/annotate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ note: v }) });
+    const r = await api(`/artifacts/${encodeURIComponent(name)}/annotate?sess=${encodeURIComponent(sessionId)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ note: v }) });
     inp.value = '';
     toast((r.result || '已写入').replace(/^\[|\]$/g, ''), 'note');
     refreshNotes(btn.closest('.island'), name);
@@ -79,11 +79,12 @@ function act(name, el) {
     case 'palette-close': return closePalette();
     case 'events': if (popAnchor === el) return closePop(); return pop(el, eventsHTML(), { align: 'end', cls: 'events' });
     case 'dock': return toggleDock();
+    case 'dock-tab': return dockTab(el.dataset.tab);
     case 'crumb': return menuPop(el, sessionMenu(sessionId), v => sessionAction(v, sessionId, el));
     case 'help': return menuPop(el, [{ v: 'keys', t: '键盘快捷键', icon: 'keyboard' }, { v: 'about', t: '关于 sunmao', icon: 'info' }], v => { show('settings'); settingsPage(v); }, { place: 'top' });
     case 'notes': return el.closest('.island').classList.toggle('show-notes');
     case 'note-add': return submitNote(el.dataset.name, el);
-    case 'sandbox': return toast('沙箱：禁止网络、无同源访问、脚本无法调用宿主', 'lock');
+    case 'sandbox': return toast('沙箱：脚本已禁用（纯文档渲染）· 禁网 · 无同源——交互式页面请「在浏览器中打开」', 'lock');
     case 'island-tall': { const isl = el.closest('.island'), on = isl.classList.toggle('tall'); el.innerHTML = ic(on ? 'shrink' : 'expand'); el.dataset.tip = on ? '收起' : '展开'; return; }
     case 'rev-prev': case 'rev-next': {
       const isl = el.closest('.island');
@@ -129,13 +130,35 @@ function act(name, el) {
     case 'win-min': { const w = shellWin(); if (w) w.win('min'); return; }
     case 'win-max': { const w = shellWin(); if (w) w.win('max'); return; }
     case 'win-close': { const w = shellWin(); if (w) w.win('close'); return; }
+    case 'imv-close': return closeImv();
   }
 }
+
+/* ================= image viewer ================= */
+// click-to-preview for every attachment surface — composer chips (the
+// blob: thumb) and sent/replayed thumbs (the /attachments URL) share one
+// overlay; the same full-size URL the kernel serves is what a transcript
+// img already points at, so the viewer needs no new fetch path
+function openImv(src, cap) {
+  const imv = $('#imv'), img = $('#imv-img'), lab = $('#imv-cap');
+  img.src = src; lab.textContent = cap || '';
+  imv.hidden = false;
+}
+function closeImv() { $('#imv').hidden = true; $('#imv-img').src = ''; }
 
 /* ================= global input ================= */
 document.addEventListener('click', e => {
   const t = e.target;
   if (t.closest('.pop') && !t.closest('[data-act]')) return;
+  // composer chip thumb → viewer (the chip × keeps working — check first)
+  const chip = t.closest('.att-chip');
+  if (chip && !t.closest('.chip-x')) {
+    const img = chip.querySelector('img');
+    if (img) { openImv(img.src, (chip.querySelector('.att-n') || {}).textContent); return; }
+  }
+  // a transcript attachment thumb → viewer
+  const im = t.closest('img.att');
+  if (im) { openImv(im.src, im.alt || im.title); return; }
   const st = t.closest('[data-starter]'); if (st) { const ta = $('#input'); ta.value = st.dataset.starter; autoGrow(); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); return; }
   const apb = t.closest('[data-ap]'); if (apb) { const cd = apb.closest('.approve'); return decide(apb.dataset.ap, cd ? +cd.dataset.apid : null); }
   const th = t.closest('.tool-h'); if (th) { if ($('.tool-o', th.parentElement)) th.parentElement.classList.toggle('open'); return; }
@@ -147,11 +170,12 @@ document.addEventListener('click', e => {
   const m = t.closest('.tc[data-mode]'); if (m) { S.mode = m.dataset.mode; return commit(); }
   const a = t.closest('[data-act]'); if (a) return act(a.dataset.act, a);
   const pv = t.closest('[data-pv]'); if (pv) return providerAction(pv.dataset.pv, pv);
+  const mc = t.closest('[data-mc]'); if (mc) return toggleCand(mc.dataset.mc);
 });
 document.addEventListener('keydown', e => {
   const typing = e.target.closest && e.target.closest('input,textarea,[contenteditable]');
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
-  if (e.key === 'Escape') { if (!$('#palette').hidden) return closePalette(); if (popEl) return closePop(); if (findBar) return closeFind(); if (view === 'settings') return go('back'); if (typing) e.target.blur(); return; }
+  if (e.key === 'Escape') { if (!$('#imv').hidden) return closeImv(); if (!$('#palette').hidden) return closePalette(); if (popEl) return closePop(); if (findBar) return closeFind(); if (view === 'settings') return go('back'); if (typing) e.target.blur(); return; }
   if (mod && k === 'f') { e.preventDefault(); return openFind(); }
   if (mod && k === 'k') { e.preventDefault(); return openPalette(); }
   if (mod && k === 'n') { e.preventDefault(); return newChat(); }

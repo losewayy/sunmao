@@ -43,36 +43,31 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
         }
     }
 
-    // 2b. shell backend — SUNMAO_SHELL decides whether the Bash tool uses
-    // the embedded POSIX shell or a real `pwsh`; a wrong value fails EVERY
-    // Bash call, not just this check.
-    print!("shell backend ... ");
-    match std::env::var_os("SUNMAO_SHELL") {
-        None => println!("embedded POSIX shell (deno_task_shell)"),
-        Some(v) => {
-            let name = v.to_string_lossy();
-            if name.eq_ignore_ascii_case("pwsh") {
-                match std::process::Command::new("pwsh")
-                    .arg("-NoProfile")
-                    .arg("-Command")
-                    .arg("1")
-                    .output()
-                {
-                    Ok(p) if p.status.success() => println!("pwsh OK"),
-                    _ => {
-                        ok = false;
-                        println!(
-                            "FAIL (SUNMAO_SHELL=pwsh but `pwsh` won't run — unset it or fix PATH)"
-                        );
-                    }
-                }
-            } else {
-                ok = false;
-                println!(
-                    "FAIL (SUNMAO_SHELL={name} — only `pwsh` is a valid opt-in; anything else falls back but signals a typo)"
-                );
-            }
+    // 2b. shell backend — the same layered resolution every Context runs
+    // (SUNMAO_SHELL → .sunmao/shell.txt → ~/.sunmao/shell.txt →
+    // auto-detect). An explicit `pwsh` on a box without the binary silently
+    // falls back at runtime; here it's a FAIL, since a typo'd env var would
+    // otherwise look healthy.
+    let res = sunmao_core::tool::ShellBackend::resolve_with(&cli.cwd);
+    let backend_name = match res.backend {
+        sunmao_core::tool::ShellBackend::Pwsh => "pwsh (PowerShell 7)",
+        sunmao_core::tool::ShellBackend::Posix => "POSIX (deno_task_shell)",
+    };
+    println!("shell backend: {backend_name} via {}", res.source.label());
+    if res.pwsh_requested_but_missing {
+        ok = false;
+        println!("  pwsh requested but not on PATH — fell back to POSIX");
+    }
+    print!("pwsh --version ... ");
+    match std::process::Command::new("pwsh").arg("--version").output() {
+        Ok(p) if p.status.success() => {
+            println!("{}", String::from_utf8_lossy(&p.stdout).trim());
         }
+        _ if res.backend == sunmao_core::tool::ShellBackend::Pwsh => {
+            ok = false;
+            println!("FAIL (pwsh resolved but won't run — fix PATH or pin posix)");
+        }
+        _ => println!("not found"),
     }
 
     // 3. session dir writable

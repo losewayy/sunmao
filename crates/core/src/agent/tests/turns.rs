@@ -483,3 +483,91 @@ async fn steer_folds_into_running_turn() {
         "the drain consumes the queue"
     );
 }
+
+/// A cancel landing BETWEEN the gate's last await and the tool call's
+/// first select-poll must still abort the call: `notify_waiters` only
+/// wakes registered waiters, so the pre-enable window used to swallow it
+/// and the tool ran anyway. The approver (the last await before dispatch)
+/// fires the cancel, which lands exactly in that window.
+#[tokio::test]
+async fn cancel_in_the_pre_registration_window_aborts_the_call() {
+    use crate::approval::{Approval, Approver};
+
+    struct CancelDuringApprove {
+        cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        notify: std::sync::Arc<tokio::sync::Notify>,
+    }
+    #[async_trait::async_trait]
+    impl Approver for CancelDuringApprove {
+        async fn approve(&self, _t: &str, _d: &str, _w: &str) -> Approval {
+            // exactly what AgentLoop::cancel() does, racing the dispatch's
+            // waiter registration
+            self.cancelled
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            self.notify.notify_waiters();
+            Approval::Once
+        }
+    }
+
+    let dir = crate::fresh_test_dir("cancel-window");
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    // an ask rule forces the approval await — the cancel lands after the
+    // gate resolves but before the tool's select registers its waiter
+    std::fs::write(
+        dir.join(".sunmao/permissions.json"),
+        r#"{"permissions":{"ask":["Glob(**/*.rs)"]}}"#,
+    )
+    .unwrap();
+    let provider = Arc::new(MockProvider {
+        responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+            vec![
+                StreamDelta::ToolCalls(vec![
+                    ToolCallFragment {
+                        index: 0,
+                        id: Some("c".into()),
+                        name: Some("Glob".into()),
+                        arguments: None,
+                    },
+                    ToolCallFragment {
+                        index: 0,
+                        arguments: Some("{\"pattern\":\"**/*.rs\"}".into()),
+                        ..Default::default()
+                    },
+                ]),
+                StreamDelta::Finish {
+                    reason: Some("tool_calls".into()),
+                    usage: None,
+                },
+            ],
+        ])),
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let mut ctx_raw = Context::new(
+        provider,
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        dir.clone(),
+    );
+    let cancelled = ctx_raw.cancelled.clone();
+    let notify = ctx_raw.cancel_notify.clone();
+    ctx_raw.approval = Arc::new(CancelDuringApprove { cancelled, notify });
+    let ctx = Arc::new(ctx_raw);
+    let agent = AgentLoop::new(ctx.clone());
+    let outcome = agent.run_turn("go", &NullObserver).await.unwrap();
+    assert!(
+        matches!(outcome, TurnOutcome::Cancelled),
+        "the turn must end cancelled — got {outcome:?}"
+    );
+    let evs = ctx.sessions.lock().await.events().await.unwrap();
+    let res = evs.iter().find_map(|e| match e {
+        crate::session::SessionEvent::ToolResult { ok, output, .. } => {
+            Some((*ok, output.clone()))
+        }
+        _ => None,
+    });
+    match res {
+        Some((false, out)) => assert!(out.contains("cancelled"), "{out}"),
+        other => panic!("the call must settle as cancelled, never run: {other:?}"),
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}

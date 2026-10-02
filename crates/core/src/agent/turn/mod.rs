@@ -232,12 +232,25 @@ impl AgentLoop {
             // cancel during stream ESTABLISHMENT: a slow/hung `stream()`
             // is outside the delta-select below — without this arm a kill
             // waits for the provider's own timeout (connect hangs can be
-            // minutes on a bad route). Bind the adapter Arc first — the
-            // temporary would drop before `select!` could borrow it.
+            // minutes on a bad route). `notify_waiters` only wakes
+            // *registered* waiters: enable() pins ours before the await,
+            // and the cancelled flag catches a cancel that beat us.
+            // Bind the adapter Arc first — the temporary would drop before
+            // `select!` could borrow it.
             let llm = self.ctx.active_llm();
+            let cancel_wait = self.ctx.cancel_notify.notified();
+            tokio::pin!(cancel_wait);
+            cancel_wait.as_mut().enable();
+            if self
+                .ctx
+                .cancelled
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                return Ok(TurnOutcome::Cancelled);
+            }
             let mut stream = tokio::select! {
                 s = llm.stream(req) => s?,
-                () = self.ctx.cancel_notify.notified() => {
+                () = &mut cancel_wait => {
                     return Ok(TurnOutcome::Cancelled);
                 }
             };
@@ -249,12 +262,28 @@ impl AgentLoop {
             // cancel mid-stream: dropping `stream` aborts the HTTP body —
             // without this `select!` a queued cancel only lands after the
             // provider finishes generating (the "stop didn't work" bug).
+            // The Notified is hoisted and enabled once: a wake between
+            // loop iterations lands on the registered waiter instead of
+            // dying between polls.
             let mut cancelled_mid_stream = false;
+            let cancel_wait = self.ctx.cancel_notify.notified();
+            tokio::pin!(cancel_wait);
+            cancel_wait.as_mut().enable();
+            if self
+                .ctx
+                .cancelled
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                cancelled_mid_stream = true;
+            }
 
             loop {
+                if cancelled_mid_stream {
+                    break;
+                }
                 let delta = tokio::select! {
                     d = stream.next() => d,
-                    () = self.ctx.cancel_notify.notified() => {
+                    () = &mut cancel_wait => {
                         cancelled_mid_stream = true;
                         None
                     }

@@ -14,6 +14,7 @@
 //! snapshot — rewinding mid-stretch restores the session's first pre-state,
 //! not a per-turn diff chain.
 
+use crate::context::MutexRecover;
 use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{BufRead, Write};
@@ -162,7 +163,7 @@ pub(crate) async fn snapshot_if_new(
         return Ok(None);
     };
     let (session_id, seq) = {
-        let st = state.lock().unwrap();
+        let st = state.lock_or_recover();
         let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         if st.taken.contains(path) || st.taken.contains(&canon) {
             return Ok(None);
@@ -202,7 +203,7 @@ pub(crate) async fn snapshot_if_new(
         .append(true)
         .open(dir.join("manifest.jsonl"))?;
     file.write_all(&line)?;
-    let mut st = state.lock().unwrap();
+    let mut st = state.lock_or_recover();
     st.seq += 1;
     st.taken.insert(path.to_path_buf());
     st.taken
@@ -292,6 +293,24 @@ pub fn copy_log_prefix(src: &Path, dst: &Path, upto_line: usize) -> Result<()> {
         buf.clear();
     }
     Ok(())
+}
+
+/// Stamp a fork's provenance onto its log — the copied prefix ends
+/// mid-story, and without this row a rewind's fork is indistinguishable
+/// from a session that happened to start at turn `n`. `mode` is the
+/// caller's own spelling ("both"/"session"), kept a string so the two
+/// rewind frontends keep their enums private.
+pub async fn stamp_rewind_provenance(
+    log: &mut crate::session::SessionLog,
+    src_id: &str,
+    upto_turn: u64,
+    mode: &str,
+) {
+    log.append_audit(&crate::session::SessionEvent::Hook {
+        event: "rewind".into(),
+        detail: format!("from {src_id} at turn {upto_turn} ({mode})"),
+    })
+    .await;
 }
 
 /// Restore working-tree files to their earliest snapshot recorded at or

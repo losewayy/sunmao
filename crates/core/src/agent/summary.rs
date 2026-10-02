@@ -78,7 +78,10 @@ pub(crate) fn truncate_output(s: &str) -> String {
 
 /// The string declarative rules glob over for a given tool: the command for
 /// Bash, the path for file tools, the pattern for search — whatever a rule
-/// like `Bash(npm *)` or `Read(./src/**)` is meant to match.
+/// like `Bash(npm *)` or `Read(./src/**)` is meant to match. Tools without a
+/// preferred field (mcp__*, ext__*, anything a plugin registers) fall back
+/// to the compact args JSON — an empty specifier used to make every
+/// specifier-scoped rule silently unmatchable while `Tool(*)` still hit.
 pub(crate) fn specifier_for(tool: &str, args: &serde_json::Value) -> String {
     let key = match tool {
         "Bash" => "command",
@@ -88,7 +91,7 @@ pub(crate) fn specifier_for(tool: &str, args: &serde_json::Value) -> String {
         "Task" => "prompt",
         "HtmlArtifact" => "name",
         "JobOutput" => "id",
-        _ => "",
+        _ => return serde_json::to_string(args).unwrap_or_default(),
     };
     args.get(key)
         .and_then(|v| v.as_str())
@@ -107,4 +110,28 @@ pub(crate) fn tool_timeout_for(ctx: &crate::context::Context, tool: &str) -> Opt
             .then(|| ctx.tool_timeouts.get("mcp__").copied())
             .flatten()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tools without a preferred args field used to hand the gate an empty
+    /// specifier — every `Tool(pattern)` rule silently unmatchable, so
+    /// `deny: ["mcp__x__y(*secret*)"]` never fired. The compact args JSON
+    /// gives specifier rules a real payload to glob over.
+    #[test]
+    fn unknown_tool_specifier_falls_back_to_args() {
+        let args = serde_json::json!({"path": "secret.key", "verbose": true});
+        let s = specifier_for("mcp__vault__read", &args);
+        assert_eq!(s, r#"{"path":"secret.key","verbose":true}"#);
+        // a specifier rule can actually match now
+        let pat = glob::Pattern::new("*secret*").unwrap();
+        assert!(pat.matches(&s));
+        // known tools keep their field
+        assert_eq!(
+            specifier_for("Bash", &serde_json::json!({"command": "ls -la"})),
+            "ls -la"
+        );
+    }
 }

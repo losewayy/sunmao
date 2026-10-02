@@ -2,6 +2,6 @@
   "permissions": {
     "allow": ["Bash(cargo *)", "Bash(git status*)", "Read"],
     "ask": ["Bash(git push*)", "Write(./src/**)"],
-    "deny": ["Bash(rm -rf *)", "Bash(format *)", "Bash(curl *)"]
+    "deny": ["Bash(rm -rf *)", "Bash(format *)", "Bash(curl *)", "Read(**/.env)", "Read(!**/.env.example)", "Bash(re:^git (push|clean)\\b)"]
   }
 }

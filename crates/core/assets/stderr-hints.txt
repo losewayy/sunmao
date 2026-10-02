@@ -1,0 +1,9 @@
+# stderr-hints — subprocess stderr substrings that mean something a model
+# trained on Unix won't read correctly. Rendered as a `[hint]` line after
+# the run result; advisory only, never changes exit semantics.
+# Format: `substring | hint for the model` — case-insensitive match.
+os error 32 | Windows file lock: the file is open in another process (AV scan, dev server, an open editor) — retry shortly or close the locker
+being used by another process | Windows file lock: the file is open in another process (AV scan, dev server, an open editor) — retry shortly or close the locker
+EBUSY | resource busy — on Windows this usually means a file lock from an open handle; retry or close the locker
+access is denied | may be a Windows file lock (AV/ indexer/ open handle), a read-only file, or a real permission failure — check who holds the file first
+permission denied | on Windows often a file lock rather than Unix permission bits — check for an open handle before chmod-style fixes

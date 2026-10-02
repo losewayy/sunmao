@@ -309,7 +309,26 @@ pub fn render_run(r: &ShellRun) -> String {
     if r.exit_code != 0 {
         out.push_str(&format!("\n[exit code {}]", r.exit_code));
     }
+    // Windows-shaped failures (file locks, busy files) read like Unix
+    // permission errors — a hint line teaches the right reflex. Advisory,
+    // never a verdict: the stderr itself is still shown verbatim above.
+    #[cfg(windows)]
+    if let Some(hint) = stderr_hint(&r.stderr) {
+        out.push_str(&format!("\n[hint] {hint}"));
+    }
     out
+}
+
+/// stderr substring → model-facing hint. `assets/stderr-hints.txt`, same
+/// `pattern | reason` grammar as risky-patterns.txt — substring match,
+/// case-insensitive, first match wins.
+#[cfg(windows)]
+fn stderr_hint(stderr: &str) -> Option<String> {
+    static TABLE: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        crate::approval::parse_table(include_str!("../../assets/stderr-hints.txt"))
+    });
+    crate::approval::classify(stderr, table).map(str::to_string)
 }
 
 // ---------- background jobs (fastctx-style: filesystem is the state) ----------
@@ -457,5 +476,45 @@ impl ToolImpl for JobOutputTool {
             ),
             ok: true,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(code: i32, stdout: &str, stderr: &str) -> ShellRun {
+        ShellRun {
+            exit_code: code,
+            stdout: stdout.into(),
+            stderr: stderr.into(),
+            preflight: String::new(),
+            ended: None,
+        }
+    }
+
+    #[test]
+    fn render_run_keeps_result_shape() {
+        let out = render_run(&run(1, "partial", "boom"));
+        assert!(out.contains("partial"));
+        assert!(out.contains("[stderr]\nboom"));
+        assert!(out.contains("[exit code 1]"));
+    }
+
+    /// Windows-only: stderr that smells like a file lock gets a `[hint]`
+    /// line appended after the exit code; unrelated stderr stays quiet.
+    #[cfg(windows)]
+    #[test]
+    fn windows_stderr_hints_surface() {
+        let out = render_run(&run(
+            1,
+            "",
+            "rm: cannot remove 'x': os error 32: The process cannot access \
+             the file because it is being used by another process",
+        ));
+        assert!(out.contains("[hint]"), "{out}");
+        assert!(out.contains("file lock"), "{out}");
+        let quiet = render_run(&run(1, "", "compile error: expected ;"));
+        assert!(!quiet.contains("[hint]"), "{quiet}");
     }
 }

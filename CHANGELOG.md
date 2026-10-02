@@ -10,6 +10,16 @@ ACP v2 server, event-sourced sessions with resume/fork/dataflow, CJK-native
 TUI.
 
 **post-0.2 additions**
+- **security change**: hook trust pinning — project/plugin/preset hook
+  commands no longer execute on load. Each command needs a pin in
+  `.sunmao/trusted-hooks.json` keyed on `sha256(canonical source path +
+  command)`; editing the command or moving the file invalidates the pin.
+  User-level sources (`~/.claude`, `~/.codex`, `~/.cursor`) are implicitly
+  trusted. Skips are durable `hook.untrusted` audit facts plus live ⚙
+  lines; `/hooks` lists the roster (`user`/`pinned`/`untrusted`) and
+  `/hooks trust <n>` / `untrust <n>` manage the ledger — identical in
+  REPL, TUI, and serve (`GET /hooks` REST read face). A cloned repo can
+  no longer exec code at SessionStart
 - **behavior change** (Windows): `Bash` defaults to real PowerShell 7 when
   `pwsh` is on PATH — no config needed; explicit `SUNMAO_SHELL` /
   `.sunmao/shell.txt` values still win (`posix`/`bash`/`deno` force the

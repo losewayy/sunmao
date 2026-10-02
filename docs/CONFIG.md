@@ -8,7 +8,8 @@ per-key where merging applies (hooks/permissions/mcp).
 
 | File | Shape | Effect |
 |---|---|---|
-| `hooks.json` | `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "..."}]}]}}` | Claude-contract hook procs; stdin=JSON event, exit 0 allow / 2 veto |
+| `hooks.json` | `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "..."}]}]}}` | Claude-contract hook procs; stdin=JSON event, exit 0 allow / 2 veto. Project/plugin/preset commands run only once pinned — see `trusted-hooks.json` |
+| `trusted-hooks.json` | `{"trusted": {"<sha256(canonical-source + "\\n" + command)>": {"source","command"}}}` | hook trust ledger — written by `/hooks trust <n>`, removed when empty. Project/plugin commands whose `(source, command)` digest isn't pinned are skipped at plan time and logged as `hook.untrusted` audit facts; editing a hook command or moving the file invalidates its pin. User-level files (`~/.claude`, `~/.codex`, `~/.cursor`) are implicitly trusted and never need a row |
 | `mcp.json` | `{"mcpServers": {"name": {"command","args","env"} \| {"url","headers"?,"auth_env"?,"token_file"?,"timeout_secs"?}}}` | MCP servers — stdio spawn or streamable-HTTP; `auth_env`/`token_file` supply a static bearer token, `headers` merges literal request headers. Server prompts surface as `/srv:name` slash commands |
 | `permissions.json` | `{"permissions": {"allow":[..],"ask":[..],"deny":[..]}}` | `Tool(glob)` rules; deny>ask>allow>default. Specifier extensions: a `!` prefix negates the entry (a bucket matches iff some positive entry hits and no `!` entry vetoes — `["Read(**/.env)", "Read(!**/.env.example)"]`), `re:` compiles the specifier as a regex (invalid regexes degrade to literal match, like hook matchers) |
 | `risky-patterns.txt` | `pattern | reason` per line | **replaces** the shipped approval-gate table outright (cold-plug); preset dirs' same-named file merges additively |
@@ -147,6 +148,10 @@ so give custom sections distinct names.
 {"type":"artifact","name","path","bytes"}
 {"type":"usage","usage":{prompt_tokens,completion_tokens,total_tokens}}
 {"type":"hook","event":"PreToolUse.updatedInput","detail":"…"}  // audit-only, skipped by the message fold
+// trust pinning writes two more Hook events: "hook.untrusted" (a
+// project/plugin command skipped at plan time — detail names event,
+// command, source file) and "hook.trust"/"hook.untrust" (the pin
+// decision itself, so who approved what is durable too)
 {"type":"task_done","id":"sub-…-l2","ok":true,"output":"…"}  // background Task finished — folds into the message stream as a <task-result> user message; full transcript at sessions/<id>.jsonl
 // a Task{steer} mid-run injection lands as a plain
 //   {"type":"message","message":{"role":"user",…}} (folded at the child's

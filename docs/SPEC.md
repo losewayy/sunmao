@@ -79,7 +79,7 @@
 
 ### 4.3 `tools` — 作用域注册表 + 受控执行管线
 
-- 内置工具命名**强制对齐主流词表**：`Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob`、`WebFetch`、`JobOutput`、`HtmlArtifact`、`Task`、`TodoWrite`、`SendMessage`——hook matcher 免费命中；`SendMessage` 是子→父上行（推上父 steer 队列），与父→子 `Task{steer}`/`steer_sub` 构成双向 agent 通信
+- 内置工具命名**强制对齐主流词表**：`Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob`、`WebFetch`、`JobOutput`、`HtmlArtifact`、`Task`、`TodoWrite`、`SendMessage`、`UpdateGoal`——hook matcher 免费命中；`SendMessage` 是子→父上行（推上父 steer 队列），与父→子 `Task{steer}`/`steer_sub` 构成双向 agent 通信
 - MCP 工具命名空间：`mcp__{server}__{tool}`——`mcp__*` matcher 免费命中
 - 执行管线串缝：`pre`(hooks+审批) → `exec` → `post`(hooks) —— 拦截点全部公开给 `ctx.audit` 与 `ctx.hooks`
 
@@ -138,6 +138,7 @@ hook engine（核心）
 - `agentLoop` 默认 driver：input → sessions 开 turn → systemPrompt 组装 → llm 流式 → tools 分发 → 事实追加回日志——**它是插件，不是内核特权层**
 - 这保留了 dsh 的"换循环即换产品"能力（极简 loop、PTC code-mode loop、审计严格 loop 都是预设层）
 - ✅ **已落地**：`Context.loop_driver`（`LoopDriver` enum）由 manifest `loop:` 键解析——项目 `plugin.json` → `plugins/*` → preset，后层赢；`--loop` 旗标再压过一切声明。内置驱动两个：`full`（契约循环：hooks+审批闸+auto-compact）与 `bare`（`agent/bare.rs`——straight 电路，session 日志/observer/cancel/迭代上限全保留，hooks/gate/compaction 全不跑）。PTC code-mode 等第三驱动照同缝加。
+- ✅ **goal 自续跑循环已落地**（`agent/goal.rs`）：`/goal <objective>` 或模型 `UpdateGoal` 设定跨轮目标后，每个 Completed 轮尾在 `run_turn` 内链出续跑轮——`SessionEvent::Goal` 持久化（`{type:"goal",goal:{...}}`，末条为准，resume/fork 恢复）+ `LiveEvent::Goal` 实时镜像 + 每请求注入 `[goal round n/m]` 合成尾消息；链终结条件=模型报 complete/blocked/abandoned、`max_rounds` 预算耗尽、取消、或 `ctx.input_pending` 有排队输入（用户输入插队而非等完整条链）；`blocked` 要求同一 blocker 跨 ≥2 轮上报才落定；TUI 底栏 chip 与 GUI composer 顶条展示目标/状态/轮数
 
 ### 4.6 `audit` — 审批与审计
 

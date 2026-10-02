@@ -10,6 +10,15 @@ ACP v2 server, event-sourced sessions with resume/fork/dataflow, CJK-native
 TUI.
 
 **post-0.2 additions**
+- **security change**: trust pinning extends to spawn surfaces — plugin
+  `extensions` children and MCP `command:` stdio servers join hook
+  commands under the same `.sunmao/trusted-hooks.json` ledger (digest =
+  `sha256(canonical source + serialized {command,args,env})`; `url` MCP
+  transports don't spawn and aren't gated). Untrusted specs fail closed
+  at connect: skipped, with `ext.untrusted`/`mcp.untrusted` audit rows —
+  no approval prompt exists that early (ACP/serve sessions come up
+  unattended). `/hooks` lists hooks + spawn rows under one numbering and
+  `trust`/`untrust` pins either kind
 - **security change**: hook trust pinning — project/plugin/preset hook
   commands no longer execute on load. Each command needs a pin in
   `.sunmao/trusted-hooks.json` keyed on `sha256(canonical source path +

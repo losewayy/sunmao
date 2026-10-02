@@ -74,7 +74,8 @@
 - 首发方言：**OpenAI Chat Completions 兼容**（DeepSeek/Kimi/国产端点一套通吃）
 - 手写 SSE 解析 + delta 累积 + `tool_calls` 碎片重组（本项目立身之本：裸写协议栈）
 - 缝定义：`trait ProviderAdapter { stream(req) -> Stream<Chunk> }`——第二 provider（Anthropic）是 v0.4+ 的另一个方言插件
-- **已落地：OpenAI Responses API 方言**（`models.json` `dialect: "openai-responses"`）——`response.*` SSE 事件映射、`instructions` 顶层系统词、`call_id` 配对、item 数组重放全做；**缓存优化双件套**：`prompt_cache_key`（per-adapter 稳定键喂服务端前缀缓存）+ `previous_response_id` 链式增量（已发 item 列表严格前缀成立才发尾部增量；压缩/倒带/换会话全部自动退化为全量重发，陈旧 `prev_id` 兜底重试一次）。reasoning effort 参数面尚未暴露（`ChatRequest` 无该字段）
+- **已落地：OpenAI Responses API 方言**（`models.json` `dialect: "openai-responses"`）——`response.*` SSE 事件映射、`instructions` 顶层系统词、`call_id` 配对、item 数组重放全做；**缓存优化双件套**：`prompt_cache_key`（per-adapter 稳定键喂服务端前缀缓存）+ `previous_response_id` 链式增量（已发 item 列表严格前缀成立才发尾部增量；压缩/倒带/换会话全部自动退化为全量重发，陈旧 `prev_id` 兜底重试一次）
+- **已落地：reasoning effort 参数面**——`ChatRequest.reasoning_effort` 逐方言落字（chat completions 平铺 `reasoning_effort`、responses 写 `reasoning.effort`、anthropic 写 `output_config.effort`），会话级覆盖挂在 `ctx.reasoning_effort`（子代理共享），`/effort`、GUI 思考强度 chip、ACP `ThoughtLevel` select 三个前端同一事实（`effort.change` audit fact，resume 时回种子）；catalog 用 `thinking`/`reasoning` 声明各模型的可选档位
 - 宽容序列化：第三方端点的脏 payload（`tool_calls` 收 null、`finish_reason` 未知值兜底）——实测教训沉淀
 
 ### 4.3 `tools` — 作用域注册表 + 受控执行管线

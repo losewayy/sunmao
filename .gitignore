@@ -4,6 +4,7 @@
 .env
 .sunmao/
 _scratch/
+_audit/
 
 # maintainer-private docs — never commit, never push
 docs/WHY.md

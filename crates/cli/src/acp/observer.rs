@@ -133,6 +133,24 @@ impl Observer for AcpObserver {
                 )));
             }
             LiveEvent::Todos { .. } => {} // the tool's ToolDone output covers it
+            // the goal chain's progress marker — round bumps would spam
+            // chunks, so only objective/status transitions speak
+            LiveEvent::Goal { goal } => {
+                use sunmao_core::tool::GoalStatus;
+                if goal.status != GoalStatus::InProgress || goal.rounds == 0 {
+                    self.send(v2::SessionUpdate::AgentMessageChunk(v2::ContentChunk::new(
+                        format!(
+                            "[goal {} — {} (round {}/{})]\n",
+                            sunmao_core::tool::status_name(goal.status),
+                            goal.objective,
+                            goal.rounds,
+                            goal.max_rounds
+                        )
+                        .into(),
+                        self.next_id("msg"),
+                    )));
+                }
+            }
             // serve-only live mirror of the durable user message — ACP
             // never runs through client.rs's Input lane, so it never lands
             LiveEvent::UserMessage { .. } => {}

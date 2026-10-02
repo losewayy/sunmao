@@ -45,6 +45,7 @@ const BUILTINS: &[&str] = &[
     "search",
     "sessions",
     "fork",
+    "goal",
     "status",
     "tasks",
     "todos",
@@ -105,6 +106,12 @@ pub enum Command {
     Stop(String),
     /// /todos — the model's session task list
     Todos,
+    /// /goal [objective] — bare shows the standing goal; text sets it and
+    /// kicks the continuation loop; `clear` abandons it
+    Goal(Option<String>),
+    /// /goal clear — explicit human stop (distinct parse so `/goal clear
+    /// skies` can still be an objective)
+    GoalClear,
     /// /mcp — the connected MCP server roster
     Mcp,
     /// /status — session vitals (model/provider/cwd/id/mode/tokens)
@@ -187,6 +194,10 @@ pub fn parse(cmd_line: &str) -> Command {
         },
         "tasks" => Command::Tasks,
         "todos" => Command::Todos,
+        "goal" => match arg().as_deref() {
+            Some("clear") | Some("off") => Command::GoalClear,
+            other => Command::Goal(other.map(str::to_string)),
+        },
         "mcp" => Command::Mcp,
         "status" => Command::Status,
         "artifacts" => Command::Artifacts,

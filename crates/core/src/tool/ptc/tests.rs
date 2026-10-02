@@ -303,3 +303,54 @@ async fn runcode_doom_loop_resets_on_varied_calls() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A call the script starts but never awaits (fire-and-forget, or a
+/// `Promise.all` whose join was dropped) still lands its durable PtcCall
+/// fact — the host bridge drains inflight requests after the script
+/// returns instead of dropping them mid-dispatch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runcode_unawaited_call_is_drained_into_the_log() {
+    let dir = crate::fresh_test_dir("ptc-drain");
+    std::fs::create_dir_all(&dir).unwrap();
+    struct SlowMark;
+    #[async_trait::async_trait]
+    impl ToolImpl for SlowMark {
+        fn name(&self) -> &'static str {
+            "SlowMark"
+        }
+        fn decl(&self) -> Tool {
+            Tool::function("SlowMark", "test tool", json!({}))
+        }
+        async fn call(&self, _a: Value, _c: &Arc<Context>) -> anyhow::Result<ToolResult> {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            Ok(ToolResult {
+                output: "slow-ok".into(),
+                ok: true,
+            })
+        }
+    }
+    let reg = builtin_registry();
+    reg.register(SlowMark);
+    let ctx = Arc::new(Context::new(
+        Arc::new(StubLlm),
+        SessionLog::ephemeral(),
+        reg,
+        dir.clone(),
+    ));
+    // the script returns while SlowMark is still in flight — the select
+    // resolves on the script and the OLD code dropped the dispatch here.
+    // (the `await` tick pumps the __ptc send before the script settles)
+    let res = run(
+        &ctx,
+        r#"(async () => { tools.SlowMark({}); await Promise.resolve(); return "done"; })()"#,
+    )
+    .await;
+    assert!(res.ok, "{}", res.output);
+    let evs = ctx.sessions.lock().await.events().await.unwrap();
+    let ptc: Vec<_> = evs
+        .iter()
+        .filter(|e| matches!(e, SessionEvent::PtcCall { name, .. } if name == "SlowMark"))
+        .collect();
+    assert_eq!(ptc.len(), 1, "the unawaited call must land its fact: {evs:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}

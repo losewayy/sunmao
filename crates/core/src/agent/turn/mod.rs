@@ -486,12 +486,22 @@ impl AgentLoop {
             }
             // the ceiling consumed its last iteration while tool calls were
             // still pending — a `Completed` outcome + Stop hook would read
-            // as a normal finish; surface the truncation instead.
+            // as a normal finish; surface the truncation instead. A cancel
+            // observed mid-dispatch reads as Cancelled — the ceiling
+            // message would misreport a user stop as a truncation.
             if iter_n + 1 == self.max_iterations && had_calls {
-                outcome = TurnOutcome::Other(format!(
-                    "hit {}-iteration ceiling with tool calls pending",
-                    self.max_iterations
-                ));
+                outcome = if self
+                    .ctx
+                    .cancelled
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    TurnOutcome::Cancelled
+                } else {
+                    TurnOutcome::Other(format!(
+                        "hit {}-iteration ceiling with tool calls pending",
+                        self.max_iterations
+                    ))
+                };
             }
         }
         // TurnEnd + the cancelled reset moved to run_turn() — every exit

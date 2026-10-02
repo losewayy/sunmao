@@ -144,8 +144,8 @@ impl ChannelsConfig {
         let Ok(text) = std::fs::read_to_string(path) else {
             return Ok(None);
         };
-        let cfg: ChannelsConfig = serde_json::from_str(&text)
-            .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+        let cfg: ChannelsConfig =
+            serde_json::from_str(&text).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
         Ok(Some(cfg))
     }
 

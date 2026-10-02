@@ -181,6 +181,13 @@ sunmao serve        multi-session web host — loopback HTTP+WebSocket;
                     (Host/HostHandle::request + Client hello/replay)
                     under thin axum adapters; sessions, artifacts
                     (CSP-sandboxed islands + annotate), dataflow
+sunmao im           IM gateway daemon — channel adapters (Telegram via
+                    getUpdates long-poll) feed `im/`'s authz/route/progress/
+                    deliver lanes onto the same Shared/Host machinery;
+                    dmScope=main folds all DMs into `im-main`, busy turns
+                    steer, /stop is main-agent-only, approval is pinned
+                    full_access (pairing/allowlist admit, deny rules net).
+                    `sunmao pairing` manages the admission ledger
 sunmao-gui          Tauri v2 frameless window over the SAME host
                     in-process — no TCP at all (scheme + IPC above)
 ```

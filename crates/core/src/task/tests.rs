@@ -1,4 +1,4 @@
-use super::spawn::spawn_parts;
+use super::parts::spawn_parts;
 use super::*;
 use crate::session::{SessionEvent, SessionLog};
 use crate::tool::builtin_registry;

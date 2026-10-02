@@ -101,6 +101,9 @@ impl Client {
                 .filter(|h| h.busy.load(Ordering::Relaxed) > 0)
                 .map(|h| h.id.clone()).collect::<Vec<_>>(),
             "steer": host.as_ref().map(|h| h.agent.steer_queue()).unwrap_or_default(),
+            // the standing goal — the composer chip renders it live; a
+            // reconnect must seed the same state a replay would fold
+            "goal": host.as_ref().and_then(|h| h.agent.goal()),
             // queued inputs render as chips on every tab — a rejoining one
             // must see them too, not just the tab that submitted
             "queue": host.as_ref().map(|h| queue_items(h)).unwrap_or_default(),
@@ -139,6 +142,8 @@ impl Client {
             "pending": host.approvals.cards(),
             "steer": host.agent.steer_queue(),
             "queue": queue_items(host),
+            // same goal seeding hello carries — a `view` switch replays it
+            "goal": host.agent.goal(),
         }));
     }
 
@@ -197,6 +202,12 @@ impl Client {
                             text,
                             attachments,
                         });
+                        // queued = pending input the goal chain yields to —
+                        // the driver decrements when it claims the slot
+                        h.agent
+                            .context()
+                            .input_pending
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         h.queue_notify.notify_one();
                         let _ = self.s.live.send(input_queue_frame(&h));
                     }
@@ -549,6 +560,12 @@ impl Client {
                         text,
                         attachments: Vec::new(),
                     });
+                    // same pending bookkeeping as `prompt` — a queued island
+                    // message interleaves a goal chain too
+                    h.agent
+                        .context()
+                        .input_pending
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     h.queue_notify.notify_one();
                     let _ = self.s.live.send(input_queue_frame(&h));
                 }

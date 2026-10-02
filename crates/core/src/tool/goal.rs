@@ -195,7 +195,11 @@ impl ToolImpl for UpdateGoalTool {
         )
     }
 
-    async fn call(&self, args: Value, ctx: &crate::context::Context) -> anyhow::Result<ToolResult> {
+    async fn call(
+        &self,
+        args: Value,
+        ctx: &Arc<crate::context::Context>,
+    ) -> anyhow::Result<ToolResult> {
         #[derive(Deserialize)]
         struct Args {
             objective: Option<String>,

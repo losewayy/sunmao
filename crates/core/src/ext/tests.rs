@@ -147,12 +147,12 @@ async fn fixture_full_roundtrip() {
     assert_eq!(tools[0].name(), "ext__echo__ping");
 
     // a real ext/tools/call through the ToolImpl surface
-    let ctx = crate::context::Context::new(
+    let ctx = Arc::new(crate::context::Context::new(
         Arc::new(StubLlm),
         crate::session::SessionLog::ephemeral(),
         crate::tool::ToolRegistry::new(),
         dir.clone(),
-    );
+    ));
     let res = tools[0].call(json!({"msg": "hi"}), &ctx).await.unwrap();
     assert!(res.ok);
     assert!(res.output.contains("hi"), "{}", res.output);

@@ -27,7 +27,11 @@ pub struct ToolResult {
 pub trait ToolImpl: Send + Sync {
     fn name(&self) -> &'static str;
     fn decl(&self) -> Tool;
-    async fn call(&self, args: Value, ctx: &crate::context::Context) -> anyhow::Result<ToolResult>;
+    async fn call(
+        &self,
+        args: Value,
+        ctx: &Arc<crate::context::Context>,
+    ) -> anyhow::Result<ToolResult>;
 }
 
 pub struct ToolRegistry {
@@ -114,7 +118,7 @@ impl ToolRegistry {
         &self,
         name: &str,
         args_json: &str,
-        ctx: &crate::context::Context,
+        ctx: &std::sync::Arc<crate::context::Context>,
     ) -> ToolResult {
         // clone the Arc out from under the lock — a std::sync guard isn't
         // Send, and a list_changed refresh mid-call must not deadlock on it
@@ -290,7 +294,7 @@ mod tests {
             fn decl(&self) -> Tool {
                 Tool::function("mcp__dead__thing", "dies", json!({}))
             }
-            async fn call(&self, _a: Value, _c: &Context) -> anyhow::Result<ToolResult> {
+            async fn call(&self, _a: Value, _c: &Arc<Context>) -> anyhow::Result<ToolResult> {
                 anyhow::bail!("mcp call_tool failed: peer closed")
             }
         }

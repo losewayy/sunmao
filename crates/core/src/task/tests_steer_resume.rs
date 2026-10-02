@@ -252,12 +252,12 @@ async fn resume_finished_sub_continues_log() {
         calls: std::sync::atomic::AtomicUsize::new(0),
         seen: std::sync::Mutex::new(Vec::new()),
     });
-    let ctx = Context::new(
+    let ctx = Arc::new(Context::new(
         provider.clone(),
         SessionLog::ephemeral(),
         builtin_registry(),
         dir.clone(),
-    );
+    ));
 
     let res = TaskTool
         .call(json!({"prompt": "first leg"}), &ctx)
@@ -322,12 +322,12 @@ async fn resume_finished_sub_continues_log() {
 async fn resume_with_model_reroutes_adapter() {
     let dir = crate::fresh_test_dir("resumemodel");
     std::fs::create_dir_all(&dir).unwrap();
-    let mut ctx = Context::new(
+    let mut ctx = Arc::new(Context::new(
         Arc::new(MockProvider),
         SessionLog::ephemeral(),
         builtin_registry(),
         dir.clone(),
-    );
+    ));
     let resolver = crate::models::ModelResolver::load(
         &dir,
         crate::models::ProviderDef {
@@ -349,7 +349,7 @@ async fn resume_with_model_reroutes_adapter() {
             seen: std::sync::Mutex::new(Vec::new()),
         }),
     );
-    ctx.models = Some(Arc::new(resolver));
+    Arc::get_mut(&mut ctx).unwrap().models = Some(Arc::new(resolver));
 
     let res = TaskTool
         .call(json!({"prompt": "first leg"}), &ctx)
@@ -379,12 +379,12 @@ async fn resume_with_model_reroutes_adapter() {
 async fn steer_to_finished_sub_errors() {
     let dir = crate::fresh_test_dir("steerdead");
     std::fs::create_dir_all(&dir).unwrap();
-    let ctx = Context::new(
+    let ctx = Arc::new(Context::new(
         Arc::new(MockProvider),
         SessionLog::ephemeral(),
         builtin_registry(),
         dir.clone(),
-    );
+    ));
     let res = TaskTool
         .call(json!({"prompt": "quick"}), &ctx)
         .await
@@ -414,12 +414,12 @@ async fn steer_to_finished_sub_errors() {
 async fn resume_requires_prompt() {
     let dir = crate::fresh_test_dir("resumenoprompt");
     std::fs::create_dir_all(&dir).unwrap();
-    let ctx = Context::new(
+    let ctx = Arc::new(Context::new(
         Arc::new(MockProvider),
         SessionLog::ephemeral(),
         builtin_registry(),
         dir.clone(),
-    );
+    ));
     let err = TaskTool
         .call(json!({"resume": "sub-1"}), &ctx)
         .await
@@ -435,12 +435,12 @@ async fn resume_requires_prompt() {
 async fn resume_missing_log_errors() {
     let dir = crate::fresh_test_dir("resumemiss");
     std::fs::create_dir_all(&dir).unwrap();
-    let ctx = Context::new(
+    let ctx = Arc::new(Context::new(
         Arc::new(MockProvider),
         SessionLog::ephemeral(),
         builtin_registry(),
         dir.clone(),
-    );
+    ));
     let err = TaskTool
         .call(json!({"resume": "sub-ghost", "prompt": "x"}), &ctx)
         .await
@@ -469,12 +469,12 @@ async fn resume_running_sub_errors() {
             )))
         }
     }
-    let ctx = Context::new(
+    let ctx = Arc::new(Context::new(
         Arc::new(Park { gate: gate.clone() }),
         SessionLog::ephemeral(),
         builtin_registry(),
         dir.clone(),
-    );
+    ));
     let res = TaskTool
         .call(json!({"prompt": "p", "run_in_background": true}), &ctx)
         .await
@@ -520,12 +520,12 @@ async fn sendmessage_from_child_reaches_parent_steers() {
         calls: std::sync::atomic::AtomicUsize::new(0),
         seen: std::sync::Mutex::new(Vec::new()),
     };
-    let ctx = Context::new(
+    let ctx = Arc::new(Context::new(
         Arc::new(provider),
         SessionLog::ephemeral(),
         builtin_registry(),
         dir.clone(),
-    );
+    ));
     // foreground spawn — the child's whole lifetime sits inside this call;
     // its SendMessage push is what we're asserting.
     let res = TaskTool

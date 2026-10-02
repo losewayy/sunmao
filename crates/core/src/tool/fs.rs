@@ -28,7 +28,11 @@ impl ToolImpl for ReadTool {
         )
     }
 
-    async fn call(&self, args: Value, ctx: &crate::context::Context) -> anyhow::Result<ToolResult> {
+    async fn call(
+        &self,
+        args: Value,
+        ctx: &Arc<crate::context::Context>,
+    ) -> anyhow::Result<ToolResult> {
         #[derive(Deserialize)]
         struct Args {
             path: PathBuf,
@@ -126,7 +130,11 @@ impl ToolImpl for WriteTool {
         )
     }
 
-    async fn call(&self, args: Value, ctx: &crate::context::Context) -> anyhow::Result<ToolResult> {
+    async fn call(
+        &self,
+        args: Value,
+        ctx: &Arc<crate::context::Context>,
+    ) -> anyhow::Result<ToolResult> {
         #[derive(Deserialize)]
         struct Args {
             path: PathBuf,
@@ -186,7 +194,11 @@ impl ToolImpl for EditTool {
         )
     }
 
-    async fn call(&self, args: Value, ctx: &crate::context::Context) -> anyhow::Result<ToolResult> {
+    async fn call(
+        &self,
+        args: Value,
+        ctx: &Arc<crate::context::Context>,
+    ) -> anyhow::Result<ToolResult> {
         #[derive(Deserialize)]
         struct Args {
             path: PathBuf,

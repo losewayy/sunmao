@@ -30,8 +30,8 @@ pub struct ApprovalCard {
     pub detail: String,
     pub why: String,
     pub reply: tokio::sync::oneshot::Sender<sunmao_core::approval::Approval>,
-    /// 0 = allow, 1 = deny (two-option card for now — scopes need a richer
-    /// Approver API that doesn't exist yet)
+    /// Focus index into the card's rendered options — the card carries
+    /// allow-once / allow-session / deny; `selected` just tracks the row
     pub selected: usize,
     pub parked: bool,
 }
@@ -176,13 +176,16 @@ pub enum Submit {
     Note(String),
     /// /quit or /exit
     Quit,
-    /// drop everything still waiting in the submission channel — the app
-    /// sends this after recalling queued items for editing.
-    Flush,
+    /// drop the last N items still waiting in the submission channel —
+    /// the app sends `Flush(1)` after recalling one queued item for
+    /// editing, so older queued work survives the recall.
+    Flush(usize),
     /// /model [selector] — None lists choices, Some swaps the active adapter
     Model(Option<String>),
     /// /tasks — the live sub-agent roster
     Tasks,
+    /// /stop <sub-…-lN> — cancel one running sub-agent
+    Stop(String),
     /// /todos — the model's session task list
     Todos,
     /// /artifacts — the .sunmao/artifacts listing
@@ -195,6 +198,10 @@ pub enum Submit {
     Mcp,
     /// /status — session vitals note
     Status,
+    /// /export-md — write the session transcript as markdown
+    Export,
+    /// /export-zip — debug bundle: transcript + raw session log zipped
+    ExportZip,
 }
 
 impl App {
@@ -296,7 +303,7 @@ impl App {
     // ── composer ─────────────────────────────────────────────────────────
 
     pub fn insert_char(&mut self, c: char) {
-        let byte_idx = char_to_byte(&self.input, self.cursor);
+        let byte_idx = super::wrap::char_to_byte(&self.input, self.cursor);
         self.input.insert(byte_idx, c);
         self.cursor += 1;
         self.refresh_slash_menu();
@@ -319,7 +326,7 @@ impl App {
         } else {
             s.to_string()
         };
-        let byte_idx = char_to_byte(&self.input, self.cursor);
+        let byte_idx = super::wrap::char_to_byte(&self.input, self.cursor);
         self.input.insert_str(byte_idx, &s);
         self.cursor += s.chars().count();
         self.refresh_slash_menu();
@@ -349,7 +356,7 @@ impl App {
 
     pub fn backspace(&mut self) {
         if self.cursor > 0 {
-            let byte_idx = char_to_byte(&self.input, self.cursor - 1);
+            let byte_idx = super::wrap::char_to_byte(&self.input, self.cursor - 1);
             self.input.remove(byte_idx);
             self.cursor -= 1;
             self.refresh_slash_menu();
@@ -412,6 +419,7 @@ impl App {
                         self.paste_stash.clear();
                         self.selected = 0;
                         self.scroll_back = 0;
+                        self.render_cache.clear();
                         Submit::Note("[transcript cleared — session log untouched]".into())
                     }
                     crate::commands::Command::Resume(arg)
@@ -421,9 +429,12 @@ impl App {
                     crate::commands::Command::Model(arg) => Submit::Model(arg),
                     crate::commands::Command::Mode(arg) => Submit::Mode(arg),
                     crate::commands::Command::Tasks => Submit::Tasks,
+                    crate::commands::Command::Stop(id) => Submit::Stop(id),
                     crate::commands::Command::Todos => Submit::Todos,
                     crate::commands::Command::Mcp => Submit::Mcp,
                     crate::commands::Command::Status => Submit::Status,
+                    crate::commands::Command::Export => Submit::Export,
+                    crate::commands::Command::ExportZip => Submit::ExportZip,
                     crate::commands::Command::Artifacts => Submit::Artifacts,
                     crate::commands::Command::Annotate(name, note) => Submit::Annotate(name, note),
                     crate::commands::Command::Search(q) => {
@@ -581,20 +592,4 @@ impl App {
         }
         self.toast.as_ref().map(|(s, _)| s.as_str())
     }
-}
-
-pub fn char_to_byte(s: &str, char_idx: usize) -> usize {
-    s.char_indices()
-        .nth(char_idx)
-        .map(|(b, _)| b)
-        .unwrap_or(s.len())
-}
-
-/// OSC 52 clipboard write — works over SSH/most modern terminals.
-pub fn osc52_copy(text: &str) -> bool {
-    use base64::Engine;
-    use std::io::Write;
-    let mut out = std::io::stdout();
-    let payload = base64::engine::general_purpose::STANDARD.encode(text);
-    write!(out, "\x1b]52;c;{payload}\x07").is_ok() && out.flush().is_ok()
 }

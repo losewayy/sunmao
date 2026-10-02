@@ -80,14 +80,14 @@ fn up_recalls_queued_tail_for_editing() {
     input_key(&mut app, key(KeyCode::Up), &tx);
     assert_eq!(app.input, "second queued");
     assert_eq!(app.queue.len(), 1);
-    assert!(matches!(rx.try_recv(), Ok(Submit::Flush)));
+    assert!(matches!(rx.try_recv(), Ok(Submit::Flush(1))));
     // again — the last waiting item comes back too
     app.input.clear();
     app.cursor = 0;
     input_key(&mut app, key(KeyCode::Up), &tx);
     assert_eq!(app.input, "first queued");
     assert!(app.queue.is_empty());
-    assert!(matches!(rx.try_recv(), Ok(Submit::Flush)));
+    assert!(matches!(rx.try_recv(), Ok(Submit::Flush(1))));
 }
 
 /// With the slash menu open, Enter *runs* the highlighted command — the

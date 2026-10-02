@@ -22,7 +22,35 @@ pub(super) fn spawn(
     extra_roots: Vec<std::path::PathBuf>,
 ) {
     tokio::spawn(async move {
-        while let Some(sub) = rx_input.recv().await {
+        // Submissions FIFO the app mirrors as `queue`. `Flush(n)` pops the
+        // tail of what hasn't run yet — recall-by-count, not a full drain,
+        // so items queued *before* the recalled one survive.
+        let mut pending: std::collections::VecDeque<Submit> = std::collections::VecDeque::new();
+        // `Flush(n)` isn't a runnable submission — it's a tail-pop on the
+        // backlog, applied the moment it's seen so the recalled item never
+        // gets a chance to run before the flush catches up with it.
+        fn intake(pending: &mut std::collections::VecDeque<Submit>, s: Submit) {
+            match s {
+                Submit::Flush(n) => {
+                    let keep = pending.len().saturating_sub(n);
+                    pending.truncate(keep);
+                }
+                _ => pending.push_back(s),
+            }
+        }
+        loop {
+            if pending.is_empty() {
+                match rx_input.recv().await {
+                    Some(s) => intake(&mut pending, s),
+                    None => return,
+                }
+            }
+            while let Ok(s) = rx_input.try_recv() {
+                intake(&mut pending, s);
+            }
+            let Some(sub) = pending.pop_front() else {
+                continue;
+            };
             match sub {
                 Submit::Quit => {
                     let _ = tx_msg.send(Msg::Quit);
@@ -40,10 +68,9 @@ pub(super) fn spawn(
                     let _ = tx_msg.send(Msg::Note(note));
                     continue;
                 }
-                Submit::Flush => {
-                    // the app recalled queued items for editing — drop
-                    // everything still pending so nothing runs twice.
-                    while rx_input.try_recv().is_ok() {}
+                Submit::Flush(_) => {
+                    // intake() consumes Flush before it can reach the
+                    // backlog — defensive no-op if a sender bypassed it.
                     continue;
                 }
                 Submit::Model(sel) => {
@@ -92,6 +119,16 @@ pub(super) fn spawn(
                     let _ = tx_msg.send(Msg::Note(commands::tasks_text(&agent.task_roster())));
                     continue;
                 }
+                Submit::Stop(id) => {
+                    // slash-path kill — same `cancel_sub` as serve's
+                    // `task_cancel` frame and the GUI roster's 终止 button
+                    let note = match agent.cancel_sub(&id).await {
+                        Ok(()) => format!("cancelled {id}"),
+                        Err(e) => format!("[stop failed] {e}"),
+                    };
+                    let _ = tx_msg.send(Msg::Note(note));
+                    continue;
+                }
                 Submit::Artifacts => {
                     let _ = tx_msg.send(Msg::Note(commands::artifacts_text(&cwd)));
                     continue;
@@ -108,6 +145,25 @@ pub(super) fn spawn(
                     let _ = tx_msg.send(Msg::Note(commands::status_text(&agent.status().await)));
                     continue;
                 }
+                Submit::Export => {
+                    let events = agent.session_events().await;
+                    let msg = match commands::export_md(&cwd, &agent.session_id(), &events) {
+                        Ok(p) => format!("[exported → {p}]"),
+                        Err(e) => format!("[export failed] {e:#}"),
+                    };
+                    let _ = tx_msg.send(Msg::Note(msg));
+                    continue;
+                }
+                Submit::ExportZip => {
+                    let events = agent.session_events().await;
+                    let log = agent.session_path().await;
+                    let msg = match commands::export_zip(&cwd, &agent.session_id(), &events, &log) {
+                        Ok(p) => format!("[exported → {p}]"),
+                        Err(e) => format!("[export failed] {e:#}"),
+                    };
+                    let _ = tx_msg.send(Msg::Note(msg));
+                    continue;
+                }
                 Submit::Annotate(name, note) => {
                     let _ = tx_msg.send(Msg::Note(commands::annotate(&cwd, &name, &note)));
                     continue;
@@ -122,6 +178,10 @@ pub(super) fn spawn(
                             match sunmao_core::SessionLog::open_path(&path).await {
                                 Ok(log) => {
                                     let events = agent.swap_session(log).await;
+                                    // the swapped log reseeds approval_mode
+                                    // — tell the footer before the replay,
+                                    // else it keeps showing the old stance.
+                                    let _ = tx_msg.send(Msg::Mode(agent.approval_mode()));
                                     let _ = tx_msg.send(Msg::Replay(events));
                                 }
                                 Err(e) => {
@@ -142,6 +202,7 @@ pub(super) fn spawn(
                                 let events = agent.swap_session(log).await;
                                 let _ =
                                     tx_msg.send(Msg::Note(format!("[forked {src} → {new_id}]")));
+                                let _ = tx_msg.send(Msg::Mode(agent.approval_mode()));
                                 let _ = tx_msg.send(Msg::Replay(events));
                             }
                             Err(e) => {
@@ -160,9 +221,20 @@ pub(super) fn spawn(
                             let _ = tx_msg.send(Msg::Note(crate::rewind::list(&agent).await));
                         }
                         Some(spec) => {
-                            match crate::rewind::run(&agent, &cwd, spec.turn, spec.mode).await {
+                            // checkpoint dirs key off the SESSION's project,
+                            // not the shell cwd — a session resumed from
+                            // elsewhere restores nothing under a wrong root.
+                            match crate::rewind::run(
+                                &agent,
+                                &agent.session_cwd(),
+                                spec.turn,
+                                spec.mode,
+                            )
+                            .await
+                            {
                                 Ok(crate::rewind::Outcome::Forked { note, events }) => {
                                     let _ = tx_msg.send(Msg::Note(note));
+                                    let _ = tx_msg.send(Msg::Mode(agent.approval_mode()));
                                     let _ = tx_msg.send(Msg::Replay(events));
                                 }
                                 Ok(crate::rewind::Outcome::CodeOnly(note)) => {
@@ -178,9 +250,10 @@ pub(super) fn spawn(
                 }
                 Submit::Bash(cmd) => {
                     // `!` local shell — the user runs it, so no approval
-                    // gate and no LLM involvement. Same deno_task_shell
-                    // engine the Bash tool uses; the durable fact folds
-                    // into the next turn's context via LocalShell.
+                    // gate and no LLM involvement. Runs on `ctx.shell` —
+                    // whichever backend `shell.txt` / `SUNMAO_SHELL` picked
+                    // (Posix|deno_task_shell, or Pwsh); the durable fact
+                    // folds into the next turn's context via LocalShell.
                     let _ = tx_msg.send(Msg::Live(LiveEvent::ToolStart {
                         name: "!".into(),
                         summary: format!("$ {cmd}"),
@@ -191,14 +264,22 @@ pub(super) fn spawn(
                     }));
                     let shell_cwd = cwd.clone();
                     let t0 = std::time::Instant::now();
-                    let (ok, output, code) =
-                        match sunmao_core::tool::run_foreground(&cmd, shell_cwd, 120).await {
-                            Ok(run) => {
-                                let ok = run.exit_code == 0;
-                                (ok, sunmao_core::tool::render_run(&run), run.exit_code)
-                            }
-                            Err(msg) => (false, msg, -1),
-                        };
+                    let ctx = agent.context().clone();
+                    let (ok, output, code) = match sunmao_core::tool::run_foreground(
+                        &cmd,
+                        shell_cwd,
+                        120,
+                        ctx.shell,
+                        Some(ctx.cancel_notify.clone()),
+                    )
+                    .await
+                    {
+                        Ok(run) => {
+                            let ok = run.exit_code == 0;
+                            (ok, sunmao_core::tool::render_run(&run), run.exit_code)
+                        }
+                        Err(msg) => (false, msg, -1),
+                    };
                     agent.record_local_shell(&cmd, code, &output).await;
                     let _ = tx_msg.send(Msg::Live(LiveEvent::ToolDone {
                         name: "!".into(),
@@ -209,6 +290,9 @@ pub(super) fn spawn(
                         call_id: None,
                         elapsed_ms: t0.elapsed().as_millis() as u64,
                     }));
+                    // a `!` emits no TurnEnd — without this the queued
+                    // copy stays parked in app.queue as a phantom entry.
+                    let _ = tx_msg.send(Msg::QueuePop);
                     continue;
                 }
                 Submit::Turn(input, atts) => {

@@ -18,6 +18,16 @@ pub fn display_width(s: &str) -> usize {
     s.graphemes(true).map(UnicodeWidthStr::width).sum()
 }
 
+/// Byte index of the `char_idx`-th char — the composer tracks its cursor
+/// in chars while `str::insert`/`remove` want byte offsets. Out-of-range
+/// `char_idx` lands past the end (a no-op insert, not a panic).
+pub fn char_to_byte(s: &str, char_idx: usize) -> usize {
+    s.char_indices()
+        .nth(char_idx)
+        .map(|(b, _)| b)
+        .unwrap_or(s.len())
+}
+
 /// Break `line` into rows no wider than `width` (display columns). Word
 /// boundaries are preferred; an unbreakable long word is hard-split at
 /// grapheme edges. Empty lines yield one empty row. `width == 0` returns

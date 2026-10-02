@@ -5,8 +5,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
 
-use super::app::{self, App, Focus, Submit};
+use super::app::{App, Focus, Submit};
 use super::menu;
+use super::wrap::char_to_byte;
 
 /// Route a keypress through the focus machine. Returns true to quit.
 pub(super) fn handle_key(
@@ -66,6 +67,7 @@ pub(super) fn resolve_card(app: &mut App, verdict: sunmao_core::approval::Approv
             sunmao_core::approval::Approval::Once => "[approved]",
             sunmao_core::approval::Approval::Session => "[approved for session]",
             sunmao_core::approval::Approval::Deny { .. } => "[denied]",
+            sunmao_core::approval::Approval::Cancelled => "[cancelled]",
         };
         // `verdict` isn't Copy (Deny may carry a reason) — note the grant
         // before the send moves it.
@@ -143,7 +145,7 @@ fn scroll_key(app: &mut App, k: KeyEvent) -> bool {
         KeyCode::Char('e') => app.toggle_fold(),
         KeyCode::Char('y') => {
             if let Some(text) = app.selected_copy() {
-                let ok = app::osc52_copy(&text);
+                let ok = super::render::osc52_copy(&text);
                 app.toast = Some((
                     if ok { "copied" } else { "copy failed" }.to_string(),
                     std::time::Instant::now(),
@@ -178,7 +180,7 @@ fn viewer_key(app: &mut App, k: KeyEvent) -> bool {
         KeyCode::Home | KeyCode::Char('g') => v.scroll = 0,
         KeyCode::Char('y') => {
             let text = v.body.clone();
-            let ok = app::osc52_copy(&text);
+            let ok = super::render::osc52_copy(&text);
             app.toast = Some((
                 if ok { "copied" } else { "copy failed" }.to_string(),
                 std::time::Instant::now(),
@@ -358,7 +360,7 @@ pub(super) fn input_key(
             }
         }
         KeyCode::Delete if app.cursor < app.input.chars().count() => {
-            let byte_idx = app::char_to_byte(&app.input, app.cursor);
+            let byte_idx = char_to_byte(&app.input, app.cursor);
             app.input.remove(byte_idx);
             app.refresh_slash_menu();
         }
@@ -374,7 +376,7 @@ pub(super) fn input_key(
         }
         KeyCode::Char('u') if k.modifiers.contains(KeyModifiers::CONTROL) => {
             // kill everything before the cursor
-            let byte_idx = app::char_to_byte(&app.input, app.cursor);
+            let byte_idx = char_to_byte(&app.input, app.cursor);
             app.input.replace_range(..byte_idx, "");
             app.cursor = 0;
             app.refresh_slash_menu();
@@ -389,17 +391,18 @@ pub(super) fn input_key(
             while i > 0 && !chars[i - 1].is_whitespace() {
                 i -= 1;
             }
-            let from = app::char_to_byte(&app.input, i);
-            let to = app::char_to_byte(&app.input, app.cursor);
+            let from = char_to_byte(&app.input, i);
+            let to = char_to_byte(&app.input, app.cursor);
             app.input.replace_range(from..to, "");
             app.cursor = i;
             app.refresh_slash_menu();
         }
         KeyCode::Up => {
             // recall a queued submission for editing before history browse —
-            // Flush drops the driver's copies so nothing runs twice.
+            // Flush(1) drops only that driver's copy; the rest of the
+            // queue keeps its place (the old full-drain silently ate it).
             if let Some(text) = app.recall_queued() {
-                let _ = tx_input.send(Submit::Flush);
+                let _ = tx_input.send(Submit::Flush(1));
                 let preview: String = text.chars().take(24).collect();
                 app.toast(format!("recalled for editing: {preview}"));
                 return false;
@@ -488,7 +491,7 @@ fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
             let _ = tx_input.send(Submit::Turn(t, atts));
         }
         // Flush is app→driver only — submit() never produces it
-        Submit::Flush => {}
+        Submit::Flush(_) => {}
         Submit::Model(sel) => {
             let _ = tx_input.send(Submit::Model(sel));
         }
@@ -498,6 +501,9 @@ fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
         Submit::Tasks => {
             let _ = tx_input.send(Submit::Tasks);
         }
+        Submit::Stop(id) => {
+            let _ = tx_input.send(Submit::Stop(id));
+        }
         Submit::Todos => {
             let _ = tx_input.send(Submit::Todos);
         }
@@ -506,6 +512,12 @@ fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
         }
         Submit::Status => {
             let _ = tx_input.send(Submit::Status);
+        }
+        Submit::Export => {
+            let _ = tx_input.send(Submit::Export);
+        }
+        Submit::ExportZip => {
+            let _ = tx_input.send(Submit::ExportZip);
         }
         Submit::Artifacts => {
             let _ = tx_input.send(Submit::Artifacts);

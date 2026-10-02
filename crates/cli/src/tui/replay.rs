@@ -41,7 +41,7 @@ impl App {
         name: &str,
         summary: &str,
         depth: u8,
-        lane: u8,
+        lane: u16,
         call_id: Option<String>,
     ) {
         if let Some(prev) = self.blocks.last_mut()
@@ -67,7 +67,7 @@ impl App {
         ok: bool,
         output: &str,
         depth: u8,
-        lane: u8,
+        lane: u16,
         call_id: Option<&str>,
     ) {
         // find the slot first (immutable), then mutate — two-phase keeps the
@@ -325,6 +325,7 @@ impl App {
                 }
                 E::Compacted { summary } => {
                     self.blocks.clear();
+                    self.render_cache.clear();
                     self.push_note(&format!("[context compacted] {summary}"));
                 }
             }

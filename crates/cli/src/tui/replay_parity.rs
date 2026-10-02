@@ -38,14 +38,14 @@ fn call(id: &str, name: &str, args: &str) -> ToolCall {
         },
     }
 }
-fn tc(c: ToolCall, depth: u8, lane: u8) -> E {
+fn tc(c: ToolCall, depth: u8, lane: u16) -> E {
     E::ToolCall {
         call: c,
         depth,
         lane,
     }
 }
-fn tr(id: &str, name: &str, ok: bool, out: &str, depth: u8, lane: u8) -> E {
+fn tr(id: &str, name: &str, ok: bool, out: &str, depth: u8, lane: u16) -> E {
     E::ToolResult {
         call_id: id.into(),
         name: name.into(),

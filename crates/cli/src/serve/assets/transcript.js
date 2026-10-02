@@ -1,76 +1,8 @@
-/* markdown render, transcript blocks, live fold, approvals, event log, replay */
+/* transcript blocks, live fold, approvals, event log, replay — markdown
+   render itself lives in md.js (highlight/mdInline/mdRender/mdTable/
+   texMath), loaded just before this file */
 'use strict';
 
-/* ================= markdown (streaming-tolerant, no deps) ================= */
-const HASH_LANGS = /^(?:python|py|bash|sh|shell|zsh|powershell|ps1|yaml|yml|toml|dockerfile|make|makefile|cmake|ruby|rb|perl|pl|r|julia|jl|ini|conf|config|docker|text|txt)$/i;
-
-function highlight(code, lang) {
-  const hash = !lang || HASH_LANGS.test(lang);
-  const re = /(\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|"""[\s\S]*?(?:"""|$)|'''[\s\S]*?(?:'''|$)|`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|\b\d[\d_]*(?:\.[\d_]+)?(?:[eEpPxX][\dA-Fa-f_+-]*)?|\b(?:const|let|var|function|fn|struct|enum|impl|trait|pub|use|mod|crate|where|match|if|else|elif|for|while|loop|break|continue|return|class|extends|new|this|self|super|import|from|export|default|async|await|try|catch|finally|throw|raise|except|def|print|pass|None|True|False|null|true|false|nil|Some|Ok|Err|type|interface|package|func|go|chan|select|defer|in|of|do|end|then|local|require|void|int|float|double|long|short|unsigned|signed|char|bool|auto|virtual|static|final|abstract|private|protected|public|readonly|mut|ref|move|dyn|unsafe|extern|sizeof|with|yield|assert|global|nonlocal|del|is|not|and|or)\b|#[^\n]*)/g;
-  let out = '', last = 0, m;
-  while ((m = re.exec(code))) {
-    const tok = m[0];
-    if (tok.startsWith('#') && !hash) { continue; } // don't treat # in non-hash langs
-    out += esc(code.slice(last, m.index));
-    let cls = 'tk-x';
-    if (/^(?:\/\/|\/\*)/.test(tok) || tok.startsWith('#')) cls = 'tk-x';
-    else if (/^["'`]/.test(tok)) cls = 'tk-s';
-    else if (/^\d/.test(tok)) cls = 'tk-n';
-    else cls = 'tk-k';
-    out += `<span class="${cls}">${esc(tok)}</span>`;
-    last = m.index + tok.length;
-    if (m.index === re.lastIndex) re.lastIndex++;
-  }
-  out += esc(code.slice(last));
-  return out;
-}
-
-function mdInline(s) {
-  s = esc(s);
-  s = s.replace(/`([^`\n]+)`/g, (_, c) => `<code>${c}</code>`);
-  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  s = s.replace(/\*\*([^*\n]+)\*\*|__([^_\n]+)__/g, '<b>$1$2</b>');
-  s = s.replace(/(^|[^*\w])\*([^*\n]+)\*/g, '$1<i>$2</i>');
-  s = s.replace(/~~([^~\n]+)~~/g, '<del>$1</del>');
-  return s;
-}
-
-function mdRender(src) {
-  const lines = String(src).split('\n');
-  let html = '', para = [], list = null, code = null, codeLang = '', quote = '';
-  const flushPara = () => { if (para.length) { html += `<p>${para.map(mdInline).join('<br>')}</p>`; para = []; } };
-  const flushList = () => { if (list) { html += list.html + `</${list.tag}>`; list = null; } };
-  const flushQuote = () => { if (quote) { html += `<blockquote>${quote}</blockquote>`; quote = ''; } };
-  const flushAll = () => { flushPara(); flushList(); flushQuote(); };
-  for (const line of lines) {
-    if (code !== null) {
-      if (/^\s*```/.test(line)) { html += `<pre><code>${highlight(code, codeLang)}</code></pre>`; code = null; }
-      else code += line + '\n';
-      continue;
-    }
-    const fence = line.match(/^\s*```\s*([\w+.#-]*)/);
-    if (fence) { flushAll(); code = ''; codeLang = fence[1] || ''; continue; }
-    const h = line.match(/^\s{0,3}(#{1,4})\s+(.+)/);
-    if (h) { flushAll(); const n = h[1].length; html += `<h${n}>${mdInline(h[2])}</h${n}>`; continue; }
-    if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) { flushAll(); html += '<hr>'; continue; }
-    const q = line.match(/^\s*>\s?(.*)/);
-    if (q) { flushPara(); flushList(); quote += `<p>${mdInline(q[1])}</p>`; continue; }
-    const li = line.match(/^\s*(?:([-*+])|(\d+)[.)])\s+(.+)/);
-    if (li) {
-      flushPara(); flushQuote();
-      const tag = li[1] ? 'ul' : 'ol';
-      if (!list || list.tag !== tag) { flushList(); list = { tag, html: `<${tag}>` }; }
-      list.html += `<li>${mdInline(li[3])}</li>`;
-      continue;
-    }
-    if (/^\s*$/.test(line)) { flushAll(); continue; }
-    flushList(); flushQuote();
-    para.push(line);
-  }
-  if (code !== null) html += `<pre><code>${highlight(code, codeLang)}</code></pre>`;
-  flushAll();
-  return html;
-}
 
 /* ================= transcript blocks ================= */
 const stIcon = st => `<span class="st ${st}">${ic(st === 'ok' ? 'check' : st === 'err' ? 'x' : 'rotate')}</span>`;
@@ -103,7 +35,10 @@ const attImgs = m => msgParts(m).filter(b => b.type === 'image')
   .map(b => `<img class="att" src="${attURL(b.path)}" alt="${esc(attBase(b.path))}" title="${esc(b.path)}">`).join('');
 const botHead = anim => `<div class="msg-h${anim ? ' enter' : ''}"><i class="dot"></i><span>sunmao</span>${modelLabel ? `<span class="model">${esc(modelLabel.replace(/^global:/, ''))}</span>` : ''}</div>`;
 const TX = $('#tx');
-function append(parent, html) { const t = document.createElement('template'); t.innerHTML = html.trim(); const first = t.content.firstElementChild; parent.appendChild(t.content); keepBottom(true); return first; }
+// force=false by default — a streamed tool/island/note must not yank the
+// scroller while the user is reading earlier output; only the user's own
+// bubble (send/steer fold) and replay's settle scroll force it
+function append(parent, html, force) { const t = document.createElement('template'); t.innerHTML = html.trim(); const first = t.content.firstElementChild; parent.appendChild(t.content); keepBottom(!!force); return first; }
 function keepBottom(force) { const sc = $('#scroller'); if (force || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 240) sc.scrollTop = sc.scrollHeight; }
 /* ---- work cards: a run of tool calls (+ the short narration between
    them) shares one card; 3+ calls earn a summary header and fold once
@@ -243,8 +178,10 @@ function toolDone(ev) {
   let i = ev.call_id ? runningTools.findIndex(t => t.call_id === ev.call_id) : -1;
   if (i < 0) i = runningTools.findIndex(t => t.name === ev.name && t.lane === (ev.lane || 0) && t.depth === (ev.depth || 0));
   if (i < 0) i = runningTools.findIndex(t => t.name === ev.name);
-  if (i < 0) i = 0;
-  const t = runningTools[i];
+  // NO unconditional `i = 0` — an unmatched tool_done must not splice the
+  // oldest card (the real finisher would spin until turn_end); let it
+  // fall to the synthetic-done branch below
+  const t = i < 0 ? undefined : runningTools[i];
   if (!t) {
     const host = msgHost();
     let g = toolGroup(host);
@@ -276,7 +213,7 @@ function islandHTML(ev) {
       <button class="ib" data-act="island-tall" data-tip="展开" aria-label="展开">${ic('expand')}</button>
       <button class="ib" data-act="island-open" data-tip="在浏览器中打开" aria-label="在浏览器中打开">${ic('external')}</button>
     </div>
-    <iframe title="${esc(nm)}" sandbox="" loading="lazy" src="/artifacts/${encodeURIComponent(nm)}"></iframe>
+    <iframe title="${esc(nm)}" sandbox="" loading="lazy" src="/artifacts/${encodeURIComponent(nm)}?sess=${encodeURIComponent(sessionId)}"></iframe>
     <div class="notes"></div>
   </div>`;
 }
@@ -342,9 +279,15 @@ function setBusy(on) {
   busy = !!on;
   $('#cmp-busy').hidden = !busy;
   $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy;
-  // send and stop are separate verbs — busy Enter steers (queues a message
-  // for the running turn), the square button cancels
-  $('#stop-btn').hidden = !busy;
+  // one button morphs instead of swapping two: busy Enter queues the
+  // message for the next turn while Ctrl+Enter steers mid-turn, so the
+  // click target flips to cancel
+  const btn = $('#send-btn');
+  btn.dataset.act = busy ? 'stop' : 'send';
+  btn.classList.toggle('stop', busy);
+  btn.setAttribute('data-tip', busy ? '停止生成 · 引导仍可用 Ctrl+Enter' : '发送|Enter · 引导|Ctrl+Enter');
+  btn.setAttribute('aria-label', busy ? '停止生成' : '发送');
+  $('use', btn).setAttribute('href', busy ? '#i-square' : '#i-arrow-up');
   renderRail();
 }
 
@@ -359,6 +302,18 @@ function eventsHTML() {
 }
 
 /* ================= replay ================= */
+// `/clear` + replay teardown share this — wiping TX alone leaves
+// pendingApprovals (the 等待批准 bar), runningTools timers and curMsg
+// alive, so a later tool_done splices a stale entry
+function clearTranscript() {
+  // same teardown a replay runs — /clear must release island resources
+  // and drop bookkeeping, not just the pixels
+  for (const isl of $$('.island')) teardownIsland(isl);
+  TX.innerHTML = '';
+  pendingApprovals.clear(); runningTools.length = 0;
+  closeMsg(); syncWait(); updateHero();
+}
+
 function renderReplay(events, anim) {
   // replay must not re-run entrance motion — §8.1.5: flag on, replay, flag off
   root.dataset.replaying = '';
@@ -394,7 +349,7 @@ function renderReplay(events, anim) {
           continue;
         }
         closeMsg();
-        append(TX, youHTML(c, anim));
+        append(TX, youHTML(c, anim), true);
         const imgs = attImgs(m);
         if (imgs) append(TX, `<div class="msg you"><div class="att-row">${imgs}</div></div>`);
         logEv('message', 'user · ' + c.slice(0, 60));
@@ -509,14 +464,49 @@ function liveEvent(raw) {
   else if (t === 'tool_start') { toolStart(ev); logEv('tool_call', `${ev.name} ${ev.summary || ''}`.slice(0, 140)); }
   else if (t === 'tool_done') { toolDone(ev); logEv('tool_result', `${ev.name} ${ev.ok ? 'ok' : 'err'}`); refreshDataflowSoon(); }
   else if (t === 'artifact') { addArtifact(ev); logEv('artifact', `${ev.name} · ${fmtBytes(ev.bytes || 0)}`); }
+  // the durable-fact mirrors — liveEvent must render the same row a replay
+  // of this exact log would (audit-gui #11): compacted clears, todos and
+  // task_done land as their note/notice rows
+  else if (t === 'compacted') {
+    TX.innerHTML = ''; pendingApprovals.clear(); runningTools.length = 0;
+    closeMsg(); syncWait();
+    addNote(`[context compacted]${ev.summary ? '\n' + ev.summary : ''}`);
+    logEv('note', 'compacted');
+  }
+  else if (t === 'task_done') {
+    const host = msgHost();
+    append(host, `<div class="notice glass">${ic(ev.ok ? 'check' : 'x', 'i sm')}<span>子代理 <code>${esc(ev.id)}</code> ${ev.ok ? '完成' : '失败'}</span></div>`);
+    logEv('tool_result', `task ${ev.id} ${ev.ok ? 'ok' : 'err'}`);
+  }
+  // the kernel's live mirror of the durable user message — emitted when a
+  // prompt is accepted as a queued/started turn. The composer no longer
+  // optimistically appends, so THIS row is the only bubble a fresh turn
+  // gets; a busy kernel still lands it via hook:steer.
+  else if (t === 'user_message') {
+    // same fold order as replay's `message` arm — text bubble first,
+    // thumbs row after
+    const m = { role: 'user', content: ev.content || [] };
+    const c = msgText(m);
+    if (c) { closeMsg(); append(TX, youHTML(c, true, clock()), true); }
+    const imgs = attImgs(m);
+    if (imgs) append(TX, `<div class="msg you"><div class="att-row">${imgs}</div></div>`);
+    logEv('message', 'user · ' + c.slice(0, 60));
+  }
+  else if (t === 'todos') {
+    const items = ev.items || [];
+    if (items.length) {
+      const mark = { done: 'x', in_progress: '>', pending: ' ' };
+      addNote('task list:\n' + items.map(i => `- [${mark[i.status] || ' '}] ${i.content}`).join('\n'));
+    }
+  }
   else if (t === 'usage') { logEv('usage', `prompt ${nf(ev.prompt_tokens || 0)} · cache_read ${nf(ev.cache_read_input_tokens || 0)}`); refreshDataflowSoon(); }
   else if (t === 'hook') {
     if (ev.event === 'steer') {
       // a queued message just folded into the turn — its durable Message
       // renders this same user bubble on replay
       closeMsg();
-      append(TX, youHTML(ev.detail || '', true, clock()));
-      steerQ.shift(); renderSteerChips();
+      append(TX, youHTML(ev.detail || '', true, clock()), true);
+      steerQ.shift(); renderQueueChips();
       logEv('message', 'user · ' + String(ev.detail || '').slice(0, 60));
     } else logEv('hook', `${ev.event} · ${ev.detail}`);
   }

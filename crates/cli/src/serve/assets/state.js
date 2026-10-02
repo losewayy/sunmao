@@ -81,7 +81,7 @@ function setApprovalMode(m) {
 let SESSION_IDS = [], SESSION_META = {};
 const EVLOG = [];
 
-const DEFAULTS = { mode: 'dark', motion: 'system', accent: '#339CFF', background: '#16181F', foreground: '#E8E9F0', wallpaper: 'graphite', dim: 0.16, panelOpacity: 0.72, blur: 24, translucentSidebar: false, contrast: 50, fonts: { ui: 'Segoe UI', code: 'JetBrains Mono' } };
+const DEFAULTS = { mode: 'dark', motion: 'system', accent: '#339CFF', background: '#16181F', foreground: '#E8E9F0', wallpaper: 'graphite', dim: 0.16, panelOpacity: 0.72, blur: 24, translucentSidebar: false, contrast: 50, fonts: { ui: 'HarmonyOS Sans SC', code: 'Maple Mono CN' } };
 const INITIAL = Object.assign(clone(DEFAULTS), { wallpaper: 'dusk-ridge', dim: 0.08, panelOpacity: 0.56, translucentSidebar: true });
 let S = (() => { try { const v = JSON.parse(localStorage.getItem('sunmao.ui')); if (v && v.fonts) return Object.assign(clone(INITIAL), v, { fonts: Object.assign({}, INITIAL.fonts, v.fonts) }); } catch {} return clone(INITIAL); })();
 const save = () => { try { localStorage.setItem('sunmao.ui', JSON.stringify(S)); } catch {} };

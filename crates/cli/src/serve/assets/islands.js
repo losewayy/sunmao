@@ -18,14 +18,18 @@ const islandApps = new WeakMap(); // island el → { meta, html, inited }
 const SANDBOX_URL = TAURI ? 'http://sunmao-sandbox.localhost/sandbox.html' : null;
 async function probeApp(el, name) {
   if (!TAURI && !sandboxPort) return;
+  // artifact fetches need the tab's session — the server falls back to the
+  // FIRST live session without `sess`, so a non-first project's islands
+  // would read the wrong dir (audit-gui #9)
+  const sq = `?sess=${encodeURIComponent(sessionId)}`;
   let meta;
   try {
-    const r = await fetch(`/artifacts/${encodeURIComponent(name)}/ui`);
+    const r = await fetch(`/artifacts/${encodeURIComponent(name)}/ui${sq}`);
     if (!r.ok) return;
     meta = await r.json();
   } catch { return; }
   let html = '';
-  try { html = await (await fetch(`/artifacts/${encodeURIComponent(name)}`)).text(); } catch {}
+  try { html = await (await fetch(`/artifacts/${encodeURIComponent(name)}${sq}`)).text(); } catch {}
   const sb = document.createElement('iframe');
   sb.setAttribute('sandbox', 'allow-scripts allow-same-origin');
   sb.src = SANDBOX_URL || `http://127.0.0.1:${sandboxPort}/sandbox.html`;
@@ -45,6 +49,11 @@ let appUiSeq = 0;
 // View to release its side (it may hold server-side resource state); the
 // reply or a short timeout lets the swap proceed — never block render.
 function teardownIsland(el) {
+  // release in-flight RPC bookkeeping first — a torn-down island must not
+  // pin its DOM subtree in pendingUi for the session's lifetime
+  // (audit-gui #8): only ui_result deletes normally, and the reply may
+  // never come once the frame is gone
+  for (const [k, v] of pendingUi) if (v === el) pendingUi.delete(k);
   const it = islandApps.get(el);
   if (!it || !it.inited) return;
   const sb = $('iframe', el);
@@ -57,6 +66,9 @@ function uiWs(el, id, msg) {
   const it = islandApps.get(el);
   const key = `${it.name}#${id}`;
   pendingUi.set(key, el);
+  // a ui_result that never lands mustn't pin the island DOM forever —
+  // 30s is generous for a local kernel round-trip (audit-gui #8)
+  setTimeout(() => pendingUi.delete(key), 30000);
   wsSend(Object.assign({ id, name: it.name }, msg));
 }
 
@@ -175,10 +187,16 @@ function handleAppMsg(el, it, d) {
   }
 }
 
-// island → host: messages come from the sandbox iframe's contentWindow
+// island → host: messages come from the sandbox iframe's contentWindow.
+// The sandbox is `sandbox=""` — opaque origin — so `postMessage('*')` on
+// our side is forced (there's no origin to target), and on receipt the
+// origin string is literally 'null'. Validate BOTH: source has to be a
+// live island frame AND origin has to be the opaque 'null' — anything else
+// means the frame dropped sandbox or something else is talking.
 window.addEventListener('message', ev => {
   const d = ev.data;
   if (!d || d.jsonrpc !== '2.0') return;
+  if (ev.origin !== 'null') return;
   for (const isl of $$('.island')) {
     const it = islandApps.get(isl);
     const sb = isl && $('iframe', isl);
@@ -192,7 +210,7 @@ window.addEventListener('message', ev => {
 async function refreshRevs(el, name, known) {
   let max = known | 0;
   try {
-    const r = await fetch('/artifacts/' + encodeURIComponent(name) + '/revs');
+    const r = await fetch('/artifacts/' + encodeURIComponent(name) + '/revs?sess=' + encodeURIComponent(sessionId));
     const v = await r.json();
     if (v && v.rev) max = v.rev;
   } catch {}
@@ -208,14 +226,17 @@ function setIslandRev(isl) {
   const name = isl.dataset.artifact;
   const cur = +isl.dataset.revCur || 1, max = +isl.dataset.revMax || 1;
   $('.rev-n', isl).textContent = `v${cur}/${max}`;
+  // ?sess too — islands from a non-first session must not read the first
+  // live session's artifact dir (audit-gui #9)
+  const sq = '?sess=' + encodeURIComponent(sessionId);
   $('iframe', isl).src = cur === max
-    ? `/artifacts/${encodeURIComponent(name)}`
-    : `/artifacts/${encodeURIComponent(name)}?rev=${cur}`;
+    ? `/artifacts/${encodeURIComponent(name)}${sq}`
+    : `/artifacts/${encodeURIComponent(name)}?rev=${cur}&sess=${encodeURIComponent(sessionId)}`;
 }
 async function refreshNotes(el, name) {
   let anns = [];
   try {
-    const r = await fetch('/artifacts/' + encodeURIComponent(name) + '/notes');
+    const r = await fetch('/artifacts/' + encodeURIComponent(name) + '/notes?sess=' + encodeURIComponent(sessionId));
     const v = await r.json();
     anns = v && Array.isArray(v.annotations) ? v.annotations : [];
   } catch {}

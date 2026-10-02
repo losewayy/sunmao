@@ -21,7 +21,9 @@ function renderJobs(jobs) {
   const box = $('#dj-list');
   if (!box) return;
   const running = jobs.filter(j => j.running).length;
-  $('#dj-count').textContent = jobs.length ? `${running ? running + ' 跑 · ' : ''}${jobs.length} 个` : '';
+  // tab-badge: bare count — the running-vs-total breakdown would overflow
+  // the chip; the pane body still shows each row's own 运行中/exit tag
+  $('#dj-count').textContent = jobs.length ? String(jobs.length) : '';
   box.innerHTML = jobs.map(j => {
     const st = j.running ? 'run' : j.exit === 0 ? 'done' : 'off';
     const tail = (j.preview || '').trim().split('\n').pop() || '';

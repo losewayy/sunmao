@@ -519,27 +519,25 @@ async fn cancel_in_the_pre_registration_window_aborts_the_call() {
     )
     .unwrap();
     let provider = Arc::new(MockProvider {
-        responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
-            vec![
-                StreamDelta::ToolCalls(vec![
-                    ToolCallFragment {
-                        index: 0,
-                        id: Some("c".into()),
-                        name: Some("Glob".into()),
-                        arguments: None,
-                    },
-                    ToolCallFragment {
-                        index: 0,
-                        arguments: Some("{\"pattern\":\"**/*.rs\"}".into()),
-                        ..Default::default()
-                    },
-                ]),
-                StreamDelta::Finish {
-                    reason: Some("tool_calls".into()),
-                    usage: None,
+        responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![vec![
+            StreamDelta::ToolCalls(vec![
+                ToolCallFragment {
+                    index: 0,
+                    id: Some("c".into()),
+                    name: Some("Glob".into()),
+                    arguments: None,
                 },
-            ],
-        ])),
+                ToolCallFragment {
+                    index: 0,
+                    arguments: Some("{\"pattern\":\"**/*.rs\"}".into()),
+                    ..Default::default()
+                },
+            ]),
+            StreamDelta::Finish {
+                reason: Some("tool_calls".into()),
+                usage: None,
+            },
+        ]])),
         calls: std::sync::atomic::AtomicUsize::new(0),
     });
     let mut ctx_raw = Context::new(
@@ -560,9 +558,7 @@ async fn cancel_in_the_pre_registration_window_aborts_the_call() {
     );
     let evs = ctx.sessions.lock().await.events().await.unwrap();
     let res = evs.iter().find_map(|e| match e {
-        crate::session::SessionEvent::ToolResult { ok, output, .. } => {
-            Some((*ok, output.clone()))
-        }
+        crate::session::SessionEvent::ToolResult { ok, output, .. } => Some((*ok, output.clone())),
         _ => None,
     });
     match res {

@@ -14,8 +14,8 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use base64::Engine as _;
 
-use crate::context::MutexRecover;
 use super::shell::ShellRun;
+use crate::context::MutexRecover;
 
 /// `pwsh -NoProfile -NonInteractive -EncodedCommand <utf16le-b64>`.
 /// EncodedCommand instead of `-Command` because the latter round-trips the

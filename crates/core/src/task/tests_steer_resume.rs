@@ -584,15 +584,17 @@ async fn resume_honors_the_spawns_whitelist() {
     let ctx = Arc::new(ctx_raw);
     // roster entry for a def OUTSIDE the whitelist → refused at policy,
     // before the log lookup even runs
-    ctx.live_tasks.lock_or_recover().push(crate::context::TaskEntry {
-        id: "sub-rogue".into(),
-        lane: 3,
-        agent: Some("rogue".into()),
-        prompt: "x".into(),
-        done: Some(true),
-        steer: None,
-        cancel: None,
-    });
+    ctx.live_tasks
+        .lock_or_recover()
+        .push(crate::context::TaskEntry {
+            id: "sub-rogue".into(),
+            lane: 3,
+            agent: Some("rogue".into()),
+            prompt: "x".into(),
+            done: Some(true),
+            steer: None,
+            cancel: None,
+        });
     let res = ctx
         .tools
         .call(
@@ -608,15 +610,17 @@ async fn resume_honors_the_spawns_whitelist() {
     );
     // a roster entry naming a def with no live definition is refused at
     // policy too — never a silent fallthrough to a generic child.
-    ctx.live_tasks.lock_or_recover().push(crate::context::TaskEntry {
-        id: "sub-ghost".into(),
-        lane: 4,
-        agent: Some("deleted-def".into()),
-        prompt: "x".into(),
-        done: Some(true),
-        steer: None,
-        cancel: None,
-    });
+    ctx.live_tasks
+        .lock_or_recover()
+        .push(crate::context::TaskEntry {
+            id: "sub-ghost".into(),
+            lane: 4,
+            agent: Some("deleted-def".into()),
+            prompt: "x".into(),
+            done: Some(true),
+            steer: None,
+            cancel: None,
+        });
     let res = ctx
         .tools
         .call(

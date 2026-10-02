@@ -351,6 +351,10 @@ async fn runcode_unawaited_call_is_drained_into_the_log() {
         .iter()
         .filter(|e| matches!(e, SessionEvent::PtcCall { name, .. } if name == "SlowMark"))
         .collect();
-    assert_eq!(ptc.len(), 1, "the unawaited call must land its fact: {evs:?}");
+    assert_eq!(
+        ptc.len(),
+        1,
+        "the unawaited call must land its fact: {evs:?}"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }

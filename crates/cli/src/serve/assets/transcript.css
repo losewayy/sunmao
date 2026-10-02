@@ -157,23 +157,12 @@
 /* §8.1.5: replay renders history — entrance motion and the hero scene stay off */
 :root[data-replaying] .enter{animation:none}
 :root[data-replaying] .hero.play *{animation:none}
-/* ---------- hero ---------- */
+/* ---------- hero (empty session: logo mark + cwd line) ---------- */
 .hero{position:absolute;left:0;right:0;top:0;bottom:150px;z-index:var(--z-hero);display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;user-select:none;padding:0 var(--s-24)}
 .hero[hidden]{display:none}
 .hero>svg{width:var(--s-64);height:var(--s-64);overflow:visible;filter:var(--sh-mark)}
-.hero h1{margin:var(--s-20) 0 0;font-size:var(--fs-display);font-weight:var(--fw-strong);letter-spacing:var(--ls-display);text-shadow:var(--sh-text-display)}
 .hero-sub{margin:var(--s-10) 0 0;font:var(--fs-xs) var(--font-mono);color:var(--c-text-2);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hero-sub:empty{display:none}
-.starters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s-10);width:min(var(--w-starters),100%);margin-top:var(--s-32);pointer-events:auto}
-.starter{display:flex;flex-direction:column;align-items:flex-start;gap:var(--s-2);padding:var(--s-12) var(--s-12) var(--s-12);border-radius:var(--r-xl);--ga:var(--glass-content);font-size:var(--fs-sm);font-weight:var(--fw-medium);color:var(--c-text);cursor:pointer;transition:transform var(--dur-base) var(--ease-out),border-color var(--dur-base) var(--ease-out),--ga var(--dur-base) var(--ease-out)}
-.starter .i{width:var(--icon-sm);height:var(--icon-sm);margin-bottom:var(--s-6);color:var(--c-accent)}
-.starter small{font-size:var(--fs-xs);font-weight:var(--fw-regular);color:var(--c-text-2)}
-.starter:hover{transform:translateY(var(--move-hover));border-color:var(--c-stroke-2);--ga:var(--glass-content-hover)}
-.starter:active{transform:translateY(0) scale(var(--scale-press))}
 .hero.play .mk-a{animation:k-join-l var(--dur-scene) var(--ease-out) both}
 .hero.play .mk-b{animation:k-join-r var(--dur-scene) var(--ease-out) both}
-.hero.play h1{animation:k-rise var(--dur-scene) calc(var(--stagger) * 2) var(--ease-out) both}
 .hero.play .hero-sub{animation:k-rise var(--dur-scene) calc(var(--stagger) * 3) var(--ease-out) both}
-.hero.play .starter{animation:k-rise var(--dur-scene) var(--ease-out) backwards}
-.hero.play .starter:nth-child(1){animation-delay:calc(var(--stagger) * 4)}.hero.play .starter:nth-child(2){animation-delay:calc(var(--stagger) * 5)}.hero.play .starter:nth-child(3){animation-delay:calc(var(--stagger) * 6)}
-@media (max-width:860px){.starters{grid-template-columns:1fr}}

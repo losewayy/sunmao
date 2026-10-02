@@ -51,7 +51,7 @@
 
   /* typography (§4) — no half-pixel sizes for CJK */
   --fs-2xs:11px;--fs-xs:12px;--fs-sm:13px;--fs-md:14px;--fs-lg:16px;
-  --fs-xl:18px;--fs-2xl:20px;--fs-3xl:26px;--fs-display:30px;--fs-metric:36px;
+  --fs-xl:18px;--fs-2xl:20px;--fs-3xl:26px;--fs-metric:36px;
   --fw-regular:400;--fw-medium:500;--fw-strong:600;
   --lh-tight:1.3;--lh-ui:1.5;--lh-body:1.7;--lh-code:1.6;
   --ls-display:-.01em;--ls-metric:-.03em;
@@ -62,7 +62,7 @@
   --s-gutter:var(--s-8);
   --h-xs:20px;--h-sm:24px;--h-md:28px;--h-lg:32px;--h-xl:36px;--h-2xl:40px;--h-3xl:48px;
   --w-rail:252px;--w-dock:264px;--w-read:720px;--w-bubble-you:600px;
-  --w-settings:760px;--w-palette:580px;--w-starters:620px;
+  --w-settings:760px;--w-palette:580px;
   --w-pop:220px;--w-pop-max:380px;
   --icon-xs:12px;--icon-sm:14px;--icon-md:16px;--icon-lg:20px;
   --icon-stroke:1.75;--icon-stroke-bold:2.4;
@@ -87,7 +87,6 @@
   --sh-3:0 22px 56px rgba(0,0,0,.42);
   --sh-thumb:0 1px 3px rgba(0,0,0,.35);
   --sh-text:0 1px 2px rgba(0,0,0,.35);
-  --sh-text-display:0 2px 18px rgba(0,0,0,.35);
   --sh-mark:drop-shadow(0 6px 18px rgba(0,0,0,.35));
   --sh-inset-hi:inset 0 1px 0 var(--c-hi);
   --ring-1:inset 0 0 0 1px var(--c-stroke);
@@ -147,7 +146,6 @@
   --sh-2:0 16px 48px rgba(30,36,60,.20);
   --sh-3:0 22px 56px rgba(30,36,60,.18);
   --sh-text:none;
-  --sh-text-display:none;
   --sh-mark:none;
   --syn-k:#8a4fd8;--syn-t:#0b7bab;--syn-p:#1f7a6d;--syn-s:#3d7a1e;--syn-n:#b45309;--syn-v:#2d3350;--syn-x:#8a8fa3;
   color-scheme:light;

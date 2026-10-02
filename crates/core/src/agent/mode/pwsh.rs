@@ -110,6 +110,21 @@ fn pwsh_segment_mutates(seg: &str, verbs: &std::collections::HashSet<String>) ->
     if unquoted.contains("$(") || unquoted.contains('`') {
         return true;
     }
+    // `{…}` — a scriptblock's body hides verbs from the first-token check
+    // (`% { Remove-Item x }` reads as `foreach`, `& { Remove-Item x }` as
+    // nothing). `@{…}` hastables share the syntax; treating every brace as
+    // mutating is the conservative call.
+    if unquoted.contains('{') {
+        return true;
+    }
+    // `& cmd`/`. script` — bare call/sourcing operators. The first token
+    // IS the operator, so stripping it leaves an empty verb and the read
+    // list below would judge the call invisible; the invoked name is a
+    // string or expression we can't classify.
+    let first = unquoted.split_whitespace().next().unwrap_or("");
+    if first == "&" || first == "." {
+        return true;
+    }
     // `$x = …`, `Set-Item Env:foo`, `[Environment]::Set…` — persistent
     // state writes, same as ShellVar mutation in the POSIX walker.
     if pwsh_assignment(&unquoted) {

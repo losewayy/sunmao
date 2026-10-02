@@ -512,6 +512,14 @@ mod tests {
             "mkdir out",
             "cat $(rm x).txt",
             "[Environment]::SetEnvironmentVariable('A','B')",
+            // read_only escapes: bare call/dot-source operators leave an
+            // empty verb after stripping; a scriptblock hides its verbs
+            // behind the read-aliased outer command
+            "& Remove-Item x",
+            ". ./evil.ps1",
+            "& { rm x }",
+            "Get-Item *.log | % { Remove-Item $_ }",
+            "gci | ? { $_.Length -gt 0 } | % { del $_ }",
         ] {
             assert!(
                 call_mutates("Bash", &bash(cmd), &v, pwsh),

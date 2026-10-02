@@ -70,6 +70,7 @@ impl AgentLoop {
                 tools: Some(&decls),
                 max_tokens: None,
                 temperature: None,
+                reasoning_effort: None,
             };
             // same cancel-during-establishment arm as the turn loop — a
             // hung stream() must not wait out its provider timeout. Bind

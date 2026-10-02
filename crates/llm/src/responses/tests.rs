@@ -126,3 +126,40 @@ fn stale_chain_detection() {
     let e = anyhow::anyhow!("provider 500 Internal Server Error");
     assert!(!stale_chain(&e));
 }
+
+/// `reasoning_effort` rides the `reasoning.effort` field — Responses'
+/// spelling, not chat-completions' flat key — and stays absent when unset.
+#[test]
+fn effort_lands_on_reasoning_object() {
+    let c = ResponsesClient::new("http://x", "k", "m");
+    let msgs = [Message::user("hi")];
+    let split = Split {
+        input: vec![],
+        prev_id: None,
+    };
+    let body = c.request_body(
+        &ChatRequest {
+            messages: &msgs,
+            tools: None,
+            max_tokens: None,
+            temperature: None,
+            reasoning_effort: Some("high"),
+        },
+        "",
+        &split,
+    );
+    assert_eq!(body["reasoning"]["effort"], "high");
+    assert!(body.get("reasoning_effort").is_none());
+    let body = c.request_body(
+        &ChatRequest {
+            messages: &msgs,
+            tools: None,
+            max_tokens: None,
+            temperature: None,
+            reasoning_effort: None,
+        },
+        "",
+        &split,
+    );
+    assert!(body.get("reasoning").is_none());
+}

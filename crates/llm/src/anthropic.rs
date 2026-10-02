@@ -179,8 +179,14 @@ impl AnthropicClient {
         (system, out)
     }
 
-    async fn stream_inner(&self, req: &crate::oai::ChatRequest<'_>) -> anyhow::Result<DeltaStream> {
-        let (system, messages) = self.map_messages(req.messages).await;
+    /// The wire body for one request — assembled separately from `send` so
+    /// the dialect's field spellings stay unit-testable.
+    fn request_body(
+        &self,
+        req: &crate::oai::ChatRequest<'_>,
+        system: Option<String>,
+        messages: Vec<Value>,
+    ) -> Value {
         let mut body = json!({
             "model": self.model,
             "max_tokens": req.max_tokens.unwrap_or(self.default_max_tokens),
@@ -216,6 +222,17 @@ impl AnthropicClient {
             }
             body["tools"] = Value::Array(decls);
         }
+        if let Some(e) = req.reasoning_effort {
+            // Anthropic spells effort `output_config.effort` (GA — adaptive
+            // thinking, no beta header); the level passes through verbatim.
+            body["output_config"] = json!({ "effort": e });
+        }
+        body
+    }
+
+    async fn stream_inner(&self, req: &crate::oai::ChatRequest<'_>) -> anyhow::Result<DeltaStream> {
+        let (system, messages) = self.map_messages(req.messages).await;
+        let body = self.request_body(req, system, messages);
 
         let resp = self
             .http
@@ -498,6 +515,38 @@ mod tests {
             .map(|(i, _)| i)
             .collect();
         assert_eq!(marked, vec![1, 2], "exactly the last two messages marked");
+    }
+
+    /// `reasoning_effort` maps to `output_config.effort` — Anthropic's
+    /// effort spelling — verbatim, and stays absent when unset.
+    #[tokio::test]
+    async fn effort_lands_on_output_config() {
+        let c = AnthropicClient::new("http://x", "k", "m");
+        let msgs = [Message::user("hi")];
+        let body = c.request_body(
+            &crate::oai::ChatRequest {
+                messages: &msgs,
+                tools: None,
+                max_tokens: None,
+                temperature: None,
+                reasoning_effort: Some("low"),
+            },
+            None,
+            vec![],
+        );
+        assert_eq!(body["output_config"]["effort"], "low");
+        let body = c.request_body(
+            &crate::oai::ChatRequest {
+                messages: &msgs,
+                tools: None,
+                max_tokens: None,
+                temperature: None,
+                reasoning_effort: None,
+            },
+            None,
+            vec![],
+        );
+        assert!(body.get("output_config").is_none());
     }
 
     #[test]

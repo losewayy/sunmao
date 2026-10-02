@@ -225,6 +225,7 @@ impl AgentLoop {
                 tools: Some(&decls),
                 max_tokens: None,
                 temperature: None,
+                reasoning_effort: None,
             };
 
             // cancel during stream ESTABLISHMENT: a slow/hung `stream()`

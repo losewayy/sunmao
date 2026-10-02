@@ -8,6 +8,7 @@
 use anyhow::{Context, bail};
 use futures_util::{Stream, StreamExt};
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::sse::{SseEvent, SseParser};
 use crate::types::{Message, Tool, Usage};
@@ -25,6 +26,12 @@ pub struct ChatRequest<'a> {
     pub tools: Option<&'a [Tool]>,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
+    /// Reasoning/thinking effort — provider dialects map it onto their own
+    /// spelling (chat-completions `reasoning_effort`, Responses
+    /// `reasoning.effort`, Anthropic `output_config.effort`). `None` = the
+    /// provider's default; the string is passed verbatim — vocabularies
+    /// don't agree ("minimal" vs "low", Anthropic's "max").
+    pub reasoning_effort: Option<&'a str>,
 }
 
 impl OaiClient {
@@ -53,9 +60,9 @@ impl OaiClient {
         &self.model
     }
 
-    /// Streaming chat completion over a live SSE byte stream.
-    async fn stream_inner(&self, req: &ChatRequest<'_>) -> anyhow::Result<DeltaStream> {
-        let messages = map_messages(req.messages).await;
+    /// The wire body for one request — assembled separately from `send` so
+    /// the dialect's field spellings stay unit-testable.
+    fn request_body(&self, req: &ChatRequest<'_>, messages: Vec<serde_json::Value>) -> Value {
         let mut body = serde_json::json!({
             "model": self.model,
             "messages": messages,
@@ -63,7 +70,7 @@ impl OaiClient {
             "stream_options": { "include_usage": true },
         });
         if let Some(tools) = req.tools {
-            body["tools"] = serde_json::to_value(tools)?;
+            body["tools"] = serde_json::to_value(tools).unwrap_or_default();
         }
         if let Some(mt) = req.max_tokens {
             body["max_tokens"] = mt.into();
@@ -71,6 +78,15 @@ impl OaiClient {
         if let Some(t) = req.temperature {
             body["temperature"] = t.into();
         }
+        if let Some(e) = req.reasoning_effort {
+            body["reasoning_effort"] = e.into();
+        }
+        body
+    }
+
+    /// Streaming chat completion over a live SSE byte stream.
+    async fn stream_inner(&self, req: &ChatRequest<'_>) -> anyhow::Result<DeltaStream> {
+        let body = self.request_body(req, map_messages(req.messages).await);
 
         let resp = self
             .http
@@ -308,5 +324,41 @@ impl Chunk {
             }));
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `reasoning_effort` lands verbatim at the body top level — the
+    /// chat-completions spelling — and stays absent when unset.
+    #[tokio::test]
+    async fn effort_lands_on_reasoning_effort() {
+        let c = OaiClient::new("http://x", "k", "m");
+        let msgs = [Message::user("hi")];
+        let mapped = map_messages(&msgs).await;
+        let body = c.request_body(
+            &ChatRequest {
+                messages: &msgs,
+                tools: None,
+                max_tokens: None,
+                temperature: None,
+                reasoning_effort: Some("high"),
+            },
+            mapped.clone(),
+        );
+        assert_eq!(body["reasoning_effort"], "high");
+        let body = c.request_body(
+            &ChatRequest {
+                messages: &msgs,
+                tools: None,
+                max_tokens: None,
+                temperature: None,
+                reasoning_effort: None,
+            },
+            mapped,
+        );
+        assert!(body.get("reasoning_effort").is_none());
     }
 }

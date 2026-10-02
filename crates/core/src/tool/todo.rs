@@ -10,6 +10,7 @@
 //! hard error — the tool exists to help the model self-organize, not to
 //! reject it.
 
+use crate::context::MutexRecover;
 use crate::tool::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -126,13 +127,19 @@ impl ToolImpl for TodoWriteTool {
         // then the live snapshot readers (/todos, turn injection) see it.
         {
             let mut log = ctx.sessions.lock().await;
-            let _ = log
-                .append(&crate::session::SessionEvent::Todos {
-                    items: items.clone(),
-                })
-                .await;
+            log.append_audit(&crate::session::SessionEvent::Todos {
+                items: items.clone(),
+            })
+            .await;
         }
-        *ctx.todos.lock().unwrap() = items.clone();
+        *ctx.todos.lock_or_recover() = items.clone();
+        // live mirror of the durable Todos fact — a watching frontend renders
+        // the same list a replay would fold, not just the tool's echo text
+        if let Some(sink) = ctx.live_sink.get() {
+            sink.on_event(&crate::agent::LiveEvent::Todos {
+                items: items.clone(),
+            });
+        }
         let mut out = format!(
             "task list updated ({} items):\n{}",
             items.len(),

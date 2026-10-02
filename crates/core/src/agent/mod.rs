@@ -9,6 +9,7 @@
 //! }
 //! ```
 
+use crate::context::{MutexRecover, RwLockRecover};
 use std::sync::Arc;
 
 use crate::context::Context;
@@ -16,10 +17,12 @@ use crate::hooks::HookEvent;
 use crate::session::{SessionEvent, SessionLog};
 
 mod bare;
+mod cancel;
 mod compact;
 mod gate;
 mod mcp;
 pub mod mode;
+mod steer;
 mod turn;
 
 pub use mode::ApprovalMode;
@@ -32,7 +35,7 @@ mod summary;
 
 pub use events::{LiveEvent, Observer, TurnOutcome};
 pub use summary::call_summary;
-pub(crate) use summary::{specifier_for, truncate_output};
+pub(crate) use summary::{specifier_for, tool_timeout_for, truncate_output};
 
 /// Folded usage facts for `/status` — sums over every `SessionEvent::Usage`.
 #[derive(Debug, Clone, Default)]
@@ -178,7 +181,8 @@ impl AgentLoop {
     pub fn swap_model(&self, selector: &str) -> Option<String> {
         let models = self.ctx.models.as_ref()?;
         let adapter = models.adapter_for(selector)?;
-        *self.ctx.llm_override.write().unwrap() = Some(adapter);
+        *self.ctx.llm_override.write_or_recover() = Some(adapter);
+        *self.ctx.active_selector.write_or_recover() = Some(selector.to_string());
         let label = models
             .resolve(selector)
             .map(|t| t.model)
@@ -190,17 +194,16 @@ impl AgentLoop {
     /// swap alongside the turns it split.
     pub async fn record_model_change(&self, selector: &str, label: &str) {
         let mut log = self.ctx.sessions.lock().await;
-        let _ = log
-            .append(&SessionEvent::Hook {
-                event: "model.change".into(),
-                detail: format!("{selector} → {label}"),
-            })
-            .await;
+        log.append_audit(&SessionEvent::Hook {
+            event: "model.change".into(),
+            detail: format!("{selector} → {label}"),
+        })
+        .await;
     }
 
     /// The session's current approval stance (SPEC §4.6).
     pub fn approval_mode(&self) -> ApprovalMode {
-        *self.ctx.approval_mode.read().unwrap()
+        *self.ctx.approval_mode.read_or_recover()
     }
 
     /// Switch the approval stance mid-session — durable as
@@ -212,11 +215,15 @@ impl AgentLoop {
     /// observer when called inside a turn, or the live sink otherwise.
     pub async fn set_approval_mode(&self, mode: ApprovalMode, observer: &dyn Observer) {
         let _turn_permit = self.ctx.turn_lock.lock().await;
-        *self.ctx.approval_mode.write().unwrap() = mode;
+        *self.ctx.approval_mode.write_or_recover() = mode;
         let detail = mode.as_str();
         {
             let mut log = self.ctx.sessions.lock().await;
-            let _ = log.append(&SessionEvent::ModeChange { mode }).await;
+            if let Err(e) = log.append(&SessionEvent::ModeChange { mode }).await {
+                // audit fact failed to persist — never silent (stderr via
+                // tracing; the live audit line below still reflects intent)
+                tracing::warn!("mode change not durable: {e:#}");
+            }
         }
         observer.on_event(&LiveEvent::Hook {
             event: "approval.mode".into(),
@@ -264,17 +271,16 @@ impl AgentLoop {
             .unwrap_or_default()
     }
 
-    /// Signal cooperative cancellation for the in-flight turn.
-    pub fn cancel(&self) {
-        self.ctx
-            .cancelled
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+    /// The shared Context — frontends need `shell`/`cancel_notify` to run
+    /// `!cmd` through the same backend the turn loop uses.
+    pub fn context(&self) -> &Arc<Context> {
+        &self.ctx
     }
 
     /// Snapshot the live sub-agent roster (`/tasks`) — detached spawns
     /// register at launch, `done` flips when TaskDone lands.
     pub fn task_roster(&self) -> Vec<crate::context::TaskEntry> {
-        self.ctx.live_tasks.lock().unwrap().clone()
+        self.ctx.live_tasks.lock_or_recover().clone()
     }
 
     /// The connected MCP servers (`/mcp`) — name, transport, tool count,
@@ -337,7 +343,7 @@ impl AgentLoop {
             .map(|t| t.provider.dialect)
             .unwrap_or_else(|| "?".to_string());
         SessionStatus {
-            session_id: self.ctx.session_id.read().unwrap().clone(),
+            session_id: self.ctx.session_id.read_or_recover().clone(),
             cwd: self.ctx.cwd.clone(),
             model: model.unwrap_or_else(|| "?".to_string()),
             provider,
@@ -350,7 +356,7 @@ impl AgentLoop {
     /// The model's current task list (`/todos`) — the hot snapshot the
     /// `Todos` events keep durable.
     pub fn todos(&self) -> Vec<crate::tool::TodoItem> {
-        self.ctx.todos.lock().unwrap().clone()
+        self.ctx.todos.lock_or_recover().clone()
     }
 
     /// The session-scoped approval grants — the `Approval::Session` ledger,
@@ -376,59 +382,12 @@ impl AgentLoop {
     pub async fn record_local_shell(&self, command: &str, exit_code: i32, output: &str) {
         let _turn_permit = self.ctx.turn_lock.lock().await;
         let mut log = self.ctx.sessions.lock().await;
-        let _ = log
-            .append(&SessionEvent::LocalShell {
-                command: command.to_string(),
-                exit_code,
-                output: output.to_string(),
-            })
-            .await;
-    }
-
-    /// Queue user steering for the running turn — the loop drains it at the
-    /// next request boundary and folds the text in as a user message, so it
-    /// steers THIS turn instead of becoming a queued next submission.
-    pub fn push_steer(&self, client: u64, text: String) {
-        self.ctx.steer.lock().unwrap().push_back((client, text));
-    }
-
-    /// Drop a queued steer before the turn consumes it (GUI chip ×). The
-    /// index is positional over the current queue; consumed items have
-    /// already left it, so a stale index is a harmless no-op.
-    pub fn cancel_steer(&self, idx: usize) {
-        self.ctx.steer.lock().unwrap().remove(idx);
-    }
-
-    /// Current steering backlog — replay/hello report it so a joining tab
-    /// shows the same queued chips.
-    pub fn steer_queue(&self) -> Vec<String> {
-        self.ctx
-            .steer
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|(_, t)| t.clone())
-            .collect()
-    }
-
-    /// Steer a *sub-agent* mid-turn: roster lookup, then push onto the
-    /// child's steer queue — its own turn loop folds the text as a user
-    /// message at the next request boundary. Errors are legible: a finished
-    /// child must be `resume`d, an unknown id never registered (or predates
-    /// this process — resume covers that too).
-    pub fn steer_sub(
-        &self,
-        sub_id: &str,
-        text: String,
-    ) -> Result<(), crate::context::SubSteerError> {
-        self.ctx.steer_sub(sub_id, text)
-    }
-
-    /// Claim every queued steer — the turn boundary drains into the log;
-    /// the driver drains leftovers after a turn ends (a steer that arrived
-    /// mid-shutdown becomes the next submission, never dropped).
-    pub fn drain_steer(&self) -> Vec<(u64, String)> {
-        self.ctx.steer.lock().unwrap().drain(..).collect()
+        log.append_audit(&SessionEvent::LocalShell {
+            command: command.to_string(),
+            exit_code,
+            output: output.to_string(),
+        })
+        .await;
     }
 
     /// Swap the active session log (TUI `/resume`): `log` becomes the fold
@@ -453,7 +412,7 @@ impl AgentLoop {
             let mut cur = self.ctx.sessions.lock().await;
             *cur = log;
         }
-        *self.ctx.session_id.write().unwrap() = new_id.clone();
+        *self.ctx.session_id.write_or_recover() = new_id.clone();
         self.ctx.hooks.retarget(&new_id, new_path);
         // the new log's task list + approval stance + checkpoint ledger
         // become the live state — resume must not inherit the abandoned
@@ -469,7 +428,7 @@ impl AgentLoop {
                 _ => None,
             })
             .unwrap_or_default();
-        *self.ctx.approval_mode.write().unwrap() = mode;
+        *self.ctx.approval_mode.write_or_recover() = mode;
         let _ = self
             .ctx
             .hooks
@@ -492,6 +451,12 @@ impl AgentLoop {
         self.ctx.sessions.lock().await.path().to_path_buf()
     }
 
+    /// The active session's id — `session_path`'s file stem without the
+    /// async hop. `/export-md` and the header bar read this.
+    pub fn session_id(&self) -> String {
+        self.ctx.session_id.read_or_recover().clone()
+    }
+
     /// Durable events of the active session — frontends replay them to
     /// rebuild the transcript (web `serve` hello, TUI --resume).
     pub async fn session_events(&self) -> Vec<SessionEvent> {
@@ -510,7 +475,28 @@ impl AgentLoop {
     }
 
     /// Rough token estimate for the current transcript.
+    /// Estimated tokens for the *next* request. Trust the provider's own
+    /// counter first — the last `Usage` fact's `prompt_tokens` is exact.
+    /// The byte heuristic is the fallback for a session that hasn't
+    /// reported usage yet (or a dialect that never does), not the
+    /// primary source: `serde_json` bytes over-count structure and
+    /// under-count CJK by ~2×.
     async fn est_tokens(&self) -> usize {
+        let events = self
+            .ctx
+            .sessions
+            .lock()
+            .await
+            .events()
+            .await
+            .unwrap_or_default();
+        if let Some(u) = events.iter().rev().find_map(|ev| match ev {
+            SessionEvent::Usage { usage } => Some(usage.prompt_tokens),
+            _ => None,
+        }) {
+            return u as usize;
+        }
+        // no usage yet — estimate from the folded messages
         let msgs = self
             .ctx
             .sessions
@@ -523,5 +509,29 @@ impl AgentLoop {
             .map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0))
             .sum::<usize>()
             / 4
+    }
+
+    /// The auto-compact tripwire, sized to the model the session is *on*.
+    /// `context_length_for` reads the provider catalog; a selector that
+    /// resolves nowhere or a provider that doesn't advertise a window falls
+    /// back to `compact_threshold`. 85% headroom leaves room for the turn
+    /// that tips it over.
+    fn effective_threshold(&self) -> usize {
+        let window = self
+            .ctx
+            .active_selector
+            .read()
+            .unwrap()
+            .as_deref()
+            .and_then(|sel| {
+                self.ctx
+                    .models
+                    .as_ref()
+                    .and_then(|m| m.context_length_for(sel))
+            });
+        match window {
+            Some(w) => ((w * 85 / 100) as usize).max(1),
+            None => self.compact_threshold,
+        }
     }
 }

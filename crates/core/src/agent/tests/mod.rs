@@ -1,4 +1,5 @@
 use super::*;
+use crate::context::MutexRecover;
 use crate::session::SessionLog;
 use crate::tool::builtin_registry;
 use futures_util::stream;
@@ -122,7 +123,11 @@ impl Observer for RecObserver {
             LiveEvent::Hook { .. } => "Hook".into(),
             LiveEvent::Artifact { .. } => "Artifact".into(),
             LiveEvent::Usage(_) => "Usage".into(),
+            LiveEvent::Compacted { .. } => "Compacted".into(),
+            LiveEvent::Todos { .. } => "Todos".into(),
+            LiveEvent::TaskDone { .. } => "TaskDone".into(),
+            LiveEvent::UserMessage { .. } => "UserMessage".into(),
         };
-        self.0.lock().unwrap().push(tag);
+        self.0.lock_or_recover().push(tag);
     }
 }

@@ -94,3 +94,16 @@ pub(crate) fn specifier_for(tool: &str, args: &serde_json::Value) -> String {
         .unwrap_or_default()
         .to_string()
 }
+
+/// Per-tool watchdog seconds from `ctx.tool_timeouts` — exact name first,
+/// then the `mcp__` catch-all row for wire-named MCP tools (`mcp__x__y`
+/// never matches literally). Bash and Task aren't listed on purpose:
+/// Bash's `timeout_secs` arg is the finer control (it kills the process
+/// tree, not just the wait), and long-running agents are Task's feature.
+pub(crate) fn tool_timeout_for(ctx: &crate::context::Context, tool: &str) -> Option<u64> {
+    ctx.tool_timeouts.get(tool).copied().or_else(|| {
+        tool.starts_with("mcp__")
+            .then(|| ctx.tool_timeouts.get("mcp__").copied())
+            .flatten()
+    })
+}

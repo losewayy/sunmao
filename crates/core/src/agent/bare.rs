@@ -17,6 +17,7 @@
 //! observer stream, and Stop-free TurnEnd emission.
 
 use super::*;
+use crate::context::MutexRecover;
 
 use futures_util::StreamExt;
 use sunmao_llm::assemble::ToolCallAssembler;
@@ -42,7 +43,7 @@ impl AgentLoop {
         }
         // same ordinal accounting as the full loop — bare skips hooks and
         // the gate, not the checkpoint ledger
-        self.ctx.checkpoints.lock().unwrap().turn += 1;
+        self.ctx.checkpoints.lock_or_recover().turn += 1;
         let mut outcome = TurnOutcome::Completed;
         for _ in 0..self.max_iterations {
             if self
@@ -50,13 +51,13 @@ impl AgentLoop {
                 .cancelled
                 .load(std::sync::atomic::Ordering::Relaxed)
             {
-                outcome = TurnOutcome::Other("cancelled".into());
+                outcome = TurnOutcome::Cancelled;
                 break;
             }
             let messages = self.ctx.sessions.lock().await.messages().await?;
             let mut messages = messages;
             {
-                let items = self.ctx.todos.lock().unwrap().clone();
+                let items = self.ctx.todos.lock_or_recover().clone();
                 if !items.is_empty() {
                     // same tail-of-request injection as the full loop —
                     // bare skips hooks and the gate, not the task list.
@@ -70,11 +71,30 @@ impl AgentLoop {
                 max_tokens: None,
                 temperature: None,
             };
-            let mut stream = self.ctx.active_llm().stream(req).await?;
+            // same cancel-during-establishment arm as the turn loop — a
+            // hung stream() must not wait out its provider timeout. Bind
+            // the adapter Arc first: the temporary would drop before
+            // `select!` could borrow it.
+            let llm = self.ctx.active_llm();
+            let mut stream = tokio::select! {
+                s = llm.stream(req) => s?,
+                () = self.ctx.cancel_notify.notified() => {
+                    return Ok(TurnOutcome::Cancelled);
+                }
+            };
             let mut content = String::new();
             let mut assembler = ToolCallAssembler::new();
             let mut finish_reason: Option<String> = None;
-            while let Some(delta) = stream.next().await {
+            let mut cancelled_mid_stream = false;
+            loop {
+                let delta = tokio::select! {
+                    d = stream.next() => d,
+                    () = self.ctx.cancel_notify.notified() => {
+                        cancelled_mid_stream = true;
+                        None
+                    }
+                };
+                let Some(delta) = delta else { break };
                 match delta? {
                     StreamDelta::Content(c) => {
                         observer.on_event(&LiveEvent::Content { text: c.clone() });
@@ -91,7 +111,8 @@ impl AgentLoop {
                     StreamDelta::Finish { reason, usage } => {
                         if let Some(u) = &usage {
                             let mut log = self.ctx.sessions.lock().await;
-                            let _ = log.append(&SessionEvent::Usage { usage: u.clone() }).await;
+                            log.append(&SessionEvent::Usage { usage: u.clone() })
+                                .await?;
                             drop(log);
                             observer.on_event(&LiveEvent::Usage(u.clone()));
                         }
@@ -113,14 +134,37 @@ impl AgentLoop {
                 .await?;
             }
             if tool_calls.is_empty() {
-                outcome = match finish_reason.as_deref() {
-                    Some("length") => TurnOutcome::LengthLimited,
-                    Some("stop") | Some("end_turn") | None => TurnOutcome::Completed,
-                    Some(other) => TurnOutcome::Other(other.to_string()),
+                outcome = if cancelled_mid_stream {
+                    TurnOutcome::Cancelled
+                } else {
+                    match finish_reason.as_deref() {
+                        Some("length") => TurnOutcome::LengthLimited,
+                        Some("stop") | Some("end_turn") | None => TurnOutcome::Completed,
+                        Some(other) => TurnOutcome::Other(other.to_string()),
+                    }
                 };
                 break;
             }
             for call in tool_calls {
+                if self
+                    .ctx
+                    .cancelled
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    // settle the remaining calls — bare keeps the
+                    // tool_call/tool_result pairing legal even on cancel
+                    let mut log = self.ctx.sessions.lock().await;
+                    log.append(&SessionEvent::ToolResult {
+                        call_id: call.id.clone(),
+                        name: call.function.name.clone(),
+                        ok: false,
+                        output: "cancelled by user".into(),
+                        depth: self.ctx.depth,
+                        lane: self.ctx.lane,
+                    })
+                    .await?;
+                    continue;
+                }
                 let t0 = std::time::Instant::now();
                 let result = if let Some(err) = malformed.get(&call.id) {
                     observer.on_event(&LiveEvent::ToolStart {
@@ -147,10 +191,31 @@ impl AgentLoop {
                         call_id: Some(call.id.clone()),
                         args: args_value.clone(),
                     });
-                    self.ctx
-                        .tools
-                        .call(&call.function.name, &call.function.arguments, &self.ctx)
-                        .await
+                    let call_fut = self.ctx.tools.call(
+                        &call.function.name,
+                        &call.function.arguments,
+                        &self.ctx,
+                    );
+                    let secs = tool_timeout_for(&self.ctx, &call.function.name);
+                    tokio::pin!(call_fut);
+                    let aborted = || crate::tool::ToolResult {
+                        output: "cancelled by user".into(),
+                        ok: false,
+                    };
+                    match secs {
+                        Some(s) => tokio::select! {
+                            r = &mut call_fut => r,
+                            () = self.ctx.cancel_notify.notified() => aborted(),
+                            () = tokio::time::sleep(std::time::Duration::from_secs(s)) => crate::tool::ToolResult {
+                                output: format!("tool {} exceeded its {s}s timeout — see tool-timeouts.txt", call.function.name),
+                                ok: false,
+                            },
+                        },
+                        None => tokio::select! {
+                            r = &mut call_fut => r,
+                            () = self.ctx.cancel_notify.notified() => aborted(),
+                        },
+                    }
                 };
                 observer.on_event(&LiveEvent::ToolDone {
                     name: call.function.name.clone(),

@@ -1,0 +1,12 @@
+# Per-tool watchdog seconds — one `Tool | secs` row per line. The turn loop
+# abandons a call past its budget and returns a failed ToolResult (the
+# process may still exist in the background for non-shell tools; Bash owns
+# its own `timeout_secs` arg that kills the process tree).
+#
+# Exempt by design: Bash (its timeout_secs arg is the control) and Task
+# (long-running agents are the feature — cancel them with the UI/Esc, not
+# a clock). Project override: `.sunmao/tool-timeouts.txt` rows replace
+# builtins by name; `0` or a huge number effectively disables a row.
+WebFetch | 60
+mcp__ | 120
+HtmlArtifact | 30

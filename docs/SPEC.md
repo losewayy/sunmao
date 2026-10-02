@@ -79,7 +79,7 @@
 
 ### 4.3 `tools` — 作用域注册表 + 受控执行管线
 
-- 内置工具命名**强制对齐主流词表**：`Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob`、`WebFetch`、`JobOutput`、`HtmlArtifact`、`Task`、`TodoWrite`、`SendMessage`、`UpdateGoal`——hook matcher 免费命中；`SendMessage` 是子→父上行（推上父 steer 队列），与父→子 `Task{steer}`/`steer_sub` 构成双向 agent 通信
+- 内置工具命名**强制对齐主流词表**：`Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob`、`WebFetch`、`JobOutput`、`HtmlArtifact`、`Task`、`TodoWrite`、`SendMessage`、`UpdateGoal`、`RunCode`——hook matcher 免费命中；`SendMessage` 是子→父上行（推上父 steer 队列），与父→子 `Task{steer}`/`steer_sub` 构成双向 agent 通信
 - MCP 工具命名空间：`mcp__{server}__{tool}`——`mcp__*` matcher 免费命中
 - 执行管线串缝：`pre`(hooks+审批) → `exec` → `post`(hooks) —— 拦截点全部公开给 `ctx.audit` 与 `ctx.hooks`
 
@@ -92,6 +92,8 @@
 | Shell 逃生门 | `Bash`——模型写命令字符串 | 不透明字符串，**重点审计对象**（管道分拆进审批层） |
 
 规矩：**能做成原生的全部原生，shell 是刻意保留的逃生门而非地基**。
+
+**`RunCode`（PTC/codemode）**：模型写一段 JS 在内嵌 QuickJS 沙箱里编排工具——无 fs/网络/`import`，全部能力是 `tools.<Name>(args)` 回调进宿主。每个子调用走完整分发管线（PreToolUse→gate→exec→PostToolUse），只是喊话通道从 model tool_call 换成脚本代发；中间结果留在沙箱不进上下文，只有脚本返回值回来。子调用的持久记录是 `Hook` 审计事实而非 ToolCall/ToolResult——否则未配对 tool_result 会污染 transcript 折叠。
 
 **Edit 成熟细节（抄 grok-build 作业）**：归一化匹配吃空白漂移（`find_normalized_match_positions` 模式）；`old_string` 为空=建文件；Read 行号锚前缀；Read-before-Write 闸门（改已有文件必须先读过）。
 

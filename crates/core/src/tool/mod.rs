@@ -170,6 +170,7 @@ pub fn builtin_registry() -> ToolRegistry {
     r.register(crate::task::TaskTool);
     r.register(WebFetchTool);
     r.register(SendMessageTool);
+    r.register(RunCodeTool);
     r
 }
 
@@ -177,6 +178,7 @@ mod artifact;
 mod fs;
 mod goal;
 mod kind;
+mod ptc;
 mod pwsh;
 mod search;
 mod sendmsg;
@@ -192,6 +194,7 @@ pub(crate) use goal::GOAL_LINE_PREFIX;
 pub(crate) use goal::apply_blocker;
 pub use goal::{BLOCKED_MIN_ROUNDS, GoalState, GoalStatus, UpdateGoalTool, status_name};
 pub use kind::{ShellBackend, ShellResolution, ShellSource};
+pub use ptc::RunCodeTool;
 pub use search::{GlobTool, GrepTool};
 pub use sendmsg::SendMessageTool;
 pub use shell::{BashTool, JobOutputTool, ShellRun, render_run, run_foreground};

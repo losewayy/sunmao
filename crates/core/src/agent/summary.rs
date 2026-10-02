@@ -19,6 +19,7 @@ pub fn call_summary(name: &str, args: &serde_json::Value) -> String {
         "WebFetch" => &["url"],
         "Task" => &["prompt"],
         "JobOutput" => &["id"],
+        "RunCode" => &["code"],
         "HtmlArtifact" => &["name"],
         _ => &[],
     };

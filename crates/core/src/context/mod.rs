@@ -185,6 +185,11 @@ pub struct Context {
     /// user message (the reverse direction of `steer_sub`). `None` on the
     /// interactive session's context — there's no parent to address.
     pub parent_steer: Option<SteerQueue>,
+    /// `RunCode` sandbox KV — `store()`/`load()` writes fold into this
+    /// snapshot; `SessionEvent::PtcStore` lines are the durable record.
+    /// Same seed discipline as `todos`: rebuilt from the log on open and
+    /// on `swap_session`.
+    pub ptc_store: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
     /// One turn at a time per context — the watermark fence. Concurrent
     /// `run_turn` calls (ACP `session/prompt` is per-request spawned, and
     /// any frontend could double-submit) would otherwise interleave
@@ -307,6 +312,7 @@ impl Context {
         let todos = seed_todos(sessions.path());
         let goal = seed_goal(sessions.path());
         let approval_mode = seed_mode(sessions.path());
+        let ptc_store = seed_ptc_store(sessions.path());
         // checkpoints: rebuild `taken`/`seq` from any existing manifest so a
         // resumed session doesn't re-snapshot already-preserved files, and
         // seed the turn counter from the log's user-turn boundaries so the
@@ -374,6 +380,7 @@ impl Context {
             loop_driver,
             live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             todos: std::sync::Mutex::new(todos),
+            ptc_store: std::sync::Mutex::new(ptc_store),
             goal: std::sync::Mutex::new(goal),
             input_pending: std::sync::atomic::AtomicUsize::new(0),
             steer: SteerQueue::default(),
@@ -394,6 +401,18 @@ impl Context {
             })
             .unwrap_or_default();
         *self.todos.lock_or_recover() = items;
+    }
+
+    /// Re-point the `RunCode` KV snapshot at a swapped-in log — every
+    /// `PtcStore` fact folds in order, later writes win.
+    pub fn reseed_ptc_store(&self, events: &[crate::session::SessionEvent]) {
+        let mut store = std::collections::BTreeMap::new();
+        for ev in events {
+            if let crate::session::SessionEvent::PtcStore { key, value } = ev {
+                store.insert(key.clone(), value.clone());
+            }
+        }
+        *self.ptc_store.lock_or_recover() = store;
     }
 
     /// Re-point the goal snapshot at a swapped-in log — last `Goal` fact
@@ -540,7 +559,7 @@ impl Context {
 
 mod seeds;
 pub(crate) use seeds::tool_timeout_table;
-use seeds::{seed_goal, seed_mode, seed_todos};
+use seeds::{seed_goal, seed_mode, seed_ptc_store, seed_todos};
 
 mod sub_agent;
 pub(crate) use sub_agent::SubCancel;

@@ -116,6 +116,8 @@ pub(super) async fn build_sub_ctx(
 
     // fresh context, one depth deeper, on its own lane
     let mut sub_ctx = Context {
+        // the child's own store — sub-agent sessions are isolated logs
+        ptc_store: std::sync::Mutex::new(std::collections::BTreeMap::new()),
         llm,
         llm_override: std::sync::RwLock::new(None),
         active_selector: std::sync::RwLock::new(None),

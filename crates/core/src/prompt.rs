@@ -40,6 +40,9 @@ pub mod names {
     /// The goal-chain continuation prompt — one section, layered like
     /// `compact` (user `prompt.d/goal-continue.md` replaces it).
     pub const GOAL_CONTINUE: &str = "goal-continue";
+    /// `RunCode` usage semantics — the tool's own decl covers the wire
+    /// contract; this section carries the "when/why" for the model.
+    pub const PTC: &str = "ptc";
     pub const PROJECT_CONTEXT: &str = "project-context";
 }
 
@@ -180,6 +183,7 @@ fn builtin_sections(shell: crate::tool::ShellBackend) -> Vec<Section> {
             include_str!("../assets/prompt/tool-guidance.md"),
         ),
         mk(names::SHELL_DIALECT, 30, dialect),
+        mk(names::PTC, 35, include_str!("../assets/prompt/ptc.md")),
     ]
 }
 
@@ -195,6 +199,7 @@ pub const RESERVED_STEMS: &[&str] = &[
     names::SUBAGENT_DEFAULT,
     names::COMPACT,
     names::GOAL_CONTINUE,
+    names::PTC,
     names::PROJECT_CONTEXT,
 ];
 

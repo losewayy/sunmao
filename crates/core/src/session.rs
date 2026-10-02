@@ -91,6 +91,10 @@ pub enum SessionEvent {
     /// selector). Audit, not conversation — the fold ignores it, but a
     /// resume reseeds `Context.approval_mode` from the latest one.
     ModeChange { mode: crate::agent::ApprovalMode },
+    /// A `store()` write from a `RunCode` script — durable KV the sandbox
+    /// shares across calls and resumes. Fold-ignored (like `Todos`): the
+    /// store is state, not transcript; `load()` re-reads the snapshot.
+    PtcStore { key: String, value: String },
     /// The session's display title was renamed (serve `POST rename`). Audit,
     /// not conversation — the fold ignores it; readers (`session_meta`, the
     /// rail) take the LAST one as the title, overriding first-prompt

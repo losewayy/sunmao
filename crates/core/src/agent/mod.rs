@@ -527,11 +527,15 @@ impl AgentLoop {
             .events()
             .await
             .unwrap_or_default();
-        if let Some(u) = events.iter().rev().find_map(|ev| match ev {
-            SessionEvent::Usage { usage } => Some(usage.prompt_tokens),
-            _ => None,
-        }) {
-            return u as usize;
+        // a Usage fact older than the last Compacted boundary describes the
+        // pre-compact transcript — trusting it re-trips the loop-head check
+        // and compacts the fresh summary a second time
+        for ev in events.iter().rev() {
+            match ev {
+                SessionEvent::Usage { usage } => return usage.prompt_tokens as usize,
+                SessionEvent::Compacted { .. } => break,
+                _ => {}
+            }
         }
         // no usage yet — estimate from the folded messages
         let msgs = self

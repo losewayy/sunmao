@@ -14,15 +14,23 @@ impl AgentLoop {
     /// Context; its Bash call would keep going after this turn died.
     /// Finished entries just notify into a dead loop — harmless.
     pub fn cancel(&self) {
-        self.ctx
-            .cancelled
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        self.ctx.cancel_notify.notify_waiters();
         for entry in self.ctx.live_tasks.lock_or_recover().iter() {
             if let Some(c) = &entry.cancel {
                 c.cancel();
             }
         }
+        self.cancel_main();
+    }
+
+    /// `cancel()` minus the sub-agent cascade — the IM frontend's `/stop`.
+    /// Stopping the main agent is the only thing a channel can express;
+    /// sub-agents keep running (their `TaskDone` write-backs land in the
+    /// log as always). The pointed version for one child is `cancel_sub`.
+    pub fn cancel_main(&self) {
+        self.ctx
+            .cancelled
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.ctx.cancel_notify.notify_waiters();
         // a parked approval card is a suspended ask() — without this drain
         // the dispatcher hangs past the turn-end reset on the pending rx
         self.ctx.approval.cancel_pending();

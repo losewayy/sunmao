@@ -8,6 +8,7 @@ use sunmao_llm::{ChatRequest, DeltaStream, ProviderAdapter, StreamDelta, ToolCal
 
 mod approval_modes;
 mod approvals;
+mod cancel;
 mod driver;
 mod effort;
 mod goal;

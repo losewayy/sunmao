@@ -23,7 +23,8 @@
 //!         GET /artifacts/{name}/revs|notes|ui ·
 //!         POST /artifacts/{name}/annotate · GET /dataflow[/{id}] ·
 //!         GET /tasks?sess= · GET /jobs?sess= · GET /jobs/{id}/output ·
-//!         POST /attachments[?sess&ext] · GET /attachments/{name}
+//!         POST /attachments[?sess&ext] · GET /attachments/{name} ·
+//!         GET|PUT /ui[?sess=] · GET|PUT /shell[?sess=]
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;

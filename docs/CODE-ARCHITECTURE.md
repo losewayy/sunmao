@@ -84,7 +84,8 @@ crates/core    the kernel. Owns state, dispatch, policy. May not know
                ├── preflight.rs  shell/preflight — spawnfate advisory pass
                ├── prompt.rs     PromptAssembler — sectioned prompt layering
                ├── assets/       kernel-owned data files (prompt/*.md,
-               │               risky-patterns.txt) — include_str!, not literals
+               │               risky-patterns.txt, windows-collision-names.txt,
+               │               stderr-hints.txt) — include_str!, not literals
                ├── web.rs        fetch → readable text
                └── tool/         the native tool surface
                    ├── mod.rs    ToolResult, ToolImpl, ToolRegistry, builtin_registry

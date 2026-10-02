@@ -63,7 +63,9 @@ The **cold-plug principle** (CODE-ARCHITECTURE rule 6): replaceable units
 swap at the file/config layer, effective at process start — never hot.
 Prompt sections are named files (`assets/prompt/*.md` ← `~/.sunmao/` ←
 `.sunmao/`); same-named files replace earlier sections. The risk table is
-a text asset too (`assets/risky-patterns.txt`).
+a text asset too (`assets/risky-patterns.txt`) — as are the Windows
+collision table (`assets/windows-collision-names.txt`) and the stderr hint
+table (`assets/stderr-hints.txt`).
 
 ## Native tool surface (11)
 

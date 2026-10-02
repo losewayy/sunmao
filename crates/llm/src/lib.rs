@@ -6,11 +6,13 @@
 pub mod anthropic;
 pub mod assemble;
 pub mod oai;
+pub mod responses;
 pub mod sse;
 pub mod types;
 
 pub use anthropic::AnthropicClient;
 pub use oai::{ChatRequest, OaiClient};
+pub use responses::ResponsesClient;
 pub use sse::{SseEvent, SseParser};
 pub use types::*;
 

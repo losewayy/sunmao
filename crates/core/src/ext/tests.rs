@@ -1,4 +1,5 @@
 use super::*;
+use crate::context::MutexRecover;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -80,12 +81,12 @@ fn plugin_names_are_sanitized() {
 async fn dispatch_resolves_parked_id() {
     let state = registry::test_state();
     let (tx, rx) = tokio::sync::oneshot::channel();
-    state.lock().unwrap().pending.insert(3, tx);
+    state.lock_or_recover().pending.insert(3, tx);
     registry::test_dispatch(&state, json!({"id": 99, "result": "stray"}));
     registry::test_dispatch(&state, json!({"id": 3, "result": {"ok": true}}));
     let frame = rx.await.unwrap();
     assert_eq!(frame["result"]["ok"], true);
-    assert!(state.lock().unwrap().pending.is_empty());
+    assert!(state.lock_or_recover().pending.is_empty());
 }
 
 // — live, gated on `rustc` (the fixture is a local .rs child) —

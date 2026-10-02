@@ -3,6 +3,7 @@
 //! manifests, preset roots) and connects each one; `connect_one` drives a
 //! single spec to a served client plus its model-facing `McpTool`s.
 
+use crate::context::{MutexRecover, RwLockRecover};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -23,6 +24,20 @@ use super::{
     prompt_info, resource_info, tool_info,
 };
 
+/// Interned `mcp__server__tool` wire names — `ToolImpl::name` must return
+/// `&'static`, and the pool keeps one leaked str per distinct name instead
+/// of leaking a fresh copy on every call.
+fn mcp_wire_name(server: &str, tool: &str) -> &'static str {
+    static NAMES: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<(String, String), &'static str>>,
+    > = std::sync::OnceLock::new();
+    let pool = NAMES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let key = (server.to_string(), tool.to_string());
+    let mut map = pool.lock_or_recover();
+    map.entry(key)
+        .or_insert_with(|| Box::leak(format!("mcp__{server}__{tool}").into_boxed_str()))
+}
+
 /// One MCP server tool wrapped as a native [`ToolImpl`].
 struct McpTool {
     server: String,
@@ -36,8 +51,10 @@ struct McpTool {
 #[async_trait::async_trait]
 impl ToolImpl for McpTool {
     fn name(&self) -> &'static str {
-        // leaked name is fine: tool names are process-lifetime constants
-        Box::leak(format!("mcp__{}__{}", self.server, self.tool_name).into_boxed_str())
+        // leaked name is fine — tool names are process-lifetime constants —
+        // but `ToolImpl::name()` is re-invoked per call site; intern once so
+        // a long session doesn't grow a new leaked str per lookup.
+        mcp_wire_name(&self.server, &self.tool_name)
     }
 
     fn decl(&self) -> Tool {
@@ -296,14 +313,14 @@ pub(crate) async fn connect_one(
     // overwrite the post-push state, so we only write when no push has
     // landed (version still 0)
     {
-        let _g = shared.write_gate.lock().unwrap();
+        let _g = shared.write_gate.lock_or_recover();
         if shared.version.load(std::sync::atomic::Ordering::Relaxed) == 0 {
-            *shared.tools.write().unwrap() = catalog;
+            *shared.tools.write_or_recover() = catalog;
             if let Some(p) = prompts {
-                *shared.prompts.write().unwrap() = p;
+                *shared.prompts.write_or_recover() = p;
             }
             if let Some(r) = resources {
-                *shared.resources.write().unwrap() = r;
+                *shared.resources.write_or_recover() = r;
             }
         }
     }

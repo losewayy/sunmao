@@ -190,6 +190,46 @@ impl Permissions {
         Self { rules }
     }
 
+    /// Split `permissions:` frontmatter entries into overlay buckets —
+    /// `deny:`/`ask:` rules apply, `allow:` and unprefixed entries are
+    /// ignored (counted for audit): a sub-agent's def can only narrow its
+    /// own surface, never widen it.
+    pub fn classify_overlay(entries: &[String]) -> (Vec<String>, Vec<String>, usize) {
+        let mut ask = Vec::new();
+        let mut deny = Vec::new();
+        let mut ignored = 0;
+        for e in entries {
+            let e = e.trim();
+            if let Some(r) = e.strip_prefix("deny:") {
+                deny.push(r.to_string());
+            } else if let Some(r) = e.strip_prefix("ask:") {
+                ask.push(r.to_string());
+            } else {
+                ignored += 1;
+            }
+        }
+        (ask, deny, ignored)
+    }
+
+    /// Overlay deny/ask rules onto a loaded set — used by agent defs
+    /// (`permissions:` frontmatter, classified by `classify_overlay`).
+    /// deny>ask>allow ordering makes the result strictly ≤ the base:
+    /// nothing in the overlay can grant what the parent's table refused.
+    pub fn with_deny_ask_overlay(&self, ask: &[String], deny: &[String]) -> Self {
+        let extra = Self::from_rules(Perms {
+            allow: Vec::new(),
+            ask: ask.to_vec(),
+            deny: deny.to_vec(),
+        });
+        let mut rules = self.rules.clone();
+        for (tool, (_, ask_e, deny_e)) in extra.rules {
+            let entry = rules.entry(tool).or_default();
+            entry.1.extend(ask_e);
+            entry.2.extend(deny_e);
+        }
+        Self { rules }
+    }
+
     /// Check a tool call: `specifier` is the command for Bash, path for file
     /// tools — whatever the rule glob should match against.
     /// deny > ask > allow; no matching rule → Allow (default flow decides).
@@ -302,5 +342,70 @@ mod tests {
         // not silently dropped: the mangled rule matches only literally
         assert_eq!(p.check("Bash", "(["), Verdict::Deny);
         assert_eq!(p.check("Bash", "anything else"), Verdict::Default);
+    }
+}
+
+#[cfg(test)]
+mod overlay_tests {
+    use super::*;
+
+    #[test]
+    fn overlay_denies_what_parent_allowed() {
+        let parent = Permissions::from_rules(Perms {
+            allow: vec!["Bash(rm *)".into(), "Write".into()],
+            ask: vec![],
+            deny: vec![],
+        });
+        assert_eq!(parent.check("Bash", "rm -rf x"), Verdict::PreApproved);
+        let (ask, deny, ignored) = Permissions::classify_overlay(&[
+            "deny:Bash(rm *)".into(),
+            "deny:Write".into(),
+            "ask:Edit".into(),
+            // widening attempts — must not apply
+            "allow:Bash(curl *)".into(),
+            "Bash(echo *)".into(),
+        ]);
+        assert_eq!(ignored, 2);
+        let child = parent.with_deny_ask_overlay(&ask, &deny);
+        assert_eq!(child.check("Bash", "rm -rf x"), Verdict::Deny);
+        assert_eq!(child.check("Write", "a.rs"), Verdict::Deny);
+        assert_eq!(child.check("Edit", "a.rs"), Verdict::Ask);
+        // ignored allow: parent's table didn't have it, overlay can't add
+        assert_eq!(child.check("Bash", "curl example.com"), Verdict::Default);
+    }
+
+    #[test]
+    fn overlay_cannot_undeny() {
+        // parent denies; child rules can't reopen it — overlay only adds
+        // deny/ask entries and deny already wins
+        let parent = Permissions::from_rules(Perms {
+            allow: vec![],
+            ask: vec![],
+            deny: vec!["Bash(rm *)".into()],
+        });
+        let child = parent.with_deny_ask_overlay(&[], &[]);
+        assert_eq!(child.check("Bash", "rm -rf x"), Verdict::Deny);
+        // even an ask on top of deny stays denied (deny > ask)
+        let child2 = parent.with_deny_ask_overlay(&["Bash(rm *)".into()], &[]);
+        assert_eq!(child2.check("Bash", "rm -rf x"), Verdict::Deny);
+    }
+
+    #[test]
+    fn overlay_supports_new_specifiers() {
+        let parent = Permissions::from_rules(Perms {
+            allow: vec!["Bash".into()],
+            ask: vec![],
+            deny: vec![],
+        });
+        let (ask, deny, _) = Permissions::classify_overlay(&[
+            "deny:Bash(git *)".into(),
+            "deny:Bash(!git status*)".into(),
+            r"ask:Bash(re:^cargo (publish|install)\b)".into(),
+        ]);
+        let child = parent.with_deny_ask_overlay(&ask, &deny);
+        assert_eq!(child.check("Bash", "git push"), Verdict::Deny);
+        assert_eq!(child.check("Bash", "git status"), Verdict::PreApproved);
+        assert_eq!(child.check("Bash", "cargo publish"), Verdict::Ask);
+        assert_eq!(child.check("Bash", "cargo test"), Verdict::PreApproved);
     }
 }

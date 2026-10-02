@@ -71,7 +71,8 @@ pub(super) async fn spawn_parts(
 /// Assemble a child's Context over a given log — shared by fresh spawns
 /// (`spawn_parts` mints id+lane+log) and resumes (`resume_parts` keeps the
 /// id and the on-disk log). Model routing, the `tools:`/`spawns:` surface
-/// trim and per-child seams are policy, identical on both paths.
+/// trim, the `permissions:` deny/ask overlay and per-child seams are
+/// policy, identical on both paths.
 pub(super) async fn build_sub_ctx(
     ctx: &Context,
     sub_id: String,
@@ -114,6 +115,28 @@ pub(super) async fn build_sub_ctx(
         tools.remove("Task");
     }
 
+    // permission overlay: the def's `permissions:` deny/ask rules fold onto
+    // the freshly loaded session table — never the parent's struct itself.
+    // deny>ask ordering means this can only narrow the child's surface.
+    let permissions = {
+        let base = crate::permissions::Permissions::load(&ctx.cwd, &ctx.extra_plugin_roots);
+        let entries = def.map(|d| d.permissions.as_slice()).unwrap_or(&[]);
+        if entries.is_empty() {
+            base
+        } else {
+            let (ask, deny, ignored) = crate::permissions::Permissions::classify_overlay(entries);
+            if ignored > 0 {
+                tracing::warn!(
+                    "agent {:?}: {ignored} permissions: entr{} ignored \
+                     (only `deny:`/`ask:` rules apply — allow can't widen)",
+                    def.map(|d| d.name.as_str()).unwrap_or("?"),
+                    if ignored == 1 { "y" } else { "ies" },
+                );
+            }
+            base.with_deny_ask_overlay(&ask, &deny)
+        }
+    };
+
     // fresh context, one depth deeper, on its own lane
     let mut sub_ctx = Context {
         // the child's own store — sub-agent sessions are isolated logs
@@ -123,7 +146,7 @@ pub(super) async fn build_sub_ctx(
         active_selector: std::sync::RwLock::new(None),
         sessions: Arc::new(tokio::sync::Mutex::new(log)),
         tools,
-        permissions: crate::permissions::Permissions::load(&ctx.cwd, &ctx.extra_plugin_roots),
+        permissions,
         approval: ctx.approval.clone(),
         // inherit the parent's resolved table (presets already folded in —
         // re-parsing here would append them twice)
@@ -155,6 +178,11 @@ pub(super) async fn build_sub_ctx(
         // snapshots (same rule as read_paths; unlike session_grants which
         // IS shared)
         checkpoints: std::sync::Mutex::new(crate::checkpoints::load(&ctx.cwd, &sub_id)),
+        // session grants stay shared with the parent — re-prompting an
+        // already-approved command on every spawn would degrade the
+        // approval UX. The leak this creates is bounded by the def's
+        // `permissions:` overlay above: a def deny rule outranks any
+        // inherited grant (deny is checked before grants in gate_call).
         session_grants: ctx.session_grants.clone(),
         // the session's stance is shared, not copied — a mid-session /mode
         // switch applies to children already running
@@ -200,6 +228,31 @@ pub(super) async fn build_sub_ctx(
     sub_ctx.connect_extensions().await;
     if let Some(names) = &allow_names {
         sub_ctx.tools = sub_ctx.tools.filtered(names);
+    }
+    // audit trail for the overlay — the fact lives in the child's own log
+    // and mirrors to the parent's live spine so --dataflow/TUI see it
+    if let Some(d) = def
+        && !d.permissions.is_empty()
+    {
+        let detail = format!(
+            "{}: {} deny/ask rules overlaid",
+            d.name,
+            d.permissions.len()
+        );
+        {
+            let mut l = sub_ctx.sessions.lock().await;
+            l.append_audit(&crate::session::SessionEvent::Hook {
+                event: "agent.perms".into(),
+                detail: detail.clone(),
+            })
+            .await;
+        }
+        if let Some(s) = ctx.live_sink.get() {
+            s.on_event(&crate::agent::LiveEvent::Hook {
+                event: "agent.perms".into(),
+                detail: format!("[l{}] {detail}", sub_ctx.lane),
+            });
+        }
     }
     sub_ctx
 }

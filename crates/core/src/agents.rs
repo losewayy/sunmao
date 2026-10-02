@@ -1,11 +1,14 @@
 //! Named sub-agent definitions — `.sunmao/agents/*.md`, `.claude/agents/*.md`.
-//! Frontmatter `name`/`description`/`model`/`tools`/`spawns`, body becomes
-//! the sub-agent's system prompt. `model` is a `models.json` selector
-//! (`provider/model`, bare model id, or `@route`) — absent means inherit
-//! the parent's model. `tools` (CSV or `[a,b]`) trims the child's tool
-//! registry — absent means the full builtin set. `spawns` (CSV or `[a,b]`,
-//! `*` = unrestricted) whitelists which agent names this one may itself
-//! spawn; absent means unrestricted, `[]` means the child can't Task at all.
+//! Frontmatter `name`/`description`/`model`/`tools`/`spawns`/`permissions`,
+//! body becomes the sub-agent's system prompt. `model` is a `models.json`
+//! selector (`provider/model`, bare model id, or `@route`) — absent means
+//! inherit the parent's model. `tools` (CSV or `[a,b]`) trims the child's
+//! tool registry — absent means the full builtin set. `spawns` (CSV or
+//! `[a,b]`, `*` = unrestricted) whitelists which agent names this one may
+//! itself spawn; absent means unrestricted, `[]` means the child can't Task
+//! at all. `permissions` (CSV or `[a,b]` of `deny:`/`ask:`-prefixed
+//! `Tool(spec)` rules) overlays the child's permission table — deny/ask
+//! only, children narrow but never widen the session's rules.
 
 use std::path::{Path, PathBuf};
 
@@ -20,6 +23,10 @@ pub struct AgentDef {
     pub tools: Option<Vec<String>>,
     /// Spawnable agent names — `None` = unrestricted, `Some([])` = none.
     pub spawns: Option<Vec<String>>,
+    /// Deny/ask overlay rules (`deny:Tool(spec)`, `ask:Tool(spec)`) —
+    /// `allow:`/bare entries are ignored at spawn. `None`/empty = inherit
+    /// the session's table unchanged.
+    pub permissions: Vec<String>,
 }
 
 /// Load all agent definitions under the convention dirs. `extra_roots` are
@@ -60,6 +67,7 @@ fn parse(text: &str, path: &Path) -> Option<AgentDef> {
     let mut model = None;
     let mut tools = None;
     let mut spawns = None;
+    let mut permissions = Vec::new();
     let mut body = text;
 
     // YAML-lite frontmatter: --- name: x description: y model: @route ---
@@ -88,6 +96,9 @@ fn parse(text: &str, path: &Path) -> Option<AgentDef> {
                 // empty value means "can't spawn at all".
                 spawns = if v == "*" { None } else { Some(parse_list(v)) };
             }
+            if let Some(v) = line.strip_prefix("permissions:") {
+                permissions = parse_list(v);
+            }
         }
         body = &rest[end + 4..];
     }
@@ -98,6 +109,7 @@ fn parse(text: &str, path: &Path) -> Option<AgentDef> {
         model,
         tools,
         spawns,
+        permissions,
     })
 }
 
@@ -118,4 +130,22 @@ pub fn find(cwd: &Path, extra_roots: &[PathBuf], name: &str) -> Option<AgentDef>
     load_all(cwd, extra_roots)
         .into_iter()
         .find(|d| d.name == name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_permissions_frontmatter() {
+        let text = "---\nname: reviewer\ndescription: ro reviewer\npermissions: deny:Write, deny:Edit, ask:Bash(git *)\n---\nbody";
+        let def = parse(text, Path::new("reviewer.md")).unwrap();
+        assert_eq!(
+            def.permissions,
+            vec!["deny:Write", "deny:Edit", "ask:Bash(git *)"]
+        );
+        // absent field → empty overlay
+        let plain = parse("no frontmatter", Path::new("x.md")).unwrap();
+        assert!(plain.permissions.is_empty());
+    }
 }

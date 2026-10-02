@@ -166,7 +166,9 @@ async fn segment_classifier_prompts_for_piped_shell() {
     }
 
     let dir = crate::fresh_test_dir("segcls");
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    // the segment grammar being exercised is the posix splitter's
+    std::fs::write(dir.join(".sunmao/shell.txt"), "posix").unwrap();
     let provider = Arc::new(MockProvider {
         responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
             vec![

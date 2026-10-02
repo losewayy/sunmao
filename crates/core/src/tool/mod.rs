@@ -181,7 +181,7 @@ mod webmod;
 pub(crate) use artifact::archive_prev;
 pub use artifact::{HtmlArtifactTool, artifact_rev};
 pub use fs::{EditTool, ReadTool, WriteTool};
-pub use kind::ShellBackend;
+pub use kind::{ShellBackend, ShellResolution, ShellSource};
 pub use search::{GlobTool, GrepTool};
 pub use sendmsg::SendMessageTool;
 pub use shell::{BashTool, JobOutputTool, ShellRun, render_run, run_foreground};

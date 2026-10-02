@@ -88,6 +88,8 @@ async fn read_only_blocks_writes_and_mutating_bash() {
     use crate::approval::Approval;
     let dir = crate::fresh_test_dir("ro-mode");
     std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    // posix dialect — `ls -la` doesn't parse under pwsh
+    std::fs::write(dir.join(".sunmao/shell.txt"), "posix").unwrap();
 
     // Read passes silently under read_only — zero prompts
     {

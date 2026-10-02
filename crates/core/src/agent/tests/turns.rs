@@ -505,3 +505,76 @@ async fn cancel_in_the_pre_registration_window_aborts_the_call() {
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A cancel observed while dispatching the ceiling iteration's last tool
+/// calls must still end the turn as Cancelled — the ceiling check used to
+/// overwrite it with `Other("hit N-iteration ceiling")`, misreporting a
+/// user stop as a truncation.
+#[tokio::test]
+async fn cancel_at_iteration_ceiling_stays_cancelled() {
+    use crate::approval::{Approval, Approver};
+
+    struct CancelOnApprove {
+        cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+    #[async_trait::async_trait]
+    impl Approver for CancelOnApprove {
+        async fn approve(&self, _t: &str, _d: &str, _w: &str) -> Approval {
+            self.cancelled
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            Approval::Once
+        }
+    }
+
+    let dir = crate::fresh_test_dir("cancel-ceiling");
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    // ask rule forces the approval await — the flag flips mid-dispatch
+    std::fs::write(
+        dir.join(".sunmao/permissions.json"),
+        r#"{"permissions":{"ask":["Glob(**/*.rs)"]}}"#,
+    )
+    .unwrap();
+    // two sibling calls: the first approves + sets the flag, the second
+    // settles cancelled — the loop then exhausts its only iteration with
+    // had_calls still true
+    let provider = Arc::new(MockProvider {
+        responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![vec![
+            StreamDelta::ToolCalls(vec![
+                ToolCallFragment {
+                    index: 0,
+                    id: Some("c1".into()),
+                    name: Some("Glob".into()),
+                    arguments: Some("{\"pattern\":\"**/*.rs\"}".into()),
+                },
+                ToolCallFragment {
+                    index: 1,
+                    id: Some("c2".into()),
+                    name: Some("Glob".into()),
+                    arguments: Some("{\"pattern\":\"**/*.rs\"}".into()),
+                },
+            ]),
+            StreamDelta::Finish {
+                reason: Some("tool_calls".into()),
+                usage: None,
+            },
+        ]])),
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let mut ctx_raw = Context::new(
+        provider,
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        dir.clone(),
+    );
+    ctx_raw.approval = Arc::new(CancelOnApprove {
+        cancelled: ctx_raw.cancelled.clone(),
+    });
+    let ctx = Arc::new(ctx_raw);
+    let agent = AgentLoop::new(ctx.clone()).with_max_iterations(1);
+    let outcome = agent.run_turn("go", &NullObserver).await.unwrap();
+    assert!(
+        matches!(outcome, TurnOutcome::Cancelled),
+        "a cancel must not read as an iteration-ceiling truncation — got {outcome:?}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

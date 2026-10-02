@@ -133,6 +133,13 @@ fn main() {
         };
         let _ = writeln!(out, "{frame}");
         let _ = out.flush();
+        // --hang: the handshake answered, then the server goes silent —
+        // park before any catalog listing so connect's timeout owns the
+        // wait (post-loop sleeps only fire on stdin EOF, which a live
+        // client never sends)
+        if hang && method == "initialize" {
+            break;
+        }
         // --push: the catalog change lands right after the first
         // tools/list — the client's bootstrap listing already answered,
         // so every list it (or the refresh pass) issues next reports the

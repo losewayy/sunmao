@@ -127,7 +127,9 @@ async fn mcp_call_survives_then_fails_after_child_death() {
         token_file: None,
         timeout_secs: None,
     };
-    let (handle, tools) = connect_one("echo", &spec).await.unwrap();
+    let (handle, tools) = connect_one("echo", &spec, std::time::Duration::from_secs(10))
+        .await
+        .unwrap();
     assert_eq!(tools.len(), 3, "model registry hides the app-only tool");
     assert_eq!(tools[0].name(), "mcp__echo__ping");
     assert_eq!(handle.tools().len(), 4, "catalog keeps every listed tool");
@@ -147,7 +149,9 @@ async fn mcp_call_survives_then_fails_after_child_death() {
         token_file: None,
         timeout_secs: None,
     };
-    let (_h, tools) = connect_one("die", &dying).await.unwrap();
+    let (_h, tools) = connect_one("die", &dying, std::time::Duration::from_secs(10))
+        .await
+        .unwrap();
     assert_eq!(tools.len(), 3, "listed before death");
     // the call must resolve to an error — never hang, never panic
     match tokio::time::timeout(
@@ -191,7 +195,9 @@ async fn mcp_apps_lands_artifact_and_bridges_visibility() {
         token_file: None,
         timeout_secs: None,
     };
-    let (handle, tools) = connect_one("echo", &spec).await.unwrap();
+    let (handle, tools) = connect_one("echo", &spec, std::time::Duration::from_secs(10))
+        .await
+        .unwrap();
 
     // catalog/visibility shape
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -345,7 +351,9 @@ async fn mcp_prompt_resolves_via_get_prompt() {
         token_file: None,
         timeout_secs: None,
     };
-    let (handle, _tools) = connect_one("echo", &spec).await.unwrap();
+    let (handle, _tools) = connect_one("echo", &spec, std::time::Duration::from_secs(10))
+        .await
+        .unwrap();
     // prompts/list landed at connect — the roster surface sees it
     let prompts = handle.prompts();
     assert_eq!(prompts.len(), 1);
@@ -409,7 +417,9 @@ async fn list_changed_refreshes_registry_at_turn_boundary() {
         token_file: None,
         timeout_secs: None,
     };
-    let (handle, tools) = connect_one("echo", &spec).await.unwrap();
+    let (handle, tools) = connect_one("echo", &spec, std::time::Duration::from_secs(10))
+        .await
+        .unwrap();
     assert_eq!(tools.len(), 3, "initial catalog predates the push");
 
     let mut ctx_raw = crate::context::Context::new(
@@ -498,4 +508,38 @@ fn expand_env_consumes_the_closing_brace() {
     assert_eq!(super::spec::expand_env("${SUNMAO_TEST_TOK"), "sekrit");
     assert_eq!(super::spec::expand_env("a$b c"), "a c");
     unsafe { std::env::remove_var("SUNMAO_TEST_TOK") };
+}
+
+/// A server that completes `initialize` then never answers `tools/list`
+/// must not stall session startup — connect used to await the listing
+/// unbounded. `connect_all_with_timeout` gives the test a short fuse; the
+/// outer timeout is the old-code tripwire (it would hang forever).
+#[tokio::test]
+async fn connect_all_bounds_a_hung_server() {
+    let Some(bin) = fixture_bin() else {
+        eprintln!("no rustc — skipping live fixture test");
+        return;
+    };
+    let dir = crate::fresh_test_dir("mcp-hang");
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    let cmd = bin.display().to_string();
+    std::fs::write(
+        dir.join(".sunmao/mcp.json"),
+        format!(
+            r#"{{"mcpServers":{{"hung":{{"command":{},"args":["--hang"]}}}}}}"#,
+            serde_json::to_string(&cmd).unwrap()
+        ),
+    )
+    .unwrap();
+    let text = crate::hooks::trust::spec_text(&cmd, &["--hang".to_string()], &Default::default());
+    crate::hooks::trust::set_pin(&dir, &dir.join(".sunmao/mcp.json"), &text, true).unwrap();
+    let conn = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        super::connect::connect_all_with_timeout(&dir, &[], std::time::Duration::from_millis(250)),
+    )
+    .await
+    .expect("a hung server must time out, not stall startup");
+    assert!(conn.tools.is_empty());
+    assert!(conn.servers.is_empty());
+    std::fs::remove_dir_all(&dir).ok();
 }

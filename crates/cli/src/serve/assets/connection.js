@@ -509,7 +509,7 @@ function renderRail() {
   $('#sessions').innerHTML = html || '<div class="empty-hint">暂无会话记录</div>';
   $$('.nav-i[data-go]').forEach(b => b.classList.toggle('on', b.dataset.go === view));
 }
-const SET_NAV = [['appearance', '外观', 'palette'], ['providers', '模型与提供商', 'cpu'], ['shell', '终端', 'terminal'], ['keys', '快捷键', 'keyboard'], ['about', '关于', 'info']];
+const SET_NAV = [['appearance', '外观', 'palette'], ['providers', '模型与提供商', 'cpu'], ['channels', 'IM 渠道', 'shield-check'], ['shell', '终端', 'terminal'], ['keys', '快捷键', 'keyboard'], ['about', '关于', 'info']];
 function renderCrumb() {
   const c = $('#crumb');
   let h;

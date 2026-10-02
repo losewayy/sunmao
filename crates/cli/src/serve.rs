@@ -83,6 +83,7 @@ const FIND_JS: &str = include_str!("serve/assets/find.js");
 const MENUS_JS: &str = include_str!("serve/assets/menus.js");
 const ROSTER_JS: &str = include_str!("serve/assets/roster.js");
 const JOBS_JS: &str = include_str!("serve/assets/jobs.js");
+const CHANNELS_JS: &str = include_str!("serve/assets/channels.js");
 const BOOT_JS: &str = include_str!("serve/assets/boot.js");
 
 /// MCP Apps sandbox proxy — a separate origin serving a single static

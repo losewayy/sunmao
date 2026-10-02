@@ -6,9 +6,9 @@
 use std::sync::Arc;
 
 use super::HostResponse;
-use crate::serve::host::Shared;
 use crate::im::config;
 use crate::im::store::Store;
+use crate::serve::host::Shared;
 
 /// `GET /channels` — `{config, status, pairing, allowlist}`:
 /// the raw channels.json text (the settings page edits it verbatim), the
@@ -34,9 +34,9 @@ pub(super) async fn view() -> HostResponse {
                 .collect::<Vec<_>>(),
             s.allow_list()
                 .iter()
-                .map(|(ch, s2, role)| {
-                    serde_json::json!({"channel": ch, "sender": s2, "role": role})
-                })
+                .map(
+                    |(ch, s2, role)| serde_json::json!({"channel": ch, "sender": s2, "role": role}),
+                )
                 .collect::<Vec<_>>(),
         ),
         Err(_) => (Vec::new(), Vec::new()),

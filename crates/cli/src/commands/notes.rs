@@ -167,6 +167,7 @@ pub fn hooks_text(rows: &[sunmao_core::hooks::trust::HookRow]) -> String {
                 sunmao_core::hooks::trust::RowKind::Hook => "hook",
                 sunmao_core::hooks::trust::RowKind::Mcp => "mcp ",
                 sunmao_core::hooks::trust::RowKind::Ext => "ext ",
+                sunmao_core::hooks::trust::RowKind::Perm => "perm",
             };
             format!(
                 "  {:>2}. {:<9} {} {} [{}]\n       {}\n       ← {}",

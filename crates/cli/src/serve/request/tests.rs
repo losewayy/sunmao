@@ -76,6 +76,7 @@ fn shared_at(cwd: std::path::PathBuf) -> super::super::host::Shared {
         prompt_override: None,
         driver_override: None,
         approval_ids: Arc::new(AtomicU64::new(0)),
+        adopt_lock: tokio::sync::Mutex::new(()),
         mgmt,
     }
 }

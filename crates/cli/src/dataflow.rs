@@ -38,6 +38,7 @@ pub async fn report(session_path: &Path) -> anyhow::Result<Value> {
             | SessionEvent::Artifact { .. }
             | SessionEvent::TaskDone { .. }
             | SessionEvent::Todos { .. }
+            | SessionEvent::Goal { .. }
             | SessionEvent::ModeChange { .. }
             | SessionEvent::SessionMeta { .. }
             | SessionEvent::Checkpoint { .. }

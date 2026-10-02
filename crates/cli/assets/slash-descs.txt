@@ -7,6 +7,7 @@ compact	把当前对话压缩进事件日志
 export-md	导出会话为 Markdown 文件
 export-zip	导出调试包（转录 + 原始事件日志压缩包）
 fork	复制该会话日志，新开一支继续
+goal	设定持续推进的目标；空参查看，clear 清除
 help	显示可用命令一览
 mcp	列出已连接的 MCP 服务器
 mode	查看或切换审批模式

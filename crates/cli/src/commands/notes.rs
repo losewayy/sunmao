@@ -11,7 +11,7 @@ use sunmao_core::tool::TodoItem;
 
 /// The backend-semantic command tail every frontend's `/help` shares;
 /// frontend-local names prepend via `help_text`'s `local` argument.
-const HELP_COMMANDS: &str = "/compact · /model [sel] · /mode [stance] · /resume [id] · /sessions · /search <q> · /fork <id> · /rewind [n] [session|code|both] · /export-md · /export-zip · /tasks · /todos · /mcp · /status · /artifacts · /annotate <name> <note> · /help";
+const HELP_COMMANDS: &str = "/compact · /model [sel] · /mode [stance] · /resume [id] · /sessions · /search <q> · /fork <id> · /rewind [n] [session|code|both] · /export-md · /export-zip · /tasks · /todos · /goal [objective] · /mcp · /status · /artifacts · /annotate <name> <note> · /help";
 
 /// The `/help` commands line — `local` inserts frontend-only names
 /// (`"/multiline · /clear · "` for the TUI, `""` elsewhere) ahead of the
@@ -96,6 +96,20 @@ pub fn todos_text(items: &[TodoItem]) -> String {
         "[no task list — TodoWrite creates it]".to_string()
     } else {
         format!("task list:\n{}", sunmao_core::tool::render_todos(items))
+    }
+}
+
+/// `/goal` — the session's standing objective, or the how-to note.
+pub fn goal_text(goal: Option<&sunmao_core::tool::GoalState>) -> String {
+    match goal {
+        Some(g) => format!(
+            "goal: {}\n  {} · round {}/{}",
+            g.objective,
+            sunmao_core::tool::status_name(g.status),
+            g.rounds,
+            g.max_rounds
+        ),
+        None => "[no goal — /goal <objective> sets one; the agent keeps working it until complete/blocked]".to_string(),
     }
 }
 

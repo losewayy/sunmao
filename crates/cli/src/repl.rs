@@ -95,6 +95,20 @@ impl Observer for StdoutObserver {
                 println!("\n\x1b[33m[context compacted] {summary}\x1b[0m");
             }
             LiveEvent::Todos { .. } => {} // the tool's echo text already printed it
+            LiveEvent::Goal { goal } => {
+                // goal facts are the loop's progress markers — visible like
+                // hook audit lines or the REPL would silently run forever
+                if *in_r {
+                    eprintln!("\x1b[0m");
+                    *in_r = false;
+                }
+                println!(
+                    "\n\x1b[36m[goal · {} · round {}/{}]\x1b[0m",
+                    sunmao_core::tool::status_name(goal.status),
+                    goal.rounds,
+                    goal.max_rounds
+                );
+            }
             // serve-only live mirror of the durable user message — the REPL
             // echoes its own prompt before run_turn, so it never lands here
             LiveEvent::UserMessage { .. } => {}
@@ -276,6 +290,35 @@ pub async fn run(
                 }
                 crate::commands::Command::Todos => {
                     println!("{}", crate::commands::todos_text(&agent.todos()));
+                    continue;
+                }
+                crate::commands::Command::Goal(arg) => {
+                    match arg {
+                        None => println!("{}", crate::commands::goal_text(agent.goal().as_ref())),
+                        Some(objective) => {
+                            if let Err(e) = agent.set_goal(&objective, &*observer.0).await {
+                                println!("[goal failed] {e:#}");
+                                continue;
+                            }
+                            println!("[goal set — the agent keeps at it until complete/blocked]");
+                            // the objective itself is the kickoff prompt —
+                            // the continuation loop chains from there
+                            let (prompt, atts) =
+                                crate::attachments::attach_mentions(&objective, cwd);
+                            if let Err(e) =
+                                agent.run_turn_blocks(&prompt, &atts, &*observer.0).await
+                            {
+                                eprintln!("[error] {e:#}");
+                            }
+                        }
+                    }
+                    continue;
+                }
+                crate::commands::Command::GoalClear => {
+                    match agent.clear_goal(&*observer.0).await {
+                        Ok(()) => println!("[goal cleared]"),
+                        Err(e) => println!("[goal clear failed] {e:#}"),
+                    }
                     continue;
                 }
                 crate::commands::Command::Mcp => {

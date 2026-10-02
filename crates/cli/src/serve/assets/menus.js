@@ -125,6 +125,7 @@ function act(name, el) {
     case 'color': return colorPop(el, el.dataset.key);
     case 'font': return fontPop(el, el.dataset.key);
     case 'motion': return motionPop(el);
+    case 'shell-pick': return shellPick(el);
     case 'side': S.translucentSidebar = !S.translucentSidebar; return commit();
     case 'reset-ui': S = clone(DEFAULTS); commit(); renderWallGrid(); return toast('已恢复默认外观', 'reset');
     case 'win-min': { const w = shellWin(); if (w) w.win('min'); return; }

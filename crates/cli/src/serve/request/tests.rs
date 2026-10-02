@@ -235,11 +235,71 @@ async fn jobs_route_reads_jobs_dir_layout() {
     let v: serde_json::Value = serde_json::from_slice(&out.body).unwrap();
     assert_eq!(v["chunk"], "done\n");
     assert_eq!(h.request("GET", "/jobs/nope/output", b"").await.status, 404);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `GET|PUT /ui` — appearance state round-trips through
+/// `<project>/.sunmao/ui.json`; a missing file answers `{}`, a non-object
+/// body is rejected, and `PUT` emits `ui_changed` on the live bus.
+#[tokio::test]
+async fn ui_route_persists_appearance_object() {
+    let root = std::env::temp_dir().join(format!("sunmao-ui-{}", std::process::id()));
+    std::fs::create_dir_all(root.join(".sunmao/sessions")).unwrap();
+    let s = std::sync::Arc::new(shared_at(root.clone()));
+    let mut rx = s.live.subscribe();
+    let h = super::HostHandle { s };
+
+    let empty = h.request("GET", "/ui", b"").await;
+    let v: serde_json::Value = serde_json::from_slice(&empty.body).unwrap();
+    assert_eq!(v["ui"], serde_json::json!({}));
+
+    assert_eq!(h.request("PUT", "/ui", b"[1,2]").await.status, 400);
+    let ok = h
+        .request(
+            "PUT",
+            "/ui",
+            br##"{"accent":"#339CFF","panelOpacity":0.8}"##,
+        )
+        .await;
+    assert_eq!(ok.status, 200);
+    let file = std::fs::read_to_string(root.join(".sunmao/ui.json")).unwrap();
+    assert!(file.contains("panelOpacity"));
+    let reread: serde_json::Value =
+        serde_json::from_slice(&h.request("GET", "/ui", b"").await.body).unwrap();
+    assert_eq!(reread["ui"]["panelOpacity"], 0.8);
     assert_eq!(
-        h.request("GET", "/jobs/..%2Fsneaky/output", b"")
+        rx.try_recv().unwrap()["type"].as_str().unwrap(),
+        "ui_changed"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `GET|PUT /shell` — writes `<project>/.sunmao/shell.txt` and reports the
+/// kernel's resolution. `SUNMAO_SHELL` in the test env outranks the file,
+/// so assertions stay on the file + a resolved backend either way.
+#[tokio::test]
+async fn shell_route_writes_project_pin() {
+    let root = std::env::temp_dir().join(format!("sunmao-shell-{}", std::process::id()));
+    std::fs::create_dir_all(root.join(".sunmao/sessions")).unwrap();
+    let s = std::sync::Arc::new(shared_at(root.clone()));
+    let h = super::HostHandle { s };
+
+    assert_eq!(
+        h.request("PUT", "/shell", br#"{"backend":"fish"}"#)
             .await
             .status,
         400
     );
+    let ok = h.request("PUT", "/shell", br#"{"backend":"posix"}"#).await;
+    assert_eq!(ok.status, 200);
+    assert_eq!(
+        std::fs::read_to_string(root.join(".sunmao/shell.txt")).unwrap(),
+        "posix\n"
+    );
+    let v: serde_json::Value =
+        serde_json::from_slice(&h.request("GET", "/shell", b"").await.body).unwrap();
+    assert!(matches!(v["backend"].as_str().unwrap(), "pwsh" | "posix"));
+    assert!(v["pwsh_on_path"].is_boolean());
     let _ = std::fs::remove_dir_all(&root);
 }

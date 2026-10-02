@@ -290,8 +290,41 @@ function toggleCand(id) {
   if (pvEdit.sel.has(id)) pvEdit.sel.delete(id); else pvEdit.sel.add(id);
   renderProviders();
 }
+const SHELL_OPTS = [
+  { v: 'auto', t: '自动检测', d: 'Windows 上 PATH 有 pwsh 就用它，否则内置 POSIX' },
+  { v: 'pwsh', t: 'PowerShell 7', d: '经 pwsh -EncodedCommand 执行命令' },
+  { v: 'posix', t: '内置 POSIX', d: 'deno_task_shell 解释器，全平台语法一致' },
+];
+function shellCur() { return SHELL && SHELL.source === 'auto-detect' ? 'auto' : SHELL.backend; }
+function renderShell() {
+  if (view !== 'settings' || setPage !== 'shell') return;
+  const host = $('#set-generic');
+  if (!SHELL) { host.innerHTML = head('终端', '') + '<div class="empty-hint">正在读取 shell 配置…</div>'; refreshShell(); return; }
+  const name = { pwsh: 'PowerShell 7', posix: '内置 POSIX' }[SHELL.backend] || SHELL.backend;
+  const src = SHELL.source === 'auto-detect' ? '自动检测' : SHELL.source;
+  const warn = SHELL.pwsh_requested_but_missing ? '配置了 pwsh 但 PATH 上没有 pwsh，已回退到内置 POSIX。'
+    : SHELL.unrecognized ? `无法识别的配置值 ${esc(SHELL.unrecognized)}，已忽略（可选 pwsh / posix / auto）。`
+    : !SHELL.pwsh_on_path ? '本机 PATH 未找到 pwsh，选择 PowerShell 7 会回退到内置 POSIX。' : '';
+  host.innerHTML = head('终端', 'Bash 工具命令的执行后端。')
+    + sec('', '', card([
+      row('Shell 后端', '写入 .sunmao/shell.txt — 只影响之后新建的会话', `<button class="pill plain" data-act="shell-pick" id="pv-shell"></button>`),
+      row('当前生效', '', mono(`${name} · ${src}`)),
+    ])) + (warn ? `<div class="empty-hint">${warn}</div>` : '');
+  const b = $('#pv-shell');
+  b.innerHTML = esc(SHELL_OPTS.find(o => o.v === shellCur()).t) + ic('chev-d');
+}
+function shellPick(el) {
+  const cur = shellCur();
+  menuPop(el, [{ label: 'Shell 后端' }, ...SHELL_OPTS.map(o => Object.assign({}, o, { on: o.v === cur }))], async v => {
+    try { SHELL = await api('/shell', jput({ backend: v })); toast('已写入 .sunmao/shell.txt，新会话生效', 'check'); }
+    catch (e) { toast(`设置失败：${e.message}`, 'alert', 'warn'); }
+    renderShell();
+  }, { align: 'end' });
+}
+
 const PAGES = {
   providers: () => head('模型与提供商', '') + '<div class="empty-hint">正在读取模型配置…</div>',
+  shell: () => head('终端', '') + '<div class="empty-hint">正在读取 shell 配置…</div>',
   keys: () => head('快捷键', '焦点不在输入框时，审批快捷键直接裁决最早的待审批卡。') + sec('', '', card([['新对话', 'Ctrl N'], ['命令面板', 'Ctrl K'], ['打开设置', 'Ctrl ,'], ['显示或隐藏数据面板', 'Ctrl \\'], ['Allow / Deny / Always', 'Y N A'], ['发送（运行中则排队）', 'Enter'], ['插队引导（不打断本轮）', 'Ctrl Enter'], ['换行', 'Shift Enter'], ['关闭弹层或返回', 'Esc']].map(([a, k]) => row(a, '', `<span class="keys">${k.split(' ').map(x => `<kbd>${esc(x)}</kbd>`).join('')}</span>`)))),
   about: () => head('关于', '') + `<div class="card glass cfg"><div class="ab-top">${$('#hero svg').outerHTML}<div><b>sunmao</b><span>Rust 编写的 agent 运行时内核</span></div></div>${row('会话', '', mono(sessionId || '—'))}${row('工作目录', '', mono(cwd || '—'))}${row('本地服务', TAURI ? '内嵌内核 · 自定义协议（无 TCP 监听）' : 'sunmao serve 只绑定本机', mono(location.host))}${row('内核', '', mono('sunmao-core'))}${row('许可', '', mono('MIT OR Apache-2.0'))}</div>`,
 };
@@ -305,5 +338,6 @@ function settingsPage(p) {
   renderCrumb();
   if (isA) { renderWallGrid(); syncSettingsUI(); }
   else if (p === 'providers') { renderProviders(); }
+  else if (p === 'shell') { renderShell(); }
 }
 

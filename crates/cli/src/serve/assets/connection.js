@@ -64,7 +64,7 @@ function route(v) {
       sessionId = v.session || '';
       clientId = v.client || 0;
       cwd = String(v.cwd || '').replace(/^\\\\\?\\/, '');
-      slashList = v.slash || [];
+      slashList = v.slash || []; // [{name, desc}] — desc is the one-line zh blurb
       models = v.models || [];
       $('#df-cwd').textContent = cwd;
       $('#df-cwd').dataset.tip = cwd;

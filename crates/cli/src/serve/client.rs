@@ -90,7 +90,9 @@ impl Client {
             "cwd": host.as_ref()
                 .map(|h| display_path(&h.agent.session_cwd()))
                 .unwrap_or_else(|| display_path(&client.s.cwd)),
-            "slash": slash_candidates(&client.s),
+            "slash": slash_candidates(&client.s).iter()
+                .map(|(n, d)| serde_json::json!({"name": n, "desc": d}))
+                .collect::<Vec<_>>(),
             "models": host.as_ref().map(|h| h.agent.model_choices()).unwrap_or_default(),
             "mode": host.as_ref().map(|h| h.agent.approval_mode().as_str()).unwrap_or("auto"),
             "sandbox_port": client.s.sandbox_port,

@@ -50,6 +50,25 @@ const BUILTINS: &[&str] = &[
     "todos",
 ];
 
+/// Builtin one-line descriptions (`assets/slash-descs.txt`, cold-plug rule
+/// 6) — slash menu, command palette and the TUI popup all read this.
+/// `name\t一行动说明` per line; unknown/file commands get `""`.
+pub fn desc(name: &str) -> &'static str {
+    static TABLE: std::sync::OnceLock<Vec<(&'static str, &'static str)>> =
+        std::sync::OnceLock::new();
+    TABLE
+        .get_or_init(|| {
+            include_str!("../assets/slash-descs.txt")
+                .lines()
+                .filter_map(|l| l.split_once('\t'))
+                .collect()
+        })
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, d)| *d)
+        .unwrap_or("")
+}
+
 /// A parsed `/…` line — command vocabulary only; execution is the
 /// frontend's (`&AgentLoop` locally, `s.mgmt` oneshots for serve).
 #[derive(Debug, Clone)]

@@ -171,6 +171,14 @@ const head = (t, d) => `<h1>${t}</h1>${d ? `<p class="lead">${d}</p>` : ''}`;
    + hand-added candidate pool, pvEdit.sel the checked subset — only the
    checked ids ever land in catalog. Fetching never writes until 保存. */
 let pvEdit = null; // { name|null for add, sel:Set, cands:[ModelEntry], fetched:bool }
+/* dialect pick list — native <select> pops a system-drawn menu that ignores
+   the page's dark theme; this rides the same pop() chrome as every other
+   picker so the options stay on-brand */
+const DIALECTS = [
+  { v: 'openai', t: 'OpenAI 兼容', d: '/chat/completions + SSE' },
+  { v: 'openai-responses', t: 'OpenAI Responses', d: '/responses + response_id 链' },
+  { v: 'anthropic', t: 'Anthropic', d: '/messages + SSE' },
+];
 function renderProviders() {
   if (view !== 'settings' || setPage !== 'providers') return;
   const host = $('#set-generic');
@@ -207,7 +215,7 @@ function provForm(n, p) {
   return `<div class="pv-form">
     <label>名称<input data-f="name" value="${esc(n)}" ${n ? 'disabled' : ''} placeholder="如 default、deepseek"></label>
     <label>Base URL<input data-f="base_url" value="${val('base_url')}" placeholder="https://api.example.com/v1"></label>
-    <label>协议<select data-f="dialect"><option value="openai"${val('dialect', 'openai') === 'openai' ? ' selected' : ''}>OpenAI 兼容</option><option value="openai-responses"${val('dialect') === 'openai-responses' ? ' selected' : ''}>OpenAI Responses</option><option value="anthropic"${val('dialect') === 'anthropic' ? ' selected' : ''}>Anthropic</option></select></label>
+    <label>协议<button class="pv-sel" type="button" data-pv="dialect" data-v="${val('dialect', 'openai')}"><span>${esc(DIALECTS.find(d => d.v === val('dialect', 'openai'))?.t || 'OpenAI 兼容')}</span>${ic('chev-d')}</button></label>
     <label>API Key<input data-f="api_key" type="password" value="${val('api_key')}" placeholder="${p && p.api_key_set ? '已配置 — 留空保持不变' : 'sk-… 或留空（本地服务）'}"></label>
     <div class="pv-mh"><span class="pv-ml">模型（勾选要用的）</span><button class="btn ghost sm" data-pv="fetch" ${v.fetching ? 'disabled' : ''}>${ic('download')}${v.fetched ? '重新拉取' : '拉取模型'}</button></div>
     ${list}
@@ -232,11 +240,22 @@ async function providerAction(kind, el) {
     const base = g('base_url');
     if (!name || !base) return toast('名称与 Base URL 必填', 'alert', 'warn');
     const catalog = (pvEdit.cands || []).filter(m => pvEdit.sel.has(m.id));
-    const edit = { name, base_url: base, dialect: g('dialect') || 'openai', api_key: g('api_key') || null, keepKey: true, keepCatalog: false, setCatalog: catalog };
+    const dBtn = cardEl.querySelector('[data-pv="dialect"]');
+    const edit = { name, base_url: base, dialect: (dBtn && dBtn.dataset.v) || 'openai', api_key: g('api_key') || null, keepKey: true, keepCatalog: false, setCatalog: catalog };
     pvEdit = null;
     return saveProviders(edit, '已保存 provider ' + name);
   }
   const n = el.dataset.n;
+  if (kind === 'dialect') {
+    return pop(el, menuHTML(DIALECTS.map(d => ({ v: d.v, t: d.t, d: d.d, on: d.v === el.dataset.v }))), { align: 'end', cls: 'models', onMount(p) {
+      p.addEventListener('click', e => {
+        const b = e.target.closest('.mi'); if (!b) return;
+        el.dataset.v = b.dataset.v;
+        el.querySelector('span').textContent = DIALECTS.find(d => d.v === b.dataset.v)?.t || b.dataset.v;
+        closePop();
+      });
+    } });
+  }
   if (kind === 'edit') {
     const cat = (MODELS.providers[n].catalog) || [];
     pvEdit = { name: n, sel: new Set(cat.map(m => m.id)), cands: cat.slice(), fetched: false };
@@ -250,7 +269,7 @@ async function providerAction(kind, el) {
     // typed-but-unsaved providers probe inline; a blank key on a provider
     // that already has one falls back to the named path (server resolves
     // the saved key). Inline fields win only when the form changed them.
-    const base = g('base_url'), key = g('api_key'), dialect = g('dialect');
+    const base = g('base_url'), key = g('api_key'), dialect = cardEl.querySelector('[data-pv="dialect"]')?.dataset.v || 'openai';
     const inline = base && (pvEdit.name == null || key || base !== MODELS.providers[pvEdit.name]?.base_url || dialect !== MODELS.providers[pvEdit.name]?.dialect);
     const body = inline ? { base_url: base, api_key: key || undefined, dialect } : { provider: pvEdit.name };
     try {

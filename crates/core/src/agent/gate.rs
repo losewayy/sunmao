@@ -23,10 +23,16 @@ impl AgentLoop {
         use crate::hooks::HookPermission as H;
         use crate::permissions::Verdict;
         match self.ctx.permissions.check(tool, specifier) {
-            Verdict::Deny => return Err("denied by permission rules".into()),
+            Verdict::Deny => {
+                self.fire_denied(tool, specifier, "permission rules", observer)
+                    .await;
+                return Err("denied by permission rules".into());
+            }
             Verdict::Ask | Verdict::PreApproved | Verdict::Default => {}
         }
         if let Some(H::Deny) = hook {
+            self.fire_denied(tool, specifier, "hook veto", observer)
+                .await;
             return Err("denied by hook".into());
         }
         // read_only refuses mutations outright — the refusal is an audit
@@ -34,7 +40,9 @@ impl AgentLoop {
         // grants on purpose: a standing answer is not a license to write
         // under a mode that forbids writing.
         let mode = self.approval_mode();
-        if mode == ApprovalMode::ReadOnly && call_mutates(tool, args, &self.ctx.readonly_verbs) {
+        if mode == ApprovalMode::ReadOnly
+            && call_mutates(tool, args, &self.ctx.readonly_verbs, self.ctx.shell)
+        {
             let detail = format!("{tool}: {specifier}");
             self.audit_fact("mode.readonly.block", &detail, observer)
                 .await;
@@ -74,7 +82,9 @@ impl AgentLoop {
         }
         // always_ask: every mutating call prompts — rules/grants already
         // answered above; safe reads still pass.
-        if mode == ApprovalMode::AlwaysAsk && call_mutates(tool, args, &self.ctx.readonly_verbs) {
+        if mode == ApprovalMode::AlwaysAsk
+            && call_mutates(tool, args, &self.ctx.readonly_verbs, self.ctx.shell)
+        {
             return self.ask(tool, specifier, "always_ask mode", observer).await;
         }
         if segmented {
@@ -86,11 +96,54 @@ impl AgentLoop {
         if let Some(H::Allow) = hook {
             return Ok(());
         }
-        // default: the risky-pattern classifier (Bash-shaped patterns today)
-        if let Some(why) = crate::approval::classify(specifier, &self.ctx.risk_table) {
+        // default: the risky-pattern classifier. Bash-shaped patterns only —
+        // feeding a Task prompt or a file path through the shell table
+        // substring-matches prose ("explain curl" asks!) instead of judging
+        // the command that will actually run.
+        if tool == "Bash"
+            && let Some(why) = crate::approval::classify(specifier, &self.ctx.risk_table)
+        {
             return self.ask(tool, specifier, why, observer).await;
         }
+        // external-directory tier: a Write/Edit/Artifact whose resolved
+        // path leaves the project root asks in every mode below
+        // FullAccess — the risky-pattern table sees Bash strings, not
+        // "../sibling/x.rs" as a path. Canonicalize both sides so `..`
+        // and symlink hops can't fake containment; a path that won't
+        // canonicalize (doesn't exist yet) resolves against its parent.
+        if ["Write", "Edit"].contains(&tool)
+            && mode != ApprovalMode::FullAccess
+            && let Some(p) = args["path"].as_str()
+            && Self::outside_project(&self.ctx.cwd, p)
+        {
+            return self
+                .ask(tool, specifier, "writes outside the project root", observer)
+                .await;
+        }
         Ok(())
+    }
+
+    /// External-directory tier helper — `path` is checked against the
+    /// project root after canonicalization. An unresolvable target (a
+    /// file that doesn't exist yet) falls back to its nearest canonical
+    /// ancestor so a `Write` to a new file is judged by where it would
+    /// land, not by where it is. Symlinks re-route through canonicalize —
+    /// a `link -> ../outside` resolves to the real target.
+    pub(super) fn outside_project(cwd: &std::path::Path, path: &str) -> bool {
+        let joined = cwd.join(path);
+        let cand = joined.canonicalize().or_else(|_| {
+            joined
+                .parent()
+                .and_then(|p| p.canonicalize().ok())
+                .map(|p| p.join(joined.file_name().unwrap_or_default()))
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no parent"))
+        });
+        match (cand, cwd.canonicalize()) {
+            (Ok(target), Ok(root)) => !target.starts_with(root),
+            // an unresolvable side can't prove containment — treat as
+            // outside (fail-closed is the gate's posture everywhere)
+            _ => true,
+        }
     }
 
     /// Per-segment adjudication for chained Bash. A deny anywhere vetoes
@@ -112,7 +165,13 @@ impl AgentLoop {
         observer: &dyn Observer,
     ) -> Result<bool, String> {
         use crate::permissions::Verdict;
-        let segments = crate::preflight::shell_segments(specifier);
+        // pwsh segments come from the quote-aware splitter — the deno AST
+        // can't parse real PowerShell (`$x`, `|`, `2>`) and would either
+        // refuse or mis-split.
+        let segments = match self.ctx.shell {
+            crate::tool::ShellBackend::Pwsh => crate::agent::mode::pwsh_segments(specifier),
+            crate::tool::ShellBackend::Posix => crate::preflight::shell_segments(specifier),
+        };
         if segments.len() <= 1 {
             return Ok(false);
         }
@@ -174,8 +233,11 @@ impl AgentLoop {
             return Err(format!("{wire}: not callable from apps (visibility)"));
         }
         // the UI is not a gate bypass — declarative rules, grants, modes and
-        // the classifier all apply exactly as they do to model calls
-        self.gate_call(&wire, &args, "", None, observer).await?;
+        // the classifier all apply exactly as they do to model calls. The
+        // specifier carries the wire name so `Tool(spec)` permission rules
+        // can match bridge calls ("" matched nothing, silently bypassing
+        // user deny/allow tables).
+        self.gate_call(&wire, &args, &wire, None, observer).await?;
         let mut params = rmcp::model::CallToolRequestParams::new(tool.to_string());
         if let Some(obj) = args.as_object() {
             params = params.with_arguments(obj.clone());
@@ -236,17 +298,51 @@ impl AgentLoop {
     pub(crate) async fn audit_fact(&self, event: &str, detail: &str, observer: &dyn Observer) {
         {
             let mut log = self.ctx.sessions.lock().await;
-            let _ = log
-                .append(&SessionEvent::Hook {
-                    event: event.to_string(),
-                    detail: detail.to_string(),
-                })
-                .await;
+            log.append_audit(&SessionEvent::Hook {
+                event: event.to_string(),
+                detail: detail.to_string(),
+            })
+            .await;
         }
         observer.on_event(&LiveEvent::Hook {
             event: event.to_string(),
             detail: detail.to_string(),
         });
+    }
+
+    /// A settled refusal → `PermissionDenied` hook. Pure observability —
+    /// the decision already happened (permission table, hook veto, card
+    /// verdict, cancel); listeners get the same `PreToolUse` payload shape
+    /// plus a `denied_by` qualifier so a hook can tell a rule block from
+    /// a human's "no".
+    async fn fire_denied(
+        &self,
+        tool: &str,
+        specifier: &str,
+        denied_by: &str,
+        observer: &dyn Observer,
+    ) {
+        self.audit_fact(
+            "permission.denied",
+            &format!("{tool}: {specifier} ({denied_by})"),
+            observer,
+        )
+        .await;
+        // PermissionDenied is observability-only — the verdict is already
+        // settled and audited; a slow hook must not delay the tool's
+        // refusal back to the model.
+        crate::hooks::HookEngine::fire_detached(
+            &self.ctx.hooks,
+            HookEvent::PermissionDenied,
+            &self.ctx.cwd,
+            &crate::hooks::HookInput {
+                tool_name: Some(tool),
+                tool_input: Some(&serde_json::json!({
+                    "specifier": specifier, "denied_by": denied_by,
+                })),
+                ..Default::default()
+            },
+        );
     }
 
     /// One approval prompt → verdict. `Session` is recorded in
@@ -259,21 +355,19 @@ impl AgentLoop {
         observer: &dyn Observer,
     ) -> Result<(), String> {
         // Notification: the loop is about to idle on a human — hooks can
-        // relay that (desktop toast, bell). Advisory only; outcome ignored.
-        let _ = self
-            .ctx
-            .hooks
-            .fire(
-                HookEvent::Notification,
-                &self.ctx.cwd,
-                &crate::hooks::HookInput {
-                    prompt: Some(why),
-                    tool_name: Some(tool),
-                    tool_input: Some(&serde_json::json!({ "specifier": specifier })),
-                    ..Default::default()
-                },
-            )
-            .await;
+        // relay that (desktop toast, bell). Advisory only; detached — a
+        // slow notify-send must not delay the card the user is waiting for.
+        crate::hooks::HookEngine::fire_detached(
+            &self.ctx.hooks,
+            HookEvent::Notification,
+            &self.ctx.cwd,
+            &crate::hooks::HookInput {
+                prompt: Some(why),
+                tool_name: Some(tool),
+                tool_input: Some(&serde_json::json!({ "specifier": specifier })),
+                ..Default::default()
+            },
+        );
         match self.ctx.approval.approve(tool, specifier, why).await {
             crate::approval::Approval::Session => {
                 self.ctx.grant_session(tool, specifier);
@@ -285,6 +379,8 @@ impl AgentLoop {
             crate::approval::Approval::Deny { reason } => {
                 let detail = format!("{tool}: {specifier} ({why})");
                 self.audit_fact("approval.deny", &detail, observer).await;
+                self.fire_denied(tool, specifier, "verdict deny", observer)
+                    .await;
                 // the denial reason names *why it couldn't be answered*
                 // (non-interactive session) when the approver supplies one —
                 // the failed ToolResult shows it so the model can route
@@ -293,6 +389,19 @@ impl AgentLoop {
                     Some(r) => format!("denied at approval gate ({why}): {r}"),
                     None => format!("denied at approval gate ({why})"),
                 })
+            }
+            crate::approval::Approval::Cancelled => {
+                // the turn ended while the card was parked — nobody answered;
+                // the label matters: a "denied" result implies a human said no
+                self.audit_fact(
+                    "approval.cancelled",
+                    &format!("{tool}: {specifier}"),
+                    observer,
+                )
+                .await;
+                self.fire_denied(tool, specifier, "cancelled", observer)
+                    .await;
+                Err(format!("cancelled at approval gate ({why})"))
             }
         }
     }

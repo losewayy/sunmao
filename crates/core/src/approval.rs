@@ -43,6 +43,12 @@ pub trait Approver: Send + Sync {
     /// `detail` is human-readable (the command). Frontends may offer a
     /// session-scoped grant; `Once`/`Deny` are always safe defaults.
     async fn approve(&self, tool: &str, detail: &str, why: &str) -> Approval;
+
+    /// Turn cancelled — resolve every parked `approve()` as `Cancelled` so
+    /// the suspended dispatcher unblocks. No-op default: `AllowAll`/`Piped`
+    /// never park. Serve's card map is the real implementation; the TUI's
+    /// parked card self-dismisses on turn-end render.
+    fn cancel_pending(&self) {}
 }
 
 /// The verdict a user gave at the approval seam.
@@ -58,6 +64,10 @@ pub enum Approval {
     /// folds it into the denied ToolResult so the model sees the cause, not
     /// just the refusal. `None` = a human said no.
     Deny { reason: Option<String> },
+    /// The turn was cancelled while the card was parked — the gate treats
+    /// it as a refusal but reports `cancelled`, not `denied`, so the
+    /// failed ToolResult tells the model nobody ever saw the ask.
+    Cancelled,
 }
 
 /// Non-interactive default: allow everything, audit the decision.

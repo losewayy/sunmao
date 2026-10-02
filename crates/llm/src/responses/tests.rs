@@ -124,7 +124,8 @@ fn stale_chain_detection() {
     let e = anyhow::anyhow!("provider 400 Bad Request: previous_response_id 'resp_x' not found");
     assert!(stale_chain(&e));
     // server spelling is not case-stable — the detector lowercases
-    let e = anyhow::anyhow!("provider 400 Bad Request: Previous response with id 'resp_x' not found");
+    let e =
+        anyhow::anyhow!("provider 400 Bad Request: Previous response with id 'resp_x' not found");
     assert!(stale_chain(&e));
     let e = anyhow::anyhow!("provider 500 Internal Server Error");
     assert!(!stale_chain(&e));

@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::context::Context;
+use crate::context::MutexRecover;
 use crate::session::SessionLog;
 use crate::tool::{ToolImpl, builtin_registry};
 use serde_json::{Value, json};
@@ -170,14 +171,14 @@ async fn restore_returns_pre_state() {
 
     let write = crate::tool::WriteTool;
     // turn 1 touches keep.txt only
-    ctx.checkpoints.lock().unwrap().turn = 1;
+    ctx.checkpoints.lock_or_recover().turn = 1;
     write
         .call(json!({"path": "keep.txt", "content": "v2"}), &ctx)
         .await
         .unwrap();
     // turn 2 rewrites keep.txt again (no new snapshot — first-write-only),
     // destroys gone.txt and creates made.txt
-    ctx.checkpoints.lock().unwrap().turn = 2;
+    ctx.checkpoints.lock_or_recover().turn = 2;
     write
         .call(json!({"path": "keep.txt", "content": "v3"}), &ctx)
         .await
@@ -223,5 +224,40 @@ async fn checkpoint_skips_sunmao_internals() {
     let target = dir.join(".sunmao/sessions/s-d.jsonl");
     ctx.checkpoint_file(&target).await.unwrap();
     assert!(manifest_lines(&dir, "s-d").is_empty());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A rewind fork's provenance row lands on the fork file — the copied
+/// prefix is followed by a `rewind` audit fact naming the source log and
+/// the boundary turn, so replay can tell "continued after a rewind" from
+/// "started there".
+#[tokio::test]
+async fn rewind_fork_stamps_provenance() {
+    let dir = crate::fresh_test_dir("ckpt-prov");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("s-src.jsonl");
+    let lines = [
+        r#"{"type":"started","model":"m","cwd":"x"}"#,
+        r#"{"type":"message","message":{"role":"user","content":"first"}}"#,
+        r#"{"type":"message","message":{"role":"assistant","content":"ok"}}"#,
+        r#"{"type":"message","message":{"role":"user","content":"second"}}"#,
+    ];
+    std::fs::write(&src, lines.join("\n") + "\n").unwrap();
+    let dst = dir.join("s-fork.jsonl");
+    copy_log_prefix(&src, &dst, 3).unwrap(); // up to boundary line 3
+
+    let mut log = SessionLog::open_path(&dst).await.unwrap();
+    stamp_rewind_provenance(&mut log, "s-src", 2, "session").await;
+
+    let evs = log.events().await.unwrap();
+    assert_eq!(evs.len(), 4, "3 prefix rows + the provenance row");
+    assert!(
+        matches!(
+            evs.last(),
+            Some(crate::session::SessionEvent::Hook { event, detail })
+                if event == "rewind" && detail == "from s-src at turn 2 (session)"
+        ),
+        "the fork's tail must name where it came from — {evs:?}"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }

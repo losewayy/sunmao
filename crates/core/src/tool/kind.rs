@@ -51,15 +51,18 @@ impl ShellSource {
 }
 
 /// `resolve` plus the diagnostics a front-end needs: where the answer came
-/// from, and whether an explicit `pwsh` request was ignored because the
-/// binary is absent (the fallback is silent at runtime by design — doctor
-/// is the place that surfaces it).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// from, and whether the layers produced signals the backend choice alone
+/// doesn't show — the fallbacks are silent at runtime by design, so doctor
+/// is the place that surfaces them.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellResolution {
     pub backend: ShellBackend,
     pub source: ShellSource,
     /// A layer asked for `pwsh` but no `pwsh` binary is on PATH.
     pub pwsh_requested_but_missing: bool,
+    /// The last layer value that matched no known word — almost always a
+    /// typo the operator meant to do something.
+    pub unrecognized_value: Option<String>,
 }
 
 impl ShellBackend {
@@ -98,6 +101,7 @@ impl ShellBackend {
         pwsh_on_path: bool,
     ) -> ShellResolution {
         let mut pwsh_requested_but_missing = false;
+        let mut unrecognized_value = None;
         for (source, raw) in layers {
             let Some(raw) = raw else { continue };
             match raw.trim().to_ascii_lowercase().as_str() {
@@ -106,6 +110,7 @@ impl ShellBackend {
                         backend: Self::Pwsh,
                         source,
                         pwsh_requested_but_missing,
+                        unrecognized_value,
                     };
                 }
                 "pwsh" | "powershell" => pwsh_requested_but_missing = true,
@@ -114,10 +119,11 @@ impl ShellBackend {
                         backend: Self::Posix,
                         source,
                         pwsh_requested_but_missing,
+                        unrecognized_value,
                     };
                 }
                 "auto" => break,
-                _ => {}
+                _ => unrecognized_value = Some(raw.trim().to_string()),
             }
         }
         ShellResolution {
@@ -128,6 +134,7 @@ impl ShellBackend {
             },
             source: ShellSource::Auto,
             pwsh_requested_but_missing,
+            unrecognized_value,
         }
     }
 
@@ -232,6 +239,7 @@ mod tests {
         let r = ShellBackend::pick(layers(Some("fish"), Some("posix"), None), true, true);
         assert_eq!(r.backend, ShellBackend::Posix);
         assert_eq!(r.source, ShellSource::ProjectFile);
+        assert_eq!(r.unrecognized_value.as_deref(), Some("fish"));
     }
 
     #[test]

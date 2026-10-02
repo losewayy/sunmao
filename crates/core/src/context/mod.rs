@@ -161,6 +161,16 @@ pub struct Context {
     /// so compaction never erases the plan. The LOG is source of truth;
     /// this is the hot snapshot for readers (turn injection, `/todos`).
     pub todos: std::sync::Mutex<Vec<crate::tool::TodoItem>>,
+    /// The session's standing goal (`/goal` / `UpdateGoal`) — same
+    /// seed/inject discipline as `todos`: last `Goal` event wins on open
+    /// and resume; the turn loop counts completed turns against
+    /// `max_rounds` and chains continuation prompts while `in_progress`.
+    pub goal: std::sync::Mutex<Option<crate::tool::GoalState>>,
+    /// Frontend submissions waiting behind the current turn — the goal
+    /// continuation loop yields while this is non-zero so a typed prompt
+    /// interleaves instead of waiting out the whole chain. Frontends bump
+    /// on enqueue, drop on dispatch.
+    pub input_pending: std::sync::atomic::AtomicUsize,
     /// User steering — messages queued while a turn is running
     /// (`(client id, text)`). The turn loop drains them at each boundary and
     /// appends them as user messages, so they steer THIS turn instead of
@@ -291,10 +301,11 @@ impl Context {
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "session".to_string());
-        // seed the task-list snapshot + approval mode before `sessions`
-        // moves — a resumed log carries the last TodoWrite and the last
-        // ModeChange.
+        // seed the task-list snapshot + approval mode + goal before
+        // `sessions` moves — a resumed log carries the last TodoWrite, the
+        // last ModeChange, and the last Goal event.
         let todos = seed_todos(sessions.path());
+        let goal = seed_goal(sessions.path());
         let approval_mode = seed_mode(sessions.path());
         // checkpoints: rebuild `taken`/`seq` from any existing manifest so a
         // resumed session doesn't re-snapshot already-preserved files, and
@@ -363,6 +374,8 @@ impl Context {
             loop_driver,
             live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             todos: std::sync::Mutex::new(todos),
+            goal: std::sync::Mutex::new(goal),
+            input_pending: std::sync::atomic::AtomicUsize::new(0),
             steer: SteerQueue::default(),
             parent_steer: None,
             turn_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
@@ -381,6 +394,17 @@ impl Context {
             })
             .unwrap_or_default();
         *self.todos.lock_or_recover() = items;
+    }
+
+    /// Re-point the goal snapshot at a swapped-in log — last `Goal` fact
+    /// wins, a log without one clears it (a rewound/replaced session
+    /// must not drag the old session's continuation loop along).
+    pub fn reseed_goal(&self, events: &[crate::session::SessionEvent]) {
+        let goal = events.iter().rev().find_map(|ev| match ev {
+            crate::session::SessionEvent::Goal { goal } => Some(goal.clone()),
+            _ => None,
+        });
+        *self.goal.lock_or_recover() = goal;
     }
 
     /// Spawn every extension the plugin manifests declare: resolve specs,
@@ -516,7 +540,7 @@ impl Context {
 
 mod seeds;
 pub(crate) use seeds::tool_timeout_table;
-use seeds::{seed_mode, seed_todos};
+use seeds::{seed_goal, seed_mode, seed_todos};
 
 mod sub_agent;
 pub(crate) use sub_agent::SubCancel;

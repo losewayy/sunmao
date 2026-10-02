@@ -82,6 +82,11 @@ pub enum SessionEvent {
     /// message each iteration, so writing it into the transcript would
     /// duplicate it once per write.
     Todos { items: Vec<crate::tool::TodoItem> },
+    /// The session's standing goal (`/goal` or `UpdateGoal`) — durable so
+    /// resume/fork continue the same self-continuation loop. The fold
+    /// ignores it: the turn loop re-injects the live snapshot per request
+    /// and continuation prompts carry the objective themselves.
+    Goal { goal: crate::tool::GoalState },
     /// The approval stance changed (`/mode`, ACP set_config_option, GUI
     /// selector). Audit, not conversation — the fold ignores it, but a
     /// resume reseeds `Context.approval_mode` from the latest one.

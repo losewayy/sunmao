@@ -162,6 +162,7 @@ pub fn builtin_registry() -> ToolRegistry {
     r.register(JobOutputTool);
     r.register(HtmlArtifactTool);
     r.register(TodoWriteTool);
+    r.register(UpdateGoalTool);
     r.register(crate::task::TaskTool);
     r.register(WebFetchTool);
     r.register(SendMessageTool);
@@ -170,6 +171,7 @@ pub fn builtin_registry() -> ToolRegistry {
 
 mod artifact;
 mod fs;
+mod goal;
 mod kind;
 mod pwsh;
 mod search;
@@ -181,6 +183,10 @@ mod webmod;
 pub(crate) use artifact::archive_prev;
 pub use artifact::{HtmlArtifactTool, artifact_rev};
 pub use fs::{EditTool, ReadTool, WriteTool};
+pub(crate) use goal::GOAL_LINE_PREFIX;
+#[cfg(test)]
+pub(crate) use goal::apply_blocker;
+pub use goal::{BLOCKED_MIN_ROUNDS, GoalState, GoalStatus, UpdateGoalTool, status_name};
 pub use kind::{ShellBackend, ShellResolution, ShellSource};
 pub use search::{GlobTool, GrepTool};
 pub use sendmsg::SendMessageTool;

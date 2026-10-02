@@ -20,6 +20,7 @@ mod bare;
 mod cancel;
 mod compact;
 mod gate;
+mod goal;
 mod mcp;
 pub mod mode;
 mod steer;
@@ -420,6 +421,7 @@ impl AgentLoop {
         // the next prompt into a different log), or its snapshot ledger.
         self.ctx.reseed_checkpoints(&events);
         self.ctx.reseed_todos(&events);
+        self.ctx.reseed_goal(&events);
         let mode = events
             .iter()
             .rev()

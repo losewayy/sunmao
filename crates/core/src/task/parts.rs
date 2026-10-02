@@ -175,6 +175,11 @@ pub(super) async fn build_sub_ctx(
         // the child's list is its own plan, not a copy of the parent's —
         // sub-session logs only carry their own Todos events.
         todos: std::sync::Mutex::new(Vec::new()),
+        // a Task spawn IS the parent's "work until done" surface — the
+        // child gets its own goal slot (its own log seeds it) but never
+        // inherits the parent's standing objective.
+        goal: std::sync::Mutex::new(None),
+        input_pending: std::sync::atomic::AtomicUsize::new(0),
         // the child's steer queue is shared with the parent's roster
         // (TaskEntry.steer) — `steer_sub`/`Task{steer}` push mid-run
         // messages that this child's turn drains like any other steer

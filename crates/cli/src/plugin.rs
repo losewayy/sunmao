@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use clap::Subcommand;
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 pub enum Cmd {
     /// Manage plugin bundles under .sunmao/plugins/.
     Plugin(PluginArgs),
@@ -19,15 +19,20 @@ pub enum Cmd {
         #[arg(long, default_value = "7474")]
         port: u16,
     },
+    /// Run the IM gateway daemon — channel adapters in, the session
+    /// out (docs/IM.md).
+    Im,
+    /// Manage IM pairing codes and the sender allowlist.
+    Pairing(crate::im::PairingArgs),
 }
 
-#[derive(clap::Args)]
+#[derive(clap::Args, Clone)]
 pub struct PluginArgs {
     #[command(subcommand)]
     pub op: PluginOp,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 pub enum PluginOp {
     /// Install a plugin source into .sunmao/plugins/ — a local dir
     /// (containing plugin.json), a git URL, or `owner/repo` shorthand.

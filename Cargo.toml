@@ -24,6 +24,10 @@ eventsource-stream = "0.2"
 futures-util = "0.3"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json"] }
 regex = "1"
+# at-least-once delivery ledger + pairing/routing index need real
+# transactions and SQL lookups — a JSONL append log can neither update a
+# row in place nor answer "all undelivered" without a full rewrite
+rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

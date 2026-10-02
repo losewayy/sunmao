@@ -37,7 +37,7 @@ use tokio::sync::{broadcast, mpsc};
 mod artifacts;
 mod client;
 mod driver;
-mod host;
+pub(crate) mod host;
 mod http;
 mod request;
 mod ws;

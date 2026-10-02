@@ -58,7 +58,10 @@ architecture: components joined by seams, every seam a contract.
   `.claude/settings.json`, `.claude/settings.local.json`,
   `~/.claude/settings.json` unmodified — 8 lifecycle events fired
   (`SessionStart`/`End`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
-  `Stop`, `SubagentStart`/`Stop`)
+  `Stop`, `SubagentStart`/`Stop`). Project/plugin hooks are fail-closed:
+  they run only after `/hooks trust <n>` pins their `(source, command)`
+  digest into `.sunmao/trusted-hooks.json` — untrusted commands are
+  skipped and audit-logged, so a cloned repo can't execute code at startup
 - **MCP client** — `.sunmao/mcp.json` + plugin manifests (`mcpServers`
   shape), stdio transport, tools surface as `mcp__{server}__{tool}`
 - **ACP server** — `sunmao --acp`: ACP v2 over stdio (initialize,

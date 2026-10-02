@@ -128,7 +128,10 @@ hook engine（核心）
 │       └── matcher: 工具名子串+regex
 │   └── (预留) gemini-dialect / copilot-dialect——字段归一化层
 │       （cursor-dialect 已实装: hooks/cursor.rs；gemini 未验过真实 bundle 暂留）
-└── 工件: transcript_path 真实落盘; fail-open 语义+审计记录每条 hook 决策
+└── 工件: transcript_path 真实落盘; fail-open 语义+审计记录每条 hook 决策；
+    trust pinning：项目/插件层 command 需 `<cwd>/.sunmao/trusted-hooks.json`
+    记账（sha256(源文件路径+command)），未记账=跳过执行并落 `hook.untrusted`
+    审计事实；用户层（~/.claude 等）隐式信任；`/hooks` 复审入口
 ```
 
 **验收试金石**：拿真实生态插件当 conformance fixture——`rtk init` 后跑一次 `Bash`，断言命令被 rewrite；context-mode 的 `hooks.json` 挂上后断言 `PreToolUse` 拦截生效。**兼容不是声称的，是测出来的。**

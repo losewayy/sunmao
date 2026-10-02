@@ -135,7 +135,7 @@ live in [`docs/CODE-ARCHITECTURE.md`](docs/CODE-ARCHITECTURE.md). Follow them.
 | prompt assembly | `crates/core/src/prompt.rs` + `assets/prompt/` |
 | shell preflight | `crates/core/src/preflight.rs` (spawnfate) |
 | risk pattern table | `crates/core/assets/risky-patterns.txt` |
-| Claude-contract hooks | `crates/core/src/hooks.rs` + `hooks/{cursor,dialect,tests,live_tests}.rs` |
+| Claude-contract hooks | `crates/core/src/hooks.rs` + `hooks/{cursor,dialect,fire,exec,trust,tests,live_tests}.rs` |
 | `--preset` resolution | `crates/core/src/presets.rs` (layers onto `ctx.extra_plugin_roots`) |
 | MCP client (stdio + HTTP) | `crates/core/src/mcp.rs` |
 | extension host (`ext/*` JSON-RPC) | `crates/core/src/ext/` — `mod` spec scan, `registry` children + request/reply |

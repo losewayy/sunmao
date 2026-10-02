@@ -16,6 +16,7 @@
 //! sources carrying the identical command each need their own approval.
 //! No managed/admin layering — single-user harness (SPEC §1).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Which layer a hook source belongs to — decides the default trust.
@@ -32,10 +33,26 @@ pub(crate) enum Layer {
     User,
 }
 
+/// What a roster row gates — one `/hooks` surface covers every
+/// "a config file names a command we would run" spawn: command hooks,
+/// extension children and MCP stdio servers share the ledger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RowKind {
+    /// A command hook loaded from a hooks/settings file.
+    Hook,
+    /// An MCP server spec's stdio `command` (url transports don't spawn).
+    Mcp,
+    /// A plugin manifest's `extensions` spawn spec.
+    Ext,
+}
+
 /// One roster row for `/hooks` — command text is shown verbatim so the
 /// review is of the real bytes that would execute, not a summary.
+/// Spawn rows (`Mcp`/`Ext`) put the serialized `{command,args,env}` spec
+/// in `command` and the server/plugin name in `matcher`.
 #[derive(Debug)]
 pub struct HookRow {
+    pub kind: RowKind,
     pub event: String,
     pub matcher: String,
     pub command: String,
@@ -45,6 +62,74 @@ pub struct HookRow {
     pub status: &'static str,
     /// Trust-pin key (sha256 hex) — the ledger's identity for this row.
     pub digest: String,
+}
+
+/// The spawn-spec surfaces under the same ledger — an extension child's
+/// `{command,args,env}` or an MCP stdio server's spec serializes to one
+/// deterministic command string (env sorted so a reorder can't mint a new
+/// digest). The pins cover the whole spec: editing args or env invalidates
+/// it, same as editing a hook command does.
+pub fn spec_text(command: &str, args: &[String], env: &HashMap<String, String>) -> String {
+    let env: std::collections::BTreeMap<_, _> = env.iter().collect();
+    serde_json::json!({"command": command, "args": args, "env": env}).to_string()
+}
+
+/// The gate one spawn spec must pass. There is no user layer for spawned
+/// children — every manifest/scanned source is project-layer by contract,
+/// so an untagged spec fails closed like a mistagged hook origin.
+pub(crate) fn spawn_trusted(cwd: &Path, source: &Path, command: &str) -> bool {
+    is_trusted(cwd, Layer::Project, source, command)
+}
+
+/// The spawn half of the `/hooks` roster: every ext spec and every MCP
+/// `command:` spec the session *would* launch, as rows alongside the hook
+/// commands. Built live from the same scans `connect_all` runs, so the
+/// listing can never drift from what the gate sees.
+pub(crate) fn spawn_rows(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<HookRow> {
+    let row = |kind: RowKind, event: &str, name: String, source: PathBuf, text: String| {
+        let status = if is_trusted(cwd, Layer::Project, &source, &text) {
+            "pinned"
+        } else {
+            "untrusted"
+        };
+        HookRow {
+            kind,
+            event: event.to_string(),
+            matcher: name,
+            digest: digest(&source, &text),
+            command: text,
+            source,
+            status,
+        }
+    };
+    let mut rows = Vec::new();
+    for (manifest, spec, plugin) in crate::ext::resolve_specs(cwd, extra_roots) {
+        rows.push(row(
+            RowKind::Ext,
+            "ext:spawn",
+            plugin,
+            manifest,
+            spec_text(&spec.command, &spec.args, &spec.env),
+        ));
+    }
+    let mut servers: Vec<_> = crate::mcp::resolve_servers(cwd, extra_roots)
+        .into_iter()
+        .collect();
+    servers.sort_by(|a, b| a.0.cmp(&b.0));
+    for (name, (spec, source)) in servers {
+        // url transports never spawn a local command — nothing to pin
+        let Some(command) = &spec.command else {
+            continue;
+        };
+        rows.push(row(
+            RowKind::Mcp,
+            "mcp:connect",
+            name,
+            source,
+            spec_text(command, &spec.args, &spec.env),
+        ));
+    }
+    rows
 }
 
 /// The ledger path — same `.sunmao/` bucket as every other per-project
@@ -212,6 +297,11 @@ fn sha256(data: &str) -> String {
 /// `HookRow` so the two can't drift apart.
 pub fn row_json(r: &HookRow) -> serde_json::Value {
     serde_json::json!({
+        "kind": match r.kind {
+            RowKind::Hook => "hook",
+            RowKind::Mcp => "mcp",
+            RowKind::Ext => "ext",
+        },
         "event": r.event,
         "matcher": r.matcher,
         "command": r.command,
@@ -219,6 +309,74 @@ pub fn row_json(r: &HookRow) -> serde_json::Value {
         "status": r.status,
         "digest": r.digest,
     })
+}
+
+impl super::HookEngine {
+    /// Every loaded command hook plus every spawn spec the session would
+    /// launch (ext children, MCP stdio servers) as `/hooks` rows —
+    /// deterministic order (kind → event → source → command) so
+    /// `/hooks trust <n>` and the listing agree. Status is read live from
+    /// the ledger, so a trust/untrust is visible on the next render.
+    pub fn roster(&self) -> Vec<HookRow> {
+        let mut rows = Vec::new();
+        for (event, groups) in &self.groups {
+            for g in groups {
+                for h in &g.hooks {
+                    if h.kind != "command" {
+                        continue;
+                    }
+                    rows.push(HookRow {
+                        kind: RowKind::Hook,
+                        event: event.clone(),
+                        matcher: g.matcher.clone(),
+                        command: h.command.clone(),
+                        source: h.origin.clone(),
+                        status: if h.layer == Layer::User {
+                            "user"
+                        } else if is_trusted(&self.cwd, h.layer, &h.origin, &h.command) {
+                            // ledger truth, not command_trusted — the
+                            // review surface reports what the pin file
+                            // says, never the test bypass
+                            "pinned"
+                        } else {
+                            "untrusted"
+                        },
+                        digest: digest(&h.origin, &h.command),
+                    });
+                }
+            }
+        }
+        rows.extend(spawn_rows(&self.cwd, &self.extra_roots));
+        rows.sort_by(|a, b| {
+            (a.kind, &a.event, &a.source, &a.command)
+                .cmp(&(b.kind, &b.event, &b.source, &b.command))
+        });
+        rows
+    }
+
+    /// `/hooks trust|untrust <n>` — pin or revoke the roster row's digest.
+    /// Returns the audit-worthy description (kind + command + action) for
+    /// the caller to log; the ledger write is the side effect.
+    pub fn set_row_trust(&self, index: usize, trust_it: bool) -> Result<String, String> {
+        if index == 0 {
+            return Err("hook numbers are 1-based — /hooks for the list".into());
+        }
+        let rows = self.roster();
+        let Some(row) = rows.get(index - 1) else {
+            return Err(format!("no hook #{index} — /hooks for the list"));
+        };
+        if row.status == "user" {
+            return Err(format!("hook #{index} is user-level — implicitly trusted"));
+        }
+        set_pin(&self.cwd, &row.source, &row.command, trust_it)?;
+        Ok(format!(
+            "{} {} ({} · {})",
+            if trust_it { "trusted" } else { "revoked" },
+            row.command,
+            row.event,
+            row.source.display()
+        ))
+    }
 }
 
 #[cfg(test)]

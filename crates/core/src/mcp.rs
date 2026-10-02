@@ -29,9 +29,10 @@ mod spec;
 
 use handler::{SessionHandler, Shared};
 
-pub use connect::connect_all;
 #[cfg(test)]
 pub(crate) use connect::connect_one;
+pub(crate) use connect::resolve_servers;
+pub use connect::{audit_skips, connect_all};
 
 /// `${CLAUDE_PLUGIN_ROOT}` substitution — shared by MCP server specs and
 /// extension specs; `root` arrives pre-stripped of the `\\?\` prefix.
@@ -248,6 +249,10 @@ impl McpServerHandle {
 pub struct McpConnected {
     pub tools: Vec<Box<dyn crate::tool::ToolImpl>>,
     pub servers: Vec<McpServerHandle>,
+    /// `mcp.untrusted` audit details — stdio specs the trust ledger didn't
+    /// pin, skipped before spawn (fail-closed). The caller folds them into
+    /// the session log once one exists (`audit_skips`).
+    pub skipped: Vec<String>,
 }
 
 /// Parse `_meta.ui` off a listed tool — the nested `ui.resourceUri` shape

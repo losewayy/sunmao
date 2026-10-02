@@ -17,7 +17,8 @@ fn fixture_bin() -> Option<std::path::PathBuf> {
 }
 
 /// A bad server entry must not brick the session — `connect_all`
-/// warns and returns the working tools only.
+/// warns and returns the working tools only. (An *untrusted* stdio spec
+/// never reaches spawn either — the trust test below covers that lane.)
 #[tokio::test]
 async fn connect_all_degrades_a_dead_server() {
     let dir = crate::fresh_test_dir("mcp-bad");
@@ -27,8 +28,73 @@ async fn connect_all_degrades_a_dead_server() {
         r#"{"mcpServers":{"ghost":{"command":"sunmao-no-such-binary-zz","args":[]}}}"#,
     )
     .unwrap();
+    // pin the spec so the gate isn't the reason it fails — this test is
+    // about spawn tolerance, not trust
+    let text = crate::hooks::trust::spec_text("sunmao-no-such-binary-zz", &[], &Default::default());
+    crate::hooks::trust::set_pin(&dir, &dir.join(".sunmao/mcp.json"), &text, true).unwrap();
     let conn = connect_all(&dir, &[]).await;
     assert!(conn.tools.is_empty(), "dead server contributes no tools");
+    assert!(conn.skipped.is_empty(), "pinned specs reach the spawn");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Fail-closed trust on stdio servers: an unpinned `command:` spec never
+/// spawns — the skip lands in `McpConnected.skipped` for the caller to
+/// audit, and the roster shows the row as `untrusted`. Pinning the same
+/// `(source, spec)` digest lets the connect proceed (it may still fail
+/// at spawn — a skipped row and a failed row are distinct outcomes).
+#[tokio::test]
+async fn untrusted_stdio_server_never_spawns() {
+    let dir = crate::fresh_test_dir("mcp-trust");
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    let mcp_file = dir.join(".sunmao/mcp.json");
+    std::fs::write(
+        &mcp_file,
+        r#"{"mcpServers":{"ghost":{"command":"sunmao-no-such-binary-zz","args":[]},
+           "remote":{"url":"http://127.0.0.1:9/never-dialed"}}}"#,
+    )
+    .unwrap();
+    let mut log = crate::session::SessionLog::ephemeral();
+
+    let conn = connect_all(&dir, &[]).await;
+    assert_eq!(conn.skipped.len(), 1, "the stdio spec must be gated");
+    assert!(conn.skipped[0].contains("ghost"), "{}", conn.skipped[0]);
+    assert!(
+        conn.servers.is_empty(),
+        "untrusted spec contributes nothing"
+    );
+    audit_skips(&conn.skipped, &mut log).await;
+    let evs = log.events().await.unwrap();
+    assert!(
+        evs.iter().any(|e| matches!(
+            e,
+            crate::session::SessionEvent::Hook { event, detail }
+                if event == "mcp.untrusted" && detail.contains("ghost")
+        )),
+        "the skip must be durable"
+    );
+
+    // roster: the gated row lists under kind=mcp — `url` servers don't
+    // spawn and produce no row at all
+    let rows = crate::hooks::trust::spawn_rows(&dir, &[]);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].kind, crate::hooks::trust::RowKind::Mcp);
+    assert_eq!(rows[0].status, "untrusted");
+    assert_eq!(rows[0].matcher, "ghost");
+
+    // pin → the gate opens (the binary still doesn't exist — spawn
+    // failure is a separate, already-degraded path)
+    crate::hooks::trust::set_pin(
+        &dir,
+        &mcp_file,
+        &crate::hooks::trust::spec_text("sunmao-no-such-binary-zz", &[], &Default::default()),
+        true,
+    )
+    .unwrap();
+    let conn = connect_all(&dir, &[]).await;
+    assert!(conn.skipped.is_empty(), "pinned spec is not gated");
+    let rows = crate::hooks::trust::spawn_rows(&dir, &[]);
+    assert_eq!(rows[0].status, "pinned");
     std::fs::remove_dir_all(&dir).ok();
 }
 

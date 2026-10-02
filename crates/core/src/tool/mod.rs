@@ -198,6 +198,7 @@ pub use ptc::RunCodeTool;
 pub use search::{GlobTool, GrepTool};
 pub use sendmsg::SendMessageTool;
 pub use shell::{BashTool, JobOutputTool, ShellRun, render_run, run_foreground};
+pub(crate) use shell::{PIPE_DRAIN_TIMEOUT, SharedBuf};
 pub(crate) use todo::TODOS_LINE_PREFIX;
 pub use todo::{
     TodoItem, TodoStatus, TodoWriteTool, inject_text as todos_inject_text, render as render_todos,

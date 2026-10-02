@@ -110,16 +110,16 @@ function palSource() {
     { g: '外观', t: '主题：浅色', i: 'sun', run: () => { S.mode = 'light'; commit(); } },
     { g: '外观', t: '主题：跟随系统', i: 'monitor', run: () => { S.mode = 'system'; commit(); } },
     ...WALLS.map(w => ({ g: '外观', t: '壁纸：' + w.name, i: 'image', run: () => { S.wallpaper = w.id; commit(); } })),
-    ...slashList.map(c => ({ g: '命令', t: '/' + c, i: 'terminal', run: () => { show('session'); $('#input').value = '/' + c + ' '; autoGrow(); $('#input').focus(); } })),
+    ...slashList.map(c => ({ g: '命令', t: '/' + c.name, sub: c.desc || '', i: 'terminal', run: () => { show('session'); $('#input').value = '/' + c.name + ' '; autoGrow(); $('#input').focus(); } })),
     ...SESSION_IDS.map(id => ({ g: '会话', t: sessTitle(id) || '新对话', d: id, i: 'note', run: () => { show('session'); resumeSession(id); } })),
   ];
 }
 function renderPal() {
   const q = $('#pal-in').value.trim().toLowerCase();
-  palItems = palSource().filter(x => !q || `${x.t} ${x.d || ''} ${x.g}`.toLowerCase().includes(q));
+  palItems = palSource().filter(x => !q || `${x.t} ${x.d || ''} ${x.sub || ''} ${x.g}`.toLowerCase().includes(q));
   palIdx = Math.max(0, Math.min(palIdx, palItems.length - 1));
   let g = '', h = '';
-  palItems.forEach((x, i) => { if (x.g !== g) { g = x.g; h += `<div class="pg">${g}</div>`; } h += `<button class="mi${i === palIdx ? ' hl' : ''}" data-pi="${i}">${ic(x.i)}<span class="mt"><span>${esc(x.t)}</span></span>${x.d ? `<kbd>${esc(x.d)}</kbd>` : ''}${x.k ? `<kbd>${esc(x.k)}</kbd>` : ''}</button>`; });
+  palItems.forEach((x, i) => { if (x.g !== g) { g = x.g; h += `<div class="pg">${g}</div>`; } h += `<button class="mi${i === palIdx ? ' hl' : ''}" data-pi="${i}">${ic(x.i)}<span class="mt"><span>${esc(x.t)}</span>${x.sub ? `<small>${esc(x.sub)}</small>` : ''}</span>${x.d ? `<kbd>${esc(x.d)}</kbd>` : ''}${x.k ? `<kbd>${esc(x.k)}</kbd>` : ''}</button>`; });
   $('#pal-list').innerHTML = h || '<div class="none">没有匹配的命令</div>';
   const hl = $('#pal-list .mi.hl'), L = $('#pal-list');
   if (hl) { const t = hl.offsetTop, b = t + hl.offsetHeight; if (t < L.scrollTop) L.scrollTop = t - 6; else if (b > L.scrollTop + L.clientHeight) L.scrollTop = b - L.clientHeight + 6; }

@@ -1,0 +1,23 @@
+# 内置斜杠命令的一行中文说明 — 斜杠菜单、命令面板与 TUI 补全共用。
+# 格式：命令名（不带 /）<TAB> 一行说明。文件命令与 /srv:prompt 无条目。
+annotate	给 artifact 追加一条批注
+artifacts	列出 .sunmao/artifacts 下的产物
+clear	清空当前对话视图（前端本地）
+compact	把当前对话压缩进事件日志
+export-md	导出会话为 Markdown 文件
+export-zip	导出调试包（转录 + 原始事件日志压缩包）
+fork	复制该会话日志，新开一支继续
+help	显示可用命令一览
+mcp	列出已连接的 MCP 服务器
+mode	查看或切换审批模式
+model	列出模型或按选择器切换模型
+multiline	切换多行输入模式（前端本地）
+quit	退出（前端本地）
+resume	恢复某条历史会话
+rewind	回退到某一轮，可连带恢复文件
+search	跨会话全文搜索
+sessions	最近的会话列表
+status	显示会话状态（模型/目录/token 等）
+stop	终止一个正在运行的子代理
+tasks	查看运行中的子代理
+todos	查看模型的任务清单

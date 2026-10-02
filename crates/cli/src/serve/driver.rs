@@ -13,10 +13,12 @@ use crate::{commands, sessions};
 
 use super::host::{Host, Input, Shared, WsObserver};
 
-/// Slash-command list for the composer menu — same candidates the TUI
-/// shows (builtins + file commands + connected servers' `/srv:prompt`
-/// names), minus pure-TUI affordances.
-pub(crate) fn slash_candidates(s: &Shared) -> Vec<String> {
+/// Slash-command menu entries for the composer menu — same candidates the
+/// TUI shows (builtins + file commands + connected servers' `/srv:prompt`
+/// names), minus pure-TUI affordances, each paired with the one-line
+/// description `commands::desc` reads from `assets/slash-descs.txt` ("" for
+/// file commands and MCP prompts — they carry no builtin blurb).
+pub(crate) fn slash_candidates(s: &Shared) -> Vec<(String, &'static str)> {
     let mut out: Vec<String> = crate::commands::candidates(&s.cwd, &s.roots)
         .into_iter()
         .filter(|n| *n != "multiline" && *n != "clear" && *n != "quit")
@@ -28,7 +30,12 @@ pub(crate) fn slash_candidates(s: &Shared) -> Vec<String> {
     }
     out.sort();
     out.dedup();
-    out
+    out.into_iter()
+        .map(|n| {
+            let d = commands::desc(&n);
+            (n, d)
+        })
+        .collect()
 }
 
 /// Ask the host's mgmt lane to adopt a session — drivers can't call
@@ -391,7 +398,11 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, cmd_line: &str, cli
         commands::Command::Help => {
             note(format!(
                 "slash commands: {}",
-                slash_candidates(s).join("  ")
+                slash_candidates(s)
+                    .iter()
+                    .map(|(n, _)| n.as_str())
+                    .collect::<Vec<_>>()
+                    .join("  ")
             ));
             true
         }

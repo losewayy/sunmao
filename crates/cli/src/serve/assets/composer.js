@@ -206,10 +206,10 @@ $('#input').addEventListener('keydown', e => {
   if (slashEl) {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); slashIdx += e.key === 'ArrowDown' ? 1 : -1; renderSlash(); return; }
     if (e.key === 'Tab') {
-      if (slashItems.length) { e.preventDefault(); const ta = $('#input'); ta.value = '/' + slashItems[((slashIdx % slashItems.length) + slashItems.length) % slashItems.length] + ' '; slashCheck(true); ta.focus(); autoGrow(); return; }
+      if (slashItems.length) { e.preventDefault(); const ta = $('#input'); ta.value = '/' + slashItems[((slashIdx % slashItems.length) + slashItems.length) % slashItems.length].name + ' '; slashCheck(true); ta.focus(); autoGrow(); return; }
     }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
-      if (slashItems.length) { e.preventDefault(); const ta = $('#input'); ta.value = '/' + slashItems[((slashIdx % slashItems.length) + slashItems.length) % slashItems.length]; slashCheck(true); send(); return; }
+      if (slashItems.length) { e.preventDefault(); const ta = $('#input'); ta.value = '/' + slashItems[((slashIdx % slashItems.length) + slashItems.length) % slashItems.length].name; slashCheck(true); send(); return; }
     }
     if (e.key === 'Escape') { e.preventDefault(); slashCheck(true); return; }
   }
@@ -324,7 +324,7 @@ function slashCheck(hide) {
   const m = v.match(/^\/(\S*)$/);
   if (hide || !m) { if (slashEl) { slashEl.remove(); slashEl = null; } return; }
   const q = m[1].toLowerCase();
-  slashItems = slashList.filter(c => c.toLowerCase().includes(q));
+  slashItems = slashList.filter(c => c.name.toLowerCase().includes(q));
   if (!slashItems.length) { if (slashEl) { slashEl.remove(); slashEl = null; } return; }
   slashIdx = Math.min(slashIdx, slashItems.length - 1);
   if (!slashEl) {
@@ -342,7 +342,7 @@ function slashCheck(hide) {
 function renderSlash() {
   if (!slashEl) return;
   slashEl.innerHTML = '<div class="lbl">/ 命令 — Enter 执行，Tab 补全</div>'
-    + slashItems.map((c, i) => `<button class="mi${i === slashIdx ? ' hl' : ''}" data-c="${esc(c)}">${ic('terminal', 'i sm')}<span class="mt mono"><span>/${esc(c)}</span></span></button>`).join('');
+    + slashItems.map((c, i) => `<button class="mi${i === slashIdx ? ' hl' : ''}" data-c="${esc(c.name)}">${ic('terminal', 'i sm')}<span class="mt mono"><span>/${esc(c.name)}</span>${c.desc ? `<small>${esc(c.desc)}</small>` : ''}</span></button>`).join('');
 }
 function pickSlash(cmd) {
   const ta = $('#input');

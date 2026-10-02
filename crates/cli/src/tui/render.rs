@@ -190,14 +190,32 @@ fn draw_slash_menu(f: &mut ratatui::Frame, m: &SlashMenu, area: Rect) {
         } else {
             format!("  {name}")
         };
-        rows.push(Line::from(Span::styled(
-            format!("{} {}", if sel { " ❯" } else { "  " }, label),
-            if sel {
-                Style::default().fg(THEME.hi).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(THEME.muted)
-            },
-        )));
+        let style = if sel {
+            Style::default().fg(THEME.hi).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(THEME.muted)
+        };
+        // command rows carry the one-line description from
+        // commands::desc (assets/slash-descs.txt); pickers don't
+        let desc = if m.kind == MenuKind::Command {
+            crate::commands::desc(name)
+        } else {
+            ""
+        };
+        if desc.is_empty() {
+            rows.push(Line::from(Span::styled(
+                format!("{} {}", if sel { " ❯" } else { "  " }, label),
+                style,
+            )));
+        } else {
+            rows.push(Line::from(vec![
+                Span::styled(
+                    format!("{} {}", if sel { " ❯" } else { "  " }, label),
+                    style,
+                ),
+                Span::styled(format!("  {desc}"), Style::default().fg(THEME.faint)),
+            ]));
+        }
     }
     if m.matches.len() > 8 {
         rows.push(Line::from(Span::styled(

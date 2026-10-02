@@ -159,7 +159,6 @@ document.addEventListener('click', e => {
   // a transcript attachment thumb → viewer
   const im = t.closest('img.att');
   if (im) { openImv(im.src, im.alt || im.title); return; }
-  const st = t.closest('[data-starter]'); if (st) { const ta = $('#input'); ta.value = st.dataset.starter; autoGrow(); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); return; }
   const apb = t.closest('[data-ap]'); if (apb) { const cd = apb.closest('.approve'); return decide(apb.dataset.ap, cd ? +cd.dataset.apid : null); }
   const th = t.closest('.tool-h'); if (th) { if ($('.tool-o', th.parentElement)) th.parentElement.classList.toggle('open'); return; }
   const swb = t.closest('.sw'); if (swb && !swb.dataset.act) return swb.setAttribute('aria-checked', String(swb.getAttribute('aria-checked') !== 'true'));

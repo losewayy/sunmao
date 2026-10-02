@@ -48,6 +48,12 @@ struct McpTool {
     ui: Option<UiToolMeta>,
 }
 
+/// Bound on the connect handshake and each catalog listing — a server
+/// that answers `initialize` but never `tools/list` used to hold session
+/// startup hostage forever (the ext host applies the same 30s to its
+/// request/reply path).
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 #[async_trait::async_trait]
 impl ToolImpl for McpTool {
     fn name(&self) -> &'static str {
@@ -269,6 +275,17 @@ pub async fn audit_skips(skipped: &[String], log: &mut crate::session::SessionLo
 /// interactive approval path — the session must come up unattended (ACP /
 /// serve spawn sessions without a human at a prompt).
 pub async fn connect_all(cwd: &Path, extra_roots: &[PathBuf]) -> McpConnected {
+    connect_all_with_timeout(cwd, extra_roots, CONNECT_TIMEOUT).await
+}
+
+/// The `connect_all` body with an explicit per-step timeout — tests drive
+/// this with a short bound so a hanging fixture doesn't stall the suite;
+/// production always sees `CONNECT_TIMEOUT`.
+pub(crate) async fn connect_all_with_timeout(
+    cwd: &Path,
+    extra_roots: &[PathBuf],
+    timeout: std::time::Duration,
+) -> McpConnected {
     let mut tools: Vec<Box<dyn ToolImpl>> = Vec::new();
     let mut handles: Vec<McpServerHandle> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
@@ -285,7 +302,7 @@ pub async fn connect_all(cwd: &Path, extra_roots: &[PathBuf]) -> McpConnected {
                 continue;
             }
         }
-        match connect_one(&name, &spec).await {
+        match connect_one(&name, &spec, timeout).await {
             Ok((handle, t)) => {
                 handles.push(handle);
                 tools.extend(t);
@@ -309,7 +326,9 @@ pub async fn connect_all(cwd: &Path, extra_roots: &[PathBuf]) -> McpConnected {
 pub(crate) async fn connect_one(
     name: &str,
     spec: &ServerSpec,
+    timeout: std::time::Duration,
 ) -> anyhow::Result<(McpServerHandle, Vec<Box<dyn ToolImpl>>)> {
+    let t = timeout;
     let shared = Shared::new(Vec::new(), Vec::new(), Vec::new());
     let handler = SessionHandler::new(name, shared.clone());
     let client: ClientHandle = if let Some(url) = &spec.url {
@@ -317,7 +336,11 @@ pub(crate) async fn connect_one(
         // in the transport config; a credential that can't resolve fails
         // this server (warn-and-skip), never a silent unauthenticated call
         let transport = spec.http_transport(url)?;
-        Arc::new(handler.serve(transport).await?)
+        Arc::new(
+            tokio::time::timeout(t, handler.serve(transport))
+                .await
+                .map_err(|_| anyhow::anyhow!("mcp server {name}: handshake timed out"))??,
+        )
     } else {
         let Some(command) = &spec.command else {
             anyhow::bail!("server {name}: needs `command` (stdio) or `url` (http)");
@@ -329,26 +352,40 @@ pub(crate) async fn connect_one(
             // servers that log startup noise from polluting the protocol
             .stderr(std::process::Stdio::null());
         let transport = TokioChildProcess::new(cmd)?;
-        Arc::new(handler.serve(transport).await?)
+        Arc::new(
+            tokio::time::timeout(t, handler.serve(transport))
+                .await
+                .map_err(|_| anyhow::anyhow!("mcp server {name}: handshake timed out"))??,
+        )
     };
 
     let transport = if spec.url.is_some() { "http" } else { "stdio" };
-    let listed = client.peer().list_all_tools().await?;
+    let listed = tokio::time::timeout(t, client.peer().list_all_tools())
+        .await
+        .map_err(|_| anyhow::anyhow!("mcp server {name}: tools/list timed out"))??;
     tracing::info!("mcp server {name}: {} tools", listed.len());
     let catalog: Vec<McpToolInfo> = listed.iter().map(|t| tool_info(name, t)).collect();
     // prompts/resources are discovery surfaces — a server that can't list
     // them keeps its tools (warn-degrade, same spirit as connect_all)
-    let prompts = match client.peer().list_all_prompts().await {
-        Ok(listed) => Some(listed.iter().map(prompt_info).collect()),
-        Err(e) => {
+    let prompts = match tokio::time::timeout(t, client.peer().list_all_prompts()).await {
+        Ok(Ok(listed)) => Some(listed.iter().map(prompt_info).collect()),
+        Ok(Err(e)) => {
             tracing::debug!("mcp server {name}: prompts/list: {e:#}");
             None
         }
+        Err(_) => {
+            tracing::debug!("mcp server {name}: prompts/list timed out");
+            None
+        }
     };
-    let resources = match client.peer().list_all_resources().await {
-        Ok(listed) => Some(listed.iter().map(resource_info).collect()),
-        Err(e) => {
+    let resources = match tokio::time::timeout(t, client.peer().list_all_resources()).await {
+        Ok(Ok(listed)) => Some(listed.iter().map(resource_info).collect()),
+        Ok(Err(e)) => {
             tracing::debug!("mcp server {name}: resources/list: {e:#}");
+            None
+        }
+        Err(_) => {
+            tracing::debug!("mcp server {name}: resources/list timed out");
             None
         }
     };

@@ -29,28 +29,45 @@ pub(super) fn spawn(
         // `Flush(n)` isn't a runnable submission — it's a tail-pop on the
         // backlog, applied the moment it's seen so the recalled item never
         // gets a chance to run before the flush catches up with it.
-        fn intake(pending: &mut std::collections::VecDeque<Submit>, s: Submit) {
+        // Every enqueued submission bumps ctx.input_pending — the goal
+        // chain yields while the counter is non-zero so a typed prompt
+        // interleaves instead of waiting out the whole loop. The count
+        // follows pending exactly: push +1, pop/flush −1.
+        let ctr = &agent.context().input_pending;
+        fn intake(
+            pending: &mut std::collections::VecDeque<Submit>,
+            s: Submit,
+            ctr: &std::sync::atomic::AtomicUsize,
+        ) {
             match s {
                 Submit::Flush(n) => {
                     let keep = pending.len().saturating_sub(n);
+                    let dropped = pending.len() - keep;
                     pending.truncate(keep);
+                    for _ in 0..dropped {
+                        ctr.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                 }
-                _ => pending.push_back(s),
+                _ => {
+                    ctr.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    pending.push_back(s);
+                }
             }
         }
         loop {
             if pending.is_empty() {
                 match rx_input.recv().await {
-                    Some(s) => intake(&mut pending, s),
+                    Some(s) => intake(&mut pending, s, ctr),
                     None => return,
                 }
             }
             while let Ok(s) = rx_input.try_recv() {
-                intake(&mut pending, s);
+                intake(&mut pending, s, ctr);
             }
             let Some(sub) = pending.pop_front() else {
                 continue;
             };
+            ctr.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
             match sub {
                 Submit::Quit => {
                     let _ = tx_msg.send(Msg::Quit);
@@ -135,6 +152,53 @@ pub(super) fn spawn(
                 }
                 Submit::Todos => {
                     let _ = tx_msg.send(Msg::Note(commands::todos_text(&agent.todos())));
+                    continue;
+                }
+                Submit::Goal(arg) => {
+                    match arg {
+                        None => {
+                            let _ =
+                                tx_msg.send(Msg::Note(commands::goal_text(agent.goal().as_ref())));
+                        }
+                        Some(objective) => {
+                            let obs = ChanObserver(tx_msg.clone());
+                            if let Err(e) = agent.set_goal(&objective, &obs).await {
+                                let _ = tx_msg.send(Msg::Note(format!("[goal failed] {e:#}")));
+                                continue;
+                            }
+                            let _ = tx_msg.send(Msg::Note(
+                                "[goal set — the agent keeps at it until complete/blocked]".into(),
+                            ));
+                            // the objective itself is the kickoff prompt —
+                            // run_turn's goal chain continues from there
+                            let (prompt, atts) =
+                                crate::attachments::attach_mentions(&objective, &cwd);
+                            let mut turn = Box::pin(agent.run_turn_blocks(&prompt, &atts, &obs));
+                            loop {
+                                tokio::select! {
+                                    res = &mut turn => {
+                                        let _ = res;
+                                        break;
+                                    }
+                                    _ = rx_cancel.recv() => {
+                                        agent.cancel();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+                Submit::GoalClear => {
+                    let obs = ChanObserver(tx_msg.clone());
+                    match agent.clear_goal(&obs).await {
+                        Ok(()) => {
+                            let _ = tx_msg.send(Msg::Note("[goal cleared]".into()));
+                        }
+                        Err(e) => {
+                            let _ = tx_msg.send(Msg::Note(format!("[goal clear failed] {e:#}")));
+                        }
+                    }
                     continue;
                 }
                 Submit::Mcp => {

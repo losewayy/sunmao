@@ -3,7 +3,7 @@
 //! session replay) lives in `replay.rs`; rendering decisions live in
 //! `mod.rs` — this file owns *what is true*, not how it looks.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::blocks::{Block, BlockKind};
 use super::menu::SlashMenu;
@@ -121,6 +121,9 @@ pub struct App {
     /// the session's approval stance (SPEC §4.6) — footer-visible so
     /// read_only/full_access are never silently active
     pub approval_mode: sunmao_core::agent::ApprovalMode,
+    /// the session's standing goal — footer chip + `/goal` display; live
+    /// `Goal` events and session replay both keep it current
+    pub goal: Option<sunmao_core::tool::GoalState>,
 }
 
 /// Content of the full-screen viewer — title line + the block's full text
@@ -188,6 +191,11 @@ pub enum Submit {
     Stop(String),
     /// /todos — the model's session task list
     Todos,
+    /// /goal [objective] — None shows the standing goal, Some sets it and
+    /// kicks the continuation loop with the objective as the prompt
+    Goal(Option<String>),
+    /// /goal clear — abandon the standing goal
+    GoalClear,
     /// /artifacts — the .sunmao/artifacts listing
     Artifacts,
     /// /annotate <name> <note> — human notes into artifact state.json
@@ -241,6 +249,7 @@ impl App {
             file_pool: Vec::new(),
             session_ids: Vec::new(),
             approval_mode: sunmao_core::agent::ApprovalMode::Auto,
+            goal: None,
         };
         let mut banner = Block::new(BlockKind::Note);
         banner.text = format!(
@@ -431,6 +440,8 @@ impl App {
                     crate::commands::Command::Tasks => Submit::Tasks,
                     crate::commands::Command::Stop(id) => Submit::Stop(id),
                     crate::commands::Command::Todos => Submit::Todos,
+                    crate::commands::Command::Goal(arg) => Submit::Goal(arg),
+                    crate::commands::Command::GoalClear => Submit::GoalClear,
                     crate::commands::Command::Mcp => Submit::Mcp,
                     crate::commands::Command::Status => Submit::Status,
                     crate::commands::Command::Export => Submit::Export,
@@ -466,130 +477,6 @@ impl App {
 
     // ── scrollback selection / folds ─────────────────────────────────────
 
-    pub fn ensure_selection(&mut self) {
-        if self.blocks.is_empty() {
-            self.selected = 0;
-        } else {
-            self.selected = self.selected.min(self.blocks.len() - 1);
-        }
-    }
-
-    pub fn select_delta(&mut self, d: isize) {
-        self.ensure_selection();
-        let max = self.blocks.len().saturating_sub(1) as isize;
-        self.selected = (self.selected as isize + d).clamp(0, max) as usize;
-    }
-
-    pub fn toggle_fold(&mut self) {
-        self.ensure_selection();
-        if self
-            .blocks
-            .get(self.selected)
-            .is_some_and(|b| b.kind == BlockKind::StepSummary)
-        {
-            // expanding a step summary splices its folded blocks back where
-            // it sat — one-way by design, close_turn refolds if still over
-            // the cap.
-            let mut summary = self.blocks.remove(self.selected);
-            let mut tail = self.blocks.split_off(self.selected);
-            self.blocks.append(&mut summary.folded);
-            self.blocks.append(&mut tail);
-            self.render_cache.clear();
-            self.ensure_selection();
-            return;
-        }
-        if let Some(b) = self.blocks.get_mut(self.selected) {
-            b.collapsed = !b.collapsed;
-            b.generation += 1;
-        }
-    }
-
-    pub fn selected_copy(&self) -> Option<String> {
-        self.blocks.get(self.selected).map(|b| b.copy_text())
-    }
-
-    /// Enter the full-screen viewer for the selected block — the "expand"
-    /// half of scrollback browsing, the transcript itself stays compact.
-    pub fn open_viewer(&mut self) {
-        self.ensure_selection();
-        if let Some(b) = self.blocks.get(self.selected) {
-            let title = match &b.tool {
-                Some(t) => format!("{} {}", t.name, t.summary),
-                None => format!("{:?}", b.kind).to_lowercase(),
-            };
-            self.viewer = Some(Viewer {
-                title,
-                body: b.copy_text(),
-                scroll: 0,
-            });
-            self.focus = Focus::Viewer;
-        }
-    }
-
-    // ── misc ─────────────────────────────────────────────────────────────
-
-    /// Esc semantics, layered like grok-build but slimmer:
-    /// card Esc → park; scrollback Esc → back to input; busy Esc → hint;
-    /// input Esc → double-tap clears the draft (stashed, Ctrl+S restores).
-    /// Returns true when the app should quit (no — Esc never quits).
-    pub fn on_esc(&mut self) {
-        match self.focus {
-            Focus::Approval => {
-                if let Some(card) = &mut self.approval {
-                    card.parked = true;
-                }
-                self.focus = Focus::Scrollback;
-                self.toast = Some(("card parked — Tab returns".into(), Instant::now()));
-            }
-            Focus::Scrollback => {
-                self.focus = Focus::Input;
-            }
-            Focus::Viewer => {
-                self.viewer = None;
-                self.focus = Focus::Scrollback;
-            }
-            Focus::Input => {
-                if self.busy {
-                    self.toast = Some(("Ctrl-C cancels the turn".into(), Instant::now()));
-                } else if !self.input.is_empty() {
-                    let now = Instant::now();
-                    if self
-                        .last_esc
-                        .is_some_and(|t| now.duration_since(t) < Duration::from_millis(800))
-                    {
-                        self.draft_stash = Some(std::mem::take(&mut self.input));
-                        self.cursor = 0;
-                        self.toast =
-                            Some(("draft stashed — Ctrl+S restores".into(), Instant::now()));
-                        self.last_esc = None;
-                    } else {
-                        self.last_esc = Some(now);
-                        self.toast = Some(("Esc again clears the draft".into(), Instant::now()));
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn restore_draft(&mut self) {
-        if let Some(d) = self.draft_stash.take() {
-            self.input = d;
-            self.cursor = self.input.chars().count();
-        }
-    }
-
-    /// Set a transient status-bar toast (copy confirm, queue notice).
-    pub fn toast(&mut self, text: impl Into<String>) {
-        self.toast = Some((text.into(), Instant::now()));
-    }
-
-    /// Age-out the toast after 3 s.
-    pub fn toast_text(&mut self) -> Option<&str> {
-        if let Some((_, t)) = self.toast
-            && t.elapsed() > Duration::from_secs(3)
-        {
-            self.toast = None;
-        }
-        self.toast.as_ref().map(|(s, _)| s.as_str())
-    }
+    // scrollback selection, fold toggle, viewer, Esc layering, draft stash
+    // and toasts live in `browse.rs` — App's verbs got too tall for one file
 }

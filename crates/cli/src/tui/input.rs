@@ -507,6 +507,14 @@ fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
         Submit::Todos => {
             let _ = tx_input.send(Submit::Todos);
         }
+        Submit::Goal(arg) => {
+            // the driver's FIFO serializes it — a `/goal` typed mid-turn
+            // lands after the running chain's current round
+            let _ = tx_input.send(Submit::Goal(arg));
+        }
+        Submit::GoalClear => {
+            let _ = tx_input.send(Submit::GoalClear);
+        }
         Submit::Mcp => {
             let _ = tx_input.send(Submit::Mcp);
         }

@@ -275,9 +275,7 @@ impl HostHandle {
             ("PUT", ["ui"]) => ui::put(s, query_arg(query, "sess"), body).await,
             ("GET", ["channels"]) => channels::view().await,
             ("PUT", ["channels"]) => channels::put(body).await,
-            ("POST", ["channels", "pairing", "approve"]) => {
-                channels::approve(s, body).await
-            }
+            ("POST", ["channels", "pairing", "approve"]) => channels::approve(s, body).await,
             ("GET", ["shell"]) => ui::shell_view(s, query_arg(query, "sess")),
             ("PUT", ["shell"]) => ui::shell_put(s, query_arg(query, "sess"), body),
             // custom wallpaper image — `.sunmao/wallpapers/custom.{ext}`;

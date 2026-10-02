@@ -7,7 +7,10 @@ git push | publishes history
 git reset --hard | discards work
 git clean | deletes untracked files
 git checkout -- | discards changes
+git checkout . | discards changes
 git restore . | discards changes
+git stash drop | discards stashed work
+git stash clear | discards all stashes
 del /s | recursive delete
 del /f /s | forced recursive delete
 rmdir /s | recursive delete

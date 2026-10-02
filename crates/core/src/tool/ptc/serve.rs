@@ -30,10 +30,36 @@ pub(super) async fn serve_requests(
     use futures_util::StreamExt;
     let mut inflight = futures_util::stream::FuturesUnordered::new();
     let seq = AtomicU64::new(0);
+    // doom-loop guard, same streak semantics as the turn loop's: identical
+    // (name, args) calls back-to-back are a stuck script, not patient
+    // iteration — a different call resets the streak so `glob → edit → glob`
+    // never trips it. The Nth call resolves {ok:false} with a reason the
+    // script (and the model reading its output) can act on.
+    let mut repeat_key: Option<(String, String)> = None;
+    let mut repeat_streak: u32 = 0;
+    const REPEAT_LIMIT: u32 = 3;
     loop {
         tokio::select! {
             msg = rx.recv() => match msg {
                 Some((op, args, reply)) => {
+                    if op == "tool" {
+                        let key = (
+                            args["name"].as_str().unwrap_or_default().to_string(),
+                            args.get("args").cloned().unwrap_or(Value::Null).to_string(),
+                        );
+                        if repeat_key.as_ref() == Some(&key) {
+                            repeat_streak += 1;
+                        } else {
+                            repeat_key = Some(key.clone());
+                            repeat_streak = 1;
+                        }
+                        if repeat_streak >= REPEAT_LIMIT {
+                            let n = repeat_streak;
+                            doom_refuse(ctx, observer, &args, seq.fetch_add(1, Ordering::Relaxed), n, reply)
+                                .await;
+                            continue;
+                        }
+                    }
                     let n = seq.fetch_add(1, Ordering::Relaxed);
                     inflight.push(dispatch(ctx, observer, op, args, reply, n));
                 }
@@ -45,6 +71,75 @@ pub(super) async fn serve_requests(
             Some(()) = inflight.next() => {}
         }
     }
+}
+
+/// The doom-loop refusal: a durable `PtcCall` row (so a replay shows the
+/// refused call too), a live ToolStart/ToolDone pair + `doom_loop` audit
+/// (same surface a turn-level refusal emits), then `{ok:false}` back to
+/// the script — the loop's verdict is legible to JS, not an exception.
+async fn doom_refuse(
+    ctx: &Arc<Context>,
+    observer: &PtcObserver,
+    args: &Value,
+    seq: u64,
+    streak: u32,
+    reply: tokio::sync::oneshot::Sender<Result<String, String>>,
+) {
+    let name = args["name"].as_str().unwrap_or_default().to_string();
+    let args_value = args.get("args").cloned().unwrap_or(Value::Null);
+    let call_id = format!("ptc-{seq}");
+    let detail = format!("identical {name} call x{streak} — refusing a repeat loop");
+    let output = format!(
+        "doom-loop guard: identical call repeated {streak} times in this script — vary the call or stop"
+    );
+    let nested_depth = ctx.depth.saturating_add(1);
+    observer.on_event(&LiveEvent::ToolStart {
+        name: name.clone(),
+        summary: call_summary(&name, &args_value),
+        depth: nested_depth,
+        lane: ctx.lane,
+        call_id: Some(call_id.clone()),
+        args: args_value.clone(),
+    });
+    observer.on_event(&LiveEvent::Hook {
+        event: "doom_loop".into(),
+        detail: detail.clone(),
+    });
+    crate::hooks::HookEngine::fire_detached(
+        &ctx.hooks,
+        HookEvent::PostToolUseFailure,
+        &ctx.cwd,
+        &HookInput {
+            tool_name: Some(&name),
+            tool_use_id: Some(&call_id),
+            tool_input: Some(&args_value),
+            tool_response: Some(&output),
+            ..Default::default()
+        },
+    );
+    observer.on_event(&LiveEvent::ToolDone {
+        name: name.clone(),
+        ok: false,
+        output: output.clone(),
+        depth: nested_depth,
+        lane: ctx.lane,
+        call_id: Some(call_id.clone()),
+        elapsed_ms: 0,
+    });
+    let mut log = ctx.sessions.lock().await;
+    log.append(&SessionEvent::PtcCall {
+        call_id,
+        name,
+        args: args_value.to_string(),
+        ok: false,
+        output: output.clone(),
+        depth: ctx.depth,
+        lane: ctx.lane,
+    })
+    .await
+    .unwrap_or_else(|e| tracing::warn!("ptc doom-loop audit append failed: {e:#}"));
+    drop(log);
+    let _ = reply.send(Ok(json!({"ok": false, "output": output}).to_string()));
 }
 
 /// One sandboxed request → host. `tool` ops take the full dispatch path

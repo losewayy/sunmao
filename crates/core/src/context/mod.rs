@@ -23,6 +23,10 @@ pub struct Context {
     /// a resolved adapter here; the loop reads through `active_llm()` so the
     /// swap takes effect on the next request, never mid-stream.
     pub llm_override: std::sync::RwLock<Option<Arc<dyn ProviderAdapter>>>,
+    /// The selector `/model` last switched to — lets the loop ask
+    /// `ModelResolver` for the *current* model's catalog capabilities
+    /// (context window) instead of guessing.
+    pub active_selector: std::sync::RwLock<Option<String>>,
     /// Active session's event log. `Arc` because detached Task sub-agents
     /// (`run_in_background`) outlive their spawn call — they append their
     /// `TaskDone` result straight into the parent's log when they finish.
@@ -33,7 +37,10 @@ pub struct Context {
     pub tools: ToolRegistry,
     /// Hook dispatcher — lifecycle events fire through dialect-compatible
     /// external commands.
-    pub hooks: HookEngine,
+    /// Arc'd because `AgentLoop::cancel` is sync — the Interrupt event must
+    /// be handed to a detached task without waiting for it. All fires after
+    /// construction are `&self`, so one owner everywhere else stays the same.
+    pub hooks: Arc<HookEngine>,
     /// Working directory tools resolve paths against.
     pub cwd: PathBuf,
     /// The live session's id — file stem of the active log. RwLock so
@@ -50,13 +57,34 @@ pub struct Context {
     /// agent; each Task spawn claims a fresh lane so parallel sub-agents'
     /// tool events stay attributable (a plain `depth` tag collides when two
     /// children run the same tool at once).
-    pub lane: u8,
+    pub lane: u16,
     /// Shared lane allocator — sub-contexts clone the same counter so lanes
     /// are unique across the whole spawn tree, not just siblings.
-    pub lane_counter: std::sync::Arc<std::sync::atomic::AtomicU8>,
+    pub lane_counter: std::sync::Arc<std::sync::atomic::AtomicU16>,
+    /// Background-job sequence — two `background:true` calls landing in the
+    /// same millisecond used to collide on the `j-<ms>` id/log dir. The
+    /// suffix keeps them distinct (the audit's `sub-<ms>-l<lane>` pattern,
+    /// applied to jobs).
+    pub job_seq: std::sync::Arc<std::sync::atomic::AtomicU16>,
     /// Cooperative cancellation — `session/cancel` sets it; the loop checks
-    /// between iterations and before each tool call.
-    pub cancelled: std::sync::atomic::AtomicBool,
+    /// between iterations and before each tool call. `Arc` so a child's
+    /// `TaskEntry` can hold a cheap cancel handle into it.
+    pub cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Mid-flight cancel wake — `cancel()` sets `cancelled` then notifies;
+    /// the turn loop and the shell executor `select!` on this so a cancel
+    /// lands while a tool call or a stream delta is still in flight, not
+    /// just at iteration boundaries. The flag alone can only be polled
+    /// where the loop already checks.
+    pub cancel_notify: std::sync::Arc<tokio::sync::Notify>,
+    /// Which shell executes `Bash` — resolved once from `SUNMAO_SHELL` /
+    /// `.sunmao/shell.txt` at context build (see `tool::ShellBackend`).
+    pub shell: crate::tool::ShellBackend,
+    /// Per-tool watchdog seconds (`assets/tool-timeouts.txt` merged with
+    /// `.sunmao/tool-timeouts.txt` + plugin dirs). A listed tool's call is
+    /// abandoned past its budget — Bash is exempt (its own `timeout_secs`
+    /// arg, which also kills the process tree, is the finer control) and
+    /// Task is exempt by design (long-running agents are the feature).
+    pub tool_timeouts: std::sync::Arc<std::collections::HashMap<String, u64>>,
     /// Files read this session — the Read-before-Write gate's ledger.
     /// (crate-visible so sub-agent contexts can construct one)
     pub(crate) read_paths: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
@@ -141,6 +169,11 @@ pub struct Context {
     /// `TaskEntry.steer` holds a clone so `steer_sub`/`Task{steer}` can push
     /// into a live child without owning its Context.
     pub steer: SteerQueue,
+    /// The *parent's* steer queue — a child pushes its `SendMessage` text
+    /// here so the parent's next request boundary folds it in as a tagged
+    /// user message (the reverse direction of `steer_sub`). `None` on the
+    /// interactive session's context — there's no parent to address.
+    pub parent_steer: Option<SteerQueue>,
     /// One turn at a time per context — the watermark fence. Concurrent
     /// `run_turn` calls (ACP `session/prompt` is per-request spawned, and
     /// any frontend could double-submit) would otherwise interleave
@@ -158,6 +191,39 @@ pub struct Context {
 /// Context carries it, TaskEntry clones the Arc for `steer_sub` addressing.
 pub type SteerQueue = std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<(u64, String)>>>;
 
+/// Poison-recovery on `std::sync::Mutex` — a panic while holding the lock
+/// used to poison it for every subsequent touch, cascading one bad tool
+/// call into a dead session. `into_inner` unwraps the panicking writer's
+/// value, which is correct: the data was mid-mutation but structurally
+/// intact (the panic was in the *logic* of the critical section, not in
+/// the container's invariants). `tokio::Mutex` can't poison — its `lock()`
+/// returns the guard directly — so no recover form exists for it.
+pub trait MutexRecover<T> {
+    fn lock_or_recover(&self) -> std::sync::MutexGuard<'_, T>;
+}
+
+impl<T> MutexRecover<T> for std::sync::Mutex<T> {
+    fn lock_or_recover(&self) -> std::sync::MutexGuard<'_, T> {
+        self.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Same recovery for `RwLock` — read and write arms split because the two
+/// guard types differ.
+pub trait RwLockRecover<T> {
+    fn read_or_recover(&self) -> std::sync::RwLockReadGuard<'_, T>;
+    fn write_or_recover(&self) -> std::sync::RwLockWriteGuard<'_, T>;
+}
+
+impl<T> RwLockRecover<T> for std::sync::RwLock<T> {
+    fn read_or_recover(&self) -> std::sync::RwLockReadGuard<'_, T> {
+        self.read().unwrap_or_else(|e| e.into_inner())
+    }
+    fn write_or_recover(&self) -> std::sync::RwLockWriteGuard<'_, T> {
+        self.write().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
 /// One detached sub-agent in the roster.
 #[derive(Debug, Clone)]
 pub struct TaskEntry {
@@ -165,7 +231,7 @@ pub struct TaskEntry {
     pub id: String,
     /// The lane this spawn claimed — unique across the spawn tree; lets a
     /// frontend (or a test) prove distinctness without racing live events.
-    pub lane: u8,
+    pub lane: u16,
     /// Agent def name, or None for a generic spawn.
     pub agent: Option<String>,
     /// One-line digest of the prompt it was given.
@@ -177,33 +243,12 @@ pub struct TaskEntry {
     /// through here; None for entries registered before the handle was
     /// threaded (legacy roster rows can't be steered).
     pub(crate) steer: Option<SteerQueue>,
+    /// Cancel handle into the child's context — `AgentLoop::cancel`
+    /// cascades through it so killing a turn also kills its running
+    /// sub-agents (otherwise a foreground Task keeps churning after the
+    /// user hit stop). None on legacy rows.
+    pub(crate) cancel: Option<SubCancel>,
 }
-
-/// Why a `steer_sub`/`Task{steer}` push was refused.
-#[derive(Debug)]
-pub enum SubSteerError {
-    /// No roster entry under that id — wrong id, or the child predates this
-    /// process (restart loses the roster; `resume` is the way back in).
-    NoSuch(String),
-    /// The child already finished — a dead child can't take a steer; it can
-    /// only be resumed.
-    Finished(String),
-    /// The roster entry exists but carries no steer handle (a spawn that
-    /// never registered one — pre-feature entries can't appear in practice).
-    NoHandle(String),
-}
-
-impl std::fmt::Display for SubSteerError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NoSuch(id) => write!(f, "no such sub-agent: {id}"),
-            Self::Finished(id) => write!(f, "{id} finished, use resume"),
-            Self::NoHandle(id) => write!(f, "{id} can't be steered"),
-        }
-    }
-}
-
-impl std::error::Error for SubSteerError {}
 
 impl Context {
     pub fn new(
@@ -279,12 +324,15 @@ impl Context {
             }
         }
         let readonly_verbs = crate::agent::mode::readonly_verbs(&verb_extra);
+        let shell = crate::tool::ShellBackend::resolve(&cwd);
+        let tool_timeouts = std::sync::Arc::new(tool_timeout_table(&cwd));
         Self {
             llm,
             llm_override: std::sync::RwLock::new(None),
+            active_selector: std::sync::RwLock::new(None),
             sessions: Arc::new(tokio::sync::Mutex::new(sessions)),
             tools,
-            hooks: HookEngine::load(&cwd, &session_id, &[]),
+            hooks: Arc::new(HookEngine::load(&cwd, &session_id, &[])),
             cwd,
             session_id: std::sync::RwLock::new(session_id),
             permissions,
@@ -292,8 +340,12 @@ impl Context {
             approval: Arc::new(AllowAll),
             depth: 0,
             lane: 0,
-            lane_counter: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
-            cancelled: std::sync::atomic::AtomicBool::new(false),
+            lane_counter: std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
+            job_seq: std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
+            cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            cancel_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+            shell,
+            tool_timeouts,
             read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),
             checkpoints: std::sync::Mutex::new(checkpoints),
             session_grants: std::sync::Arc::new(std::sync::Mutex::new(
@@ -311,6 +363,7 @@ impl Context {
             live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             todos: std::sync::Mutex::new(todos),
             steer: SteerQueue::default(),
+            parent_steer: None,
             turn_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         }
     }
@@ -326,7 +379,7 @@ impl Context {
                 _ => None,
             })
             .unwrap_or_default();
-        *self.todos.lock().unwrap() = items;
+        *self.todos.lock_or_recover() = items;
     }
 
     /// Spawn every extension the plugin manifests declare: resolve specs,
@@ -337,12 +390,16 @@ impl Context {
     /// Failures degrade per child — an unspawnable extension warns and the
     /// rest still come up.
     pub async fn connect_extensions(&mut self) {
-        let session_id = self.session_id.read().unwrap().clone();
+        let session_id = self.session_id.read_or_recover().clone();
         crate::ext::connect_all(&self.ext, &self.cwd, &session_id, &self.extra_plugin_roots).await;
         for tool in self.ext.tools() {
             self.tools.register_arc(tool);
         }
-        self.hooks.attach_ext(self.ext.clone());
+        // still sole owner here — the Arc wrap is for cancel()'s detached
+        // Interrupt fire, nothing clones it during setup
+        if let Some(hooks) = Arc::get_mut(&mut self.hooks) {
+            hooks.attach_ext(self.ext.clone());
+        }
     }
 
     /// Layer preset dirs onto this context. Hooks and permissions reload
@@ -356,11 +413,11 @@ impl Context {
         self.extra_plugin_roots = roots;
         self.permissions =
             crate::permissions::Permissions::load(&self.cwd, &self.extra_plugin_roots);
-        self.hooks = HookEngine::load(
+        self.hooks = Arc::new(HookEngine::load(
             &self.cwd,
-            self.session_id.read().unwrap().as_str(),
+            self.session_id.read_or_recover().as_str(),
             &self.extra_plugin_roots,
-        );
+        ));
         // preset risky-patterns.txt files merge into the resolved table —
         // tightening the gate is additive; wholesale replacement stays a
         // project-file privilege.
@@ -377,13 +434,13 @@ impl Context {
 
     pub fn mark_read(&self, path: &std::path::Path) {
         if let Ok(canon) = path.canonicalize() {
-            self.read_paths.lock().unwrap().insert(canon);
+            self.read_paths.lock_or_recover().insert(canon);
         }
-        self.read_paths.lock().unwrap().insert(path.to_path_buf());
+        self.read_paths.lock_or_recover().insert(path.to_path_buf());
     }
 
     pub fn has_read(&self, path: &std::path::Path) -> bool {
-        let set = self.read_paths.lock().unwrap();
+        let set = self.read_paths.lock_or_recover();
         if set.contains(path) {
             return true;
         }
@@ -417,30 +474,6 @@ impl Context {
             .insert(format!("{tool}\t{specifier}"));
     }
 
-    /// Steer a live sub-agent by id — roster lookup, then push the text
-    /// onto the child's steer queue. The child's turn loop drains it at
-    /// the next request boundary like any other steer. `Finished` means
-    /// the child can only be resumed; `NoSuch` means the roster never knew
-    /// this id (a pre-restart child lives on disk only — resume it).
-    /// `AgentLoop::steer_sub` is this helper's public wrapper.
-    pub(crate) fn steer_sub(&self, sub_id: &str, text: String) -> Result<(), SubSteerError> {
-        let steer = {
-            let tasks = self.live_tasks.lock().unwrap();
-            match tasks.iter().find(|t| t.id == sub_id) {
-                None => return Err(SubSteerError::NoSuch(sub_id.to_string())),
-                Some(t) if t.done.is_some() => {
-                    return Err(SubSteerError::Finished(sub_id.to_string()));
-                }
-                Some(t) => t
-                    .steer
-                    .clone()
-                    .ok_or_else(|| SubSteerError::NoHandle(sub_id.to_string()))?,
-            }
-        };
-        steer.lock().unwrap().push_back((0, text));
-        Ok(())
-    }
-
     /// Checkpoint a file before a tool mutates it — the first write in the
     /// session preserves the pre-state under `.sunmao/checkpoints/`; repeat
     /// writes and out-of-scope paths (`.sunmao`, outside the project) are
@@ -449,7 +482,7 @@ impl Context {
     /// propagate: a write proceeding without its snapshot would make the
     /// rewind surface lie.
     pub async fn checkpoint_file(&self, path: &std::path::Path) -> anyhow::Result<()> {
-        let turn = self.checkpoints.lock().unwrap().turn;
+        let turn = self.checkpoints.lock_or_recover().turn;
         if let Some(rel) =
             crate::checkpoints::snapshot_if_new(&self.checkpoints, &self.cwd, path, turn).await?
         {
@@ -470,54 +503,20 @@ impl Context {
     /// `events` are the log's already-folded events — the same classifier
     /// `turn_boundaries` applies to raw lines.
     pub(crate) fn reseed_checkpoints(&self, events: &[crate::session::SessionEvent]) {
-        let id = self.session_id.read().unwrap().clone();
+        let id = self.session_id.read_or_recover().clone();
         let mut st = crate::checkpoints::load(&self.cwd, &id);
         st.turn = events
             .iter()
             .filter(|e| crate::checkpoints::is_turn_boundary(e))
             .count() as u64;
-        *self.checkpoints.lock().unwrap() = st;
+        *self.checkpoints.lock_or_recover() = st;
     }
 }
 
-/// Recover the task list a persisted log ended on: scan for `Todos`
-/// event lines (prefiltered by the serializer's literal prefix) and take
-/// the last one. Ephemeral logs and missing files seed empty — a fresh
-/// session simply has no list yet.
-fn seed_todos(path: &std::path::Path) -> Vec<crate::tool::TodoItem> {
-    if path.as_os_str().is_empty() {
-        return Vec::new();
-    }
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    for line in text.lines().rev() {
-        if line.starts_with(crate::tool::TODOS_LINE_PREFIX)
-            && let Ok(crate::session::SessionEvent::Todos { items }) =
-                serde_json::from_str::<crate::session::SessionEvent>(line)
-        {
-            return items;
-        }
-    }
-    Vec::new()
-}
+mod seeds;
+pub(crate) use seeds::tool_timeout_table;
+use seeds::{seed_mode, seed_todos};
 
-/// The approval stance a reopened log left behind — last `ModeChange` wins.
-/// Same line-scan trick as `seed_todos`: cheap suffix read, no full fold.
-fn seed_mode(path: &std::path::Path) -> crate::agent::ApprovalMode {
-    if path.as_os_str().is_empty() {
-        return Default::default();
-    }
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return Default::default();
-    };
-    for line in text.lines().rev() {
-        if line.contains("\"mode_change\"")
-            && let Ok(crate::session::SessionEvent::ModeChange { mode }) =
-                serde_json::from_str::<crate::session::SessionEvent>(line)
-        {
-            return mode;
-        }
-    }
-    Default::default()
-}
+mod sub_agent;
+pub(crate) use sub_agent::SubCancel;
+pub use sub_agent::SubSteerError;

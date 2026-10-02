@@ -324,6 +324,36 @@ impl App {
                     // those DO render; PtcStore is pure state so it folds
                     // silently like Usage does
                 }
+                E::PtcCall {
+                    call_id,
+                    name,
+                    args,
+                    ok,
+                    output,
+                    depth,
+                    lane,
+                } => {
+                    // a script's nested call — start+done in one fact, one
+                    // depth in from the RunCode row so it reads as "inside
+                    // the script" in both the live stream and the replay
+                    let args_value: serde_json::Value =
+                        serde_json::from_str(args).unwrap_or(serde_json::Value::Null);
+                    self.tool_start(
+                        name,
+                        &sunmao_core::agent::call_summary(name, &args_value),
+                        depth.saturating_add(1),
+                        *lane,
+                        Some(call_id.clone()),
+                    );
+                    self.tool_done(
+                        name,
+                        *ok,
+                        output,
+                        depth.saturating_add(1),
+                        *lane,
+                        Some(call_id),
+                    );
+                }
                 E::Hook { event, detail } => {
                     self.push_audit(&format!("{event} — {detail}"));
                 }

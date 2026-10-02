@@ -440,6 +440,15 @@ function renderReplay(events, anim) {
       let g = toolGroup(host);
       append(g, toolHTML([ev.exit_code === 0 ? 'ok' : 'err', 'shell', '$ ' + (ev.command || ''), 'exit ' + ev.exit_code, capOut(ev.output || '')]));
       logEv('tool_call', '! ' + (ev.command || ''));
+    } else if (t === 'ptc_call') {
+      // a RunCode script's nested call — durable start+done in one fact;
+      // renders as a done-state row one ↳ depth in from the RunCode card
+      const host = msgHost();
+      const g = toolGroup(host);
+      let a = null, sum = '';
+      try { a = JSON.parse(ev.args || '{}'); sum = a.command || a.path || a.pattern || a.name || a.prompt || String(ev.args).slice(0, 120); } catch { sum = String(ev.args || '').slice(0, 120); }
+      append(g, toolHTML([ev.ok ? 'ok' : 'err', '↳ ' + (ev.name || '?'), sum, '', capOut(ev.output || '')], { body: editPreviewHTML(ev.name, a) }));
+      logEv('tool_result', `↳ ${ev.name || '?'} ${ev.ok ? 'ok' : 'err'}`);
     } else if (t === 'session_meta') {
       // rename fact — rail title override; audit-visible like mode_change,
       // no transcript row

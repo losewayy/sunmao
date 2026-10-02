@@ -152,6 +152,24 @@ pub fn markdown(session_id: &str, cwd: &Path, events: &[SessionEvent]) -> String
             SessionEvent::Hook { event, detail } => {
                 out.push_str(&format!("\n> *hook {event}:* {detail}\n"));
             }
+            SessionEvent::PtcCall {
+                name,
+                args,
+                ok,
+                output,
+                ..
+            } => {
+                // a RunCode script's nested call — an indented tool row,
+                // same visibility as a top-level call but marked as
+                // script-driven so readers don't look for a tool_use pair
+                out.push_str(&format!(
+                    "\n### ↳ {} {}\n\n- args: `{}`\n- nested in RunCode script\n\n```text\n{}\n```\n",
+                    name,
+                    if *ok { "✓" } else { "✗" },
+                    truncate(args, 200),
+                    output
+                ));
+            }
             SessionEvent::Artifact {
                 name, path, bytes, ..
             } => {

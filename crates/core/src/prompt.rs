@@ -172,7 +172,10 @@ impl PromptAssembler {
 /// `driver` picks the tool-guidance section: `ptc` advertises RunCode as
 /// the whole surface, so the default "prefer dedicated tools" guidance
 /// would describe a call shape the model can't emit.
-fn builtin_sections(shell: crate::tool::ShellBackend, driver: crate::agent::LoopDriver) -> Vec<Section> {
+fn builtin_sections(
+    shell: crate::tool::ShellBackend,
+    driver: crate::agent::LoopDriver,
+) -> Vec<Section> {
     let mk = |name: &str, order: u32, text: &str| Section {
         name: name.into(),
         order,

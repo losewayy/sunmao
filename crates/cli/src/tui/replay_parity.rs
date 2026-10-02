@@ -149,6 +149,32 @@ fn fixture() -> Vec<E> {
         E::ModeChange {
             mode: sunmao_core::agent::ApprovalMode::ReadOnly,
         },
+        // a RunCode call whose script fanned out to two nested calls —
+        // durable PtcCall rows render one ↳ depth in on both frontends
+        tc(
+            call("rc1", "RunCode", r#"{"code":"tools.Read({path:'a'})"}"#),
+            0,
+            0,
+        ),
+        E::PtcCall {
+            call_id: "ptc-0".into(),
+            name: "Read".into(),
+            args: r#"{"path":"a.txt"}"#.into(),
+            ok: true,
+            output: "a".into(),
+            depth: 0,
+            lane: 0,
+        },
+        E::PtcCall {
+            call_id: "ptc-1".into(),
+            name: "Bash".into(),
+            args: r#"{"command":"false"}"#.into(),
+            ok: false,
+            output: "exit status 1".into(),
+            depth: 0,
+            lane: 0,
+        },
+        tr("rc1", "RunCode", true, "\"a\"", 0, 0),
         E::TaskDone {
             id: "bg-1".into(),
             ok: true,
@@ -358,6 +384,8 @@ fn replay_parity_tui_vs_gui() {
         "hook|approval.mode",
         "hook|hook injected context",
         "note|✓ Write",
+        "tool|1|Read|1xok",
+        "tool|1|Bash|1xerr",
     ] {
         assert!(
             tui_lines.iter().any(|l| l == needle),

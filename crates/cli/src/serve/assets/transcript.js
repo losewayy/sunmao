@@ -130,6 +130,10 @@ let curText = '';       // accumulated markdown for curBubble
 let curThink = null, curThinkText = '';
 const runningTools = [];   // {el, name, lane, depth, t0}
 const pendingApprovals = new Map();  // id -> card element
+// the session's standing goal — SessionEvent::Goal (replay) and
+// LiveEvent::goal frames both fold into this; a goal keeps the top strip
+// open even while idle so its round counter stays visible
+let curGoal = null;
 
 function msgHost() {
   if (!curMsg) { curMsg = append(TX, `<div class="msg bot">${botHead(true)}</div>`); curMsg.classList.add('enter'); }
@@ -255,7 +259,7 @@ function collapse(card, html) {
 }
 function syncWait() {
   $('#cmp-wait').hidden = pendingApprovals.size === 0;
-  $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy;
+  $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy && !curGoal;
   renderRail();
 }
 function decide(verdict, id) {
@@ -278,7 +282,7 @@ function abortTurn() {
 function setBusy(on) {
   busy = !!on;
   $('#cmp-busy').hidden = !busy;
-  $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy;
+  $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy && !curGoal;
   // one button morphs instead of swapping two: busy Enter queues the
   // message for the next turn while Ctrl+Enter steers mid-turn, so the
   // click target flips to cancel
@@ -289,6 +293,29 @@ function setBusy(on) {
   btn.setAttribute('aria-label', busy ? '停止生成' : '发送');
   $('use', btn).setAttribute('href', busy ? '#i-square' : '#i-arrow-up');
   renderRail();
+}
+
+/* ---- goal chip — mirrors the TUI footer chip: objective (truncated),
+   status, round counter. `complete`/`abandoned` still pin it until a
+   later event clears curGoal. */
+const GOAL_STATUS = { in_progress: '进行中', complete: '已完成', blocked: '受阻', abandoned: '已放弃' };
+function renderGoalChip() {
+  const el = $('#cmp-goal');
+  if (!curGoal) { el.hidden = true; el.textContent = ''; return; }
+  const obj = curGoal.objective || '';
+  const cut = [...obj].slice(0, 18).join('') + ([...obj].length > 18 ? '…' : '');
+  el.innerHTML = `<b>◎</b>${esc(cut)} · ${GOAL_STATUS[curGoal.status] || curGoal.status} · 轮 ${curGoal.rounds}/${curGoal.max_rounds}`;
+  el.hidden = false;
+}
+// one fold for both surfaces — a live `goal` event and a `goal` session
+// event carry the same {goal:{...}} payload and land identically
+function applyGoalEvent(g, log) {
+  const prev = curGoal;
+  curGoal = g;
+  renderGoalChip();
+  $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy && !curGoal;
+  if (log) logEv('goal', `${g.status} · 轮 ${g.rounds}/${g.max_rounds}`);
+  return !prev || prev.status !== g.status || prev.objective !== g.objective;
 }
 
 /* ================= event log ================= */
@@ -323,6 +350,9 @@ function renderReplay(events, anim) {
   TX.innerHTML = ''; EVLOG.length = 0;
   pendingApprovals.clear(); runningTools.length = 0;
   closeMsg(); syncWait();
+  // the goal is session state the replay re-derives — wipe it here so a
+  // goal-less log can't inherit the previous view's chip
+  curGoal = null; renderGoalChip();
   const pendingCalls = new Map(); // call_id -> tool element
   for (const ev of events || []) {
     const t = ev.type;
@@ -430,6 +460,13 @@ function renderReplay(events, anim) {
         const mark = { done: 'x', in_progress: '>', pending: ' ' };
         addNote('task list:\n' + items.map(i => `- [${mark[i.status] || ' '}] ${i.content}`).join('\n'));
       }
+    } else if (t === 'goal' && ev.goal) {
+      // status/objective flips are transcript-worthy; round bumps just
+      // re-render the chip — otherwise a long run's replay is all noise
+      if (applyGoalEvent(ev.goal, true)) {
+        addNote(`goal · ${GOAL_STATUS[ev.goal.status] || ev.goal.status}: ${ev.goal.objective || ''}` +
+          (ev.goal.status === 'blocked' && ev.goal.blocker ? ` — ${ev.goal.blocker}` : ''));
+      }
     }
     // other event types have no transcript footprint
   }
@@ -497,6 +534,12 @@ function liveEvent(raw) {
     if (items.length) {
       const mark = { done: 'x', in_progress: '>', pending: ' ' };
       addNote('task list:\n' + items.map(i => `- [${mark[i.status] || ' '}] ${i.content}`).join('\n'));
+    }
+  }
+  else if (t === 'goal' && ev.goal) {
+    if (applyGoalEvent(ev.goal, true)) {
+      addNote(`goal · ${GOAL_STATUS[ev.goal.status] || ev.goal.status}: ${ev.goal.objective || ''}` +
+        (ev.goal.status === 'blocked' && ev.goal.blocker ? ` — ${ev.goal.blocker}` : ''));
     }
   }
   else if (t === 'usage') { logEv('usage', `prompt ${nf(ev.prompt_tokens || 0)} · cache_read ${nf(ev.cache_read_input_tokens || 0)}`); refreshDataflowSoon(); }

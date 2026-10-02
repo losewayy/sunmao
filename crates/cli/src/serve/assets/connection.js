@@ -78,6 +78,9 @@ function route(v) {
       waitingSessions.clear(); (v.waiting_sessions || []).forEach(id => waitingSessions.add(id));
       steerQ = v.steer || []; inputQ = v.queue || []; renderQueueChips();
       renderReplay(v.replay || []);
+      // the authoritative live goal rides the hello frame — the replay
+      // fold just walked the same log, so this only overwrites on drift
+      if (v.goal) { curGoal = v.goal; renderGoalChip(); }
       (v.pending || []).forEach(c => approvalCard(c));
       setBusy(!!v.busy);
       refreshSessions(); refreshModels(); refreshProjects();
@@ -111,6 +114,7 @@ function route(v) {
       $('#df-sess').textContent = sessionId || '—';
       renderReplay(v.events || []);
       setApprovalMode(v.mode);
+      if (v.goal) { curGoal = v.goal; renderGoalChip(); }
       setBusy(!!v.busy);
       (v.pending || []).forEach(c => approvalCard(c));
       steerQ = v.steer || []; inputQ = v.queue || []; renderQueueChips();

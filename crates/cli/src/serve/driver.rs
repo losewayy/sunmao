@@ -121,6 +121,12 @@ pub(super) async fn driver(s: Arc<Shared>, host: Arc<Host>) {
             }
             host.queue_notify.notified().await;
         };
+        // claimed — the goal chain stops yielding to this input once it
+        // starts running; the counter tracks *queued* submissions only
+        host.agent
+            .context()
+            .input_pending
+            .fetch_sub(1, Ordering::Relaxed);
         // chip gone the moment the turn claims it — and every tab sees it
         let _ = s.live.send(super::host::input_queue_frame(&host));
         dispatch_input(&s, &host, input).await;
@@ -371,6 +377,37 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, cmd_line: &str, cli
         }
         commands::Command::Todos => {
             note(commands::todos_text(&host.agent.todos()));
+            true
+        }
+        commands::Command::Goal(arg) => {
+            match arg {
+                None => note(commands::goal_text(host.agent.goal().as_ref())),
+                Some(objective) => {
+                    let obs = WsObserver::new(s.live.clone(), sess.clone());
+                    match host.agent.set_goal(&objective, &obs).await {
+                        Ok(()) => {
+                            note(
+                                "[goal set — the agent keeps at it until complete/blocked]".into(),
+                            );
+                            // the objective itself is the kickoff prompt —
+                            // the chain continues through run_turn_blocks
+                            let cwd = host.agent.session_cwd();
+                            let (prompt, atts) =
+                                crate::attachments::attach_mentions(&objective, &cwd);
+                            let _ = host.agent.run_turn_blocks(&prompt, &atts, &obs).await;
+                        }
+                        Err(e) => note(format!("[goal failed] {e:#}")),
+                    }
+                }
+            }
+            true
+        }
+        commands::Command::GoalClear => {
+            let obs = WsObserver::new(s.live.clone(), sess.clone());
+            match host.agent.clear_goal(&obs).await {
+                Ok(()) => note("[goal cleared]".into()),
+                Err(e) => note(format!("[goal clear failed] {e:#}")),
+            }
             true
         }
         commands::Command::Mcp => {

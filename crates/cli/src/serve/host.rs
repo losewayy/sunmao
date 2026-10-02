@@ -254,11 +254,20 @@ pub(crate) fn input_queue_frame(host: &Host) -> serde_json::Value {
 /// racing a pop is normal traffic, not a protocol fault.
 pub(crate) fn queue_op(host: &Host, v: &serde_json::Value) {
     let Some(id) = v["id"].as_u64() else { return };
+    // every removal drops input_pending the same way a driver pop does —
+    // the counter tracks *queued* submissions regardless of how they leave
+    let dropped = || {
+        host.agent
+            .context()
+            .input_pending
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    };
     let mut q = host.queue.lock_or_recover();
     match v["type"].as_str() {
         Some("input_remove") => {
             if let Some(p) = q.iter().position(|i| i.id == id) {
                 q.remove(p);
+                dropped();
             }
         }
         Some("input_move") => {

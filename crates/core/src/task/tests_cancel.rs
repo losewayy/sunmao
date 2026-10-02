@@ -105,3 +105,77 @@ async fn cancel_sub_kills_one_child() {
     assert!(err.contains("finished"), "{err}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A foreground Task whose owning turn is cancelled gets its call future
+/// dropped mid-run — the roster entry must still settle, or it reads as
+/// "running" forever and `Task{resume}` refuses the child for good.
+#[tokio::test]
+async fn cancelled_foreground_spawn_does_not_ghost_the_roster() {
+    let dir = crate::fresh_test_dir("cancel-fg");
+    std::fs::create_dir_all(&dir).unwrap();
+    // first request parks forever (the turn's cancel drops the call
+    // future — no reply ever arrives); a resumed child answers fast
+    struct ParkOnce {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+    #[async_trait::async_trait]
+    impl ProviderAdapter for ParkOnce {
+        async fn stream(&self, _req: ChatRequest<'_>) -> anyhow::Result<DeltaStream> {
+            if self
+                .calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                == 0
+            {
+                std::future::pending::<()>().await;
+            }
+            Ok(Box::pin(futures_util::stream::iter(vec![
+                Ok(sunmao_llm::StreamDelta::Content("done".into())),
+                Ok(sunmao_llm::StreamDelta::Finish {
+                    reason: Some("stop".into()),
+                    usage: None,
+                }),
+            ])))
+        }
+    }
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let ctx = Arc::new(Context::new(
+        Arc::new(ParkOnce {
+            calls: calls.clone(),
+        }),
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        dir.clone(),
+    ));
+
+    let spawned = tokio::spawn({
+        let ctx = ctx.clone();
+        async move { TaskTool.call(json!({"prompt": "park forever"}), &ctx).await }
+    });
+    // wait until the child is actually parked on its first request — the
+    // roster row exists earlier than that (registration precedes run_turn),
+    // and aborting too early would leave the provider's park-once armed
+    // for the RESUME call instead
+    for _ in 0..500 {
+        if calls.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+    spawned.abort();
+    let _ = spawned.await;
+    let entry = ctx.live_tasks.lock_or_recover()[0].clone();
+    assert_eq!(
+        entry.done,
+        Some(false),
+        "a dropped foreground spawn must settle its roster row — {:?}",
+        entry.done
+    );
+    // resume must not refuse a ghost as "still running"
+    let res = TaskTool
+        .call(json!({"resume": entry.id, "prompt": "continue"}), &ctx)
+        .await
+        .expect("resume must accept a cancelled child");
+    assert!(res.ok, "{}", res.output);
+    std::fs::remove_dir_all(&dir).ok();
+}

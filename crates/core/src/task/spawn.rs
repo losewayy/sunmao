@@ -168,6 +168,41 @@ pub(super) fn finish_task(
     }
 }
 
+/// Drop-guard on a roster entry: if the future driving the child is
+/// cancelled (the turn's tool-call select aborts a foreground Task mid-run,
+/// or the detached task dies), the entry would stay `done: None` forever —
+/// /tasks lists a ghost "running" row and `Task{resume}` refuses it as
+/// still-running. The guard fills `done` only when it's still unset — the
+/// happy path's `finish_task` writes the real `ok` first and Drop no-ops.
+pub(super) struct RosterGuard {
+    tasks: Arc<std::sync::Mutex<Vec<crate::context::TaskEntry>>>,
+    id: String,
+}
+
+impl RosterGuard {
+    pub(super) fn new(
+        tasks: &Arc<std::sync::Mutex<Vec<crate::context::TaskEntry>>>,
+        id: &str,
+    ) -> Self {
+        Self {
+            tasks: tasks.clone(),
+            id: id.to_string(),
+        }
+    }
+}
+
+impl Drop for RosterGuard {
+    fn drop(&mut self) {
+        let mut tasks = self.tasks.lock_or_recover();
+        if let Some(e) = tasks
+            .iter_mut()
+            .find(|t| t.id == self.id && t.done.is_none())
+        {
+            e.done = Some(false);
+        }
+    }
+}
+
 /// Run one sub-agent to completion in the foreground: registers, drives
 /// `run_spawn` (`source` names the hook dialect — `"subagent"` for a fresh
 /// spawn, `"subagent-resume"` for a continuation), then flips the roster.
@@ -183,6 +218,9 @@ async fn drive_foreground(
     let steer = sub_ctx.steer.clone();
     let cancel = crate::context::SubCancel::new(&sub_ctx);
     register_task(ctx, &sub_id, lane, &prompt, agent, &steer, &cancel);
+    // a cancelled select arm drops this future mid-run_spawn — without the
+    // guard the roster row stays "running" forever (and resume refuses it)
+    let _roster = RosterGuard::new(&ctx.live_tasks, &sub_id);
     let mut res = run_spawn(
         Arc::new(sub_ctx),
         prompt,
@@ -285,31 +323,7 @@ pub(super) async fn detach(
     let notify_sink = sink.clone();
     let id = sub_id;
     tokio::spawn(async move {
-        // drop-guard on the roster entry: if this future is cancelled (task
-        // dropped), the completion path below never runs and the entry
-        // would stay `done: None` forever — /tasks would list a ghost
-        // "running" task and leak its steer/cancel handles. The guard only
-        // fills `done` when it's still None — the happy path's
-        // `finish_task` writes the real `ok` first and Drop then no-ops.
-        struct RosterGuard {
-            tasks: Arc<std::sync::Mutex<Vec<crate::context::TaskEntry>>>,
-            id: String,
-        }
-        impl Drop for RosterGuard {
-            fn drop(&mut self) {
-                let mut tasks = self.tasks.lock_or_recover();
-                if let Some(e) = tasks
-                    .iter_mut()
-                    .find(|t| t.id == self.id && t.done.is_none())
-                {
-                    e.done = Some(false);
-                }
-            }
-        }
-        let _roster = RosterGuard {
-            tasks: parent_tasks.clone(),
-            id: id.clone(),
-        };
+        let _roster = RosterGuard::new(&parent_tasks, &id);
         let res = run_spawn(Arc::new(sub_ctx), prompt, sink, source).await;
         // The child's own log already holds the full transcript — the
         // parent record stays lean (capped), with `id` pointing there.

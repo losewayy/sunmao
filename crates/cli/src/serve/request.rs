@@ -195,6 +195,10 @@ impl HostHandle {
             ("POST", ["session", id, "rename"]) => session_rename(s, id, body).await,
             ("DELETE", ["session", id]) => session_delete(s, id).await,
             ("GET", ["session", id, "events"]) => session_events(s, id),
+            // `GET /session/{id}/md` — the SAME renderer `export_md`/`export_zip`
+            // ride, served over HTTP so the download matches REPL/TUI output
+            // byte-for-byte. Frontend never re-implements the fold.
+            ("GET", ["session", id, "md"]) => session_markdown(s, id),
             ("GET", ["session", id, "turns"]) => {
                 // the /rewind picker's data — user-turn boundaries on the
                 // log, numbered and previewed exactly like the TUI list
@@ -278,6 +282,7 @@ fn js_asset(name: &str) -> Option<&'static str> {
         "wallpaper.js" => super::WALLPAPER_JS,
         "settings.js" => super::SETTINGS_JS,
         "diff.js" => super::DIFF_JS,
+        "md.js" => super::MD_JS,
         "transcript.js" => super::TRANSCRIPT_JS,
         "islands.js" => super::ISLANDS_JS,
         "connection.js" => super::CONNECTION_JS,
@@ -455,6 +460,30 @@ fn session_events(s: &Arc<Shared>, id: &str) -> HostResponse {
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect();
     HostResponse::json(serde_json::json!({"events": events}))
+}
+
+/// `GET /session/{id}/md` — the session transcript as markdown. The wire
+/// shape (raw `Content-Type: text/markdown` body) rides the download it
+/// was built for; the renderer is `commands::export::markdown` — the same
+/// fold `/export-md` (REPL), `/export-zip` (debug bundle), and TUI use —
+/// so the four exports are the same document.
+fn session_markdown(s: &Arc<Shared>, id: &str) -> HostResponse {
+    let Some(p) = log_path(s, id) else {
+        return HostResponse::err(404, "no such session".into());
+    };
+    let Ok(text) = std::fs::read_to_string(&p) else {
+        return HostResponse::err(500, "unreadable log".into());
+    };
+    let events: Vec<sunmao_core::session::SessionEvent> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    let md = crate::commands::export::markdown(id, &s.cwd, &events);
+    HostResponse {
+        status: 200,
+        headers: vec![("content-type".into(), "text/markdown; charset=utf-8".into())],
+        body: md.into_bytes(),
+    }
 }
 
 /// `GET /session[?id=…]` — the viewed host's id + live set + the session's

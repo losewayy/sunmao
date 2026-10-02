@@ -238,3 +238,68 @@ async fn runcode_nested_calls_are_durable_ptc_facts() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// The script-side doom-loop guard: the same (tool, args) for the third
+/// call in a row resolves {ok:false} with a legible reason — a runaway
+/// `while` over a static call dies instead of burning the budget.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runcode_doom_loop_refuses_identical_streak() {
+    let dir = crate::fresh_test_dir("ptc9");
+    std::fs::create_dir_all(&dir).unwrap();
+    let ctx = test_ctx(&dir);
+    let res = run(
+        &ctx,
+        r#"(async () => {
+            const r = [];
+            for (let i = 0; i < 5; i++) r.push((await tools.Glob({pattern: "x"})).ok);
+            return r.join(",");
+        })()"#,
+    )
+    .await;
+    assert!(res.ok, "{}", res.output);
+    // first two calls ran, calls 3..5 refused by the guard
+    assert_eq!(
+        res.output, "\"true,true,false,false,false\"",
+        "{}",
+        res.output
+    );
+    let evs = ctx.sessions.lock().await.events().await.unwrap();
+    let refused = evs
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                SessionEvent::PtcCall { ok: false, output, .. } if output.contains("doom-loop")
+            )
+        })
+        .count();
+    assert_eq!(refused, 3, "each refused call is a durable fact: {evs:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A different call interleaved between repeats resets the streak —
+/// `glob(x) → glob(y) → glob(x)` is real control flow, not a stuck loop.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runcode_doom_loop_resets_on_varied_calls() {
+    let dir = crate::fresh_test_dir("ptc10");
+    std::fs::create_dir_all(&dir).unwrap();
+    let ctx = test_ctx(&dir);
+    let res = run(
+        &ctx,
+        r#"(async () => {
+            const r = [];
+            for (let i = 0; i < 5; i++) {
+                r.push((await tools.Glob({pattern: "x"})).ok);
+                r.push((await tools.Glob({pattern: "y" + i})).ok);
+            }
+            return r.join(",");
+        })()"#,
+    )
+    .await;
+    assert!(res.ok, "{}", res.output);
+    assert_eq!(
+        res.output, "\"true,true,true,true,true,true,true,true,true,true\"",
+        "{}",
+        res.output
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

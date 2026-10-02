@@ -114,3 +114,30 @@ fn plugin_root_expands() {
         "non-plugin command untouched"
     );
 }
+
+/// A hook that detaches a grandchild (`start /b`) inherits our pipe ends —
+/// cmd exits, the pipes never EOF, and the OLD code hung in the drain join
+/// until the grandchild's own lifespan ended. The bounded drain must return
+/// the hook's verdict in ~the drain grace, not the grandchild's runtime.
+#[cfg(windows)]
+#[tokio::test]
+async fn detached_grandchild_cannot_hang_hook() {
+    let dir = crate::fresh_test_dir("hook-drain");
+    std::fs::create_dir_all(&dir).unwrap();
+    let t0 = std::time::Instant::now();
+    let res = super::exec::run_hook_command(
+        "cmd /c start /b ping -n 20 127.0.0.1 >nul",
+        &serde_json::json!({"x": 1}),
+        &dir,
+        Some(60),
+    )
+    .await
+    .unwrap();
+    assert!(
+        t0.elapsed() < std::time::Duration::from_secs(15),
+        "drain must be bounded: {:?}",
+        t0.elapsed()
+    );
+    assert_eq!(res.0, 0);
+    std::fs::remove_dir_all(&dir).ok();
+}

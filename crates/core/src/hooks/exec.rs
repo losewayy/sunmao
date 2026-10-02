@@ -60,17 +60,24 @@ pub(super) async fn run_hook_command(
         // stdout/stderr drain concurrently — a hook that fills the pipe
         // buffer before exec resolves deadlocks otherwise (same shape the
         // Bash tool had). Timeout SIGKILLs rather than orphaning the child.
+        // Drains and the stdin feed are bounded too: a detached grandchild
+        // holding a pipe end keeps them open past exec, and "hooks must
+        // never hang the loop" covers them — partial bytes still return.
+        let out_buf = crate::tool::SharedBuf::default();
+        let err_buf = crate::tool::SharedBuf::default();
         let (code, out, err) = rt.block_on(async {
-            let out_drain = tokio::task::spawn_blocking(move || {
-                let mut b = Vec::new();
-                out_r.pipe_to(&mut b).ok();
-                crate::console::console_text(&b)
-            });
-            let err_drain = tokio::task::spawn_blocking(move || {
-                let mut b = Vec::new();
-                err_r.pipe_to(&mut b).ok();
-                crate::console::console_text(&b)
-            });
+            let out_drain = {
+                let mut b = out_buf.clone();
+                tokio::task::spawn_blocking(move || {
+                    out_r.pipe_to(&mut b).ok();
+                })
+            };
+            let err_drain = {
+                let mut b = err_buf.clone();
+                tokio::task::spawn_blocking(move || {
+                    err_r.pipe_to(&mut b).ok();
+                })
+            };
             enum End {
                 Natural(i32),
                 Timeout,
@@ -87,9 +94,12 @@ pub(super) async fn run_hook_command(
                     Err(())
                 }
             };
-            let out = out_drain.await.unwrap_or_default();
-            let err = err_drain.await.unwrap_or_default();
-            (code, out, err)
+            let _ = tokio::time::timeout(
+                crate::tool::PIPE_DRAIN_TIMEOUT,
+                futures_util::future::join(out_drain, err_drain),
+            )
+            .await;
+            (code, out_buf.text(), err_buf.text())
         });
         let code = match code {
             Ok(c) => c,
@@ -100,7 +110,13 @@ pub(super) async fn run_hook_command(
                 anyhow::bail!("hook timed out after {budget}s");
             }
         };
-        let _ = feed_thread.join();
+        // bounded join — a grandchild inheriting the stdin read end keeps
+        // the writer blocked on a full buffer; past the deadline the thread
+        // is abandoned like the drains above.
+        let deadline = std::time::Instant::now() + crate::tool::PIPE_DRAIN_TIMEOUT;
+        while !feed_thread.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
         Ok((code, out, err))
     })
     .await?

@@ -11,13 +11,17 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use sunmao_core::context::MutexRecover;
 
 use sunmao_core::agent::Observer as _;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::driver::slash_candidates;
-use super::host::{Host, Input, Shared, WsObserver, display_path, fork_or_resume, new_session};
+use super::host::{
+    Host, Input, Shared, WsObserver, display_path, fork_or_resume, input_queue_frame, new_session,
+    queue_items,
+};
 
 /// Process-global client ids — a `session` switch frame names its issuer
 /// so only that tab follows (`0` = the caller opted out of the tag).
@@ -91,10 +95,21 @@ impl Client {
             "mode": host.as_ref().map(|h| h.agent.approval_mode().as_str()).unwrap_or("auto"),
             "sandbox_port": client.s.sandbox_port,
             "busy": host.as_ref().map(|h| h.busy.load(Ordering::Relaxed) > 0).unwrap_or(false),
-            "busy_sessions": client.s.sessions.lock().unwrap().values()
+            "busy_sessions": client.s.sessions.lock_or_recover().values()
                 .filter(|h| h.busy.load(Ordering::Relaxed) > 0)
                 .map(|h| h.id.clone()).collect::<Vec<_>>(),
             "steer": host.as_ref().map(|h| h.agent.steer_queue()).unwrap_or_default(),
+            // queued inputs render as chips on every tab — a rejoining one
+            // must see them too, not just the tab that submitted
+            "queue": host.as_ref().map(|h| queue_items(h)).unwrap_or_default(),
+            // a reconnect mid-ask must re-render the pending card — the
+            // kernel is still blocked on it; without it the transcript
+            // replays clean and the approval is unanswerable. Same for
+            // every session that has a card outstanding (rail badges).
+            "pending": host.as_ref().map(|h| h.approvals.cards()).unwrap_or_default(),
+            "waiting_sessions": client.s.sessions.lock_or_recover().values()
+                .filter(|h| !h.approvals.cards().is_empty())
+                .map(|h| h.id.clone()).collect::<Vec<_>>(),
             "replay": evs,
         }));
         client
@@ -121,6 +136,7 @@ impl Client {
             // surface as chips the same way
             "pending": host.approvals.cards(),
             "steer": host.agent.steer_queue(),
+            "queue": queue_items(host),
         }));
     }
 
@@ -158,30 +174,56 @@ impl Client {
                         }
                     }
                 }
-                if !text.trim().is_empty()
+                // attachments-only prompts count — a pasted screenshot with
+                // no caption is still a turn, not a no-op.
+                if !(text.trim().is_empty() && attachments.is_empty())
                     && let Some(h) = self.viewing_host()
                 {
-                    // busy + not a slash command → steer the running turn;
-                    // a prompt carrying attachments can't steer (steer is
-                    // text-only), so it keeps FIFO order as a queued input.
-                    // slash lines keep FIFO order (a queued `/mode` mustn't
-                    // jump ahead of the prompt it's queued behind)
-                    if h.busy.load(Ordering::Relaxed) > 0
-                        && !text.trim_start().starts_with('/')
-                        && attachments.is_empty()
+                    // Enter always enqueues — busy no longer routes to steer
+                    // (that's Ctrl+Enter's explicit wire type now). Idle =
+                    // empty queue: notify wakes the driver and it pops this
+                    // same turn. The user-bubble echo moved to dispatch_input
+                    // — a queued prompt must not paint ahead of the turn
+                    // that's still running.
                     {
-                        h.agent.push_steer(self.id, text);
-                        let _ = self.s.live.send(serde_json::json!({
-                            "type":"steer_queue","sess":h.id,
-                            "items":h.agent.steer_queue(),
-                        }));
-                    } else {
-                        let _ = h.input.send(Input {
+                        let id = h
+                            .queue_next_id
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        h.queue.lock_or_recover().push_back(Input {
+                            id,
                             client: self.id,
                             text,
                             attachments,
                         });
+                        h.queue_notify.notify_one();
+                        let _ = self.s.live.send(input_queue_frame(&h));
                     }
+                }
+            }
+            // explicit steering — Ctrl+Enter sends this instead of `prompt`.
+            // The turn loop folds it in at the next request boundary; if the
+            // turn already ended, the driver drains it as the next input —
+            // ahead of the FIFO, which is exactly the "加急" semantic:
+            // a queued prompt never out-ranks a live steer.
+            "steer" => {
+                let text = v["text"].as_str().unwrap_or("").to_string();
+                if !text.trim().is_empty()
+                    && let Some(h) = self.viewing_host()
+                {
+                    h.agent.push_steer(self.id, text);
+                    let _ = self.s.live.send(serde_json::json!({
+                        "type":"steer_queue","sess":h.id,
+                        "items":h.agent.steer_queue(),
+                    }));
+                }
+            }
+            // input-queue controls — the GUI chips ride these. Mutation
+            // discipline lives in host::queue_op next to the queue itself;
+            // every op broadcasts the refreshed list so tabs stay in sync.
+            "input_remove" | "input_move" | "input_edit" => {
+                if let Some(h) = self.viewing_host() {
+                    super::host::queue_op(&h, &v);
+                    let _ = self.s.live.send(input_queue_frame(&h));
                 }
             }
             "steer_cancel" => {
@@ -206,12 +248,34 @@ impl Client {
                 let sess = v["sess"].as_str().unwrap_or(&self.viewing).to_string();
                 let reply = match target {
                     Some(h) if !sub_id.is_empty() && !text.is_empty() => {
-                        match h.agent.steer_sub(&sub_id, text) {
+                        match h.agent.steer_sub(&sub_id, text).await {
                             Ok(()) => format!("steered {sub_id}"),
                             Err(e) => e.to_string(),
                         }
                     }
                     Some(_) => "task_steer needs id + text".into(),
+                    None => format!("no session {sess}"),
+                };
+                self.emit(serde_json::json!({
+                    "type":"note","sess":sess,"text":reply,
+                }));
+            }
+            // {type:"task_cancel", sess, id} — kill ONE running sub-agent
+            // (the roster popover's stop control); `agent.cancel()` nukes
+            // the whole turn, this is the surgical version.
+            "task_cancel" => {
+                let sub_id = v["id"].as_str().unwrap_or("").to_string();
+                let target = v["sess"]
+                    .as_str()
+                    .and_then(|id| self.s.host(id))
+                    .or_else(|| self.viewing_host());
+                let sess = v["sess"].as_str().unwrap_or(&self.viewing).to_string();
+                let reply = match target {
+                    Some(h) if !sub_id.is_empty() => match h.agent.cancel_sub(&sub_id).await {
+                        Ok(()) => format!("cancelled {sub_id}"),
+                        Err(e) => e.to_string(),
+                    },
+                    Some(_) => "task_cancel needs id".into(),
                     None => format!("no session {sess}"),
                 };
                 self.emit(serde_json::json!({
@@ -239,15 +303,23 @@ impl Client {
                             args: serde_json::Value::Null,
                         });
                         let t0 = std::time::Instant::now();
-                        let (ok, output, code) =
-                            match sunmao_core::tool::run_foreground(&cmd, cwd, 120).await {
-                                Ok(run) => (
-                                    run.exit_code == 0,
-                                    sunmao_core::tool::render_run(&run),
-                                    run.exit_code,
-                                ),
-                                Err(msg) => (false, msg, -1),
-                            };
+                        let ctx = h.agent.context().clone();
+                        let (ok, output, code) = match sunmao_core::tool::run_foreground(
+                            &cmd,
+                            cwd,
+                            120,
+                            ctx.shell,
+                            Some(ctx.cancel_notify.clone()),
+                        )
+                        .await
+                        {
+                            Ok(run) => (
+                                run.exit_code == 0,
+                                sunmao_core::tool::render_run(&run),
+                                run.exit_code,
+                            ),
+                            Err(msg) => (false, msg, -1),
+                        };
                         h.agent.record_local_shell(&cmd, code, &output).await;
                         obs.on_event(&LiveEvent::ToolDone {
                             name: "!".into(),
@@ -279,7 +351,7 @@ impl Client {
                     .and_then(|id| self.s.host(id))
                     .or_else(|| self.viewing_host());
                 if let Some(h) = target
-                    && let Some(card) = h.approvals.map.lock().unwrap().remove(&id)
+                    && let Some(card) = h.approvals.map.lock_or_recover().remove(&id)
                 {
                     let _ = self.s.live.send(serde_json::json!({
                         "type": "approval_done", "sess": h.id, "id": id,
@@ -463,11 +535,20 @@ impl Client {
                             &WsObserver::new(self.s.live.clone(), h.id.clone()),
                         )
                         .await;
-                    let _ = h.input.send(Input {
+                    // same queue path as the composer prompt — the island's
+                    // prompt is a real user turn; the bubble paints when the
+                    // driver picks it up, not ahead of a running turn
+                    let id = h
+                        .queue_next_id
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    h.queue.lock_or_recover().push_back(Input {
+                        id,
                         client: self.id,
                         text,
                         attachments: Vec::new(),
                     });
+                    h.queue_notify.notify_one();
+                    let _ = self.s.live.send(input_queue_frame(&h));
                 }
                 self.emit(serde_json::json!({"type":"ui_result","id":v["id"],"result":{}}));
             }

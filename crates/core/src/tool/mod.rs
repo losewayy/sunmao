@@ -7,7 +7,7 @@
 //!   shell        — `Bash`: model writes a command string; routed through
 //!                  deno_task_shell so bash syntax is identical on Windows.
 
-use crate::context::RwLockRecover;
+use crate::context::{MutexRecover, RwLockRecover};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -154,6 +154,36 @@ impl Default for ToolRegistry {
     }
 }
 
+/// A completed exec doesn't guarantee the pipes hit EOF — a detached
+/// grandchild (`cmd /c start /b`, a daemonizing child) keeps the write end
+/// open forever. Drains get this grace after exec; past it we keep the
+/// partial bytes and mark the run's `ended` (the abandoned blocking
+/// threads are bounded garbage, not a hang). Shared by the shell tools and
+/// the hook executor.
+pub(crate) const PIPE_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Bytes a `pipe_to` drain thread accumulates — shared so a timed-out
+/// drain still yields what arrived (`pipe_to` takes `&mut dyn Write`,
+/// an owned Vec would be unrecoverable past the timeout).
+#[derive(Clone, Default)]
+pub(crate) struct SharedBuf(pub(crate) std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl SharedBuf {
+    pub(crate) fn text(&self) -> String {
+        crate::console::console_text(&self.0.lock_or_recover())
+    }
+}
+
+impl std::io::Write for SharedBuf {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock_or_recover().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// Canonical builtin set for v0.1.
 pub fn builtin_registry() -> ToolRegistry {
     let r = ToolRegistry::new();
@@ -198,7 +228,6 @@ pub use ptc::RunCodeTool;
 pub use search::{GlobTool, GrepTool};
 pub use sendmsg::SendMessageTool;
 pub use shell::{BashTool, JobOutputTool, ShellRun, render_run, run_foreground};
-pub(crate) use shell::{PIPE_DRAIN_TIMEOUT, SharedBuf};
 pub(crate) use todo::TODOS_LINE_PREFIX;
 pub use todo::{
     TodoItem, TodoStatus, TodoWriteTool, inject_text as todos_inject_text, render as render_todos,

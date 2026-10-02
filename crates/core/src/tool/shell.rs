@@ -1,39 +1,9 @@
-use crate::context::MutexRecover;
 use crate::tool::*;
 use anyhow::bail;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 // ---------- Bash ----------
-
-/// A completed exec doesn't guarantee the pipes hit EOF — a detached
-/// grandchild (`cmd /c start /b`, a daemonizing child) keeps the write end
-/// open forever. Drains get this grace after exec; past it we keep the
-/// partial bytes and mark the run's `ended` (the abandoned blocking
-/// threads are bounded garbage, not a hang).
-pub(crate) const PIPE_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-
-/// Bytes a `pipe_to` drain thread accumulates — shared so a timed-out
-/// drain still yields what arrived (`pipe_to` takes `&mut dyn Write`,
-/// an owned Vec would be unrecoverable past the timeout).
-#[derive(Clone, Default)]
-pub(crate) struct SharedBuf(pub(crate) std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-
-impl SharedBuf {
-    pub(crate) fn text(&self) -> String {
-        crate::console::console_text(&self.0.lock_or_recover())
-    }
-}
-
-impl std::io::Write for SharedBuf {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock_or_recover().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
 
 pub struct BashTool;
 

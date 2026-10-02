@@ -3,6 +3,12 @@
 //!
 //! Rule syntax: `"Tool"` or `"Tool(specifier)"` — e.g. `"Bash"`,
 //! `"Bash(npm *)"` (glob over the command), `"Read(./src/**)"` (glob path).
+//! Specifier extensions: `!` negates the entry (`Read(!**/.env)`), `re:`
+//! compiles the rest as a regex (`Bash(re:^git (push|clone)\b)`); an
+//! invalid regex degrades to a literal-string glob, same convention as
+//! the hooks matcher. A bucket matches when some positive entry hits AND
+//! no `!` entry hits — so `deny: ["Read(**/.env)", "Read(!**/.env.example")]`
+//! refuses dotenv files but not the committed templates.
 //! Semantics: deny wins over ask wins over allow; unmatched →
 //! the runtime's default (approval gate for risky, allow otherwise).
 
@@ -21,6 +27,81 @@ pub enum Verdict {
     Deny,
 }
 
+/// One specifier inside a rule — the compiled form of whatever the user
+/// wrote after `Tool(`.
+#[derive(Clone)]
+enum Spec {
+    /// Glob (`npm *`, `./src/**`) — the default shape.
+    Glob(glob::Pattern),
+    /// `re:<pattern>` — regex searched against the specifier. An invalid
+    /// regex degrades to an exact-literal glob rather than silently
+    /// dropping out of the table (same convention as the hooks matcher).
+    Regex(regex::Regex),
+    /// `!`-prefixed entry — vetoes a match of its bucket.
+    Neg(Box<Spec>),
+}
+
+impl Spec {
+    fn parse(spec: &str) -> Self {
+        match spec.strip_prefix('!') {
+            Some(rest) => Spec::Neg(Box::new(Self::positive(rest))),
+            None => Self::positive(spec),
+        }
+    }
+
+    fn positive(spec: &str) -> Self {
+        if let Some(rest) = spec.strip_prefix("re:") {
+            return match regex::Regex::new(rest) {
+                Ok(re) => Spec::Regex(re),
+                Err(e) => {
+                    tracing::warn!(
+                        "permission rule: bad regex {rest:?} ({e}) — matching literally"
+                    );
+                    Self::literal(rest)
+                }
+            };
+        }
+        match glob::Pattern::new(spec) {
+            Ok(p) => Spec::Glob(p),
+            Err(e) => {
+                // an unparseable glob degrades to a literal too — a mangled
+                // rule must not silently drop out of the deny table
+                tracing::warn!("permission rule: bad glob {spec:?} ({e}) — matching literally");
+                Self::literal(spec)
+            }
+        }
+    }
+
+    fn literal(spec: &str) -> Self {
+        Spec::Glob(
+            glob::Pattern::new(&glob::Pattern::escape(spec)).unwrap_or_else(|_| {
+                // escape() output always parses; belt-and-suspenders fallback
+                glob::Pattern::new("*").expect("' *' is a valid glob")
+            }),
+        )
+    }
+
+    fn hits(&self, specifier: &str) -> bool {
+        match self {
+            Spec::Glob(p) => p.matches(specifier),
+            Spec::Regex(re) => re.is_match(specifier),
+            Spec::Neg(inner) => inner.hits(specifier),
+        }
+    }
+}
+
+/// A rule bucket (one of allow/ask/deny): hits when a positive entry
+/// matches AND no `!` entry vetoes the specifier.
+fn bucket_match(specs: &[Spec], specifier: &str) -> bool {
+    let vetoed = specs
+        .iter()
+        .any(|s| matches!(s, Spec::Neg(_)) && s.hits(specifier));
+    !vetoed
+        && specs
+            .iter()
+            .any(|s| !matches!(s, Spec::Neg(_)) && s.hits(specifier))
+}
+
 #[derive(Debug, serde::Deserialize, Default)]
 struct PermsFile {
     #[serde(default)]
@@ -37,7 +118,7 @@ struct Perms {
     deny: Vec<String>,
 }
 
-type RuleSet = (Vec<glob::Pattern>, Vec<glob::Pattern>, Vec<glob::Pattern>);
+type RuleSet = (Vec<Spec>, Vec<Spec>, Vec<Spec>);
 
 #[derive(Default)]
 pub struct Permissions {
@@ -75,19 +156,19 @@ impl Permissions {
 
     fn from_rules(p: Perms) -> Self {
         // group rules per tool: "Tool(spec)" → tool=Tool, pattern=spec
-        fn parse(rules: Vec<String>) -> HashMap<String, Vec<glob::Pattern>> {
-            let mut m: HashMap<String, Vec<glob::Pattern>> = HashMap::new();
+        fn parse(rules: Vec<String>) -> HashMap<String, Vec<Spec>> {
+            let mut m: HashMap<String, Vec<Spec>> = HashMap::new();
             for r in rules {
                 if let Some((tool, spec)) = r.split_once('(') {
-                    let spec = spec.trim_end_matches(')');
-                    if let Ok(pat) = glob::Pattern::new(spec) {
-                        m.entry(tool.trim().to_string()).or_default().push(pat);
-                    }
+                    let spec = spec.strip_suffix(')').unwrap_or(spec);
+                    m.entry(tool.trim().to_string())
+                        .or_default()
+                        .push(Spec::parse(spec));
                 } else {
                     // bare tool name → match anything
-                    if let Ok(pat) = glob::Pattern::new("*") {
-                        m.entry(r.trim().to_string()).or_default().push(pat);
-                    }
+                    m.entry(r.trim().to_string())
+                        .or_default()
+                        .push(Spec::parse("*"));
                 }
             }
             m
@@ -116,11 +197,11 @@ impl Permissions {
         let Some((allow, ask, deny)) = self.rules.get(tool) else {
             return Verdict::Default;
         };
-        if deny.iter().any(|p| p.matches(specifier)) {
+        if bucket_match(deny, specifier) {
             Verdict::Deny
-        } else if ask.iter().any(|p| p.matches(specifier)) {
+        } else if bucket_match(ask, specifier) {
             Verdict::Ask
-        } else if allow.iter().any(|p| p.matches(specifier)) {
+        } else if bucket_match(allow, specifier) {
             Verdict::PreApproved
         } else {
             Verdict::Default
@@ -155,5 +236,71 @@ mod tests {
         // path-scoped deny
         assert_eq!(p.check("Write", "./src/main.rs"), Verdict::Deny);
         assert_eq!(p.check("Write", "./other/x.rs"), Verdict::Default);
+    }
+
+    #[test]
+    fn negation_carves_exceptions_inside_a_bucket() {
+        let p = Permissions::from_rules(Perms {
+            allow: vec![],
+            ask: vec![],
+            deny: vec!["Read(**/.env)".into(), "Read(!**/.env.example)".into()],
+        });
+        assert_eq!(p.check("Read", "secrets/.env"), Verdict::Deny);
+        assert_eq!(p.check("Read", ".env.example"), Verdict::Default);
+        // a negation alone never matches — `!` can't conjure a bucket hit
+        let only_neg = Permissions::from_rules(Perms {
+            allow: vec![],
+            ask: vec![],
+            deny: vec!["Read(!**/keep/**)".into()],
+        });
+        assert_eq!(only_neg.check("Read", "any/path"), Verdict::Default);
+    }
+
+    #[test]
+    fn negation_in_allow_still_loses_to_deny() {
+        // deny>ask>allow is decided on buckets, not entries: a `deny` hit
+        // outranks an `allow` hit even when the allow is vetoed by its own
+        // `!` — and an unvetoed deny can never be talked down by allow.
+        let p = Permissions::from_rules(Perms {
+            allow: vec!["Bash(git *)".into(), "Bash(!git push*)".into()],
+            ask: vec![],
+            deny: vec!["Bash(git push*)".into()],
+        });
+        assert_eq!(p.check("Bash", "git push origin"), Verdict::Deny);
+        assert_eq!(p.check("Bash", "git status"), Verdict::PreApproved);
+    }
+
+    #[test]
+    fn regex_specifier() {
+        let p = Permissions::from_rules(Perms {
+            allow: vec![],
+            ask: vec![],
+            deny: vec![r"Bash(re:^git (push|clean)\b)".into()],
+        });
+        assert_eq!(p.check("Bash", "git push origin"), Verdict::Deny);
+        assert_eq!(p.check("Bash", "git clean -fd"), Verdict::Deny);
+        assert_eq!(p.check("Bash", "git pushback"), Verdict::Default);
+        assert_eq!(p.check("Bash", "git status"), Verdict::Default);
+        // negated regex — the exception form combine
+        let q = Permissions::from_rules(Perms {
+            allow: vec![],
+            ask: vec![],
+            deny: vec!["Bash(git *)".into(), "Bash(!re:^git (status|log)$)".into()],
+        });
+        assert_eq!(q.check("Bash", "git status"), Verdict::Default);
+        assert_eq!(q.check("Bash", "git status --porcelain"), Verdict::Deny);
+        assert_eq!(q.check("Bash", "git push"), Verdict::Deny);
+    }
+
+    #[test]
+    fn invalid_regex_degrades_to_literal() {
+        let p = Permissions::from_rules(Perms {
+            allow: vec![],
+            ask: vec![],
+            deny: vec!["Bash(re:([)".into()],
+        });
+        // not silently dropped: the mangled rule matches only literally
+        assert_eq!(p.check("Bash", "(["), Verdict::Deny);
+        assert_eq!(p.check("Bash", "anything else"), Verdict::Default);
     }
 }

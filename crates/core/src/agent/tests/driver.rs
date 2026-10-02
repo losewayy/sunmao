@@ -152,7 +152,8 @@ async fn full_driver_still_enforces_gate() {
 /// Layering: a preset manifest's `loop:` key wins over the project's —
 /// later layers own the driver slot.
 #[tokio::test]
-async fn preset_loop_key_overrides_project() {    let dir = crate::fresh_test_dir("lp");
+async fn preset_loop_key_overrides_project() {
+    let dir = crate::fresh_test_dir("lp");
     let preset = dir.join("preset-min");
     std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
     std::fs::create_dir_all(&preset).unwrap();

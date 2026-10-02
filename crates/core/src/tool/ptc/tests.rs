@@ -1,5 +1,5 @@
 use super::*;
-use crate::session::SessionLog;
+use crate::session::{SessionEvent, SessionLog};
 use crate::tool::builtin_registry;
 use sunmao_llm::ProviderAdapter;
 
@@ -210,3 +210,31 @@ async fn runcode_sandbox_surface() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A nested call lands a durable PtcCall fact — replay-visible, carrying
+/// args so summaries/dataflow can be re-derived — and stays OUT of the
+/// message fold (no orphan ToolResult in the provider transcript).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runcode_nested_calls_are_durable_ptc_facts() {
+    let dir = crate::fresh_test_dir("ptc8");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "hi").unwrap();
+    let ctx = test_ctx(&dir);
+    let res = run(&ctx, r#"tools.Read({path: "a.txt"}).then(r => r.ok)"#).await;
+    assert!(res.ok, "{}", res.output);
+    let evs = ctx.sessions.lock().await.events().await.unwrap();
+    let ptc: Vec<_> = evs
+        .iter()
+        .filter(|e| matches!(e, SessionEvent::PtcCall { name, .. } if name == "Read"))
+        .collect();
+    assert_eq!(ptc.len(), 1, "one nested call, one fact: {evs:?}");
+    // the fold must not fabricate a protocol tool_result for the script's
+    // call — the transcript would carry a tool message with no tool_use
+    let msgs = ctx.sessions.lock().await.messages().await.unwrap();
+    assert!(
+        !msgs.iter().any(|m| m.role == sunmao_llm::types::Role::Tool),
+        "nested calls never fold into protocol messages: {msgs:?}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+

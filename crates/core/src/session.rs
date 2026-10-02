@@ -95,6 +95,25 @@ pub enum SessionEvent {
     /// shares across calls and resumes. Fold-ignored (like `Todos`): the
     /// store is state, not transcript; `load()` re-reads the snapshot.
     PtcStore { key: String, value: String },
+    /// A `tools.*` call a `RunCode` script dispatched through the gate —
+    /// durable *and* transcript-visible on replay (nested row under the
+    /// script's RunCode call), but fold-ignored: a `ToolCall`/`ToolResult`
+    /// pair would corrupt the fold — providers need tool_use/results issued
+    /// by an assistant message, and these were issued by a script.
+    PtcCall {
+        call_id: String,
+        name: String,
+        /// the JSON args the script passed (post-hook-rewrite) — enough for
+        /// a replay to re-render `call_summary` and for export/dataflow to
+        /// attribute the call
+        args: String,
+        ok: bool,
+        output: String,
+        #[serde(default)]
+        depth: u8,
+        #[serde(default)]
+        lane: u16,
+    },
     /// The session's display title was renamed (serve `POST rename`). Audit,
     /// not conversation — the fold ignores it; readers (`session_meta`, the
     /// rail) take the LAST one as the title, overriding first-prompt

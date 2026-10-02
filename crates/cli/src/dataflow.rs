@@ -53,6 +53,14 @@ pub async fn report(session_path: &Path) -> anyhow::Result<Value> {
                 cache_read += usage.cache_read_input_tokens;
                 cache_write += usage.cache_creation_input_tokens;
             }
+            SessionEvent::PtcCall {
+                name, ok, output, ..
+            } => {
+                // a script's nested call resolves to one fact — count it
+                // like a ToolResult; the args pass below attributes flows
+                tool_calls.push((name, ok));
+                let _ = output;
+            }
             SessionEvent::ToolResult {
                 name, ok, output, ..
             } => {
@@ -72,31 +80,44 @@ pub async fn report(session_path: &Path) -> anyhow::Result<Value> {
         let Ok(v) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        if v["type"] == "tool_call" {
-            let name = v["call"]["function"]["name"].as_str().unwrap_or("");
-            let args: Value =
+        let (name, args) = if v["type"] == "tool_call" {
+            (
+                v["call"]["function"]["name"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string(),
                 serde_json::from_str(v["call"]["function"]["arguments"].as_str().unwrap_or("{}"))
-                    .unwrap_or(json!({}));
-            match name {
-                "Read" => files_read.push(s(&args, "path")),
-                "Write" | "Edit" => files_written.push(s(&args, "path")),
-                "Bash" => shell_commands.push(s(&args, "command")),
-                "SendMessage" => uplinks.push(s(&args, "message")),
-                "Task" => {
-                    // a Task call carrying `steer` is a parent→child push —
-                    // the spawn fields live on a different arm
-                    if args["steer"].is_string() {
-                        downlinks.push(format!(
-                            "steer→{}: {}",
-                            s(&args, "steer"),
-                            s(&args, "message")
-                        ));
-                    } else if args["resume"].is_string() {
-                        downlinks.push(format!("resume→{}", s(&args, "resume")));
-                    }
+                    .unwrap_or(json!({})),
+            )
+        } else if v["type"] == "ptc_call" {
+            // a RunCode script's nested call — same attribution surface,
+            // args live on the fact itself instead of a ToolCall join
+            (
+                v["name"].as_str().unwrap_or("").to_string(),
+                serde_json::from_str(v["args"].as_str().unwrap_or("{}")).unwrap_or(json!({})),
+            )
+        } else {
+            continue;
+        };
+        match name.as_str() {
+            "Read" => files_read.push(s(&args, "path")),
+            "Write" | "Edit" => files_written.push(s(&args, "path")),
+            "Bash" => shell_commands.push(s(&args, "command")),
+            "SendMessage" => uplinks.push(s(&args, "message")),
+            "Task" => {
+                // a Task call carrying `steer` is a parent→child push —
+                // the spawn fields live on a different arm
+                if args["steer"].is_string() {
+                    downlinks.push(format!(
+                        "steer→{}: {}",
+                        s(&args, "steer"),
+                        s(&args, "message")
+                    ));
+                } else if args["resume"].is_string() {
+                    downlinks.push(format!("resume→{}", s(&args, "resume")));
                 }
-                _ => {}
             }
+            _ => {}
         }
     }
 

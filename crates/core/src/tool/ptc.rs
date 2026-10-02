@@ -19,12 +19,14 @@
 //!   same `block_on` scope and borrows `ctx` directly — `Promise.all` fan-out
 //!   lands on a `FuturesUnordered`, which is genuinely concurrent
 //!   (smoke-tested: two parallel calls overlap).
-//! - Two-layer cancellation: a watchdog flips a flag the JS interrupt
-//!   handler consults (covers CPU-bound scripts), and `select!` arms on
-//!   timeout/cancel cover scripts parked in a host await.
-//! - Nested calls produce `SessionEvent::Hook` audit facts, NOT
+//! - Two-layer cancellation: a spawned watchdog flips the flag the JS
+//!   interrupt handler consults (covers CPU-bound scripts — the block_on's
+//!   own select! arms can't be polled while sync JS occupies the thread),
+//!   and `select!` arms cover scripts parked in a host await.
+//! - Nested calls produce `SessionEvent::PtcCall` audit facts, NOT
 //!   `ToolCall`/`ToolResult` — those would fold into protocol tool messages
 //!   without a matching assistant `tool_call` and corrupt the transcript.
+//!   PtcCall stays out of the fold but replays as a nested transcript row.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -34,10 +36,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sunmao_llm::types::Tool;
 
-use crate::agent::{LiveEvent, Observer, call_summary, specifier_for, tool_timeout_for};
-use crate::context::{Context, MutexRecover};
-use crate::hooks::{HookEvent, HookInput};
-use crate::session::SessionEvent;
+use crate::agent::{LiveEvent, Observer};
+use crate::context::Context;
 use crate::tool::{ToolImpl, ToolResult};
 
 /// JS heap cap per script — big enough for real fan-outs, small enough that
@@ -138,9 +138,10 @@ fn run_script(ctx: Arc<Context>, code: &str, timeout: Duration) -> Result<String
     handle.block_on(async {
         let rt = rquickjs::AsyncRuntime::new().map_err(|e| format!("quickjs init: {e}"))?;
         rt.set_memory_limit(MEMORY_LIMIT).await;
-        // Watchdog: timeout or session cancel flips the flag the JS
-        // interrupt handler reads — the only way out of a CPU-bound
-        // `while(true)` is an uncatchable interrupt mid-eval.
+        // Watchdog: a separate task, not a select! arm — this block_on runs
+        // on ONE thread, so while a CPU-bound `while(true)` sits inside an
+        // async_with poll no other future here can ever be polled. The task
+        // flips the flag the JS interrupt handler reads.
         let stop = Arc::new(AtomicBool::new(false));
         let reason = Arc::new(AtomicU64::new(0)); // 0 none, 1 timeout, 2 cancel
         rt.set_interrupt_handler(Some({
@@ -169,7 +170,7 @@ fn run_script(ctx: Arc<Context>, code: &str, timeout: Duration) -> Result<String
         let code = code.to_string();
         tokio::select! {
             r = jctx.async_with(async |jctx| -> Result<String, String> {
-                install(&jctx, &ctx, tx).map_err(|e| format!("install: {e}"))?;
+                install_surface(&jctx, &ctx, tx).map_err(|e| format!("install: {e}"))?;
                 let p = jctx
                     .eval::<rquickjs::promise::MaybePromise, _>(code)
                     .map_err(|e| format!("eval error: {e} / {:?}", jctx.catch()))?;
@@ -197,318 +198,11 @@ fn run_script(ctx: Arc<Context>, code: &str, timeout: Duration) -> Result<String
     })
 }
 
-/// Register the JS surface: `tools.<Name>(args)` per callable tool plus the
-/// `store`/`load`/`describe` builtins — all thin wrappers over `__ptc`,
-/// the single host channel. `RunCode` itself is withheld: a sandboxed
-/// script must not spawn nested sandboxes.
-fn install<'js>(
-    jctx: &rquickjs::Ctx<'js>,
-    ctx: &Arc<Context>,
-    tx: tokio::sync::mpsc::UnboundedSender<PtcMsg>,
-) -> rquickjs::Result<()> {
-    let globals = jctx.globals();
-    globals.set(
-        "__ptc",
-        rquickjs::Function::new(
-            jctx.clone(),
-            rquickjs::prelude::Async(move |op: String, args: String| {
-                let tx = tx.clone();
-                async move {
-                    let (rtx, rrx) = tokio::sync::oneshot::channel();
-                    let args_v: Value = serde_json::from_str(&args).unwrap_or(Value::Null);
-                    if tx.send((op, args_v, rtx)).is_err() {
-                        return Err(rquickjs::Error::new_into_js_message(
-                            "host",
-                            "js",
-                            "tool bridge is gone",
-                        ));
-                    }
-                    match rrx.await {
-                        Ok(Ok(out)) => Ok(out),
-                        Ok(Err(e)) => Err(rquickjs::Error::new_into_js_message("host", "js", e)),
-                        Err(_) => Err(rquickjs::Error::new_into_js_message(
-                            "host",
-                            "js",
-                            "tool bridge dropped the reply",
-                        )),
-                    }
-                }
-            }),
-        ),
-    )?;
-    let names: Vec<String> = ctx
-        .tools
-        .declarations()
-        .iter()
-        .map(|t| t.function.name.clone())
-        .filter(|n| n != "RunCode")
-        .collect();
-    // Bracket-access assignments tolerate any tool name (mcp__x__y is a
-    // valid identifier anyway, but `tools["..."]` needs no validation).
-    let list = serde_json::to_string(&names).unwrap_or_else(|_| "[]".into());
-    jctx.eval::<(), _>(format!(
-        r#"
-        globalThis.tools = {{}};
-        for (const n of {list}) {{
-            tools[n] = (args) => __ptc("tool", JSON.stringify({{name: n, args: args ?? {{}}}}))
-                .then(JSON.parse);
-        }}
-        globalThis.store = (key, value) => __ptc("store", JSON.stringify({{key, value}}))
-            .then(JSON.parse);
-        globalThis.load = (key) => __ptc("load", JSON.stringify({{key}}))
-            .then((r) => JSON.parse(r).value);
-        globalThis.describe = (name) => __ptc("describe", JSON.stringify({{name: name ?? null}}))
-            .then(JSON.parse);
-        "#,
-    ))
-}
+mod install;
+mod serve;
 
-/// The host side of `__ptc`: receive requests, dispatch them against the
-/// session's real pipeline, keep `Promise.all`-era calls concurrent via
-/// `FuturesUnordered`. Ends when the script's side drops its senders.
-async fn serve_requests(
-    ctx: &Arc<Context>,
-    mut rx: tokio::sync::mpsc::UnboundedReceiver<PtcMsg>,
-    observer: &PtcObserver,
-) {
-    use futures_util::StreamExt;
-    let mut inflight = futures_util::stream::FuturesUnordered::new();
-    let seq = AtomicU64::new(0);
-    loop {
-        tokio::select! {
-            msg = rx.recv() => match msg {
-                Some((op, args, reply)) => {
-                    let n = seq.fetch_add(1, Ordering::Relaxed);
-                    inflight.push(dispatch(ctx, observer, op, args, reply, n));
-                }
-                None => {
-                    while inflight.next().await.is_some() {}
-                    break;
-                }
-            },
-            Some(()) = inflight.next() => {}
-        }
-    }
-}
-
-/// One sandboxed request → host. `tool` ops take the full dispatch path
-/// (PreToolUse → gate → run → PostToolUse); the `store`/`load`/`describe`
-/// builtins are pure in-memory/durable bookkeeping, no gate.
-async fn dispatch(
-    ctx: &Arc<Context>,
-    observer: &PtcObserver,
-    op: String,
-    args: Value,
-    reply: tokio::sync::oneshot::Sender<Result<String, String>>,
-    seq: u64,
-) {
-    let res = match op.as_str() {
-        "tool" => tool_call(ctx, observer, &args, seq).await,
-        "store" => {
-            let key = args["key"].as_str().unwrap_or_default().to_string();
-            let value = serde_json::to_string(&args["value"]).unwrap_or_else(|_| "null".into());
-            if key.is_empty() {
-                Err("store: empty key".into())
-            } else {
-                ctx.ptc_store
-                    .lock_or_recover()
-                    .insert(key.clone(), value.clone());
-                let mut log = ctx.sessions.lock().await;
-                log.append_audit(&SessionEvent::PtcStore {
-                    key: key.clone(),
-                    value,
-                })
-                .await;
-                Ok(format!("{{\"stored\":{}}}", json!(key)))
-            }
-        }
-        "load" => {
-            let key = args["key"].as_str().unwrap_or_default();
-            let v = ctx.ptc_store.lock_or_recover().get(key).cloned();
-            Ok(format!(
-                "{{\"value\":{}}}",
-                v.unwrap_or_else(|| "null".into())
-            ))
-        }
-        "describe" => {
-            let name = args["name"].as_str();
-            let decls: Vec<Tool> = ctx
-                .tools
-                .declarations()
-                .into_iter()
-                .filter(|t| {
-                    t.function.name != "RunCode" && name.is_none_or(|n| t.function.name == n)
-                })
-                .collect();
-            Ok(serde_json::to_string(&decls).unwrap_or_else(|_| "[]".into()))
-        }
-        other => Err(format!("unknown op {other:?}")),
-    };
-    let _ = reply.send(res);
-}
-
-/// One `tools.<Name>(args)` call through the real dispatch seam: PreToolUse
-/// hooks (veto/rewrite count) → the shared gate (rules, grants, modes,
-/// classifier, approval card) → `tools.call` under the same per-tool
-/// watchdog the turn loop applies → PostToolUse. Durable record lands as
-/// `Hook` audit facts, never as transcript ToolCall/ToolResult.
-async fn tool_call(
-    ctx: &Arc<Context>,
-    observer: &PtcObserver,
-    args: &Value,
-    seq: u64,
-) -> Result<String, String> {
-    let name = args["name"].as_str().unwrap_or_default().to_string();
-    if name.is_empty() || name == "RunCode" {
-        return Ok(json!({"ok": false, "output": format!("no such tool: {name:?}")}).to_string());
-    }
-    let call_id = format!("ptc-{seq}");
-    let mut args_value = args.get("args").cloned().unwrap_or(Value::Null);
-
-    // PreToolUse: hooks may veto, rewrite input, or hand the gate a verdict.
-    let pre = ctx
-        .hooks
-        .fire(
-            HookEvent::PreToolUse,
-            &ctx.cwd,
-            &HookInput {
-                tool_name: Some(&name),
-                tool_use_id: Some(&call_id),
-                tool_input: Some(&args_value),
-                ..Default::default()
-            },
-        )
-        .await;
-    if let Some(updated) = pre.updated_input {
-        crate::agent::audit_fact(
-            ctx,
-            "PreToolUse.updatedInput",
-            &format!("{name}: {args_value} → {updated}"),
-            observer,
-        )
-        .await;
-        args_value = updated;
-    }
-    observer.on_event(&LiveEvent::ToolStart {
-        name: name.clone(),
-        summary: call_summary(&name, &args_value),
-        depth: ctx.depth,
-        lane: ctx.lane,
-        call_id: Some(call_id.clone()),
-        args: args_value.clone(),
-    });
-    let t0 = std::time::Instant::now();
-    let result = if let Some(reason) = pre.block_reason {
-        crate::agent::audit_fact(
-            ctx,
-            "PreToolUse.block",
-            &format!("{name}: {reason}"),
-            observer,
-        )
-        .await;
-        ToolResult {
-            output: format!("blocked by hook: {reason}"),
-            ok: false,
-        }
-    } else {
-        let specifier = specifier_for(&name, &args_value);
-        match crate::agent::gate_call(
-            ctx,
-            &name,
-            &args_value,
-            &specifier,
-            pre.permission_decision,
-            observer,
-        )
-        .await
-        {
-            Ok(()) => {
-                // Same watchdog discipline as the turn loop: tools listed in
-                // tool-timeouts.txt are abandoned past their budget.
-                let args_json = args_value.to_string();
-                let call_fut = ctx.tools.call(&name, &args_json, ctx);
-                match tool_timeout_for(ctx, &name) {
-                    Some(s) => match tokio::time::timeout(Duration::from_secs(s), call_fut).await {
-                        Ok(r) => r,
-                        Err(_) => ToolResult {
-                            output: format!(
-                                "tool {name} exceeded its {s}s timeout — raise or remove its row in .sunmao/tool-timeouts.txt"
-                            ),
-                            ok: false,
-                        },
-                    },
-                    None => call_fut.await,
-                }
-            }
-            Err(denial) => ToolResult {
-                output: denial,
-                ok: false,
-            },
-        }
-    };
-    observer.on_event(&LiveEvent::ToolDone {
-        name: name.clone(),
-        ok: result.ok,
-        output: crate::agent::truncate_output(&result.output),
-        depth: ctx.depth,
-        lane: ctx.lane,
-        call_id: Some(call_id.clone()),
-        elapsed_ms: t0.elapsed().as_millis() as u64,
-    });
-    // durable audit fact — the log can answer "what did that script do"
-    {
-        let mut log = ctx.sessions.lock().await;
-        log.append_audit(&SessionEvent::Hook {
-            event: "ptc.tool".into(),
-            detail: format!(
-                "{name} {} {} → {}",
-                if result.ok { "ok" } else { "failed" },
-                call_summary(&name, &args_value),
-                crate::agent::truncate_output(&result.output)
-            ),
-        })
-        .await;
-    }
-    let post = ctx
-        .hooks
-        .fire(
-            HookEvent::PostToolUse,
-            &ctx.cwd,
-            &HookInput {
-                tool_name: Some(&name),
-                tool_use_id: Some(&call_id),
-                tool_input: Some(&args_value),
-                tool_response: Some(&result.output),
-                ..Default::default()
-            },
-        )
-        .await;
-    if !result.ok {
-        crate::hooks::HookEngine::fire_detached(
-            &ctx.hooks,
-            HookEvent::PostToolUseFailure,
-            &ctx.cwd,
-            &HookInput {
-                tool_name: Some(&name),
-                tool_use_id: Some(&call_id),
-                tool_input: Some(&args_value),
-                tool_response: Some(&result.output),
-                ..Default::default()
-            },
-        );
-    }
-    {
-        let mut log = ctx.sessions.lock().await;
-        for extra in post.extra_context {
-            log.append(&SessionEvent::Message {
-                message: sunmao_llm::types::Message::user(format!("[hook context] {extra}")),
-            })
-            .await
-            .unwrap_or_else(|e| tracing::warn!("hook context append failed: {e:#}"));
-        }
-    }
-    Ok(json!({"ok": result.ok, "output": result.output}).to_string())
-}
+use install::install as install_surface;
+use serve::serve_requests;
 
 #[cfg(test)]
 mod tests;

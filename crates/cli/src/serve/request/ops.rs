@@ -64,7 +64,7 @@ fn log_tail(path: &std::path::Path, n: usize) -> String {
     let start = (start..=data.len())
         .find(|&i| i == data.len() || data[i] & 0xC0 != 0x80)
         .unwrap_or(data.len());
-    String::from_utf8_lossy(&data[start..]).into_owned()
+    sunmao_core::console::console_text(&data[start..])
 }
 
 /// `exit.json` 的 `exit_code` —— 存在即完结，`spawn_background` 写完它
@@ -140,6 +140,6 @@ pub(super) fn job_output(
         "exit": job_exit(&dir),
         "offset": offset,
         "total": data.len(),
-        "chunk": String::from_utf8_lossy(&data[offset..end]),
+        "chunk": sunmao_core::console::console_text(&data[offset..end]),
     }))
 }

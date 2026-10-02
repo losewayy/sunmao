@@ -131,7 +131,7 @@ impl ToolImpl for GrepTool {
             Err(e) => return Err(e.into()),
         };
         const CAP: usize = 8 * 1024;
-        let text = String::from_utf8_lossy(&out.stdout);
+        let text = crate::console::console_text(&out.stdout);
         let mut res = if text.len() > CAP {
             // CAP isn't char-aligned for CJK/emoji output — step back or
             // the slice panics mid-codepoint.
@@ -141,7 +141,7 @@ impl ToolImpl for GrepTool {
             }
             format!("{}…[truncated {} bytes]", &text[..end], text.len() - end)
         } else {
-            text.into_owned()
+            text
         };
         if res.is_empty() {
             res = "[no matches]".into();

@@ -114,13 +114,15 @@ pub async fn run_foreground(
         }
     };
 
+    // pwsh writes pipes in [Console]::OutputEncoding (the OEM codepage
+    // unless the box opted into UTF-8) — console_text covers both.
     let stdout = out_task
         .await
-        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .map(|b| crate::console::console_text(&b))
         .unwrap_or_else(|_| String::new());
     let stderr = err_task
         .await
-        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .map(|b| crate::console::console_text(&b))
         .unwrap_or_else(|_| String::new());
 
     Ok(ShellRun {

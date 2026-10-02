@@ -28,6 +28,8 @@ tracing.workspace = true
 # spawnfate — the shell/preflight engine. Its model is Windows-only; the
 # preflight module no-ops elsewhere.
 spawnfate = "0.1"
+# GetOEMCP + MultiByteToWideChar for `console_text`'s OEM-codepage decode.
+windows-sys = { version = "0.61", features = ["Win32_Globalization"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

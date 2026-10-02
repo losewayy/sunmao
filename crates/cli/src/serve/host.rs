@@ -82,6 +82,8 @@ pub(crate) struct Shared {
     /// `None` re-assembles per session dir so cross-project sessions get
     /// their own project's prompt.
     pub(crate) prompt_override: Option<String>,
+    /// `--loop` override — folded into the new-session prompt's driver pick.
+    pub(crate) driver_override: Option<sunmao_core::agent::LoopDriver>,
     /// process-wide approval id space (see Pending)
     pub(crate) approval_ids: Arc<AtomicU64>,
     /// host-management channel — session drivers can't `await adopt`
@@ -419,10 +421,16 @@ pub(crate) async fn new_session(
         .as_millis();
     let id = format!("{}-{}", crate::session_id(), ms % 1000);
     let dir = cwd.join(".sunmao/sessions");
+    // the prompt is assembled for the driver this session will actually
+    // run — manifest `loop:` keys resolve per project dir, the CLI flag wins
+    let driver = s
+        .driver_override
+        .unwrap_or_else(|| sunmao_core::agent::LoopDriver::resolve(&cwd, &s.roots));
     let prompt = match &s.prompt_override {
         Some(p) => p.clone(),
         None => sunmao_core::prompt::PromptAssembler::new(&cwd)
             .with_extra_roots(&s.roots)
+            .with_driver(driver)
             .assemble(None),
     };
     let mut log = sunmao_core::SessionLog::open(&dir, &id).await?;

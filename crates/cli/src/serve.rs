@@ -135,6 +135,10 @@ pub(crate) struct HostSpec {
     /// `--system` override (already assembled); `None` → each session's
     /// prompt is assembled from *its* project dir
     pub prompt_override: Option<String>,
+    /// `--loop` override — new-session prompts are assembled for this driver
+    /// (the factory's Context already carries it; prompt assembly needs it
+    /// before the Context exists).
+    pub driver_override: Option<sunmao_core::agent::LoopDriver>,
     pub model_label: String,
     pub first_log: Option<(SessionLog, &'static str)>,
 }
@@ -154,6 +158,7 @@ pub(crate) async fn spawn_host(spec: HostSpec, sandbox_port: u16) -> Result<Host
         sessions: Mutex::new(HashMap::new()),
         factory: spec.factory,
         prompt_override: spec.prompt_override,
+        driver_override: spec.driver_override,
         model_label: spec.model_label,
         sandbox_port,
         approval_ids: Arc::new(AtomicU64::new(0)),

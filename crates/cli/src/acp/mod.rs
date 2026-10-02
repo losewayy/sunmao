@@ -165,7 +165,7 @@ pub async fn run(
                     };
                     let llm = agent.new_llm();
                     let sessions_dir = cwd.join(".sunmao").join("sessions");
-                    let log = match SessionLog::open(&sessions_dir, &id).await {
+                    let mut log = match SessionLog::open(&sessions_dir, &id).await {
                         Ok(l) => l,
                         Err(e) => {
                             return responder
@@ -174,6 +174,7 @@ pub async fn run(
                     };
                     let registry = builtin_registry();
                     let mcp = sunmao_core::mcp::connect_all(&cwd, &preset_roots).await;
+                    sunmao_core::mcp::audit_skips(&mcp.skipped, &mut log).await;
                     for t in mcp.tools {
                         registry.register_boxed(t);
                     }
@@ -210,6 +211,7 @@ pub async fn run(
                                 message: Message::system(
                                     sunmao_core::prompt::PromptAssembler::new(&cwd)
                                         .with_extra_roots(&preset_roots)
+                                        .with_driver(ctx.loop_driver)
                                         .assemble(None),
                                 ),
                             })
@@ -340,7 +342,7 @@ pub async fn run(
                         Err(e) => return responder.respond_with_error(e),
                     };
                     let llm = agent.new_llm();
-                    let log = match SessionLog::open_path(&log_path).await {
+                    let mut log = match SessionLog::open_path(&log_path).await {
                         Ok(l) => l,
                         Err(e) => {
                             return responder
@@ -349,6 +351,7 @@ pub async fn run(
                     };
                     let registry = builtin_registry();
                     let mcp = sunmao_core::mcp::connect_all(&cwd, &preset_roots).await;
+                    sunmao_core::mcp::audit_skips(&mcp.skipped, &mut log).await;
                     for t in mcp.tools {
                         registry.register_boxed(t);
                     }

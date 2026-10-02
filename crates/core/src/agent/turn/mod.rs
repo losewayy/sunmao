@@ -219,7 +219,7 @@ impl AgentLoop {
             {
                 messages.push(Message::user(g.inject_text()));
             }
-            let decls = self.ctx.tools.declarations();
+            let decls = self.ctx.advertised_tools();
             let req = ChatRequest {
                 messages: &messages,
                 tools: Some(&decls),

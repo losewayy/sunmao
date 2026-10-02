@@ -84,6 +84,23 @@ fn no_files_still_assembles() {
 }
 
 #[test]
+fn ptc_driver_swaps_tool_guidance_for_codemode_contract() {
+    let dir = scratch();
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    std::fs::write(dir.join(".sunmao/shell.txt"), "posix").unwrap();
+    let s = PromptAssembler::new(&dir)
+        .with_driver(crate::agent::LoopDriver::Ptc)
+        .assemble(None);
+    assert!(s.contains("PTC (codemode)"), "{s}");
+    // the default "prefer dedicated tools" prose must be gone — under ptc
+    // the model can't emit those calls at all
+    assert!(!s.contains("Prefer dedicated tools"), "{s}");
+    // the RunCode API reference still lands
+    assert!(s.contains("tools.<Name>(args)"), "{s}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn md_skill_indexes_from_frontmatter() {
     let dir = scratch();
     let sd = dir.join(".sunmao/skills/greeter");

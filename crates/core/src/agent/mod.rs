@@ -82,6 +82,11 @@ pub enum LoopDriver {
     /// event-sourced log and still relay live events. For eval rigs and
     /// air-gapped/minimal deployments where the gate's prompts are noise.
     Bare,
+    /// PTC/codemode: the full contract loop, but the model's tool surface
+    /// is `RunCode` alone — every other tool stays registered and callable
+    /// only through the script's `tools.*` bridge (each nested call still
+    /// takes the gate/hook pipeline). See `assets/prompt/ptc-driver.md`.
+    Ptc,
 }
 
 impl LoopDriver {
@@ -92,7 +97,10 @@ impl LoopDriver {
         match name.trim().to_ascii_lowercase().as_str() {
             "full" | "default" => Ok(Self::Full),
             "bare" | "minimal" => Ok(Self::Bare),
-            other => anyhow::bail!("unknown loop driver {other:?} (known: full, bare)"),
+            "ptc" | "codemode" | "code-mode" => Ok(Self::Ptc),
+            other => {
+                anyhow::bail!("unknown loop driver {other:?} (known: full, bare, ptc)")
+            }
         }
     }
 
@@ -100,6 +108,7 @@ impl LoopDriver {
         match self {
             Self::Full => "full",
             Self::Bare => "bare",
+            Self::Ptc => "ptc",
         }
     }
 
@@ -108,7 +117,7 @@ impl LoopDriver {
     /// preset roots last so a `--preset` picks the loop. First `"loop"` key
     /// found wins the slot at its layer; the LAST layer's declaration wins
     /// overall (same precedence every preset seam follows).
-    pub(crate) fn resolve(cwd: &std::path::Path, extra_roots: &[std::path::PathBuf]) -> Self {
+    pub fn resolve(cwd: &std::path::Path, extra_roots: &[std::path::PathBuf]) -> Self {
         let mut manifests = vec![
             cwd.join(".sunmao").join("plugin.json"),
             cwd.join(".claude-plugin").join("plugin.json"),

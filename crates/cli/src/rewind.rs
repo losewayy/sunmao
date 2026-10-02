@@ -104,16 +104,37 @@ pub async fn run(agent: &AgentLoop, project: &Path, n: u64, mode: Mode) -> Resul
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let new_id = format!("s-{ms}-fork");
+    let ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    let new_id = format!(
+        "s-{ms}-{:x}-fork",
+        (std::process::id() as u64) << 20 | (ns as u64 >> 12)
+    );
     let dir = src.parent().unwrap_or(project);
     let dst = dir.join(format!("{new_id}.jsonl"));
     sunmao_core::checkpoints::copy_log_prefix(&src, &dst, boundary.line)
         .map_err(|e| format!("{e:#}"))?;
     sunmao_core::checkpoints::fork_checkpoints(project, &src_id, &new_id, n)
         .map_err(|e| format!("{e:#}"))?;
-    let log = sunmao_core::SessionLog::open_path(&dst)
+    let mut log = sunmao_core::SessionLog::open_path(&dst)
         .await
         .map_err(|e| format!("{e:#}"))?;
+    // the fork's prefix ends mid-story — stamp its provenance so a future
+    // replay knows the tail beyond this line is a rewind's continuation,
+    // not an original run that happened to start there
+    sunmao_core::checkpoints::stamp_rewind_provenance(
+        &mut log,
+        &src_id,
+        n,
+        match mode {
+            Mode::Both => "both",
+            Mode::Session => "session",
+            Mode::Code => "code",
+        },
+    )
+    .await;
     let events = agent.swap_session(log).await;
     note.push_str(&format!(", session forked → {new_id}]"));
     Ok(Outcome::Forked { note, events })

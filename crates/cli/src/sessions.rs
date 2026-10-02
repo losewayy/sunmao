@@ -71,7 +71,16 @@ pub fn fork_copy(cwd: &Path, id: &str) -> Result<(String, PathBuf), String> {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let new_id = format!("s-{ms}-fork");
+    // pid + nanos tail — two forks in the same millisecond must not
+    // overwrite each other's copy of the source log.
+    let ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    let new_id = format!(
+        "s-{ms}-{:x}-fork",
+        (std::process::id() as u64) << 20 | (ns as u64 >> 12)
+    );
     let dst = sessions_dir(cwd).join(format!("{new_id}.jsonl"));
     std::fs::copy(&src, &dst).map_err(|e| format!("[fork {id} failed] {e}"))?;
     Ok((new_id, dst))

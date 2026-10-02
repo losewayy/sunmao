@@ -4,6 +4,7 @@
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
+use sunmao_core::context::MutexRecover;
 
 use sunmao_core::Context;
 use sunmao_core::agent::{AgentLoop, LiveEvent, Observer, TurnOutcome};
@@ -24,7 +25,7 @@ impl StdoutObserver {
 
 impl Observer for StdoutObserver {
     fn on_event(&self, ev: &LiveEvent) {
-        let mut in_r = self.in_reasoning.lock().unwrap();
+        let mut in_r = self.in_reasoning.lock_or_recover();
         match ev {
             LiveEvent::Reasoning { text } => {
                 if !*in_r {
@@ -90,6 +91,17 @@ impl Observer for StdoutObserver {
                 println!("\x1b[36m[artifact '{name}' → {path} ({bytes} B{v})]\x1b[0m");
             }
             LiveEvent::Usage(_) => {} // durable in the log; REPL stays quiet
+            LiveEvent::Compacted { summary } => {
+                println!("\n\x1b[33m[context compacted] {summary}\x1b[0m");
+            }
+            LiveEvent::Todos { .. } => {} // the tool's echo text already printed it
+            // serve-only live mirror of the durable user message — the REPL
+            // echoes its own prompt before run_turn, so it never lands here
+            LiveEvent::UserMessage { .. } => {}
+            LiveEvent::TaskDone { id, ok, .. } => {
+                let mark = if *ok { "✓" } else { "✗" };
+                println!("\n\x1b[36m[sub-agent {id} {mark}]\x1b[0m");
+            }
             LiveEvent::TurnEnd { outcome } => {
                 if *in_r {
                     eprintln!("\x1b[0m");
@@ -179,7 +191,16 @@ pub async fn run(
             if cmd.is_empty() {
                 continue;
             }
-            match sunmao_core::tool::run_foreground(cmd, cwd.to_path_buf(), 120).await {
+            let ctx = agent.context().clone();
+            match sunmao_core::tool::run_foreground(
+                cmd,
+                cwd.to_path_buf(),
+                120,
+                ctx.shell,
+                Some(ctx.cancel_notify.clone()),
+            )
+            .await
+            {
                 Ok(run) => {
                     let out = sunmao_core::tool::render_run(&run);
                     println!("{out}");
@@ -233,12 +254,24 @@ pub async fn run(
                     }
                     continue;
                 }
-                crate::commands::Command::Sessions(_) | crate::commands::Command::Resume(None) => {
+                // /sessions <id> is the REPL's resume-by-id — same arm as
+                // /resume, the bare listing stays for the empty form.
+                crate::commands::Command::Sessions(None)
+                | crate::commands::Command::Resume(None) => {
                     println!("{}", crate::sessions::recent_sessions_text(cwd, 8));
                     continue;
                 }
                 crate::commands::Command::Tasks => {
                     println!("{}", crate::commands::tasks_text(&agent.task_roster()));
+                    continue;
+                }
+                crate::commands::Command::Stop(id) => {
+                    // slash-path kill — same `cancel_sub` as the GUI
+                    // roster's 终止 button and serve's `task_cancel` frame
+                    match agent.cancel_sub(&id).await {
+                        Ok(()) => println!("cancelled {id}"),
+                        Err(e) => println!("[stop failed] {e}"),
+                    }
                     continue;
                 }
                 crate::commands::Command::Todos => {
@@ -272,7 +305,8 @@ pub async fn run(
                     println!("{n}");
                     continue;
                 }
-                crate::commands::Command::Resume(Some(id)) => {
+                crate::commands::Command::Sessions(Some(id))
+                | crate::commands::Command::Resume(Some(id)) => {
                     let path = crate::sessions::resolve_log_path(cwd, &id);
                     match sunmao_core::SessionLog::open_path(&path).await {
                         Ok(log) => {
@@ -299,11 +333,37 @@ pub async fn run(
                     }
                     continue;
                 }
+                crate::commands::Command::Export => {
+                    let events = agent.session_events().await;
+                    match crate::commands::export_md(cwd, &agent.session_id(), &events) {
+                        Ok(p) => println!("[exported → {p}]"),
+                        Err(e) => println!("[export failed] {e:#}"),
+                    }
+                    continue;
+                }
+                crate::commands::Command::ExportZip => {
+                    let events = agent.session_events().await;
+                    let log = agent.session_path().await;
+                    match crate::commands::export_zip(cwd, &agent.session_id(), &events, &log) {
+                        Ok(p) => println!("[exported → {p}]"),
+                        Err(e) => println!("[export failed] {e:#}"),
+                    }
+                    continue;
+                }
                 crate::commands::Command::Rewind(spec) => {
                     match spec {
                         None => println!("{}", crate::rewind::list(agent).await),
                         Some(spec) => {
-                            match crate::rewind::run(agent, cwd, spec.turn, spec.mode).await {
+                            // checkpoint dirs key off the SESSION's project —
+                            // a resumed session restores under its own root.
+                            match crate::rewind::run(
+                                agent,
+                                &agent.session_cwd(),
+                                spec.turn,
+                                spec.mode,
+                            )
+                            .await
+                            {
                                 Ok(crate::rewind::Outcome::Forked { note, events }) => {
                                     println!("{note} — {} events folded in", events.len());
                                 }
@@ -314,12 +374,18 @@ pub async fn run(
                     }
                     continue;
                 }
-                // local-only builtins and unknown names — an MCP prompt
-                // (`/srv:name`) resolves through the server first, then a
-                // command file, else report unknown.
-                crate::commands::Command::Clear
-                | crate::commands::Command::Multiline
-                | crate::commands::Command::Other => {
+                // Frontend-local builtins are builtins FIRST — `/clear` on an
+                // MCP server must never shadow the command the user typed.
+                // Only `Other` (a name no frontend owns) falls through to the
+                // MCP-prompt/command-file chain.
+                crate::commands::Command::Clear | crate::commands::Command::Multiline => {
+                    println!(
+                        "[/{name} is a TUI-local command — no effect in the REPL]",
+                        name = cmd_line.split_whitespace().next().unwrap_or("")
+                    );
+                    continue;
+                }
+                crate::commands::Command::Other => {
                     let name = cmd_line.split_whitespace().next().unwrap_or("");
                     let rest = cmd_line[name.len()..].trim();
                     match agent.mcp_prompt_text(name, rest).await {

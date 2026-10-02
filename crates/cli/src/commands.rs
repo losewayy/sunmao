@@ -16,6 +16,11 @@ use std::path::{Path, PathBuf};
 pub mod notes;
 pub use notes::*;
 
+/// `/export-md` — session log → shareable markdown transcript.
+#[path = "commands/export.rs"]
+pub mod export;
+pub use export::*;
+
 /// Builtin command names — the `/` menus offer these alongside the
 /// file-backed `.md` commands found by `candidates`. Frontend-local
 /// entries (`clear`, `multiline`, `quit`) parse to their `Command`
@@ -32,6 +37,9 @@ const BUILTINS: &[&str] = &[
     "model",
     "multiline",
     "quit",
+    "export-md",
+    "export-zip",
+    "stop",
     "resume",
     "rewind",
     "search",
@@ -60,6 +68,10 @@ pub enum Command {
     Fork(String),
     /// /rewind [n] [session|code|both] — bare lists turn boundaries
     Rewind(Option<RewindSpec>),
+    /// /export-zip — debug bundle: transcript + raw session log zipped
+    ExportZip,
+    /// /export-md — write the session transcript as markdown
+    Export,
     /// /sessions [id] — the resume picker alias: an arg resumes in the
     /// TUI, bare lists recent sessions everywhere
     Sessions(Option<String>),
@@ -68,6 +80,10 @@ pub enum Command {
     Search(String),
     /// /tasks — the live sub-agent roster
     Tasks,
+    /// /stop <sub-…-lN> — cancel one running sub-agent; the roster's kill
+    /// switch surfaced as a builtin (the `task_cancel` ws frame is its
+    /// served equivalent — frontends share `cancel_sub` underneath)
+    Stop(String),
     /// /todos — the model's session task list
     Todos,
     /// /mcp — the connected MCP server roster
@@ -138,6 +154,12 @@ pub fn parse(cmd_line: &str) -> Command {
                 Ok(spec) => Command::Rewind(Some(spec)),
                 Err(note) => Command::Note(note),
             },
+        },
+        "export-md" => Command::Export,
+        "export-zip" => Command::ExportZip,
+        "stop" => match arg() {
+            Some(id) => Command::Stop(id),
+            None => Command::Note("[usage: /stop <sub-…-lN>]".into()),
         },
         "sessions" => Command::Sessions(arg()),
         "search" => match arg() {
@@ -351,6 +373,8 @@ mod tests {
     #[test]
     fn builtin_parse() {
         assert!(matches!(parse("quit"), Command::Quit));
+        assert!(matches!(parse("export-md"), Command::Export));
+        assert!(matches!(parse("export-zip"), Command::ExportZip));
         assert!(matches!(parse("compact"), Command::Compact));
         assert!(matches!(parse("model"), Command::Model(None)));
         assert!(matches!(

@@ -30,8 +30,11 @@
 //! replies normalize into the same `HookOutcome`. Codex's `.codex/hooks.json`
 //! rides the Claude path (identical file shape) and needs no normalization.
 
+use crate::context::RwLockRecover;
 mod cursor;
 mod dialect;
+mod exec;
+mod fire;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -40,11 +43,6 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub(crate) use dialect::apply_ext_reply;
-use dialect::apply_result;
-
-/// A hook process that outlives this budget is abandoned — hooks advise
-/// the loop, they must never be able to hang it.
-const HOOK_TIMEOUT_SECS: u64 = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookEvent {
@@ -61,12 +59,25 @@ pub enum HookEvent {
     /// The turn aborted on an error (stream failure, hook veto abort) —
     /// fired instead of a clean Stop when the outcome wasn't normal.
     StopFailure,
+    /// The user interrupted a running turn (Esc / cancel button / ACP
+    /// cancel). Fired detached from `AgentLoop::cancel` — its outcome is
+    /// never observed, so the interrupt itself can't be delayed or vetoed;
+    /// the event exists for audit logs and cleanup scripts that must see
+    /// interruptions. Fires only while a kernel turn holds `turn_lock` —
+    /// cancelling an idle session is a no-op and earns no event.
+    Interrupt,
     SessionEnd,
     SubagentStart,
     SubagentStop,
     /// The loop wants user attention — an approval prompt fired. Hooks
     /// can relay it (desktop notify, sound); the outcome is advisory only.
     Notification,
+    /// A refusal settled — deny rule, hook veto, or a card answered "no".
+    /// Fired after the verdict so listeners see the finished refusal; a
+    /// decision-capable prompt event is `PreToolUse` (its
+    /// `permissionDecision` IS the PermissionRequest surface — this one
+    /// is observability only).
+    PermissionDenied,
 }
 
 impl HookEvent {
@@ -81,10 +92,12 @@ impl HookEvent {
             Self::PostCompact => "PostCompact",
             Self::Stop => "Stop",
             Self::StopFailure => "StopFailure",
+            Self::Interrupt => "Interrupt",
             Self::SessionEnd => "SessionEnd",
             Self::SubagentStart => "SubagentStart",
             Self::SubagentStop => "SubagentStop",
             Self::Notification => "Notification",
+            Self::PermissionDenied => "PermissionDenied",
         }
     }
 }
@@ -103,6 +116,8 @@ pub enum HookPermission {
 
 /// Per-event input — grouped because the payload surface keeps growing with
 /// the dialect (prompt for UserPromptSubmit, tool_use_id for tool events).
+/// Borrowed fields are fine: `plan()` freezes them into owned JSON payloads
+/// before any async boundary, so detached fires never carry this struct.
 #[derive(Debug, Default)]
 pub struct HookInput<'a> {
     /// The user's prompt text (UserPromptSubmit payload field `prompt`).
@@ -301,8 +316,8 @@ impl HookEngine {
     /// `/resume` swaps the session under a shared context, and hooks
     /// must name the live session from the next fire on.
     pub fn retarget(&self, session_id: &str, transcript_path: PathBuf) {
-        *self.session_id.write().unwrap() = session_id.to_string();
-        *self.transcript_path.write().unwrap() = transcript_path;
+        *self.session_id.write_or_recover() = session_id.to_string();
+        *self.transcript_path.write_or_recover() = transcript_path;
     }
 
     /// Attach the session's extension registry — `ext/event` requests then
@@ -316,8 +331,8 @@ impl HookEngine {
     /// from stdin, extensions get it as `ext/event`'s `payload` param.
     fn payload(&self, event: HookEvent, cwd: &Path, input: &HookInput<'_>) -> Value {
         json!({
-            "session_id": self.session_id.read().unwrap().clone(),
-            "transcript_path": self.transcript_path.read().unwrap().display().to_string().replace("\\\\?\\", ""),
+            "session_id": self.session_id.read_or_recover().clone(),
+            "transcript_path": self.transcript_path.read_or_recover().display().to_string().replace("\\\\?\\", ""),
             "cwd": cwd.display().to_string().replace("\\\\?\\", ""),
             "hook_event_name": event.as_str(),
             "prompt": input.prompt,
@@ -328,79 +343,6 @@ impl HookEngine {
             "tool_response": input.tool_response,
             "mcp_servers": input.mcp_servers,
         })
-    }
-
-    /// Fire one lifecycle event.
-    pub async fn fire(&self, event: HookEvent, cwd: &Path, input: &HookInput<'_>) -> HookOutcome {
-        let payload = self.payload(event, cwd, input);
-        let mut outcome = HookOutcome::default();
-        if let Some(groups) = self.groups.get(event.as_str()) {
-            for group in groups {
-                // cursor matchers filter on THEIR tool names (Shell, MCP:<t>)
-                // — everything else matches the native name.
-                let match_name = match group.dialect {
-                    cursor::Dialect::Cursor => {
-                        cursor::cursor_tool_name(input.tool_name.unwrap_or(""))
-                    }
-                    cursor::Dialect::Claude => input.tool_name.unwrap_or("").to_string(),
-                };
-                if !matches(&group.matcher, &match_name) {
-                    continue;
-                }
-                for hook in &group.hooks {
-                    if hook.kind != "command" {
-                        continue;
-                    }
-                    let command = expand_plugin_root(&hook.command, hook.plugin_root.as_deref());
-                    tracing::debug!(event = event.as_str(), %command, "firing hook");
-                    // cursor commands read a cursor-shaped payload — their
-                    // event name, their tool names, their extra fields.
-                    let hook_payload = match hook.dialect {
-                        cursor::Dialect::Cursor => cursor::cursor_payload(
-                            &hook.event_name,
-                            &self.session_id.read().unwrap().clone(),
-                            &self
-                                .transcript_path
-                                .read()
-                                .unwrap()
-                                .display()
-                                .to_string()
-                                .replace("\\\\?\\", ""),
-                            &cwd.display().to_string().replace("\\\\?\\", ""),
-                            input,
-                            &match_name,
-                        ),
-                        cursor::Dialect::Claude => payload.clone(),
-                    };
-                    match run_hook_command(&command, &hook_payload, cwd, hook.timeout).await {
-                        Ok((code, stdout, stderr)) => {
-                            tracing::debug!(
-                                code,
-                                stdout = &stdout[..stdout.len().min(512)],
-                                stderr = &stderr[..stderr.len().min(256)],
-                                "hook finished"
-                            );
-                            // cursor replies normalize into the dialect
-                            // apply_result already parses.
-                            let stdout = match hook.dialect {
-                                cursor::Dialect::Cursor => cursor::normalize_reply(&stdout),
-                                cursor::Dialect::Claude => stdout,
-                            };
-                            apply_result(code, &stdout, &stderr, &mut outcome);
-                        }
-                        Err(e) => {
-                            tracing::warn!("hook failed to spawn: {e:#}");
-                        }
-                    }
-                }
-            }
-        }
-        // extension children run after every command hook for the event —
-        // same payload, same outcome, replies carry the same effect shape.
-        if let Some(ext) = &self.ext {
-            ext.fire_event(event.as_str(), &payload, &mut outcome).await;
-        }
-        outcome
     }
 }
 
@@ -509,72 +451,6 @@ fn matches(matcher: &str, tool_name: &str) -> bool {
         Ok(re) => re.is_match(tool_name),
         Err(_) => tool_name.contains(matcher),
     }
-}
-
-/// Hook commands get the payload on stdin and run under the embedded shell,
-/// same as the Bash tool — one execution model for all shell surfaces.
-/// `timeout_secs` overrides the global budget (cursor per-entry `timeout`).
-async fn run_hook_command(
-    command: &str,
-    payload: &Value,
-    cwd: &Path,
-    timeout_secs: Option<u64>,
-) -> anyhow::Result<(i32, String, String)> {
-    let command = command.to_string();
-    let payload = serde_json::to_string(payload)?;
-    let cwd = cwd.to_path_buf();
-    let budget = timeout_secs.unwrap_or(HOOK_TIMEOUT_SECS);
-    tokio::task::spawn_blocking(move || -> anyhow::Result<(i32, String, String)> {
-        let list = deno_task_shell::parser::parse(&command)
-            .map_err(|e| anyhow::anyhow!("bad hook command: {e}"))?;
-        let env_vars: HashMap<std::ffi::OsString, std::ffi::OsString> =
-            std::env::vars_os().collect();
-        let state =
-            deno_task_shell::ShellState::new(env_vars, cwd, Default::default(), Default::default());
-        let (out_r, out_w) = deno_task_shell::pipe();
-        let (err_r, err_w) = deno_task_shell::pipe();
-        // stdin carries the JSON payload. A writer thread guards against
-        // pipe-buffer backpressure on large PostToolUse payloads; join it
-        // after exec — when write_all returns, in_w drops → child sees EOF.
-        // (Detaching without join is what the old code did; on a slow
-        // scheduler the EOF could arrive late, stalling stdin-blocking hooks.)
-        let (in_r, mut in_w) = std::io::pipe()?;
-        let feed_thread = std::thread::spawn(move || {
-            use std::io::Write as _;
-            let _ = in_w.write_all(payload.as_bytes());
-        });
-        let exec = deno_task_shell::execute_with_pipes(
-            list,
-            state,
-            deno_task_shell::ShellPipeReader::from_raw(in_r),
-            out_w,
-            err_w,
-        );
-        let rt = tokio::runtime::Handle::current();
-        let code = match rt.block_on(tokio::time::timeout(
-            std::time::Duration::from_secs(budget),
-            exec,
-        )) {
-            Ok(code) => code,
-            Err(_) => {
-                // a hung hook must not stall the agent. The feed thread is
-                // deliberately NOT joined — joining a still-writing stdin
-                // would re-create the stall we're escaping.
-                anyhow::bail!("hook timed out after {budget}s");
-            }
-        };
-        let _ = feed_thread.join();
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        out_r.pipe_to(&mut out).ok();
-        err_r.pipe_to(&mut err).ok();
-        Ok((
-            code,
-            String::from_utf8_lossy(&out).into_owned(),
-            String::from_utf8_lossy(&err).into_owned(),
-        ))
-    })
-    .await?
 }
 
 #[cfg(test)]

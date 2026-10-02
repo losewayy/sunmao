@@ -113,7 +113,10 @@ impl ToolImpl for GrepTool {
         if let Some(g) = &a.glob {
             cmd.arg("--glob").arg(g);
         }
-        cmd.arg(&a.pattern);
+        // `--` before positionals — a pattern or path starting with `-`
+        // (model-emitted `-foo` search) would parse as an rg flag, not an
+        // operand, and the tool would silently search the wrong thing
+        cmd.arg("--").arg(&a.pattern);
         if let Some(p) = &a.path {
             cmd.arg(p);
         }
@@ -130,7 +133,13 @@ impl ToolImpl for GrepTool {
         const CAP: usize = 8 * 1024;
         let text = String::from_utf8_lossy(&out.stdout);
         let mut res = if text.len() > CAP {
-            format!("{}…[truncated {} bytes]", &text[..CAP], text.len() - CAP)
+            // CAP isn't char-aligned for CJK/emoji output — step back or
+            // the slice panics mid-codepoint.
+            let mut end = CAP;
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}…[truncated {} bytes]", &text[..end], text.len() - end)
         } else {
             text.into_owned()
         };

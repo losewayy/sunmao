@@ -5,3 +5,5 @@ parsing. `$env:NAME` reads env vars; `Set-Location`/`cd` both work; `&&`
 and `||` chain like POSIX. Commands persist nothing between calls — each
 invocation is a fresh `pwsh -EncodedCommand` (no shell state carries over).
 Windows paths (`C:\…`, `~\…`) are native; `/` also works in most cmdlets.
+Redirect discarded output to `$null` (`cmd 2>$null`) — `/dev/null` does
+not exist here.

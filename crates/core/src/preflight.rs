@@ -11,8 +11,18 @@
 //!
 //! Words that contain variable/tilde/command-substitution parts can't be
 //! predicted honestly — those commands are skipped, and commands prefixed
-//! with env-var assignments are skipped with them. deno_task_shell builtins
-//! never touch the filesystem, so they are exempt by name.
+//! with env-var assignments are skipped with them.
+//!
+//! Two layers know which names the shell resolves in-process:
+//! - *Builtins* are probed against a live `ShellState` instead of a
+//!   hand-maintained list — a written-out table drifted the day upstream
+//!   added `test` and dropped nothing (`builtin_commands()` is
+//!   crate-private, so the state itself is the honest oracle).
+//! - *Name collisions* (`assets/windows-collision-names.txt`) are the
+//!   opposite failure: the name resolves — to a System32 binary whose
+//!   POSIX-namesake semantics differ (`find`, `sort`, `timeout`). The
+//!   advisory fires only when the resolved path actually lands under
+//!   %WINDIR%, so a real POSIX port earlier in PATH stays clean.
 
 use deno_task_shell::parser::{
     Command, CommandInner, PipelineInner, Sequence, SequentialList, WordPart,
@@ -22,12 +32,61 @@ use spawnfate::model::{Producer, Severity, Shell, SpawnInput, TargetParser, Verd
 use std::path::Path;
 
 /// deno_task_shell builtins — resolved in-process, never probed on disk.
-/// (`builtin_commands()` is crate-private upstream; keep the names in sync
-/// with shell/commands/mod.rs.)
-const DENO_BUILTINS: &[&str] = &[
-    "args", "cat", "cd", "cp", "echo", "exit", "export", "false", "head", "mkdir", "mv", "pwd",
-    "rm", "set", "shopt", "sleep", "true", "unset", "xargs",
-];
+/// The live ShellState is the oracle (upstream's `builtin_commands()` is
+/// crate-private and has drifted under hand-maintained copies before):
+/// `resolve_custom_command` is the same lookup `execute_with_pipes` uses,
+/// so this can never disagree with what actually runs.
+fn is_shell_builtin(name: &str) -> bool {
+    // Commands lookup never consults env/cwd — a throwaway state is cheap
+    // and honest. cwd must be absolute; the current dir always is, and the
+    // fallback only matters when it somehow isn't.
+    let cwd = std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from(if cfg!(windows) { r"C:\" } else { "/" }));
+    let state = deno_task_shell::ShellState::new(
+        Default::default(),
+        cwd,
+        Default::default(),
+        Default::default(),
+    );
+    state
+        .resolve_custom_command(std::ffi::OsStr::new(name))
+        .is_some()
+}
+
+/// `name | what-the-system-binary-actually-does` — POSIX-looking names that
+/// resolve to a Windows system binary whose semantics differ. Baked via
+/// include_str!; the file is the policy, not this comment.
+#[cfg(windows)]
+fn collision_table() -> &'static Vec<(String, String)> {
+    static TABLE: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        crate::approval::parse_table(include_str!("../assets/windows-collision-names.txt"))
+    })
+}
+
+/// Name-collision advisory: the command resolved *to a Windows system
+/// binary* whose POSIX namesake behaves differently — a silent-wrong-answer
+/// class spawnfate can't see (the spawn succeeds). `resolved`/`windows_dir`
+/// come from the same report/env as the verdict.
+#[cfg(windows)]
+fn collision_advisory(name: &str, resolved: &str, windows_dir: &str) -> Option<String> {
+    let dir = windows_dir.replace('/', "\\").to_lowercase();
+    let dir = dir.trim_end_matches('\\');
+    let res = resolved.replace('/', "\\").to_lowercase();
+    let in_system32 = res.starts_with(&format!("{dir}\\system32\\"))
+        || res.starts_with(&format!("{dir}\\syswow64\\"));
+    if !in_system32 {
+        return None;
+    }
+    let base = res.rsplit('\\').next()?;
+    let stem = base.strip_suffix(".exe").unwrap_or(base);
+    collision_table()
+        .iter()
+        .find(|(n, _)| n == stem)
+        .map(|(_, what)| {
+            format!("{name}: resolved to {resolved} — a Windows system binary, not the POSIX tool ({what})")
+        })
+}
 
 /// A flattened simple command: file = args[0], rest = argv.
 struct FlatCommand {
@@ -63,6 +122,13 @@ pub fn advisories(list: &SequentialList, cwd: &Path) -> Vec<String> {
                             cmd.file, n.severity, n.layer, n.message, n.rule
                         ));
                     }
+                }
+                // Runs but answers wrong: POSIX-looking name resolved to a
+                // System32 binary with divergent semantics.
+                if let Some(resolved) = &report.resolved
+                    && let Some(adv) = collision_advisory(&cmd.file, resolved, &env.windows_dir)
+                {
+                    out.push(adv);
                 }
             }
             Verdict::Dies { layer, error } => {
@@ -119,7 +185,7 @@ fn simple_commands(list: &SequentialList) -> Vec<FlatCommand> {
             continue;
         }
         let file = flat.remove(0);
-        if DENO_BUILTINS.contains(&file.as_str()) {
+        if is_shell_builtin(&file) {
             continue;
         }
         out.push(FlatCommand { file, args: flat });
@@ -354,6 +420,51 @@ mod tests {
     fn skips_denotaskshell_builtins() {
         let cmds = simple_commands(&parse("rm -rf x && cd y && echo z"));
         assert!(cmds.is_empty());
+    }
+
+    /// The builtin oracle is the live ShellState, so names upstream added
+    /// or never had can't drift: `test` is a real builtin, `args` never was.
+    #[test]
+    fn builtin_probe_matches_the_real_shell() {
+        for name in ["rm", "cat", "test", ":"] {
+            assert!(is_shell_builtin(name), "{name} should be builtin");
+        }
+        for name in ["args", "ls", "find", "[", "cargo"] {
+            assert!(!is_shell_builtin(name), "{name} should not be builtin");
+        }
+    }
+
+    /// Collision advisories only fire when the name actually resolved into
+    /// %WINDIR% — a POSIX port earlier in PATH (Git's find/sort) stays clean.
+    #[test]
+    fn collision_fires_on_system32_only() {
+        let adv = collision_advisory("find", r"C:\Windows\System32\find.exe", r"C:\Windows");
+        assert!(adv.is_some(), "System32 find.exe should advise");
+        let quiet = collision_advisory(
+            "find",
+            r"C:\Program Files\Git\usr\bin\find.exe",
+            r"C:\Windows",
+        );
+        assert!(
+            quiet.is_none(),
+            "Git's find is POSIX, no advisory: {quiet:?}"
+        );
+        // a name that collides nowhere stays silent even under System32
+        assert!(
+            collision_advisory("ping", r"C:\Windows\System32\ping.exe", r"C:\Windows").is_none()
+        );
+    }
+
+    /// End-to-end: `fc` is a System32 binary on every Windows box and has no
+    /// POSIX homonym in PATH on a stock machine — the advisory must surface.
+    #[test]
+    fn collision_advisory_reaches_the_result() {
+        let adv = advisories(&parse("fc a.txt b.txt"), Path::new(r"C:\"));
+        assert!(
+            adv.iter()
+                .any(|a| a.contains("fc") && a.contains("Windows system binary")),
+            "{adv:?}"
+        );
     }
 
     #[test]

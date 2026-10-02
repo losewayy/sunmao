@@ -1,0 +1,11 @@
+# windows-collision-names — POSIX-looking command names that resolve to a
+# Windows system binary with *different* semantics. Preflight fires an
+# advisory only when the resolved path actually lands under %WINDIR%
+# (System32/SysWOW64) — a real POSIX port earlier in PATH stays clean.
+# Format: `name | what the system binary actually does` (lowercase name).
+find | find.exe searches file CONTENTS for a string (like grep), not file names — use the Glob tool
+sort | sort.exe has no -u/-n/-k flags and no POSIX option syntax — pipe to a real sort or use another tool
+timeout | timeout.exe waits N seconds itself; it does not run a command with a deadline
+fc | fc.exe compares two files (binary/line diff), not POSIX fc history editing
+expand | expand.exe extracts .cab/.zip-style compressed files, not tabs-to-spaces
+shutdown | shutdown.exe takes /s /r /t Windows flags, not POSIX -h/-r

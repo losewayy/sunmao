@@ -160,7 +160,10 @@ impl ToolImpl for TaskTool {
             // def re-resolution: the roster remembered the def name (minus
             // the `-r` lineage tag a fresh resumed entry carries); a child
             // the roster never knew — a process restart left only the log —
-            // resumes as a generic sub-agent.
+            // resolves through the same spawn whitelist a fresh spawn does
+            // (a restricted parent's `spawns:` defaults the omitted name to
+            // its first entry; a name it can't spawn is refused outright —
+            // resume must not smuggle a def past spawn policy).
             let agent_name = {
                 let tasks = ctx.live_tasks.lock_or_recover();
                 tasks
@@ -169,9 +172,7 @@ impl ToolImpl for TaskTool {
                     .and_then(|t| t.agent.as_deref())
                     .map(|n| n.strip_suffix("-r").unwrap_or(n).to_string())
             };
-            let def = agent_name
-                .as_deref()
-                .and_then(|n| crate::agents::find(&ctx.cwd, &ctx.extra_plugin_roots, n));
+            let def = resolve_spawn_def(ctx, agent_name.as_deref())?;
             let llm_override = match &a.model {
                 None => None,
                 Some(sel) => match ctx.models.as_ref() {

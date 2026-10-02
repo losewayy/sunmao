@@ -93,7 +93,7 @@
 
 规矩：**能做成原生的全部原生，shell 是刻意保留的逃生门而非地基**。
 
-**`RunCode`（PTC/codemode）**：模型写一段 JS 在内嵌 QuickJS 沙箱里编排工具——无 fs/网络/`import`，全部能力是 `tools.<Name>(args)` 回调进宿主。每个子调用走完整分发管线（PreToolUse→gate→exec→PostToolUse），只是喊话通道从 model tool_call 换成脚本代发；中间结果留在沙箱不进上下文，只有脚本返回值回来。子调用的持久记录是 `Hook` 审计事实而非 ToolCall/ToolResult——否则未配对 tool_result 会污染 transcript 折叠。
+**`RunCode`（PTC/codemode）**：模型写一段 JS 在内嵌 QuickJS 沙箱里编排工具——无 fs/网络/`import`，全部能力是 `tools.<Name>(args)` 回调进宿主。每个子调用走完整分发管线（PreToolUse→gate→exec→PostToolUse），只是喊话通道从 model tool_call 换成脚本代发；中间结果留在沙箱不进上下文，只有脚本返回值回来。子调用的持久记录是 `SessionEvent::PtcCall` 事实（含 name/args/ok/output/depth/lane）——不进消息折叠（不配对的 tool_result 会污染 transcript），但回放渲染成嵌套 `↳` 行、dataflow/export 可归属。
 
 **Edit 成熟细节（抄 grok-build 作业）**：归一化匹配吃空白漂移（`find_normalized_match_positions` 模式）；`old_string` 为空=建文件；Read 行号锚前缀；Read-before-Write 闸门（改已有文件必须先读过）。
 
@@ -131,7 +131,11 @@ hook engine（核心）
 └── 工件: transcript_path 真实落盘; fail-open 语义+审计记录每条 hook 决策；
     trust pinning：项目/插件层 command 需 `<cwd>/.sunmao/trusted-hooks.json`
     记账（sha256(源文件路径+command)），未记账=跳过执行并落 `hook.untrusted`
-    审计事实；用户层（~/.claude 等）隐式信任；`/hooks` 复审入口
+    审计事实；用户层（~/.claude 等）隐式信任；`/hooks` 复审入口。
+    同一账本覆盖"配置指定我们要 exec 的命令"的全部面：plugin.json
+    `extensions` 与 mcpServers `command:`（url 传输不产生本地进程，不入闸）
+    按 `sha256(源 + 展开后 {command,args,env} JSON)` 记账，未记账=连接期
+    跳过并落 `ext.untrusted`/`mcp.untrusted`；`/hooks` 三类同列共编号
 ```
 
 **验收试金石**：拿真实生态插件当 conformance fixture——`rtk init` 后跑一次 `Bash`，断言命令被 rewrite；context-mode 的 `hooks.json` 挂上后断言 `PreToolUse` 拦截生效。**兼容不是声称的，是测出来的。**

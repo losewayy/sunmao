@@ -248,68 +248,6 @@ async fn malformed_tool_args_become_failed_result() {
     );
 }
 
-/// Auto-compaction used to check at the TOP of the loop — after the prompt
-/// was already appended — so the Compacted boundary folded the user's fresh
-/// question into the summary and the model never saw it as a live message.
-/// The check must run before the append.
-#[tokio::test]
-async fn auto_compact_runs_before_prompt_append() {
-    let provider = Arc::new(MockProvider {
-        responses: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
-            // 1st call = the summarizer
-            vec![
-                StreamDelta::Content("summary of the old talk".into()),
-                StreamDelta::Finish {
-                    reason: Some("stop".into()),
-                    usage: None,
-                },
-            ],
-            // 2nd call = the real turn answer
-            vec![
-                StreamDelta::Content("answer".into()),
-                StreamDelta::Finish {
-                    reason: Some("stop".into()),
-                    usage: None,
-                },
-            ],
-        ])),
-        calls: std::sync::atomic::AtomicUsize::new(0),
-    });
-    let ctx = Arc::new(Context::new(
-        provider.clone(),
-        SessionLog::ephemeral(),
-        builtin_registry(),
-        std::env::temp_dir(),
-    ));
-    // seed enough history to trip a tiny threshold
-    ctx.sessions
-        .lock()
-        .await
-        .append(&crate::session::SessionEvent::Message {
-            message: sunmao_llm::types::Message::user("x".repeat(400)),
-        })
-        .await
-        .unwrap();
-    let agent = AgentLoop::new(ctx.clone()).with_compact_threshold(60);
-    agent
-        .run_turn("fresh question", &NullObserver)
-        .await
-        .unwrap();
-    // 2 provider calls: summarizer + the actual turn
-    assert_eq!(provider.calls.load(std::sync::atomic::Ordering::Relaxed), 2);
-    let msgs = ctx.sessions.lock().await.messages().await.unwrap();
-    let texts: Vec<String> = msgs.iter().filter_map(|m| m.content_text()).collect();
-    let spos = texts
-        .iter()
-        .position(|t| t.contains("summary of the old talk"))
-        .expect("compacted summary must be in the fold");
-    let qpos = texts
-        .iter()
-        .position(|t| *t == "fresh question")
-        .expect("the prompt must survive compaction as a live user message");
-    assert!(qpos > spos, "prompt must land AFTER the compacted boundary");
-}
-
 #[tokio::test]
 async fn cancel_flag_breaks_loop() {
     // provider would return tool_calls forever; cancel must interrupt

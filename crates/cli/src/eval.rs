@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use sunmao_core::context::MutexRecover;
 
 use anyhow::{Context as _, bail};
 use serde_json::{Value, json};
@@ -50,7 +51,7 @@ struct QuietObserver {
 impl Observer for QuietObserver {
     fn on_event(&self, ev: &LiveEvent) {
         if let LiveEvent::Content { text: c } = ev {
-            self.content.lock().unwrap().push_str(c);
+            self.content.lock_or_recover().push_str(c);
         }
     }
 }
@@ -227,7 +228,7 @@ async fn run_case_inner(
             .await
             .map(|e| e.len())
             .unwrap_or(0);
-        let obs_mark = obs.content.lock().unwrap().len();
+        let obs_mark = obs.content.lock_or_recover().len();
 
         let outcome = agent.run_turn(&step.prompt, &obs).await?;
         if !matches!(outcome, TurnOutcome::Completed) {
@@ -258,7 +259,7 @@ async fn run_case_inner(
             .and_then(|m| m.content_text())
             .unwrap_or_default();
         if final_text.is_empty() {
-            final_text = obs.content.lock().unwrap()[obs_mark..].to_string();
+            final_text = obs.content.lock_or_recover()[obs_mark..].to_string();
         }
         let names: Vec<&str> = tool_names.iter().map(String::as_str).collect();
         result.failures.extend(

@@ -124,6 +124,24 @@ impl Observer for AcpObserver {
                     self.next_id("msg"),
                 )));
             }
+            // transcript-folding facts — durable on the log; an ACP client
+            // rebuilds its own view, so a one-line notice is the whole job
+            LiveEvent::Compacted { summary } => {
+                self.send(v2::SessionUpdate::AgentMessageChunk(v2::ContentChunk::new(
+                    format!("[context compacted] {summary}\n").into(),
+                    self.next_id("msg"),
+                )));
+            }
+            LiveEvent::Todos { .. } => {} // the tool's ToolDone output covers it
+            // serve-only live mirror of the durable user message — ACP
+            // never runs through client.rs's Input lane, so it never lands
+            LiveEvent::UserMessage { .. } => {}
+            LiveEvent::TaskDone { id, ok, .. } => {
+                self.send(v2::SessionUpdate::AgentMessageChunk(v2::ContentChunk::new(
+                    format!("[sub-agent {id} {}]\n", if *ok { "done" } else { "failed" }).into(),
+                    self.next_id("msg"),
+                )));
+            }
         }
     }
 }

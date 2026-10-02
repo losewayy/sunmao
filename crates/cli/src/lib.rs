@@ -5,6 +5,7 @@
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
+use sunmao_core::context::RwLockRecover;
 
 use anyhow::Context as _;
 use clap::Parser;
@@ -116,11 +117,16 @@ fn parse_approval_mode(s: &str) -> Result<sunmao_core::agent::ApprovalMode, Stri
 }
 
 fn session_id() -> String {
+    // same-second spawns (double-clicked GUI + a TUI share the project)
+    // used to collide on `s-{secs}` and silently overwrite each other's
+    // log — pid + a per-process counter keeps every id unique.
+    static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    format!("s-{now}")
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("s-{now}-{:x}-{seq:x}", std::process::id())
 }
 
 /// Session provider adapter from the cli flags — shared by the interactive
@@ -183,8 +189,17 @@ pub fn init_tracing() {
 }
 
 /// The CLI entry point — `main` is `sunmao::run(Cli::parse())`.
-pub async fn run(cli: Cli) -> anyhow::Result<()> {
+pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
     init_tracing();
+
+    // `--session-dir` is relative to `--cwd`, not the shell's cwd — the
+    // default `.sunmao/sessions` MUST land inside the project being
+    // worked on, and a `--cwd` without a re-anchor writes/reads two
+    // different directories (session.log opens in one, /resume lists
+    // the other). Absolute values pass through unchanged.
+    if cli.session_dir.is_relative() {
+        cli.session_dir = cli.cwd.join(&cli.session_dir);
+    }
 
     // `plugin` ops are pure file management — they never need a provider,
     // a session log, or any of the session setup below.
@@ -289,11 +304,11 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     // default, never silently skip them. Restrictive resumed modes
     // (read_only/always_ask) are honored: they only refuse more.
     if let Some(mode) = cli.mode {
-        *ctx_raw.approval_mode.write().unwrap() = mode;
+        *ctx_raw.approval_mode.write_or_recover() = mode;
     } else if cli.print.is_some()
-        && *ctx_raw.approval_mode.read().unwrap() == sunmao_core::agent::ApprovalMode::FullAccess
+        && *ctx_raw.approval_mode.read_or_recover() == sunmao_core::agent::ApprovalMode::FullAccess
     {
-        *ctx_raw.approval_mode.write().unwrap() = sunmao_core::agent::ApprovalMode::Auto;
+        *ctx_raw.approval_mode.write_or_recover() = sunmao_core::agent::ApprovalMode::Auto;
     }
     // Model routing seam: `.sunmao/models.json` (+ `.claude` compat) names
     // providers and routes; agent `model:` selectors resolve through it.

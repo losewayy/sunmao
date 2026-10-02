@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
+use sunmao_core::context::{MutexRecover, RwLockRecover};
 
 use agent_client_protocol::schema::v2;
 use agent_client_protocol::{Agent, Client, Error, Responder, Result, Stdio, V2ConnectionTo};
@@ -230,8 +231,8 @@ pub async fn run(
                             },
                         )
                         .await;
-                    let mode = *ctx.approval_mode.read().unwrap();
-                    agent.sessions.lock().unwrap().insert(
+                    let mode = *ctx.approval_mode.read_or_recover();
+                    agent.sessions.lock_or_recover().insert(
                         id,
                         Arc::new(Mutex::new(SessionState {
                             agent: AgentLoop::new(ctx.clone()),
@@ -263,13 +264,13 @@ pub async fn run(
                     // live sessions first; a fresh server's map is empty, so
                     // also scan the request cwd's session dir — resumable
                     // logs are sessions too
-                    let map = agent.sessions.lock().unwrap();
+                    let map = agent.sessions.lock_or_recover();
                     let mut infos: Vec<_> = map
                         .keys()
                         .map(|id| {
                             v2::SessionInfo::new(
                                 v2::SessionId::new(id.clone()),
-                                v2::AbsolutePath::new(map[id].lock().unwrap().ctx.cwd.clone()),
+                                v2::AbsolutePath::new(map[id].lock_or_recover().ctx.cwd.clone()),
                             )
                         })
                         .collect();
@@ -317,7 +318,7 @@ pub async fn run(
                             cx: V2ConnectionTo<Client>| {
                     let id = req.session_id.to_string();
                     // already live in this process?
-                    if agent.sessions.lock().unwrap().contains_key(&id) {
+                    if agent.sessions.lock_or_recover().contains_key(&id) {
                         return responder.respond(v2::ResumeSessionResponse::new());
                     }
                     // reopen the on-disk log — events fold back into messages
@@ -384,8 +385,8 @@ pub async fn run(
                     // the mode the reopened log was seeded with — the
                     // response advertises it so the client's selector
                     // shows the resumed stance, not a default
-                    let resumed_mode = *ctx.approval_mode.read().unwrap();
-                    agent.sessions.lock().unwrap().insert(
+                    let resumed_mode = *ctx.approval_mode.read_or_recover();
+                    agent.sessions.lock_or_recover().insert(
                         id,
                         Arc::new(Mutex::new(SessionState {
                             agent: AgentLoop::new(ctx.clone()),
@@ -408,7 +409,7 @@ pub async fn run(
                             responder: Responder<v2::SetSessionConfigOptionResponse>,
                             cx: V2ConnectionTo<Client>| {
                     let session = {
-                        let map = agent.sessions.lock().unwrap();
+                        let map = agent.sessions.lock_or_recover();
                         map.get(&req.session_id.to_string()).cloned()
                     };
                     let Some(session) = session else {
@@ -432,7 +433,7 @@ pub async fn run(
                             .respond_with_error(invalid_params(format!("unknown mode: {wanted}")));
                     };
                     let (agent_loop, ctx, session_id) = {
-                        let st = session.lock().unwrap();
+                        let st = session.lock_or_recover();
                         (st.agent.clone(), st.ctx.clone(), req.session_id.clone())
                     };
                     // durable + live: the audit line rides the same observer
@@ -448,7 +449,7 @@ pub async fn run(
                         )
                         .await;
                     responder.respond(v2::SetSessionConfigOptionResponse::new(vec![mode_config(
-                        *ctx.approval_mode.read().unwrap(),
+                        *ctx.approval_mode.read_or_recover(),
                     )]))
                 }
             },
@@ -468,7 +469,7 @@ pub async fn run(
                     // closed session = dead extensions — graceful shutdown
                     // before the state drops (Drop would only detach).
                     // Clone the ctx out of the lock: guards never cross await.
-                    let ctx = session.map(|s| s.lock().unwrap().ctx.clone());
+                    let ctx = session.map(|s| s.lock_or_recover().ctx.clone());
                     if let Some(ctx) = ctx {
                         // SessionEnd is a session fact, not a frontend
                         // courtesy — fire before the children die so they
@@ -494,19 +495,19 @@ pub async fn run(
                             responder: Responder<v2::PromptResponse>,
                             cx: V2ConnectionTo<Client>| {
                     let session = {
-                        let map = agent.sessions.lock().unwrap();
+                        let map = agent.sessions.lock_or_recover();
                         map.get(&req.session_id.to_string()).cloned()
                     };
                     let Some(session) = session else {
                         return responder.respond_with_error(invalid_params("unknown session"));
                     };
 
-                    let session_cwd = session.lock().unwrap().ctx.cwd.clone();
+                    let session_cwd = session.lock_or_recover().ctx.cwd.clone();
                     let (prompt_text, attachments) =
                         blocks::prompt_blocks(&req.prompt, &session_cwd);
 
                     let user_msg_id = {
-                        let mut st = session.lock().unwrap();
+                        let mut st = session.lock_or_recover();
                         st.next_msg += 1;
                         v2::MessageId::new(format!("user-{}", st.next_msg))
                     };
@@ -530,7 +531,7 @@ pub async fn run(
                             ));
                             // clone the loop handle out from under the lock —
                             // turns on one session serialize via ACP anyway
-                            let agent_loop = session.lock().unwrap().agent.clone();
+                            let agent_loop = session.lock_or_recover().agent.clone();
                             let outcome = agent_loop
                                 .run_turn_blocks(&prompt_text, &attachments, &obs)
                                 .await;
@@ -556,7 +557,7 @@ pub async fn run(
             {
                 let agent = agent.clone();
                 async move |notif: v2::CancelSessionNotification, _cx: V2ConnectionTo<Client>| {
-                    let map = agent.sessions.lock().unwrap();
+                    let map = agent.sessions.lock_or_recover();
                     if let Some(s) = map.get(&notif.session_id.to_string()) {
                         s.lock()
                             .unwrap()
@@ -574,9 +575,9 @@ pub async fn run(
 
     // server going down = every live session's extensions go down with it
     let exts: Vec<_> = {
-        let map = agent.sessions.lock().unwrap();
+        let map = agent.sessions.lock_or_recover();
         map.values()
-            .map(|s| s.lock().unwrap().ctx.ext.clone())
+            .map(|s| s.lock_or_recover().ctx.ext.clone())
             .collect()
     };
     for ext in exts {

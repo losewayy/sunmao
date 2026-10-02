@@ -11,7 +11,7 @@ use sunmao_core::tool::TodoItem;
 
 /// The backend-semantic command tail every frontend's `/help` shares;
 /// frontend-local names prepend via `help_text`'s `local` argument.
-const HELP_COMMANDS: &str = "/compact · /model [sel] · /mode [stance] · /resume [id] · /sessions · /search <q> · /fork <id> · /rewind [n] [session|code|both] · /tasks · /todos · /mcp · /status · /artifacts · /annotate <name> <note> · /help";
+const HELP_COMMANDS: &str = "/compact · /model [sel] · /mode [stance] · /resume [id] · /sessions · /search <q> · /fork <id> · /rewind [n] [session|code|both] · /export-md · /export-zip · /tasks · /todos · /mcp · /status · /artifacts · /annotate <name> <note> · /help";
 
 /// The `/help` commands line — `local` inserts frontend-only names
 /// (`"/multiline · /clear · "` for the TUI, `""` elsewhere) ahead of the

@@ -96,7 +96,7 @@ impl ToolImpl for TaskTool {
         )
     }
 
-    async fn call(&self, args: Value, ctx: &Context) -> anyhow::Result<ToolResult> {
+    async fn call(&self, args: Value, ctx: &Arc<Context>) -> anyhow::Result<ToolResult> {
         #[derive(Deserialize)]
         struct Args {
             prompt: Option<String>,

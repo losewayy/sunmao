@@ -43,12 +43,12 @@ async fn mcp_call_survives_then_fails_after_child_death() {
         eprintln!("rustc not found — skipping live MCP test");
         return;
     };
-    let ctx = crate::context::Context::new(
+    let ctx = Arc::new(crate::context::Context::new(
         std::sync::Arc::new(StubLlm),
         crate::session::SessionLog::ephemeral(),
         crate::tool::ToolRegistry::new(),
         std::env::temp_dir(),
-    );
+    ));
 
     // healthy path: real initialize → tools/list → tools/call
     let spec = ServerSpec {

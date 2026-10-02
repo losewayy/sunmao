@@ -33,7 +33,11 @@ impl ToolImpl for BashTool {
         )
     }
 
-    async fn call(&self, args: Value, ctx: &crate::context::Context) -> anyhow::Result<ToolResult> {
+    async fn call(
+        &self,
+        args: Value,
+        ctx: &Arc<crate::context::Context>,
+    ) -> anyhow::Result<ToolResult> {
         #[derive(Deserialize)]
         struct Args {
             command: String,
@@ -444,7 +448,11 @@ impl ToolImpl for JobOutputTool {
         )
     }
 
-    async fn call(&self, args: Value, ctx: &crate::context::Context) -> anyhow::Result<ToolResult> {
+    async fn call(
+        &self,
+        args: Value,
+        ctx: &Arc<crate::context::Context>,
+    ) -> anyhow::Result<ToolResult> {
         #[derive(Deserialize)]
         struct Args {
             id: String,

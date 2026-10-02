@@ -47,7 +47,7 @@ impl ToolImpl for SendMessageTool {
         )
     }
 
-    async fn call(&self, args: Value, ctx: &Context) -> anyhow::Result<ToolResult> {
+    async fn call(&self, args: Value, ctx: &std::sync::Arc<Context>) -> anyhow::Result<ToolResult> {
         #[derive(Deserialize)]
         struct Args {
             message: String,
@@ -97,18 +97,16 @@ mod tests {
 
     /// A bare context pointing its uplink at a queue the test can read —
     /// mirrors what `build_sub_ctx` wires for a real child.
-    fn ctx_with_uplink() -> (Context, crate::context::SteerQueue) {
+    fn ctx_with_uplink() -> (Arc<Context>, crate::context::SteerQueue) {
         let queue = crate::context::SteerQueue::default();
-        let ctx = Context {
-            parent_steer: Some(queue.clone()),
-            ..Context::new(
-                Arc::new(NullProvider),
-                crate::session::SessionLog::ephemeral(),
-                crate::tool::builtin_registry(),
-                crate::fresh_test_dir("sendmsg"),
-            )
-        };
-        (ctx, queue)
+        let mut inner = Context::new(
+            Arc::new(NullProvider),
+            crate::session::SessionLog::ephemeral(),
+            crate::tool::builtin_registry(),
+            crate::fresh_test_dir("sendmsg"),
+        );
+        inner.parent_steer = Some(queue.clone());
+        (Arc::new(inner), queue)
     }
 
     #[tokio::test]
@@ -136,12 +134,12 @@ mod tests {
 
     #[tokio::test]
     async fn interactive_session_reports_no_parent() {
-        let ctx = Context::new(
+        let ctx = Arc::new(Context::new(
             Arc::new(NullProvider),
             crate::session::SessionLog::ephemeral(),
             crate::tool::builtin_registry(),
             crate::fresh_test_dir("sendmsg-top"),
-        );
+        ));
         assert!(ctx.parent_steer.is_none());
         let r = SendMessageTool
             .call(json!({"message": "hello"}), &ctx)

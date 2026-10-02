@@ -27,12 +27,12 @@ impl ProviderAdapter for MockProvider {
 async fn bg_task_pushes_result_into_parent_log() {
     let dir = crate::fresh_test_dir("bg");
     std::fs::create_dir_all(&dir).unwrap();
-    let ctx = Context::new(
+    let ctx = Arc::new(Context::new(
         Arc::new(MockProvider),
         SessionLog::ephemeral(),
         builtin_registry(),
         dir.clone(),
-    );
+    ));
 
     let res = TaskTool
         .call(
@@ -106,12 +106,12 @@ async fn bg_task_pushes_result_into_parent_log() {
 async fn spawn_ids_are_unique_within_a_millisecond() {
     let dir = crate::fresh_test_dir("uniq");
     std::fs::create_dir_all(&dir).unwrap();
-    let ctx = Context::new(
+    let ctx = Arc::new(Context::new(
         Arc::new(MockProvider),
         SessionLog::ephemeral(),
         builtin_registry(),
         dir.clone(),
-    );
+    ));
     let (a, _) = spawn_parts(&ctx, None, None).await;
     let (b, _) = spawn_parts(&ctx, None, None).await;
     assert_ne!(a, b, "concurrent spawns must not share a session id");
@@ -142,13 +142,13 @@ async fn spawns_whitelist_gates_children() {
     )
     .unwrap();
 
-    let mut ctx = Context::new(
+    let mut ctx = Arc::new(Context::new(
         Arc::new(MockProvider),
         SessionLog::ephemeral(),
         builtin_registry(),
         dir.clone(),
-    );
-    ctx.agent_name = Some("orchestrator".into());
+    ));
+    Arc::get_mut(&mut ctx).unwrap().agent_name = Some("orchestrator".into());
 
     // not whitelisted → refused
     let err = resolve_spawn_def(&ctx, Some("grader")).unwrap_err();
@@ -181,12 +181,12 @@ async fn tools_whitelist_and_depth_cap_trim_registry() {
     )
     .unwrap();
 
-    let ctx = Context::new(
+    let ctx = Arc::new(Context::new(
         Arc::new(MockProvider),
         SessionLog::ephemeral(),
         builtin_registry(),
         dir.clone(),
-    );
+    ));
     let defs: Vec<_> = crate::agents::load_all(&dir, &[]);
     let reader = defs.iter().find(|d| d.name == "reader").unwrap();
     let (_, reader_ctx) = spawn_parts(&ctx, Some(reader), None).await;
@@ -219,12 +219,12 @@ async fn tools_whitelist_and_depth_cap_trim_registry() {
 async fn call_site_model_routes_and_unknown_selector_fails() {
     let dir = crate::fresh_test_dir("taskmodel");
     std::fs::create_dir_all(&dir).unwrap();
-    let mut ctx = Context::new(
+    let mut ctx = Arc::new(Context::new(
         Arc::new(MockProvider),
         SessionLog::ephemeral(),
         builtin_registry(),
         dir.clone(),
-    );
+    ));
     let resolver = crate::models::ModelResolver::load(
         &dir,
         crate::models::ProviderDef {
@@ -237,7 +237,7 @@ async fn call_site_model_routes_and_unknown_selector_fails() {
         "default",
     )
     .with_adapter("@cheap", Arc::new(MockProvider));
-    ctx.models = Some(Arc::new(resolver));
+    Arc::get_mut(&mut ctx).unwrap().models = Some(Arc::new(resolver));
 
     // unknown selector → tool error carrying the available selectors
     let err = TaskTool

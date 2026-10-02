@@ -65,7 +65,11 @@ impl ToolImpl for McpTool {
         )
     }
 
-    async fn call(&self, args: Value, ctx: &crate::context::Context) -> anyhow::Result<ToolResult> {
+    async fn call(
+        &self,
+        args: Value,
+        ctx: &Arc<crate::context::Context>,
+    ) -> anyhow::Result<ToolResult> {
         let mut params = CallToolRequestParams::new(self.tool_name.clone());
         if let Some(obj) = args.as_object() {
             params = params.with_arguments(obj.clone());

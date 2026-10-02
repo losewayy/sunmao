@@ -345,7 +345,7 @@ impl ToolImpl for ExtTool {
     async fn call(
         &self,
         args: Value,
-        _ctx: &crate::context::Context,
+        _ctx: &std::sync::Arc<crate::context::Context>,
     ) -> anyhow::Result<crate::tool::ToolResult> {
         let reply = self
             .child

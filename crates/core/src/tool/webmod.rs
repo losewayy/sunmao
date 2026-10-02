@@ -31,7 +31,7 @@ impl ToolImpl for WebFetchTool {
     async fn call(
         &self,
         args: Value,
-        _ctx: &crate::context::Context,
+        _ctx: &std::sync::Arc<crate::context::Context>,
     ) -> anyhow::Result<ToolResult> {
         #[derive(Deserialize)]
         struct Args {

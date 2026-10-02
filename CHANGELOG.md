@@ -10,6 +10,12 @@ ACP v2 server, event-sourced sessions with resume/fork/dataflow, CJK-native
 TUI.
 
 **post-0.2 additions**
+- **behavior change** (Windows): `Bash` defaults to real PowerShell 7 when
+  `pwsh` is on PATH — no config needed; explicit `SUNMAO_SHELL` /
+  `.sunmao/shell.txt` values still win (`posix`/`bash`/`deno` force the
+  embedded interpreter back on, `auto` re-arms detection). New user-level
+  pin `~/.sunmao/shell.txt`; `sunmao doctor` reports the effective
+  backend, its source layer, and `pwsh --version`. Non-Windows unchanged.
 - **behavior change**: `-p`/`--print` no longer pins `full_access`. With no
   `--mode` flag a piped run denies every approval prompt (new
   `PipedApprover`) — headless sessions can't wait on cards — and the

@@ -262,6 +262,7 @@ impl HostHandle {
             ("GET", ["dataflow"]) => dataflow_current(s, query_arg(query, "sess")).await,
             ("GET", ["dataflow", id]) => dataflow_by_id(s, id).await,
             ("GET", ["tasks"]) => ops::tasks_list(s, query_arg(query, "sess")),
+            ("GET", ["hooks"]) => ops::hooks_list(s, query_arg(query, "sess")),
             ("GET", ["jobs"]) => ops::jobs_list(s, query_arg(query, "sess")),
             ("GET", ["jobs", id, "output"]) => {
                 ops::job_output(s, id, query_arg(query, "sess"), query)

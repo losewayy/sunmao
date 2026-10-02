@@ -204,6 +204,8 @@ pub enum Submit {
     Mode(Option<String>),
     /// /mcp — the connected MCP server roster
     Mcp,
+    /// /hooks [trust|untrust <n>] — hook trust roster / pin ops
+    Hooks(crate::commands::HookOp),
     /// /status — session vitals note
     Status,
     /// /export-md — write the session transcript as markdown
@@ -443,6 +445,7 @@ impl App {
                     crate::commands::Command::Goal(arg) => Submit::Goal(arg),
                     crate::commands::Command::GoalClear => Submit::GoalClear,
                     crate::commands::Command::Mcp => Submit::Mcp,
+                    crate::commands::Command::Hooks(op) => Submit::Hooks(op),
                     crate::commands::Command::Status => Submit::Status,
                     crate::commands::Command::Export => Submit::Export,
                     crate::commands::Command::ExportZip => Submit::ExportZip,

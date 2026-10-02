@@ -9,6 +9,7 @@ export-zip	导出调试包（转录 + 原始事件日志压缩包）
 fork	复制该会话日志，新开一支继续
 goal	设定持续推进的目标；空参查看，clear 清除
 help	显示可用命令一览
+hooks	列出已加载的 hook 及信任状态；trust/untrust <n> 批准或吊销
 mcp	列出已连接的 MCP 服务器
 mode	查看或切换审批模式
 model	列出模型或按选择器切换模型

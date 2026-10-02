@@ -325,6 +325,24 @@ pub async fn run(
                     println!("{}", crate::commands::mcp_text(&agent.mcp_roster()));
                     continue;
                 }
+                crate::commands::Command::Hooks(op) => {
+                    use crate::commands::HookOp;
+                    match op {
+                        HookOp::List => {
+                            println!("{}", crate::commands::hooks_text(&ctx.hooks.roster()))
+                        }
+                        HookOp::Trust(n) | HookOp::Untrust(n) => {
+                            match agent
+                                .set_hook_trust(n, matches!(op, HookOp::Trust(_)))
+                                .await
+                            {
+                                Ok(d) => println!("[{d}]"),
+                                Err(e) => println!("[hooks: {e}]"),
+                            }
+                        }
+                    }
+                    continue;
+                }
                 crate::commands::Command::Status => {
                     println!("{}", crate::commands::status_text(&agent.status().await));
                     continue;

@@ -205,6 +205,24 @@ pub(super) fn spawn(
                     let _ = tx_msg.send(Msg::Note(commands::mcp_text(&agent.mcp_roster())));
                     continue;
                 }
+                Submit::Hooks(op) => {
+                    let note = match op {
+                        commands::HookOp::List => {
+                            commands::hooks_text(&agent.context().hooks.roster())
+                        }
+                        commands::HookOp::Trust(n) | commands::HookOp::Untrust(n) => {
+                            match agent
+                                .set_hook_trust(n, matches!(op, commands::HookOp::Trust(_)))
+                                .await
+                            {
+                                Ok(d) => format!("[{d}]"),
+                                Err(e) => format!("[hooks: {e}]"),
+                            }
+                        }
+                    };
+                    let _ = tx_msg.send(Msg::Note(note));
+                    continue;
+                }
                 Submit::Status => {
                     let _ = tx_msg.send(Msg::Note(commands::status_text(&agent.status().await)));
                     continue;

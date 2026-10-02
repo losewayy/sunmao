@@ -518,6 +518,9 @@ fn submit_app(app: &mut App, tx_input: &mpsc::UnboundedSender<Submit>) -> bool {
         Submit::Mcp => {
             let _ = tx_input.send(Submit::Mcp);
         }
+        Submit::Hooks(op) => {
+            let _ = tx_input.send(Submit::Hooks(op));
+        }
         Submit::Status => {
             let _ = tx_input.send(Submit::Status);
         }

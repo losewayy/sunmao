@@ -37,6 +37,30 @@ pub(super) fn tasks_list(s: &Arc<Shared>, sess: Option<String>) -> HostResponse 
     HostResponse::json(serde_json::json!({"tasks": tasks}))
 }
 
+/// `GET /hooks?sess=…` — the viewed session's hook trust roster
+/// (`engine.roster()` as JSON; `/hooks` text is the terminal rendering of
+/// the same rows). Dormant sessions have no loaded engine → `hooks: []`;
+/// the GUI's own untrusted-hook notice flows through the `hook.untrusted`
+/// live event + replay rows, this endpoint is the on-demand read.
+pub(super) fn hooks_list(s: &Arc<Shared>, sess: Option<String>) -> HostResponse {
+    let host = sess
+        .as_deref()
+        .and_then(|id| s.host(id))
+        .or_else(|| s.live_ids().first().and_then(|id| s.host(id)));
+    let hooks = host
+        .map(|h| {
+            h.agent
+                .context()
+                .hooks
+                .roster()
+                .iter()
+                .map(sunmao_core::hooks::trust::row_json)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    HostResponse::json(serde_json::json!({"hooks": hooks}))
+}
+
 /// `sess` 指向的项目目录：活动宿主报它自己的 `session_cwd`；休眠日志从
 /// `<project>/.sunmao/sessions/<id>.jsonl` 反推项目；都找不到时用启动
 /// 目录兜底（jobs 是按项目分桶的，不是按会话）。

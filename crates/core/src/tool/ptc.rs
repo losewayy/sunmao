@@ -22,7 +22,8 @@
 //! - Two-layer cancellation: a spawned watchdog flips the flag the JS
 //!   interrupt handler consults (covers CPU-bound scripts — the block_on's
 //!   own select! arms can't be polled while sync JS occupies the thread),
-//!   and `select!` arms cover scripts parked in a host await.
+//!   and `select!` arms cover scripts parked in a host await. The watchdog
+//!   is aborted when the select returns, so nothing outlives the script.
 //! - Nested calls produce `SessionEvent::PtcCall` audit facts, NOT
 //!   `ToolCall`/`ToolResult` — those would fold into protocol tool messages
 //!   without a matching assistant `tool_call` and corrupt the transcript.
@@ -141,7 +142,8 @@ fn run_script(ctx: Arc<Context>, code: &str, timeout: Duration) -> Result<String
         // Watchdog: a separate task, not a select! arm — this block_on runs
         // on ONE thread, so while a CPU-bound `while(true)` sits inside an
         // async_with poll no other future here can ever be polled. The task
-        // flips the flag the JS interrupt handler reads.
+        // flips the flag the JS interrupt handler reads; an abort at the end
+        // of the select keeps it from sleeping past the script's finish.
         let stop = Arc::new(AtomicBool::new(false));
         let reason = Arc::new(AtomicU64::new(0)); // 0 none, 1 timeout, 2 cancel
         rt.set_interrupt_handler(Some({
@@ -152,7 +154,7 @@ fn run_script(ctx: Arc<Context>, code: &str, timeout: Duration) -> Result<String
         let jctx = rquickjs::AsyncContext::custom::<rquickjs::context::intrinsic::All>(&rt)
             .await
             .map_err(|e| format!("quickjs context: {e}"))?;
-        {
+        let watchdog = {
             let stop = stop.clone();
             let reason = reason.clone();
             let cancel = ctx.cancel_notify.clone();
@@ -162,13 +164,13 @@ fn run_script(ctx: Arc<Context>, code: &str, timeout: Duration) -> Result<String
                     () = cancel.notified() => reason.store(2, Ordering::Relaxed),
                 }
                 stop.store(true, Ordering::Relaxed);
-            });
-        }
+            })
+        };
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<PtcMsg>();
         let observer = PtcObserver(ctx.live_sink.get().cloned());
         let serve = serve_requests(&ctx, rx, &observer);
         let code = code.to_string();
-        tokio::select! {
+        let res = tokio::select! {
             r = jctx.async_with(async |jctx| -> Result<String, String> {
                 install_surface(&jctx, &ctx, tx).map_err(|e| format!("install: {e}"))?;
                 let p = jctx
@@ -194,7 +196,12 @@ fn run_script(ctx: Arc<Context>, code: &str, timeout: Duration) -> Result<String
                 Err(format!("script exceeded its {timeout:?} budget — killed"))
             }
             () = ctx.cancel_notify.notified() => Err("cancelled by user".into()),
-        }
+        };
+        // the script is over — a watchdog still parked on sleep(timeout)
+        // would hold the interrupt flag closed until the budget lapses;
+        // abort it so nothing outlives this call
+        watchdog.abort();
+        res
     })
 }
 

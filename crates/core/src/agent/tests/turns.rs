@@ -61,6 +61,9 @@ async fn hook_veto_still_emits_turn_end() {
         builtin_registry(),
         dir.clone(),
     ));
+    ctx.hooks
+        .trust_all
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let agent = AgentLoop::new(ctx.clone());
     let rec = RecObserver(std::sync::Mutex::new(Vec::new()));
     let outcome = agent.run_turn("hi", &rec).await.unwrap();

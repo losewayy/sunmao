@@ -86,11 +86,13 @@ struct CursorEntry {
 /// Parse a cursor `hooks.json` and merge groups under native event names.
 /// `{"version":1, "hooks": {"preToolUse": [{"command": ".cursor/x.sh"}]}}`.
 /// Each flat entry becomes its own matcher group (cursor semantics: the
-/// matcher lives ON the command, there is no group layer).
+/// matcher lives ON the command, there is no group layer). `layer` is the
+/// trust layer — `~/.cursor/hooks.json` is user, the project's is pinned.
 pub(crate) fn merge_cursor_file(
     groups: &mut HashMap<String, Vec<MatcherGroup>>,
     path: &Path,
     plugin_root: Option<&Path>,
+    layer: super::trust::Layer,
 ) {
     let Ok(text) = std::fs::read_to_string(path) else {
         return;
@@ -122,6 +124,8 @@ pub(crate) fn merge_cursor_file(
                         kind: "command".into(),
                         command: e.command,
                         plugin_root: plugin_root.map(|p| p.to_path_buf()),
+                        origin: path.to_path_buf(),
+                        layer,
                         dialect: Dialect::Cursor,
                         event_name: cursor_event.clone(),
                         timeout: e.timeout,

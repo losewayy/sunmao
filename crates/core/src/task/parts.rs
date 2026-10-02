@@ -138,13 +138,19 @@ pub(super) async fn build_sub_ctx(
     };
 
     // fresh context, one depth deeper, on its own lane
+    let sessions = Arc::new(tokio::sync::Mutex::new(log));
+    let mut hook_engine =
+        crate::hooks::HookEngine::load(&ctx.cwd, &sub_id, &ctx.extra_plugin_roots);
+    // trust-skip audit rows land on the CHILD's log — same ownership rule
+    // as its ToolResult facts
+    hook_engine.attach_sessions(sessions.clone());
     let mut sub_ctx = Context {
         // the child's own store — sub-agent sessions are isolated logs
         ptc_store: std::sync::Mutex::new(std::collections::BTreeMap::new()),
         llm,
         llm_override: std::sync::RwLock::new(None),
         active_selector: std::sync::RwLock::new(None),
-        sessions: Arc::new(tokio::sync::Mutex::new(log)),
+        sessions,
         tools,
         permissions,
         approval: ctx.approval.clone(),
@@ -153,11 +159,7 @@ pub(super) async fn build_sub_ctx(
         risk_table: ctx.risk_table.clone(),
         // sub-agents inherit the parent's preset layers — a preset is a
         // session-level property, not per-agent
-        hooks: Arc::new(crate::hooks::HookEngine::load(
-            &ctx.cwd,
-            &sub_id,
-            &ctx.extra_plugin_roots,
-        )),
+        hooks: Arc::new(hook_engine),
         cwd: ctx.cwd.clone(),
         session_id: std::sync::RwLock::new(sub_id.clone()),
         depth: ctx.depth + 1,

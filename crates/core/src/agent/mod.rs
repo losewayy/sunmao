@@ -170,8 +170,30 @@ impl AgentLoop {
 
     /// Install the live-event sink `Task` sub-agents relay their tool
     /// lifecycle through. First install wins — frontends call once at setup.
+    /// The hook engine gets the same sink so trust-skip audits surface live.
     pub fn set_live_sink(&self, sink: Arc<dyn Observer>) {
+        self.ctx.hooks.set_live(sink.clone());
         let _ = self.ctx.live_sink.set(sink);
+    }
+
+    /// `/hooks trust|untrust <n>` — pin or revoke a command in
+    /// `.sunmao/trusted-hooks.json` and record the decision as a durable
+    /// audit fact (who flipped what is as reconstructible as the skip).
+    pub async fn set_hook_trust(&self, index: usize, trust_it: bool) -> Result<String, String> {
+        let detail = self.ctx.hooks.set_row_trust(index, trust_it)?;
+        {
+            let mut log = self.ctx.sessions.lock().await;
+            log.append_audit(&SessionEvent::Hook {
+                event: if trust_it {
+                    "hook.trust".into()
+                } else {
+                    "hook.untrust".into()
+                },
+                detail: detail.clone(),
+            })
+            .await;
+        }
+        Ok(detail)
     }
 
     /// Mid-session model switch: resolve `selector` through the session's

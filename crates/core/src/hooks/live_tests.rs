@@ -10,6 +10,9 @@ async fn pre_tool_use_hook_blocks_via_exit2() {
     )
     .unwrap();
     let engine = HookEngine::load(&dir, "test", &[]);
+    engine
+        .trust_all
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let out = engine
         .fire(
             HookEvent::PreToolUse,
@@ -52,6 +55,9 @@ async fn session_start_delivers_source_and_collects_context() {
     )
     .unwrap();
     let engine = HookEngine::load(&dir, "test", &[]);
+    engine
+        .trust_all
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let out = engine
         .fire(
             HookEvent::SessionStart,
@@ -91,6 +97,9 @@ async fn real_rtk_hook_rewrites_command() {
     )
     .unwrap();
     let engine = HookEngine::load(&dir, "test", &[]);
+    engine
+        .trust_all
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let out = engine
         .fire(
             HookEvent::PreToolUse,
@@ -140,6 +149,9 @@ async fn cursor_hooks_file_fires_on_mapped_tool_and_rewrites() {
     )
     .unwrap();
     let engine = HookEngine::load(&dir, "test", &[]);
+    engine
+        .trust_all
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let out = engine
         .fire(
             HookEvent::PreToolUse,
@@ -181,6 +193,9 @@ async fn codex_hooks_file_loads_like_a_claude_file() {
     )
     .unwrap();
     let engine = HookEngine::load(&dir, "test", &[]);
+    engine
+        .trust_all
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     engine
         .fire(
             HookEvent::PreToolUse,
@@ -243,6 +258,9 @@ async fn preset_dir_fires_its_hooks() {
         dir.clone(),
     )
     .with_extra_plugin_roots(roots);
+    ctx.hooks
+        .trust_all
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let out = ctx
         .hooks
         .fire(
@@ -274,6 +292,9 @@ async fn interrupt_event_reaches_the_hook() {
     )
     .unwrap();
     let engine = HookEngine::load(&dir, "test", &[]);
+    engine
+        .trust_all
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let out = engine
         .fire(HookEvent::Interrupt, &dir, &HookInput::default())
         .await;
@@ -296,4 +317,158 @@ impl sunmao_llm::ProviderAdapter for MockProvider {
     ) -> anyhow::Result<sunmao_llm::DeltaStream> {
         Ok(Box::pin(futures_util::stream::iter(vec![])))
     }
+}
+
+/// The whole point of trust pinning: a project-carried SessionStart hook
+/// must NOT execute until the user pins it — and the skip must be a durable
+/// `hook.untrusted` fact, not a silent drop.
+#[tokio::test]
+async fn untrusted_project_hook_skips_and_audits() {
+    let dir = crate::fresh_test_dir("untrusted");
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    std::fs::write(
+        dir.join(".sunmao/hooks.json"),
+        r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo ran > should-not-exist.txt"}]}]}}"#,
+    )
+    .unwrap();
+    let mut engine = HookEngine::load(&dir, "test", &[]);
+    let log = crate::session::SessionLog::open(dir.join(".sunmao/sessions"), "s-t1")
+        .await
+        .unwrap();
+    let sessions = std::sync::Arc::new(tokio::sync::Mutex::new(log));
+    engine.attach_sessions(sessions.clone());
+    // roster shows OUR project hook as untrusted before any pin — user-level
+    // rows (~/.claude etc. on a real machine) may coexist, so locate by command
+    let rows = engine.roster();
+    let row = rows
+        .iter()
+        .find(|r| r.command.contains("should-not-exist.txt"))
+        .expect("the project hook must be loaded");
+    assert_eq!(row.status, "untrusted", "row: {row:?}");
+
+    engine
+        .fire(
+            HookEvent::SessionStart,
+            &dir,
+            &HookInput {
+                source: Some("startup"),
+                ..Default::default()
+            },
+        )
+        .await;
+    // the command never ran — no side-effect file
+    assert!(!dir.join("should-not-exist.txt").exists());
+    // the skip IS durable: a hook.untrusted row names command + source
+    let events = sessions.lock().await.events().await.unwrap();
+    let skip = events.iter().find_map(|e| match e {
+        crate::session::SessionEvent::Hook { event, detail } if event == "hook.untrusted" => {
+            Some(detail.clone())
+        }
+        _ => None,
+    });
+    let detail = skip.expect("a skip must land in the session log");
+    assert!(detail.contains("SessionStart"), "{detail}");
+    assert!(detail.contains("should-not-exist.txt"), "{detail}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Pin → run → revoke → skip again: the round-trip through
+/// `set_row_trust` + the ledger file is the `/hooks` contract.
+#[tokio::test]
+async fn pinned_hook_executes_and_revocation_stops_it() {
+    let dir = crate::fresh_test_dir("pinned");
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    std::fs::write(
+        dir.join(".sunmao/hooks.json"),
+        r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo ok >> pin-ran.txt"}]}]}}"#,
+    )
+    .unwrap();
+    let engine = HookEngine::load(&dir, "test", &[]);
+    let input = || HookInput {
+        source: Some("startup"),
+        ..Default::default()
+    };
+    // user-level rows (~/.claude etc.) may coexist on a real machine —
+    // locate our command's roster index rather than assuming row 1
+    let idx_of = |engine: &HookEngine| {
+        engine
+            .roster()
+            .iter()
+            .position(|r| r.command.contains("pin-ran.txt"))
+            .map(|i| i + 1)
+    };
+    engine.fire(HookEvent::SessionStart, &dir, &input()).await;
+    assert!(!dir.join("pin-ran.txt").exists(), "untrusted must not run");
+
+    // pin OUR row — the ledger write alone is what unlocks it
+    let idx = idx_of(&engine).expect("the project hook must be loaded");
+    engine.set_row_trust(idx, true).unwrap();
+    let row = engine
+        .roster()
+        .into_iter()
+        .find(|r| r.command.contains("pin-ran.txt"))
+        .unwrap();
+    assert_eq!(row.status, "pinned");
+    engine.fire(HookEvent::SessionStart, &dir, &input()).await;
+    assert_eq!(
+        std::fs::read_to_string(dir.join("pin-ran.txt")).unwrap(),
+        "ok\n"
+    );
+
+    // revoke → back to skipped (a second fire adds nothing)
+    engine.set_row_trust(idx, false).unwrap();
+    let row = engine
+        .roster()
+        .into_iter()
+        .find(|r| r.command.contains("pin-ran.txt"))
+        .unwrap();
+    assert_eq!(row.status, "untrusted");
+    engine.fire(HookEvent::SessionStart, &dir, &input()).await;
+    assert_eq!(
+        std::fs::read_to_string(dir.join("pin-ran.txt")).unwrap(),
+        "ok\n"
+    );
+    // out-of-range and zero indices are errors, not silent no-ops
+    assert!(engine.set_row_trust(0, true).is_err());
+    assert!(engine.set_row_trust(9, true).is_err());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `hook.trust` decisions are audit facts too — the session log must
+/// answer "who pinned this, when" without asking the ledger file.
+#[tokio::test]
+async fn trust_decisions_are_logged() {
+    let dir = crate::fresh_test_dir("trustlog");
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    std::fs::write(
+        dir.join(".sunmao/hooks.json"),
+        r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"true"}]}]}}"#,
+    )
+    .unwrap();
+    let log = crate::session::SessionLog::open(dir.join(".sunmao/sessions"), "s-t2")
+        .await
+        .unwrap();
+    let provider = std::sync::Arc::new(MockProvider);
+    let ctx = std::sync::Arc::new(crate::context::Context::new(
+        provider,
+        log,
+        crate::tool::builtin_registry(),
+        dir.clone(),
+    ));
+    let agent = crate::agent::AgentLoop::new(ctx.clone());
+    // index by command — user-level rows may occupy earlier slots
+    let idx = ctx
+        .hooks
+        .roster()
+        .iter()
+        .position(|r| r.command == "true")
+        .map(|i| i + 1)
+        .expect("the project hook must be loaded");
+    agent.set_hook_trust(idx, true).await.unwrap();
+    let events = ctx.sessions.lock().await.events().await.unwrap();
+    assert!(events.iter().any(|e| matches!(
+        e,
+        crate::session::SessionEvent::Hook { event, .. } if event == "hook.trust"
+    )));
+    std::fs::remove_dir_all(&dir).ok();
 }

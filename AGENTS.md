@@ -35,7 +35,7 @@ commit、git 历史、`.crate` 包体、文档、注释、CI 产物——**一�
 crates/llm/    provider dialects (OAI, Anthropic), hand-rolled SSE parser,
                tool_calls fragment reassembly — we own the wire
 crates/core/   Context seam assembly, AgentLoop, session log (event-sourced
-               JSONL), tool registry + 12 native tools, hooks dispatcher,
+               JSONL), tool registry + 13 native tools, hooks dispatcher,
                permissions, approval gate, MCP client, sub-agent Task
 crates/cli/    `sunmao` binary — REPL / -p / TUI / ACP / --dataflow / doctor
 docs/          SPEC.md (design contract — read first),
@@ -139,7 +139,7 @@ live in [`docs/CODE-ARCHITECTURE.md`](docs/CODE-ARCHITECTURE.md). Follow them.
 | `--preset` resolution | `crates/core/src/presets.rs` (layers onto `ctx.extra_plugin_roots`) |
 | MCP client (stdio + HTTP) | `crates/core/src/mcp.rs` |
 | extension host (`ext/*` JSON-RPC) | `crates/core/src/ext/` — `mod` spec scan, `registry` children + request/reply |
-| tools | `crates/core/src/tool/{mod,fs,shell,search,artifact,webmod,todo,sendmsg}.rs` |
+| tools | `crates/core/src/tool/{mod,fs,shell,search,artifact,webmod,todo,sendmsg,ptc}.rs` — `ptc` = RunCode QuickJS sandbox |
 | sub-agents | `crates/core/src/task.rs` + `task/{spawn,parts,resume}.rs` + `agents.rs` |
 | model routing | `crates/core/src/models.rs` (ModelResolver — `.sunmao/models.json`) |
 | SSE parser | `crates/llm/src/sse.rs` |

@@ -73,52 +73,25 @@ impl AnthropicClient {
                     });
                 }
                 Role::User => {
-                    // tool_result messages fold into a user turn — and a
-                    // parallel tool_calls batch emits N consecutive results,
-                    // which Anthropic requires in ONE user message: merge
-                    // onto the previous turn if it already carries results.
-                    if let Some(id) = &m.tool_call_id {
-                        let block = json!({
-                            "type": "tool_result",
-                            "tool_use_id": id,
-                            "content": m.content_text().unwrap_or_default(),
-                        });
-                        let merged = out.last_mut().and_then(|p| {
-                            if p["role"] == "user"
-                                && p["content"]
-                                    .as_array()
-                                    .map(|c| c.iter().all(|b| b["type"] == "tool_result"))
-                                    .unwrap_or(false)
-                            {
-                                p["content"].as_array_mut().map(|c| c.push(block.clone()))
-                            } else {
-                                None
+                    let mut content = Vec::new();
+                    for b in m.content.iter().flatten() {
+                        match b.resolve().await {
+                            ResolvedBlock::Text(text) => {
+                                content.push(json!({"type": "text", "text": text}));
                             }
-                        });
-                        if merged.is_none() {
-                            out.push(json!({"role": "user", "content": [block]}));
-                        }
-                    } else {
-                        let mut content = Vec::new();
-                        for b in m.content.iter().flatten() {
-                            match b.resolve().await {
-                                ResolvedBlock::Text(text) => {
-                                    content.push(json!({"type": "text", "text": text}));
-                                }
-                                ResolvedBlock::Image { mime, data } => {
-                                    content.push(json!({
-                                        "type": "image",
-                                        "source": {
-                                            "type": "base64",
-                                            "media_type": mime,
-                                            "data": data,
-                                        },
-                                    }));
-                                }
+                            ResolvedBlock::Image { mime, data } => {
+                                content.push(json!({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": mime,
+                                        "data": data,
+                                    },
+                                }));
                             }
                         }
-                        out.push(json!({"role": "user", "content": content}));
                     }
+                    out.push(json!({"role": "user", "content": content}));
                 }
                 Role::Assistant => {
                     let mut content = Vec::new();
@@ -145,16 +118,30 @@ impl AnthropicClient {
                     out.push(json!({"role": "assistant", "content": content}));
                 }
                 Role::Tool => {
-                    // OAI `tool` role — already covered by the User arm via
-                    // tool_call_id, but keep an explicit path for safety
-                    out.push(json!({
-                        "role": "user",
-                        "content": [{
-                            "type": "tool_result",
-                            "tool_use_id": m.tool_call_id.clone().unwrap_or_default(),
-                            "content": m.content_text().unwrap_or_default(),
-                        }],
-                    }));
+                    // tool_result blocks fold into a user turn — and a
+                    // parallel tool_calls batch emits N consecutive results,
+                    // which Anthropic requires in ONE user message: merge
+                    // onto the previous turn if it already carries results.
+                    let block = json!({
+                        "type": "tool_result",
+                        "tool_use_id": m.tool_call_id.clone().unwrap_or_default(),
+                        "content": m.content_text().unwrap_or_default(),
+                    });
+                    let merged = out.last_mut().and_then(|p| {
+                        if p["role"] == "user"
+                            && p["content"]
+                                .as_array()
+                                .map(|c| c.iter().all(|b| b["type"] == "tool_result"))
+                                .unwrap_or(false)
+                        {
+                            p["content"].as_array_mut().map(|c| c.push(block.clone()))
+                        } else {
+                            None
+                        }
+                    });
+                    if merged.is_none() {
+                        out.push(json!({"role": "user", "content": [block]}));
+                    }
                 }
             }
         }
@@ -484,6 +471,37 @@ mod tests {
         assert_eq!(mapped[2]["role"], "user");
         assert_eq!(mapped[2]["content"][0]["type"], "tool_result");
         assert_eq!(mapped[2]["content"][0]["tool_use_id"], "t1");
+    }
+
+    /// A parallel tool_calls batch emits N consecutive `Role::Tool` results;
+    /// Anthropic requires them merged into ONE user message — separate user
+    /// turns per result are a 400 on the wire.
+    #[tokio::test]
+    async fn parallel_tool_results_merge_into_one_user_turn() {
+        let c = AnthropicClient::new("http://x", "k", "m");
+        let call = |id: &str| ToolCall {
+            id: id.into(),
+            kind: "function".into(),
+            function: FunctionCall {
+                name: "Bash".into(),
+                arguments: "{}".into(),
+            },
+        };
+        let msgs = vec![
+            Message::assistant(None, vec![call("t1"), call("t2")]),
+            Message::tool_result("t1", "out1"),
+            Message::tool_result("t2", "out2"),
+            Message::user("next"),
+        ];
+        let (_sys, mapped) = c.map_messages(&msgs).await;
+        assert_eq!(mapped.len(), 3);
+        let content = &mapped[1]["content"];
+        assert_eq!(content.as_array().unwrap().len(), 2);
+        assert_eq!(content[0]["tool_use_id"], "t1");
+        assert_eq!(content[1]["tool_use_id"], "t2");
+        // a real user turn after the batch must NOT absorb further results
+        // nor be absorbed — it stays its own message
+        assert_eq!(mapped[2]["content"][0]["type"], "text");
     }
 
     /// Prompt-cache breakpoints: the last TWO messages carry

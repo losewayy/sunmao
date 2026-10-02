@@ -144,7 +144,7 @@ hook engine（核心）
 
 ### 4.6 `audit` — 审批与审计
 
-- 审批缝：`tools/*` 执行前可挂 policy（always_ask / auto / full-access 模式；`tool_input` 级规则）✅ `Context.approval_mode`（`agent/mode.rs`）：always_ask/auto/read_only/full_access 四档，`gate.rs` 裁决链 deny→grants→mode→ask→classify；Bash mutation 走 deno_task_shell AST（重定向/命令替换/动态 verb），动词白名单 `assets/readonly-verbs.txt` 可冷插；`/mode`（REPL+TUI）+ GUI composer chip + ACP `set_config_option` 三端入口，切换写 `mode_change` SessionEvent 可审计
+- 审批缝：`tools/*` 执行前可挂 policy（always_ask / auto / full-access 模式；`tool_input` 级规则）✅ `Context.approval_mode`（`agent/mode.rs`）：always_ask/auto/read_only/full_access 四档，`gate.rs` 裁决链 deny→grants→mode→ask→classify；Bash mutation 走 deno_task_shell AST（重定向/命令替换/动态 verb），动词白名单 `assets/readonly-verbs.txt` 可冷插；`/mode`（REPL+TUI）+ GUI composer chip + ACP `set_config_option` 三端入口，切换写 `mode_change` SessionEvent 可审计；规则 specifier 支持 `!` 否定与 `re:` 正则（`deny: Read(**/.env)` + `Read(!**/.env.example)` 这类例外可写），子代理 `agents/*.md` 的 `permissions:` 只允许 deny/ask overlay——def 能收窄自己的裁决面，不能放宽会话规则
 - **`shell/preflight`（差异化原语）**：Bash 命令执行前过 spawnfate 引擎——模拟 Windows spawn 各层（deno_task_shell 的 which 解析→CreateProcess→argv 序列化→目标 argv 拆分），预测命令会死在哪层/被怎么改写；结果进审计日志+警告回模型。spawnfate 同时以 MCP 形态对外发布（MCP client 的 dogfood + "我们给生态供货"的证明）
 - 审计流：每一次 hook 决策、每一次外部动作（exec/网络/写盘）、每一次上下文注入——全部进 SessionEvent 日志
 - **data-flow 文档是一等功能**：`sunmao --dataflow` 从日志生成"什么数据去了哪"的机器可读报告

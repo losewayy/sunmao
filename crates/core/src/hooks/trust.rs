@@ -44,6 +44,10 @@ pub enum RowKind {
     Mcp,
     /// A plugin manifest's `extensions` spawn spec.
     Ext,
+    /// A project-layer `allow` permission rule — it short-circuits the
+    /// approval gate, so it applies only once pinned (deny/ask never
+    /// widen a session and aren't listed).
+    Perm,
 }
 
 /// One roster row for `/hooks` — command text is shown verbatim so the
@@ -301,6 +305,7 @@ pub fn row_json(r: &HookRow) -> serde_json::Value {
             RowKind::Hook => "hook",
             RowKind::Mcp => "mcp",
             RowKind::Ext => "ext",
+            RowKind::Perm => "perm",
         },
         "event": r.event,
         "matcher": r.matcher,
@@ -347,6 +352,10 @@ impl super::HookEngine {
             }
         }
         rows.extend(spawn_rows(&self.cwd, &self.extra_roots));
+        rows.extend(crate::permissions::permission_rows(
+            &self.cwd,
+            &self.extra_roots,
+        ));
         rows.sort_by(|a, b| {
             (a.kind, &a.event, &a.source, &a.command)
                 .cmp(&(b.kind, &b.event, &b.source, &b.command))

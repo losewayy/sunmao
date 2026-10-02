@@ -186,6 +186,8 @@ function route(v) {
       if (sess === sessionId) { inputQ = v.items || []; renderQueueChips(); }
       break;
     case 'models_changed': refreshModels(); break;
+    case 'ui_changed': loadUi(); break;
+    case 'shell_changed': refreshShell(); break;
     case 'model':
       if (sess === sessionId) { modelLabel = v.label || modelLabel; $('#cmp-model').textContent = modelLabel; toast(`模型切换为 ${v.label}`, 'cpu'); }
       break;
@@ -353,6 +355,9 @@ async function refreshDataflow() {
 // routes, completable selectors. The picker renders from it; the settings
 // page edits it through PUT /models.
 let MODELS = null;
+// `SHELL` = last GET /shell snapshot — resolved backend + which layer chose
+// it; the 终端 settings page reads it, PUT /shell writes .sunmao/shell.txt.
+let SHELL = null;
 const jput = v => ({ method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(v) });
 const jpost = v => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(v) });
 async function refreshModels() {
@@ -390,6 +395,10 @@ async function saveProviders(edit, ok) {
     if (ok) toast(ok, 'check');
     if (view === 'settings' && setPage === 'providers') renderProviders();
   } catch (e) { toast(`保存失败：${e.message}`, 'alert', 'warn'); }
+}
+async function refreshShell() {
+  try { SHELL = await api('/shell'); } catch { SHELL = null; }
+  if (view === 'settings' && setPage === 'shell') renderShell();
 }
 
 
@@ -490,7 +499,7 @@ function renderRail() {
   $('#sessions').innerHTML = html || '<div class="empty-hint">暂无会话记录</div>';
   $$('.nav-i[data-go]').forEach(b => b.classList.toggle('on', b.dataset.go === view));
 }
-const SET_NAV = [['appearance', '外观', 'palette'], ['providers', '模型与提供商', 'cpu'], ['keys', '快捷键', 'keyboard'], ['about', '关于', 'info']];
+const SET_NAV = [['appearance', '外观', 'palette'], ['providers', '模型与提供商', 'cpu'], ['shell', '终端', 'terminal'], ['keys', '快捷键', 'keyboard'], ['about', '关于', 'info']];
 function renderCrumb() {
   const c = $('#crumb');
   let h;

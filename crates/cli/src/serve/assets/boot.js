@@ -5,6 +5,7 @@
 makeNoise();
 try { const cu = localStorage.getItem('sunmao.wall.custom'); if (cu) setCustom(cu, false); } catch {}
 apply();
+loadUi(); /* server ui.json overrides the localStorage first-frame cache */
 show('session');
 updateHero();
 connect();

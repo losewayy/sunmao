@@ -270,6 +270,10 @@ impl HostHandle {
             ("GET", ["models"]) => models::view(s, query_arg(query, "sess")).await,
             ("POST", ["models", "fetch"]) => models::fetch(s, query_arg(query, "sess"), body).await,
             ("PUT", ["models"]) => models::put(s, query_arg(query, "sess"), body).await,
+            ("GET", ["ui"]) => ui::view(s, query_arg(query, "sess")).await,
+            ("PUT", ["ui"]) => ui::put(s, query_arg(query, "sess"), body).await,
+            ("GET", ["shell"]) => ui::shell_view(s, query_arg(query, "sess")),
+            ("PUT", ["shell"]) => ui::shell_put(s, query_arg(query, "sess"), body),
             _ => HostResponse::err(404, "not found".into()),
         }
     }
@@ -570,6 +574,8 @@ mod attachments;
 mod models;
 #[path = "request/ops.rs"]
 mod ops;
+#[path = "request/ui.rs"]
+mod ui;
 
 #[cfg(test)]
 #[path = "request/tests.rs"]

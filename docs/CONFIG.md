@@ -202,6 +202,37 @@ a cheap/fast model for scout-style agents, session model otherwise:
 - `/model [selector]` in the TUI switches the *session's* active adapter
   mid-run (next request onward); bare `/model` lists routes + providers.
 
+### Catalog entries: capability flags
+
+A catalog entry can carry optional capability flags beyond `id`:
+
+```jsonc
+{ "id": "qwen3-max", "vision": true, "context_length": 262144,
+  "thinking": ["low", "medium", "high"], "reasoning": true }
+```
+
+- `vision`, `context_length` — surfaced as picker badges and available to
+  the model-choice UI.
+- `thinking` — the model's selectable thinking/effort levels. `/effort` and
+  the GUI chip list them verbatim; the vocabulary is free-form (providers
+  don't agree on one).
+- `reasoning` — the provider signals reasoning support without naming
+  levels (e.g. OpenRouter `supported_parameters` containing `"reasoning"`);
+  frontends then offer the canonical `low`/`medium`/`high` trio.
+- Both fill automatically from `/models` fetch when the endpoint declares
+  them (`supported_parameters`, `capabilities`, a truthy `reasoning`
+  field); hand-edited entries pass through verbatim.
+
+`/effort [level]` sets a session-scoped reasoning-effort override — the
+value lands in the request's dialect spelling (chat completions
+`reasoning_effort`, responses `reasoning.effort`, anthropic
+`output_config.effort`). Bare `/effort` lists the current override + the
+active model's levels; `/effort default` clears. The setting rides the
+same surfaces as `/model`: a durable `effort.change` audit fact (resume
+reseeds it), a GUI composer chip, and the ACP `ThoughtLevel` config
+option. Any string passes through — a catalog that never learned the
+provider's vocabulary is a UI hint, not a gate.
+
 ## Eval cases (`sunmao eval <file>`)
 
 Case-driven regression runner: each case sends `prompt` through the real

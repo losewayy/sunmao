@@ -55,6 +55,21 @@ SSE events:
 | `content_block_delta` (input_json_delta) | `ToolCallFragment{arguments}` |
 | `message_delta` (stop_reason) | `Finish` |
 
+## Reasoning effort (every dialect)
+
+`ChatRequest.reasoning_effort` is one `Option<&str>` on our side; each
+adapter writes its own spelling:
+
+| Dialect | Wire |
+|---|---|
+| OpenAI chat completions | flat `reasoning_effort: "low|medium|high|…"` |
+| OpenAI responses | `reasoning.effort` object |
+| Anthropic messages | `output_config.effort` |
+
+The session override (`ctx.reasoning_effort`, `/effort`, GUI chip, ACP
+`ThoughtLevel`) carries whatever string the user picked — levels are a
+provider vocabulary, we never translate them.
+
 ## Prompt caching (every dialect)
 
 Cache hits are a **wire contract**: providers cache a request's leading
@@ -129,6 +144,7 @@ stdio JSON-RPC, stdout is protocol-only (diagnostics → stderr/tracing).
 | `session/prompt` | runs the turn; emits `AgentMessageChunk`, `AgentThoughtChunk`, `ToolCallUpdate`, idle state |
 | `session/cancel` (notification) | sets `ctx.cancelled`; loop exits cooperatively |
 | `session/close` | drops the live session handle |
+| `session/set_config_option` | `mode` → approval stance; `effort` (ThoughtLevel category) → session reasoning-effort override |
 | `session/request_permission` (agent→client) | approval gate surfaces as a native permission prompt |
 
 Rule that has to stay true: **stdout = JSON-RPC frames, nothing else** — a

@@ -30,3 +30,6 @@ tokio-stream.workspace = true
 tracing-subscriber.workspace = true
 unicode-segmentation = "1"
 unicode-width = "0.2.2"
+
+zip = "4.6"
+

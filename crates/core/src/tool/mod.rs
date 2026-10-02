@@ -7,6 +7,7 @@
 //!   shell        — `Bash`: model writes a command string; routed through
 //!                  deno_task_shell so bash syntax is identical on Windows.
 
+use crate::context::RwLockRecover;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -74,7 +75,7 @@ impl ToolRegistry {
     /// catalog in one pass (removed tools really go away, they don't
     /// linger as stale declarations).
     pub fn replace_prefixed(&self, prefix: &str, tools: Vec<Box<dyn ToolImpl>>) {
-        let mut map = self.tools.write().unwrap();
+        let mut map = self.tools.write_or_recover();
         map.retain(|k, _| !k.starts_with(prefix));
         for t in tools {
             map.insert(t.name().to_string(), t.into());
@@ -94,7 +95,7 @@ impl ToolRegistry {
     /// child's surface to exactly what the def allows.
     pub fn filtered(&self, names: &[String]) -> ToolRegistry {
         let r = ToolRegistry::new();
-        let map = self.tools.read().unwrap();
+        let map = self.tools.read_or_recover();
         for n in names {
             if let Some(t) = map.get(n) {
                 r.register_arc(t.clone());
@@ -106,7 +107,7 @@ impl ToolRegistry {
     /// Drop one tool — the depth cap strips `Task` from leaf children so
     /// the model never sees a spawner it can't legally use.
     pub fn remove(&self, name: &str) {
-        self.tools.write().unwrap().remove(name);
+        self.tools.write_or_recover().remove(name);
     }
 
     pub async fn call(
@@ -117,7 +118,7 @@ impl ToolRegistry {
     ) -> ToolResult {
         // clone the Arc out from under the lock — a std::sync guard isn't
         // Send, and a list_changed refresh mid-call must not deadlock on it
-        let tool = self.tools.read().unwrap().get(name).cloned();
+        let tool = self.tools.read_or_recover().get(name).cloned();
         let Some(tool) = tool else {
             return ToolResult {
                 output: format!("unknown tool: {name}"),
@@ -163,12 +164,16 @@ pub fn builtin_registry() -> ToolRegistry {
     r.register(TodoWriteTool);
     r.register(crate::task::TaskTool);
     r.register(WebFetchTool);
+    r.register(SendMessageTool);
     r
 }
 
 mod artifact;
 mod fs;
+mod kind;
+mod pwsh;
 mod search;
+mod sendmsg;
 mod shell;
 mod todo;
 mod webmod;
@@ -176,7 +181,9 @@ mod webmod;
 pub(crate) use artifact::archive_prev;
 pub use artifact::{HtmlArtifactTool, artifact_rev};
 pub use fs::{EditTool, ReadTool, WriteTool};
+pub use kind::ShellBackend;
 pub use search::{GlobTool, GrepTool};
+pub use sendmsg::SendMessageTool;
 pub use shell::{BashTool, JobOutputTool, ShellRun, render_run, run_foreground};
 pub(crate) use todo::TODOS_LINE_PREFIX;
 pub use todo::{
@@ -187,7 +194,7 @@ pub use webmod::WebFetchTool;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::Context;
+    use crate::context::{Context, MutexRecover};
     use crate::session::SessionLog;
     use serde_json::json;
     use std::sync::Arc;
@@ -318,7 +325,7 @@ mod tests {
             )
             .await;
         assert!(res.ok, "{}", res.output);
-        let items = ctx.todos.lock().unwrap().clone();
+        let items = ctx.todos.lock_or_recover().clone();
         assert_eq!(items.len(), 3);
         assert_eq!(items[1].status, TodoStatus::InProgress);
         // durable fact, same payload
@@ -333,7 +340,7 @@ mod tests {
             .call("TodoWrite", &json!({"todos": []}).to_string(), &ctx)
             .await;
         assert!(res2.ok);
-        assert!(ctx.todos.lock().unwrap().is_empty());
+        assert!(ctx.todos.lock_or_recover().is_empty());
     }
 
     /// More than one in_progress is demoted, not refused — the tool is a
@@ -357,7 +364,7 @@ mod tests {
             .await;
         assert!(res.ok);
         assert!(res.output.contains("demoted"));
-        let items = ctx.todos.lock().unwrap().clone();
+        let items = ctx.todos.lock_or_recover().clone();
         assert_eq!(
             items.iter().map(|t| t.status).collect::<Vec<_>>(),
             vec![TodoStatus::InProgress, TodoStatus::Pending]
@@ -406,7 +413,7 @@ mod tests {
             builtin_registry(),
             dir.clone(),
         ));
-        let items = ctx.todos.lock().unwrap().clone();
+        let items = ctx.todos.lock_or_recover().clone();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].content, "fresh");
         assert_eq!(items[0].status, TodoStatus::InProgress);

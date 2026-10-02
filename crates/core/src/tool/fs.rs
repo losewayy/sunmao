@@ -196,9 +196,19 @@ impl ToolImpl for EditTool {
         let a: Args = serde_json::from_value(args)?;
         let path = ctx.cwd.join(&a.path);
 
-        // empty old_string = create file — still destroys the bytes when
-        // the target already exists, so the checkpoint runs unconditionally
+        // empty old_string = create file — a file that already exists is
+        // an overwrite, not a create; route it through the read gate the
+        // same as a real edit so bytes can't be destroyed sight-unseen.
         if a.old_string.is_empty() {
+            if path.exists() && !ctx.has_read(&path) {
+                return Ok(ToolResult {
+                    output: format!(
+                        "refused: {} exists and was not Read this session. Read it first (or use Write for a new file).",
+                        path.display()
+                    ),
+                    ok: false,
+                });
+            }
             ctx.checkpoint_file(&path).await?;
             tokio::fs::write(&path, &a.new_string).await?;
             return Ok(ToolResult {
@@ -271,8 +281,13 @@ fn find_normalized(haystack: &str, needle: &str) -> Option<(usize, usize)> {
             .map(|(i, c)| i + c.len_utf8()),
     );
     for start in starts {
-        // limit candidate window to needle length * 4 + margin
-        let window_end = (start + needle.len() * 4 + 64).min(haystack.len());
+        // limit candidate window to needle length * 4 + margin — the cap
+        // can land mid-codepoint; step back to a char boundary or the
+        // slice panics on multibyte haystacks.
+        let mut window_end = (start + needle.len() * 4 + 64).min(haystack.len());
+        while !haystack.is_char_boundary(window_end) {
+            window_end -= 1;
+        }
         let window = &haystack[start..window_end];
         for end_off in line_ends(window) {
             let cand = &window[..end_off];

@@ -241,9 +241,11 @@ fn cache_key_for(base_url: &str, model: &str) -> String {
 }
 
 /// Rejected `previous_response_id` → the one case where a full-input
-/// retry is semantics-preserving (nothing reached the model yet).
+/// retry is semantics-preserving (nothing reached the model yet). Server
+/// messages aren't case-stable ("Previous response with id …"), so the
+/// match lowercases first.
 fn stale_chain(e: &anyhow::Error) -> bool {
-    let msg = e.to_string();
+    let msg = e.to_string().to_lowercase();
     msg.contains("previous_response_id") || msg.contains("previous response")
 }
 
@@ -271,6 +273,14 @@ impl ProviderAdapter for ResponsesClient {
             ))),
             Err(e) if split.prev_id.is_some() && stale_chain(&e) => {
                 tracing::warn!("previous_response_id rejected; resending full input: {e:#}");
+                // drop the dead link before the resend — if that send also
+                // fails, a remembered prev_id would poison every later
+                // request with the same rejection.
+                {
+                    let mut chain = self.chain.lock().unwrap_or_else(|p| p.into_inner());
+                    chain.prev_id = None;
+                    chain.sent.clear();
+                }
                 let split = Split {
                     input: items.clone(),
                     prev_id: None,

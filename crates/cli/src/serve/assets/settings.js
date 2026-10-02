@@ -346,6 +346,7 @@ function shellPick(el) {
 
 const PAGES = {
   providers: () => head('模型与提供商', '') + '<div class="empty-hint">正在读取模型配置…</div>',
+  channels: () => head('IM 渠道', '') + '<div class="empty-hint">正在读取渠道状态…</div>',
   shell: () => head('终端', '') + '<div class="empty-hint">正在读取 shell 配置…</div>',
   keys: () => head('快捷键', '焦点不在输入框时，审批快捷键直接裁决最早的待审批卡。') + sec('', '', card([['新对话', 'Ctrl N'], ['命令面板', 'Ctrl K'], ['打开设置', 'Ctrl ,'], ['显示或隐藏数据面板', 'Ctrl \\'], ['Allow / Deny / Always', 'Y N A'], ['发送（运行中则排队）', 'Enter'], ['插队引导（不打断本轮）', 'Ctrl Enter'], ['换行', 'Shift Enter'], ['关闭弹层或返回', 'Esc']].map(([a, k]) => row(a, '', `<span class="keys">${k.split(' ').map(x => `<kbd>${esc(x)}</kbd>`).join('')}</span>`)))),
   about: () => head('关于', '') + `<div class="card glass cfg"><div class="ab-top">${$('#hero svg').outerHTML}<div><b>sunmao</b><span>Rust 编写的 agent 运行时内核</span></div></div>${row('会话', '', mono(sessionId || '—'))}${row('工作目录', '', mono(cwd || '—'))}${row('本地服务', TAURI ? '内嵌内核 · 自定义协议（无 TCP 监听）' : 'sunmao serve 只绑定本机', mono(location.host))}${row('内核', '', mono('sunmao-core'))}${row('许可', '', mono('MIT OR Apache-2.0'))}</div>`,
@@ -360,6 +361,7 @@ function settingsPage(p) {
   renderCrumb();
   if (isA) { renderWallGrid(); syncSettingsUI(); }
   else if (p === 'providers') { renderProviders(); }
+  else if (p === 'channels') { refreshChannels(); }
   else if (p === 'shell') { renderShell(); }
 }
 

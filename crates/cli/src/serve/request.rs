@@ -273,6 +273,11 @@ impl HostHandle {
             ("PUT", ["models"]) => models::put(s, query_arg(query, "sess"), body).await,
             ("GET", ["ui"]) => ui::view(s, query_arg(query, "sess")).await,
             ("PUT", ["ui"]) => ui::put(s, query_arg(query, "sess"), body).await,
+            ("GET", ["channels"]) => channels::view().await,
+            ("PUT", ["channels"]) => channels::put(body).await,
+            ("POST", ["channels", "pairing", "approve"]) => {
+                channels::approve(s, body).await
+            }
             ("GET", ["shell"]) => ui::shell_view(s, query_arg(query, "sess")),
             ("PUT", ["shell"]) => ui::shell_put(s, query_arg(query, "sess"), body),
             // custom wallpaper image — `.sunmao/wallpapers/custom.{ext}`;
@@ -319,6 +324,7 @@ fn js_asset(name: &str) -> Option<&'static str> {
         "menus.js" => super::MENUS_JS,
         "roster.js" => super::ROSTER_JS,
         "jobs.js" => super::JOBS_JS,
+        "channels.js" => super::CHANNELS_JS,
         "boot.js" => super::BOOT_JS,
         _ => return None,
     })
@@ -575,6 +581,8 @@ async fn dataflow_by_id(s: &Arc<Shared>, id: &str) -> HostResponse {
 
 #[path = "request/attachments.rs"]
 mod attachments;
+#[path = "request/channels.rs"]
+mod channels;
 #[path = "request/models.rs"]
 mod models;
 #[path = "request/ops.rs"]

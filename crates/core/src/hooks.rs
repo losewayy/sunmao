@@ -407,7 +407,10 @@ impl HookEngine {
                         source: h.origin.clone(),
                         status: if h.layer == trust::Layer::User {
                             "user"
-                        } else if self.command_trusted(h) {
+                        } else if trust::is_trusted(&self.cwd, h.layer, &h.origin, &h.command) {
+                            // ledger truth, not command_trusted — the
+                            // review surface reports what the pin file
+                            // says, never the test bypass
                             "pinned"
                         } else {
                             "untrusted"

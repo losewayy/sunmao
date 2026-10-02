@@ -92,6 +92,11 @@
 .pv-ck:hover{background:var(--c-fill-1)}
 .pv-ck .i,.pv-ck .tag{color:var(--c-text-3);flex:none}
 .pv-ck>span.mono{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pv-ckr{display:flex;gap:var(--s-6);align-items:stretch}
+.pv-ckr .pv-ck{flex:1;min-width:0}
+.pv-tk{width:160px;flex:none;padding:0 var(--s-8);border:0;outline:0;border-radius:var(--r-sm);background:var(--c-sunken);box-shadow:var(--ring-1);font:var(--fs-xs) var(--font-mono);color:var(--c-text)}
+.pv-tk:focus{box-shadow:var(--ring-accent)}
+.pv-tk::placeholder{color:var(--c-text-3)}
 .pv-add{display:flex;gap:var(--s-6)}
 .pv-add input{flex:1;height:var(--h-lg);padding:0 var(--s-10);border:0;outline:0;border-radius:var(--r-md);background:var(--c-sunken);box-shadow:var(--ring-1);font:var(--fs-sm) var(--font-mono);color:var(--c-text)}
 .pv-add input:focus{box-shadow:var(--ring-accent)}

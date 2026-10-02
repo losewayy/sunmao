@@ -56,7 +56,7 @@ function route(v) {
   // attributed to whatever this tab happens to be viewing (audit-gui #13)
   // — every emitter tags, so an untagged one is already an anomaly:
   // drop it to the event log rather than mis-draw it.
-  const SESS_TYPES = new Set(['live', 'note', 'approval', 'approval_done', 'steer_queue', 'input_queue', 'model', 'mode', 'busy']);
+  const SESS_TYPES = new Set(['live', 'note', 'approval', 'approval_done', 'steer_queue', 'input_queue', 'model', 'mode', 'effort', 'busy']);
   const sess = typeof v.sess === 'string' ? v.sess : null;
   if (SESS_TYPES.has(v.type) && sess == null) { logEv('note', `untagged ${v.type} frame dropped`); return; }
   switch (v.type) {
@@ -71,6 +71,7 @@ function route(v) {
       $('#df-sess').textContent = sessionId || '—';
       $('#hero-sub').textContent = cwd;
       setApprovalMode(v.mode);
+      setEffort(v.effort, v.effort_levels);
       sandboxPort = v.sandbox_port || 0;
       busySessions.clear(); (v.busy_sessions || []).forEach(id => busySessions.add(id));
       // re-attach mid-ask: rebuild the waiting badges + re-render any
@@ -114,6 +115,7 @@ function route(v) {
       $('#df-sess').textContent = sessionId || '—';
       renderReplay(v.events || []);
       setApprovalMode(v.mode);
+      setEffort(v.effort, v.effort_levels);
       if (v.goal) { curGoal = v.goal; renderGoalChip(); }
       setBusy(!!v.busy);
       (v.pending || []).forEach(c => approvalCard(c));
@@ -198,6 +200,9 @@ function route(v) {
       break;
     case 'mode':
       if (sess === sessionId) { setApprovalMode(v.mode); toast(`审批模式切换为 ${MODE_LABELS[v.mode] || v.mode}`, 'shield'); }
+      break;
+    case 'effort':
+      if (sess === sessionId) { setEffort(v.level, v.levels); toast(`思考强度 → ${v.level || '默认'}`, 'sparkles'); }
       break;
     case 'busy':
       busySessions[v.busy ? 'add' : 'delete'](sess);

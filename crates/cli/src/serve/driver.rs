@@ -278,11 +278,7 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, cmd_line: &str, cli
                             &WsObserver::new(s.live.clone(), sess.clone()),
                         )
                         .await;
-                    let _ = s.live.send(serde_json::json!({
-                        "type":"effort","sess":sess,
-                        "level":host.agent.reasoning_effort(),
-                        "levels":host.agent.effort_levels().await,
-                    }));
+                    let _ = s.live.send(super::host::effort_frame(host).await);
                     note(commands::effort_note(
                         host.agent.reasoning_effort().as_deref(),
                     ));
@@ -357,10 +353,10 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, cmd_line: &str, cli
                         host.agent.record_model_change(&sel, &label).await;
                         let _ = s.live.send(serde_json::json!({
                             "type":"model","sess":sess,"label":label,
-                            // the new model's level vocabulary — the GUI's
-                            // effort picker refreshes on this frame too
-                            "levels":host.agent.effort_levels().await,
                         }));
+                        // the new model's level vocabulary — tabs' effort
+                        // picker refreshes on its own frame
+                        let _ = s.live.send(super::host::effort_frame(host).await);
                     }
                     None => note(commands::model_unknown(&sel)),
                 },

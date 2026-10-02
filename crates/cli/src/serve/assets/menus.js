@@ -117,6 +117,7 @@ function act(name, el) {
       return menuPop(el, [{ label: '审批模式' }, ...MODES.map(m => Object.assign({}, m, { on: m.v === approvalMode }))], v => { wsSend({ type: 'mode', sel: v }); }, { place: 'top', align: 'end' });
     }
     case 'pick-model': return modelPop(el);
+    case 'pick-effort': return effortPop(el);
     case 'send': return send();
     case 'stop': return wsSend({ type: 'cancel' });
     case 'new-chat': return newChat();

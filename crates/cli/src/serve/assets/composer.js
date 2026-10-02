@@ -6,27 +6,44 @@
 // <pasted-text> blocks at submit, same convention as the TUI
 const PASTE_STASH_LIMIT = 2048;
 let pasteStash = [];
-// image attachments uploaded this draft — each entry {marker, path, mime};
-// send() ships the ones whose marker still sits in the text
+// image attachments uploaded this draft — each entry {path, mime, name,
+// thumb(blob url), file?}; chips alone carry the draft — send() ships all
+// pending ones, the × button retracts; no text marker needed
 let pendingAtts = [];
 function expandPastes(text) {
   let out = text;
   pasteStash.forEach((content, i) => {
     const marker = `[paste #${i + 1}]`;
-    if (out.includes(marker)) out = out.replace(marker, `\n<pasted-text>\n${content}\n</pasted-text>\n`);
+    // replaceAll — a marker the user duplicated should expand at every
+    // site, not just the first; and pruning happens in send() so a stale
+    // stash can't re-inject hour-old clipboard text into a new draft
+    if (out.includes(marker)) out = out.replaceAll(marker, `\n<pasted-text>\n${content}\n</pasted-text>\n`);
   });
   return out;
 }
 function autoGrow() { const ta = $('#input'); ta.style.height = '34px'; ta.style.height = Math.min(168, ta.scrollHeight) + 'px'; slashCheck(); atCheck(); }
 function send() {
   const ta = $('#input'), text = ta.value.trim();
-  if (!text) return ta.focus();
+  if (!text && !pendingAtts.length) return ta.focus();
+  if (!text) {
+    // attachments-only prompt — nothing to expand; the kernel counts a
+    // bare image as a turn (client.rs gate), so we can ship it directly
+    const atts = pendingAtts.slice();
+    const restore = () => {
+      pendingAtts = atts.map(a => a.file ? { ...a, thumb: URL.createObjectURL(a.file) } : a);
+      renderAtts(); toast('发送失败，草稿已恢复', 'alert', 'warn');
+    };
+    if (!wsSend({ type: 'prompt', text: '', attachments: atts.map(a => ({ path: a.path, mime: a.mime })) }, restore)) return toast('未连接到内核，无法发送', 'alert', 'warn');
+    for (const a of atts) if (a.thumb) URL.revokeObjectURL(a.thumb);
+    pendingAtts = []; renderAtts(); autoGrow();
+    return;
+  }
   // frontend-local commands — they never reach the kernel (the kernel's
   // slash list filters them; this is the same rule kept on the send path)
   const lc = text.match(/^\/(\S+)(?:\s|$)/);
   if (lc && ['clear', 'quit', 'exit', 'multiline'].includes(lc[1])) {
     ta.value = ''; autoGrow(); slashCheck(true);
-    if (lc[1] === 'clear') { TX.innerHTML = ''; updateHero(); return; }
+    if (lc[1] === 'clear') { clearTranscript(); return; }
     if (lc[1] === 'quit' || lc[1] === 'exit') {
       const w = shellWin();
       if (w) w.win('close'); else toast('serve 模式：直接关闭此标签页即可退出', 'info');
@@ -39,43 +56,148 @@ function send() {
   // the transcript via the kernel's local_shell fact
   if (text.startsWith('!')) {
     const cmd = text.slice(1).trim();
+    if (!cmd) { ta.value = ''; autoGrow(); slashCheck(true); return; }
+    // clear AFTER a live send — and pass a restore for the Tauri lane,
+    // whose failure only surfaces async via the invoke rejection
+    if (!wsSend({ type: 'local_shell', cmd }, () => {
+      ta.value = text; autoGrow(); slashCheck(true);
+      toast('执行失败，命令已恢复到输入框', 'alert', 'warn');
+    })) return toast('未连接到内核，无法执行', 'alert', 'warn');
     ta.value = ''; autoGrow(); slashCheck(true);
-    if (!cmd) return;
-    if (!wsSend({ type: 'local_shell', cmd })) return toast('未连接到内核，无法执行', 'alert', 'warn');
     return;
   }
   const payload = expandPastes(text);
-  const atts = pendingAtts.filter(a => payload.includes(a.marker));
-  if (atts.length) pendingAtts = pendingAtts.filter(a => !atts.includes(a));
-  ta.value = ''; autoGrow(); slashCheck(true);
+  // chips are the carrier — no in-text marker; every pending attachment
+  // rides this prompt (the × on a chip is how one gets retracted)
+  const atts = pendingAtts.slice();
   // a busy session steers — the message rides the running turn's next
-  // boundary (queued chips show it) instead of becoming the next turn
+  // boundary (queued chips show it) instead of becoming the next turn;
+  // attachments can't steer (text-only), so they stay a queued turn
   const frame = { type: 'prompt', text: payload };
   if (atts.length) frame.attachments = atts.map(a => ({ path: a.path, mime: a.mime }));
-  if (!wsSend(frame)) return toast('未连接到内核，无法发送', 'alert', 'warn');
-  if (busy) return; // chip feedback comes from the kernel's steer_queue frame
-  append(TX, youHTML(payload, true, clock()));
+  // send first, clear second — a dead socket must leave the draft intact.
+  // Snapshot what the clear destroys so the Tauri lane's async failure can
+  // rebuild it (thumbs re-create from the retained File, not the revoked
+  // object URL).
+  const draftAt = { text, atts: pendingAtts.slice(), stash: pasteStash.slice() };
+  const restoreDraft = () => {
+    pendingAtts = draftAt.atts.map(a => a.file ? { ...a, thumb: URL.createObjectURL(a.file) } : a);
+    pasteStash = draftAt.stash;
+    renderAtts();
+    ta.value = draftAt.text; autoGrow(); slashCheck(true);
+    toast('发送失败，草稿已恢复', 'alert', 'warn');
+  };
+  if (!wsSend(frame, restoreDraft)) return toast('未连接到内核，无法发送', 'alert', 'warn');
+  // consume the stash wholesale — the draft shipped; a `[paste #N]` typed
+  // into a NEW draft must never resurrect the old clipboard content
+  pasteStash = [];
+  for (const a of pendingAtts) if (a.thumb) URL.revokeObjectURL(a.thumb);
+  pendingAtts = []; // sent or retracted — either way the draft is clean
+  renderAtts();
+  ta.value = ''; autoGrow(); slashCheck(true);
+  // no optimistic bubble — the kernel echoes the accepted prompt back as a
+  // `user_message` live event, so the bubble AND its attachment thumbs are
+  // drawn from the kernel's busy/idle truth, not this tab's possibly-stale
+  // flag (audit-gui #4); a local append here is what double-rendered them.
   // first prompt names the session right away — same rule the host applies
   const m = SESSION_META[sessionId] || (SESSION_META[sessionId] = { mtime: Date.now() });
   if (!m.title) { m.title = text.split('\n').map(s => s.trim()).find(Boolean).slice(0, 80); renderRail(); renderCrumb(); }
   updateHero();
   logEv('message', 'user · ' + text.slice(0, 60));
 }
-// queued steering — the kernel reports the backlog; chips × cancel one
+// two queues, one chip row — steer chips (⚡, injected at the running
+// turn's next request boundary) lead; queued prompts (FIFO, next turn)
+// follow. The kernel is the single source: chips render `input_queue` /
+// `steer_queue` broadcasts verbatim, controls only send ops back.
 let steerQ = [];
-function renderSteerChips() {
+let inputQ = [];
+function renderQueueChips() {
   const box = $('#cmp-queue');
-  if (!steerQ.length) { box.hidden = true; box.innerHTML = ''; return; }
+  if (!steerQ.length && !inputQ.length) { box.hidden = true; box.innerHTML = ''; return; }
   box.hidden = false;
-  box.innerHTML = steerQ.map((t, i) =>
-    `<span class="chip" data-tip="已入队，回合边界注入"><span>${esc(t.length > 40 ? t.slice(0, 40) + '…' : t)}</span><button class="chip-x" data-si="${i}" aria-label="撤回">×</button></span>`).join('');
+  const clip = t => esc(t.length > 40 ? t.slice(0, 40) + '…' : t);
+  box.innerHTML =
+    steerQ.map((t, i) =>
+      `<span class="chip q-steer" data-tip="引导已入队 · 下个请求边界注入"><span>${ic('zap', 'i xs')} ${clip(t)}</span><button class="chip-x" data-si="${i}" aria-label="撤回">×</button></span>`).join('') +
+    inputQ.map(q =>
+      `<span class="chip q-in" data-tip="排队中 · 点击编辑"><button class="chip-btn" data-mv="${q.id},-1" aria-label="前移">${ic('chev-l', 'i xs')}</button><button class="chip-btn" data-mv="${q.id},1" aria-label="后移">${ic('chev-r', 'i xs')}</button><button class="chip-t" data-qedit="${q.id}">${clip(q.text)}</button><button class="chip-x" data-qx="${q.id}" aria-label="移除">×</button></span>`).join('');
 }
 $('#cmp-queue').addEventListener('click', e => {
-  const b = e.target.closest('[data-si]');
-  if (b) wsSend({ type: 'steer_cancel', idx: +b.dataset.si });
+  const b = e.target.closest('[data-si],[data-mv],[data-qx],[data-qedit]');
+  if (!b) return;
+  if (b.dataset.si !== undefined) return wsSend({ type: 'steer_cancel', idx: +b.dataset.si });
+  if (b.dataset.qx !== undefined) return wsSend({ type: 'input_remove', id: +b.dataset.qx });
+  if (b.dataset.mv !== undefined) {
+    const [id, dir] = b.dataset.mv.split(',');
+    return wsSend({ type: 'input_move', id: +id, dir: +dir });
+  }
+  // inline edit — swap the label for an input seeded with the FULL text
+  // (the chip shows a 40-char clip); Enter/blur commits, Esc discards
+  const q = inputQ.find(x => x.id === +b.dataset.qedit);
+  if (!q) return;
+  const chip = b.closest('.chip');
+  const inp = document.createElement('input');
+  inp.value = q.text; inp.spellcheck = false;
+  b.replaceWith(inp);
+  inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length);
+  let done = false;
+  const commit = save => {
+    if (done) return; done = true;
+    if (save && inp.value.trim() && inp.value !== q.text)
+      wsSend({ type: 'input_edit', id: q.id, text: inp.value.trim() });
+    else renderQueueChips();
+  };
+  inp.addEventListener('keydown', ev => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') { ev.preventDefault(); commit(true); }
+    if (ev.key === 'Escape') { ev.preventDefault(); commit(false); }
+  });
+  inp.addEventListener('blur', () => commit(true));
+});
+// Ctrl+Enter — explicit steer: the text rides the running turn's next
+// request boundary instead of queueing behind it. With a non-empty queue
+// it's ALSO the expedite: the driver drains steer before the FIFO, so a
+// Ctrl+Enter lands ahead of every queued prompt. Text-only — a draft
+// carrying attachments can't steer; falls back to the queue with a note.
+function steerSend() {
+  const ta = $('#input'), text = ta.value.trim();
+  if (!text) return ta.focus();
+  if (pendingAtts.length) {
+    toast('引导只带文本 — 附件消息走 Enter 排队', 'alert', 'warn');
+    return send();
+  }
+  const payload = expandPastes(text);
+  const restore = () => { ta.value = text; autoGrow(); slashCheck(true); toast('发送失败，草稿已恢复', 'alert', 'warn'); };
+  if (!wsSend({ type: 'steer', text: payload }, restore)) return toast('未连接到内核，无法发送', 'alert', 'warn');
+  pasteStash = [];
+  ta.value = ''; autoGrow(); slashCheck(true);
+  logEv('message', 'steer · ' + payload.slice(0, 60));
+}
+// attachment thumbs above the input — chips ARE the carrier; the wire
+// payload ships {path,mime} per chip, the text stays free of markers
+function renderAtts() {
+  const box = $('#cmp-atts');
+  box.hidden = !pendingAtts.length;
+  box.innerHTML = pendingAtts.map((a, i) =>
+    `<span class="att-chip"><img src="${a.thumb || attURL(a.path)}" alt=""><span class="att-n">${esc(a.name || attBase(a.path))}</span><button class="chip-x" data-ri="${i}" aria-label="移除附件">×</button></span>`).join('');
+}
+function removeAtt(i) {
+  const a = pendingAtts[i];
+  if (!a) return;
+  pendingAtts.splice(i, 1);
+  if (a.thumb) URL.revokeObjectURL(a.thumb);
+  renderAtts(); autoGrow();
+}
+$('#cmp-atts').addEventListener('click', e => {
+  const b = e.target.closest('[data-ri]');
+  if (b) removeAtt(+b.dataset.ri);
 });
 $('#input').addEventListener('input', autoGrow);
 $('#input').addEventListener('keydown', e => {
+  // Ctrl+Enter takes priority over every menu branch — with a slash/at
+  // menu open the modifier still means "steer the raw text", not
+  // "accept the highlighted completion"
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); steerSend(); return; }
   if (atEl) {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); atIdx += e.key === 'ArrowDown' ? 1 : -1; atCheck(); return; }
     if ((e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229)) && atAccept()) { e.preventDefault(); return; }
@@ -95,24 +217,23 @@ $('#input').addEventListener('keydown', e => {
 });
 $('#input').addEventListener('paste', e => {
   // images first — a copied screenshot arrives as a File, not text. Upload
-  // it to the session's attachments dir and drop a [图片 name] marker; the
-  // marker's presence at send decides whether the block rides the prompt.
+  // it to the session's attachments dir; the chip alone carries the draft
+  // (no [图片] text marker — the wire payload is the {path,mime} list).
   const file = e.clipboardData && [...(e.clipboardData.files || [])].find(f => /^image\//.test(f.type));
   if (file) {
     e.preventDefault();
     const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
-    const s = e.target.selectionStart;
     (async () => {
       try {
         const bytes = await file.arrayBuffer();
         const r = await api('/attachments?ext=' + ext + '&sess=' + encodeURIComponent(sessionId), { method: 'POST', body: bytes });
-        const marker = `[图片 ${r.name}]`;
-        pendingAtts.push({ marker, path: r.path, mime: r.mime });
-        const ta = $('#input');
-        ta.value = ta.value.slice(0, s) + marker + ta.value.slice(s);
-        ta.selectionStart = ta.selectionEnd = s + marker.length;
-        autoGrow();
-        toast(`图片已附加 → ${marker}`, 'note');
+        // blob url as the chip thumb — we already hold the bytes locally,
+        // no reason to round-trip GET /attachments for a preview
+        // keep the File itself — a send-failure restore can re-mint the
+        // thumb URL; a revoked blob: URL can't be resurrected
+        pendingAtts.push({ path: r.path, mime: r.mime, name: r.name, thumb: URL.createObjectURL(file), file });
+        renderAtts();
+        toast(`图片已附加 → ${r.name}`, 'note');
       } catch (err) { toast(`图片上传失败：${err.message || err}`, 'alert', 'warn'); }
     })();
     return;

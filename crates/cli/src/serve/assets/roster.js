@@ -15,7 +15,9 @@ async function refreshRoster() {
 function renderRoster(tasks) {
   const box = $('#dt-list');
   if (!box) return;
-  $('#dt-count').textContent = tasks.length ? tasks.length + ' 个' : '';
+  // badge lives inside the tab chip now — the tab label already says WHAT,
+  // so the count is a bare number, not a phrase that would overflow the pill
+  $('#dt-count').textContent = tasks.length ? String(tasks.length) : '';
   const st = t => t.done === null || t.done === undefined ? 'run' : t.done ? 'done' : 'err';
   box.innerHTML = tasks.map(t => {
     const s = st(t);
@@ -28,7 +30,7 @@ function renderRoster(tasks) {
 }
 function taskSteerPop(anchor, id) {
   if (popAnchor === anchor) return closePop();
-  pop(anchor, `<div class="lbl">引导 ${esc(id)}</div><div class="field"><input id="st-in" placeholder="插一句话给它，回车发送" spellcheck="false" autocomplete="off"></div><div class="hint">进入它的引导队列 — 在下一个请求边界并入正在跑的轮次</div>`, { align: 'end', onMount(p) {
+  pop(anchor, `<div class="lbl">引导 ${esc(id)}</div><div class="field"><input id="st-in" placeholder="插一句话给它，回车发送" spellcheck="false" autocomplete="off"></div><div class="hint">进入它的引导队列 — 在下一个请求边界并入正在跑的轮次</div><div class="field"><button id="st-kill" class="btn btn-sm" data-tip="终止|立即停止该子代理（不等下一条消息）">终止这个子代理</button></div>`, { align: 'end', onMount(p) {
     const inp = $('#st-in', p);
     inp.addEventListener('keydown', e => {
       if (e.key !== 'Enter') return;
@@ -37,6 +39,11 @@ function taskSteerPop(anchor, id) {
       closePop();
       wsSend({ type: 'task_steer', sess: sessionId, id, text: t });
       toast('已发送给 ' + id, 'arrow-up');
+    });
+    $('#st-kill', p).addEventListener('click', () => {
+      closePop();
+      wsSend({ type: 'task_cancel', sess: sessionId, id });
+      toast('已终止 ' + id, 'x');
     });
     setTimeout(() => inp.focus(), 20);
   } });

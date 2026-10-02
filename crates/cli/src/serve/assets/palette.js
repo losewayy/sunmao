@@ -8,17 +8,36 @@ function pop(anchor, html, o = {}) {
   const p = document.createElement('div');
   p.className = 'pop glass' + (o.cls ? ' ' + o.cls : '');
   p.innerHTML = html; document.body.appendChild(p);
-  const r = anchor.getBoundingClientRect(), pr = p.getBoundingClientRect(), gap = 6;
-  let up = o.place === 'top' || (r.bottom + gap + pr.height > innerHeight - 8 && r.top - gap - pr.height > 8);
-  let top = up ? r.top - gap - pr.height : r.bottom + gap;
-  let left = o.align === 'end' ? r.right - pr.width : r.left;
-  left = Math.max(8, Math.min(left, innerWidth - pr.width - 8)); top = Math.max(8, Math.min(top, innerHeight - pr.height - 8));
-  p.style.left = left + 'px'; p.style.top = top + 'px';
-  if (up) p.classList.add('up');
-  requestAnimationFrame(() => p.classList.add('show'));
   popEl = p; popAnchor = anchor; anchor.classList && anchor.classList.add('pressed');
+  // Content first: `onMount` fills the dynamic lists (model catalog, job
+  // tails), so placement measures the box the popover will really have.
+  // Measured as an empty shell it landed on the composer and then grew
+  // down over the send button.
   if (o.onMount) o.onMount(p);
+  place(p, anchor, o);
+  requestAnimationFrame(() => p.classList.add('show'));
   return p;
+}
+/* Popover placement — `place:'top'` (or a cramped bottom) opens upward.
+   A popover opened from a composer chip is anchored to the whole composer,
+   not to the chip: level with the row it would cover the send button. */
+function place(p, anchor, o) {
+  const gap = 6, r = anchor.getBoundingClientRect();
+  const bar = anchor.closest && anchor.closest('.composer');
+  const upEdge = bar ? bar.getBoundingClientRect().top : r.top;
+  const w = p.offsetWidth, h = () => p.offsetHeight;
+  const up = o.place === 'top' || (r.bottom + gap + h() > innerHeight - 8 && upEdge - gap - h() > 8);
+  if (up) {
+    // too tall for the room above? the scrolling body shrinks — the box
+    // never spills back onto the composer
+    const room = upEdge - gap - 8, body = p.querySelector('.mp-list, .scroll');
+    if (h() > room && body) body.style.maxHeight = Math.max(72, room - (h() - body.offsetHeight)) + 'px';
+  }
+  const top = up ? upEdge - gap - h() : r.bottom + gap;
+  const left = o.align === 'end' ? r.right - w : r.left;
+  p.style.left = Math.max(8, Math.min(left, innerWidth - w - 8)) + 'px';
+  p.style.top = Math.max(8, Math.min(top, innerHeight - h() - 8)) + 'px';
+  if (up) p.classList.add('up');
 }
 function closePop() {
   if (!popEl) return;
@@ -55,7 +74,12 @@ document.addEventListener('mouseover', e => {
       const rail = $('#rail').getBoundingClientRect();
       left = rail.right + 8; top = Math.max(6, Math.min(r.top + r.height / 2 - tr.height / 2, innerHeight - tr.height - 6));
     } else {
+      // centered on the anchor, and clear of what it sits on: over a
+      // composer chip the bubble lifts above the whole bar — the two edges
+      // touching made the capsule read as clipped
+      const bar = el.closest('.composer');
       top = r.bottom + 8; if (top + tr.height > innerHeight - 6) top = r.top - tr.height - 8;
+      if (bar) top = Math.min(top, bar.getBoundingClientRect().top - 8 - tr.height);
       left = Math.max(6, Math.min(r.left + r.width / 2 - tr.width / 2, innerWidth - tr.width - 6));
     }
     tip.style.transform = `translate(${Math.round(left)}px,${Math.round(top)}px)`; tip.classList.add('show');

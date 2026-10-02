@@ -1,0 +1,12 @@
+# IM gateway 面向渠道用户的文案 — 冷拔插数据文件（CODE-ARCHITECTURE 规则
+# 6）：同键同顺序。格式：键<TAB>模板。模板内 {var} 由发送处替换。
+pairing_offer	⏳ 请先配对。配对码：{code} — 请在部署机上运行 sunmao pairing approve {code} 批准（1 小时内有效）。
+pairing_cooldown	稍后再试 — 配对码申请太频繁。
+pairing_pending	待批准的配对请求：
+pairing_row	{code} · sender {sender} · 剩 {mins} 分钟
+pairing_approved	✅ 已批准 — 你可以开始对话了。
+stopped	🛑 已停止。
+redelivery_prefix	♻️ 可能重复：
+status_line	⟳ {elapsed}s · {last}
+mode_fixed	IM 会话固定 full_access — 无按钮审批面；/mode 在 IM 下不可用。
+help	命令：/stop 停止当前任务 · /pairing 查看配对状态（owner）。其余输入直接对话；busy 时的消息会注入当前回合。

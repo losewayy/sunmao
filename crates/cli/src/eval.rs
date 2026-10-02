@@ -23,7 +23,7 @@ use crate::Cli;
 mod cases;
 use cases::{Case, Expect, parse_cases};
 
-#[derive(clap::Args)]
+#[derive(clap::Args, Clone)]
 pub struct EvalArgs {
     /// Case file: a JSON object/array, or JSONL — one case object per line.
     pub file: PathBuf,

@@ -21,6 +21,7 @@ mod commands;
 mod dataflow;
 mod doctor;
 mod eval;
+mod im;
 mod plugin;
 mod repl;
 mod rewind;
@@ -30,7 +31,7 @@ mod tui;
 
 pub use serve::{Client, HostHandle, HostResponse, SANDBOX_PAGE};
 
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 #[command(name = "sunmao", version, about = "agent harness kernel — 榫卯")]
 pub struct Cli {
     /// Launch the ratatui TUI instead of the REPL.
@@ -234,6 +235,12 @@ pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // pairing ops are pure state-file management — same early-exit class
+    // as `plugin`: no provider, no session setup
+    if let Some(plugin::Cmd::Pairing(args)) = &cli.command {
+        return im::pairing(&args.op);
+    }
+
     let cwd = cli.cwd.canonicalize().context("bad --cwd")?;
 
     // presets resolve once here — unknown names fail fast before any
@@ -256,6 +263,12 @@ pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
         let listener = std::net::TcpListener::bind(("127.0.0.1", port))
             .with_context(|| format!("bind 127.0.0.1:{port}"))?;
         return serve_main(&cli, listener).await;
+    }
+
+    // ── im: IM gateway daemon — same host machinery, channel adapters
+    // as the front door ──
+    if let Some(plugin::Cmd::Im) = cli.command {
+        return im::run(&cli).await;
     }
 
     let llm = provider_adapter(&cli);

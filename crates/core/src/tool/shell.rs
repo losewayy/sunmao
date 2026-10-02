@@ -1,9 +1,39 @@
+use crate::context::MutexRecover;
 use crate::tool::*;
 use anyhow::bail;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 // ---------- Bash ----------
+
+/// A completed exec doesn't guarantee the pipes hit EOF — a detached
+/// grandchild (`cmd /c start /b`, a daemonizing child) keeps the write end
+/// open forever. Drains get this grace after exec; past it we keep the
+/// partial bytes and mark the run's `ended` (the abandoned blocking
+/// threads are bounded garbage, not a hang).
+pub(crate) const PIPE_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Bytes a `pipe_to` drain thread accumulates — shared so a timed-out
+/// drain still yields what arrived (`pipe_to` takes `&mut dyn Write`,
+/// an owned Vec would be unrecoverable past the timeout).
+#[derive(Clone, Default)]
+pub(crate) struct SharedBuf(pub(crate) std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl SharedBuf {
+    pub(crate) fn text(&self) -> String {
+        crate::console::console_text(&self.0.lock_or_recover())
+    }
+}
+
+impl std::io::Write for SharedBuf {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock_or_recover().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 pub struct BashTool;
 
@@ -220,17 +250,20 @@ async fn run_parsed(
                 // Readers drain *while* the pipeline runs — waiting for exec
                 // to finish first deadlocks any child that fills the pipe
                 // buffer (>64KB on Windows before anyone reads).
-                let out_drain = tokio::task::spawn_blocking(move || {
-                    let mut b = Vec::new();
-                    out_reader.pipe_to(&mut b).ok();
-                    // OEM codepage, not always UTF-8 — console_text.rs
-                    crate::console::console_text(&b)
-                });
-                let err_drain = tokio::task::spawn_blocking(move || {
-                    let mut b = Vec::new();
-                    err_reader.pipe_to(&mut b).ok();
-                    crate::console::console_text(&b)
-                });
+                let out_buf = SharedBuf::default();
+                let err_buf = SharedBuf::default();
+                let out_drain = {
+                    let mut b = out_buf.clone();
+                    tokio::task::spawn_blocking(move || {
+                        out_reader.pipe_to(&mut b).ok();
+                    })
+                };
+                let err_drain = {
+                    let mut b = err_buf.clone();
+                    tokio::task::spawn_blocking(move || {
+                        err_reader.pipe_to(&mut b).ok();
+                    })
+                };
                 enum End {
                     Natural(i32),
                     Timeout,
@@ -254,10 +287,29 @@ async fn run_parsed(
                         (c, Some("cancelled by user — killed".to_string()))
                     }
                 };
-                // writer handles drop with exec → drains see EOF and return.
-                let stdout = out_drain.await.unwrap_or_default();
-                let stderr = err_drain.await.unwrap_or_default();
-                (code, stdout, stderr, ended)
+                // writer handles drop with exec → drains see EOF and
+                // return — unless a detached grandchild still holds the
+                // write end: bound the wait so the run can't hang past it.
+                let (mut ended, truncated) = match tokio::time::timeout(
+                    PIPE_DRAIN_TIMEOUT,
+                    futures_util::future::join(out_drain, err_drain),
+                )
+                .await
+                {
+                    Ok(_) => (ended, false),
+                    Err(_) => (ended, true),
+                };
+                if truncated {
+                    let tag = format!(
+                        "output truncated — pipes still held {}s after exit",
+                        PIPE_DRAIN_TIMEOUT.as_secs()
+                    );
+                    ended = Some(match ended {
+                        Some(e) => format!("{e}; {tag}"),
+                        None => tag,
+                    });
+                }
+                (code, out_buf.text(), err_buf.text(), ended)
             });
             Ok((code, stdout, stderr, ended))
         },
@@ -524,5 +576,35 @@ mod tests {
         assert!(out.contains("file lock"), "{out}");
         let quiet = render_run(&run(1, "", "compile error: expected ;"));
         assert!(!quiet.contains("[hint]"), "{quiet}");
+    }
+
+    /// A `start /b` grandchild inherits the stdout pipe's write end — cmd
+    /// exits but the pipe never EOFs. The run must still return with the
+    /// bytes it got (bounded drain), not hang the tool call forever.
+    /// Without the drain deadline `run_foreground` only returns when
+    /// ping's own ~20s budget lapses; with it the wait is ~5s. (The
+    /// abandoned drain thread still pins the test runtime until ping
+    /// exits — the wall time is the grandchild's, not the run's.)
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn detached_grandchild_pipe_does_not_hang_the_run() {
+        let cwd = std::env::current_dir().unwrap();
+        let t0 = std::time::Instant::now();
+        let run = run_foreground(
+            "cmd /c start /b ping -n 20 127.0.0.1 >nul",
+            cwd,
+            120,
+            crate::tool::ShellBackend::Posix,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            t0.elapsed() < std::time::Duration::from_secs(12),
+            "drain must be bounded: {:?}",
+            t0.elapsed()
+        );
+        let ended = run.ended.clone().unwrap_or_default();
+        assert!(ended.contains("truncated"), "ended: {:?}", run.ended);
     }
 }

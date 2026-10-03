@@ -528,30 +528,14 @@ impl Context {
         // FusionExecute joins the registry with the builtins so the Lead's
         // surface can keep it — under Standard it must never appear (same
         // posture as SearchTools: dead schema weight for a call the shape
-        // can't use), and under Fusion it replaces Task: the Lead delegates
-        // through the spec contract, not free-form sub-agent prompts.
-        // An escalated Lead returns to the standard surface minus the
-        // delegation tool — it finishes the job itself.
+        // can't use). The fusion surface itself (armed Lead's read set,
+        // escalated Lead back to standard-minus-delegate) is
+        // `fusion::lead_decl`'s call — the table lives with the policy.
         if *self.turn_mode.read_or_recover() == crate::agent::TurnMode::Fusion {
-            if self.fusion.lock_or_recover().escalated {
-                return decls
-                    .into_iter()
-                    .filter(|t| t.function.name != "SearchTools" && t.function.name != "FusionExecute")
-                    .collect();
-            }
-            const FUSION_LEAD_TOOLS: &[&str] = &[
-                "Read",
-                "Grep",
-                "Glob",
-                "WebFetch",
-                "JobOutput",
-                "Bash",
-                "UpdateGoal",
-                "FusionExecute",
-            ];
+            let escalated = self.fusion.lock_or_recover().escalated;
             return decls
                 .into_iter()
-                .filter(|t| FUSION_LEAD_TOOLS.contains(&t.function.name.as_str()))
+                .filter(|t| crate::agent::fusion::lead_decl(&t.function.name, escalated))
                 .collect();
         }
         decls

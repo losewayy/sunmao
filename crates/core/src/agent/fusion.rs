@@ -57,6 +57,30 @@ pub(crate) struct FusionState {
 /// Delegations before the Lead escalates and finishes the job itself.
 pub(crate) const ESCALATE_AFTER: u32 = 2;
 
+/// Is `name` on the fusion Lead's declared surface? `advertised_tools`
+/// delegates the answer here so the surface table sits with the rest of
+/// the delegation's policy, not inside Context's field soup. An armed
+/// Lead keeps the read tools + Bash + UpdateGoal + FusionExecute (Task's
+/// slot — the spec contract replaces free-form sub-agent prompts); an
+/// escalated Lead returns to the standard surface minus the delegation
+/// tool — it finishes the job itself.
+pub(crate) fn lead_decl(name: &str, escalated: bool) -> bool {
+    if escalated {
+        return name != "SearchTools" && name != "FusionExecute";
+    }
+    const LEAD_TOOLS: &[&str] = &[
+        "Read",
+        "Grep",
+        "Glob",
+        "WebFetch",
+        "JobOutput",
+        "Bash",
+        "UpdateGoal",
+        "FusionExecute",
+    ];
+    LEAD_TOOLS.contains(&name)
+}
+
 /// Verify commands get the same default budget a `Bash` call would.
 const VERIFY_TIMEOUT_SECS: u64 = 120;
 

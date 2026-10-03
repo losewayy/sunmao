@@ -311,7 +311,7 @@ pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
         Vec::new()
     };
     let interactive = cli.print.is_none() && !cli.acp;
-    let (tx_approval, rx_approval) = tokio::sync::mpsc::unbounded_channel();
+    let (tx_approval, rx_approval) = tokio::sync::mpsc::unbounded_channel::<tui::ApprovalMsg>();
     let mut ctx_raw = Context::new(llm, sessions, registry, cwd.clone())
         .with_extra_plugin_roots(preset_roots.clone());
     ctx_raw.mcp_servers = mcp.servers;

@@ -52,6 +52,8 @@ enum Msg {
     Quit,
     /// approval request from a tool (risky command) — carries the reply channel
     ApprovalReq(ApprovalReq),
+    /// the turn was cancelled — every unanswered card resolves `Cancelled`
+    ApprovalCancel,
     /// git branch probe finished — footer shows it next to the cwd
     Branch(Option<String>),
     /// mouse wheel — scrolls the transcript directly
@@ -73,6 +75,9 @@ enum Msg {
     /// `!` emits ToolDone but never a TurnEnd, so the queue would
     /// otherwise hold a phantom entry forever.
     QueuePop,
+    /// a foreground op that isn't a turn finished (`/compact` sets busy
+    /// but emits no TurnEnd — it reports by note)
+    OpEnd,
 }
 
 /// A risky tool call suspended on user verdict.
@@ -83,10 +88,18 @@ pub struct ApprovalReq {
     pub reply: tokio::sync::oneshot::Sender<sunmao_core::approval::Approval>,
 }
 
+/// Approver → UI wire. `CancelAll` is the `cancel_pending` drain: without it
+/// a parked/active card's suspended `approve()` would wait on a verdict that
+/// can never come once the turn is dead.
+pub enum ApprovalMsg {
+    Req(ApprovalReq),
+    CancelAll,
+}
+
 /// Approval seam for the TUI — risky calls suspend on a oneshot until the
 /// card resolves.
 pub struct TuiApprover {
-    pub tx: mpsc::UnboundedSender<ApprovalReq>,
+    pub tx: mpsc::UnboundedSender<ApprovalMsg>,
 }
 
 #[async_trait::async_trait]
@@ -100,18 +113,24 @@ impl sunmao_core::approval::Approver for TuiApprover {
         let (tx, rx) = tokio::sync::oneshot::channel();
         if self
             .tx
-            .send(ApprovalReq {
+            .send(ApprovalMsg::Req(ApprovalReq {
                 tool: tool.to_string(),
                 detail: detail.to_string(),
                 why: why.to_string(),
                 reply: tx,
-            })
+            }))
             .is_err()
         {
             return sunmao_core::approval::Approval::Deny { reason: None };
         }
         rx.await
             .unwrap_or(sunmao_core::approval::Approval::Deny { reason: None })
+    }
+
+    fn cancel_pending(&self) {
+        // the app holds the reply senders (card + backlog) — the drain is a
+        // channel hop, ordered after any Req already in flight
+        let _ = self.tx.send(ApprovalMsg::CancelAll);
     }
 }
 
@@ -127,7 +146,7 @@ pub async fn run(
     agent: AgentLoop,
     model: &str,
     cwd: std::path::PathBuf,
-    rx_approval: mpsc::UnboundedReceiver<ApprovalReq>,
+    rx_approval: mpsc::UnboundedReceiver<ApprovalMsg>,
     replay: Vec<sunmao_core::SessionEvent>,
     extra_roots: Vec<std::path::PathBuf>,
 ) -> Result<()> {
@@ -163,7 +182,7 @@ async fn run_inner(
     agent: AgentLoop,
     model: &str,
     cwd: std::path::PathBuf,
-    mut rx_approval: mpsc::UnboundedReceiver<ApprovalReq>,
+    mut rx_approval: mpsc::UnboundedReceiver<ApprovalMsg>,
     replay: Vec<sunmao_core::SessionEvent>,
     extra_roots: Vec<std::path::PathBuf>,
 ) -> Result<()> {
@@ -202,8 +221,12 @@ async fn run_inner(
     {
         let tx_msg = tx_msg.clone();
         tokio::spawn(async move {
-            while let Some(req) = rx_approval.recv().await {
-                let _ = tx_msg.send(Msg::ApprovalReq(req));
+            while let Some(am) = rx_approval.recv().await {
+                let m = match am {
+                    ApprovalMsg::Req(req) => Msg::ApprovalReq(req),
+                    ApprovalMsg::CancelAll => Msg::ApprovalCancel,
+                };
+                let _ = tx_msg.send(m);
             }
         });
     }
@@ -317,6 +340,7 @@ async fn run_inner(
                     parked: false,
                 });
             }
+            Some(Msg::ApprovalCancel) => app.cancel_approvals(),
             Some(Msg::Live(ev)) => match ev {
                 LiveEvent::Content { text } => app.stream(BlockKind::Assistant, &text),
                 LiveEvent::Reasoning { text } => app.stream(BlockKind::Thinking, &text),
@@ -408,6 +432,7 @@ async fn run_inner(
             Some(Msg::QueuePop) => {
                 app.queue.pop_front();
             }
+            Some(Msg::OpEnd) => app.end_op(),
             Some(Msg::Wheel(d)) => {
                 // wheel: scrolls transcript; in the viewer it scrolls that.
                 if app.focus == Focus::Viewer {

@@ -295,6 +295,31 @@ impl App {
         }
     }
 
+    /// Turn cancelled — answer every unanswered card `Cancelled` so the
+    /// suspended approver unblocks (an unanswered oneshot would hang the
+    /// dispatcher past the turn end). Covers the parked card too: Esc only
+    /// releases the keys, the ask is still live.
+    pub fn cancel_approvals(&mut self) {
+        let mut n = 0;
+        if let Some(card) = self.approval.take() {
+            let _ = card.reply.send(sunmao_core::approval::Approval::Cancelled);
+            n += 1;
+        }
+        for card in self.approval_backlog.drain(..) {
+            let _ = card.reply.send(sunmao_core::approval::Approval::Cancelled);
+            n += 1;
+        }
+        if self.focus == Focus::Approval {
+            self.focus = Focus::Input;
+        }
+        if n > 0 {
+            self.push_note(&format!(
+                "[approval cancelled — {n} unanswered card{}]",
+                if n > 1 { "s" } else { "" }
+            ));
+        }
+    }
+
     /// `↑` on an empty composer while items wait: pull the tail back into
     /// the editor for revision — the driver drops its copy via Flush, so
     /// the recalled item doesn't run twice. Returns the restored text.

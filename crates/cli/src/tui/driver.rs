@@ -83,6 +83,9 @@ pub(super) fn spawn(
                     let obs = ChanObserver(tx_msg.clone());
                     let note = commands::compact_note(agent.compact(&obs, "manual").await);
                     let _ = tx_msg.send(Msg::Note(note));
+                    // `/compact` set busy on submit but emits no TurnEnd —
+                    // an explicit end, now that notes don't fake one
+                    let _ = tx_msg.send(Msg::OpEnd);
                     continue;
                 }
                 Submit::Flush(_) => {

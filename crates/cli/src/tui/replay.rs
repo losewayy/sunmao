@@ -186,13 +186,23 @@ impl App {
         self.ensure_selection();
     }
 
+    /// A transcript note — mid-turn (artifact, sub-agent done, compaction)
+    /// or idle. Never touches `busy`: the footer/spinner belongs to
+    /// `close_turn` and `end_op`; a note arriving while the turn is alive
+    /// must not masquerade as its end (Ctrl-C would read "idle" and stash
+    /// a draft instead of cancelling).
     pub fn push_note(&mut self, note: &str) {
-        self.busy = false;
-        self.busy_since = None;
         let mut b = Block::new(BlockKind::Note);
         b.text = note.to_string();
         self.blocks.push(b);
         self.follow_tail();
+    }
+
+    /// A foreground op that isn't a turn ended (today: `/compact` — it
+    /// emits Compacted + a summary note, never a TurnEnd).
+    pub fn end_op(&mut self) {
+        self.busy = false;
+        self.busy_since = None;
     }
 
     /// An audit fact (hook rewrite/veto/injection, session grant) — always

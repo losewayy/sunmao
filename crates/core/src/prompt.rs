@@ -93,8 +93,10 @@ impl PromptAssembler {
             return full.to_string();
         }
         let mut sections = builtin_sections(self.shell, self.driver);
-        apply_layer(&mut sections, &user_layer_dir(), 40);
-        apply_layer(&mut sections, &self.cwd.join(".sunmao"), 50);
+        // the dynamic section joins BEFORE the layers so it lives under the
+        // same-stem replacement contract as every other reserved stem — a
+        // prompt.d/project-context.md swaps it in place (order survives the
+        // slot's text swap), never appends a near-duplicate.
         let ctx = project_context(&self.cwd, &self.extra_roots);
         if !ctx.trim().is_empty() {
             sections.push(Section {
@@ -103,6 +105,8 @@ impl PromptAssembler {
                 text: ctx,
             });
         }
+        apply_layer(&mut sections, &user_layer_dir(), 40);
+        apply_layer(&mut sections, &self.cwd.join(".sunmao"), 50);
         render(sections)
     }
 

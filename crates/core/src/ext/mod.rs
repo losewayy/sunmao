@@ -44,7 +44,8 @@ pub(crate) async fn connect_all(
         let text = crate::hooks::trust::spec_text(&spec.command, &spec.args, &spec.env);
         if !crate::hooks::trust::spawn_trusted(cwd, &manifest, &text) {
             let detail = format!(
-                "ext {plugin_name}: {text} (from {})",
+                "ext {plugin_name}: {} (from {})",
+                crate::hooks::trust::spec_display(&spec.command, &spec.args, &spec.env),
                 manifest.display().to_string().replace("\\\\?\\", "")
             );
             tracing::warn!("untrusted extension skipped: {detail}");

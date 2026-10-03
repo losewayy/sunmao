@@ -294,7 +294,8 @@ pub(crate) async fn connect_all_with_timeout(
             let text = crate::hooks::trust::spec_text(command, &spec.args, &spec.env);
             if !crate::hooks::trust::spawn_trusted(cwd, &source, &text) {
                 let detail = format!(
-                    "mcp {name}: {text} (from {})",
+                    "mcp {name}: {} (from {})",
+                    crate::hooks::trust::spec_display(command, &spec.args, &spec.env),
                     source.display().to_string().replace("\\\\?\\", "")
                 );
                 tracing::warn!("untrusted mcp server skipped: {detail}");

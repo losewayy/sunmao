@@ -101,6 +101,26 @@ pub struct Context {
     /// switch mid-session takes effect for a child that's already running.
     /// Durable via `SessionEvent::ModeChange`; seeded from the log on open.
     pub approval_mode: std::sync::Arc<std::sync::RwLock<crate::agent::ApprovalMode>>,
+    /// The session's turn shape (`agent::TurnMode` — Standard | Fusion).
+    /// Deliberately NOT Arc-shared like `approval_mode`: turn mode is a
+    /// per-context property — every sub-agent context runs Standard, so a
+    /// Sidekick can't delegate a second level. Durable via
+    /// `SessionEvent::TurnModeChange`; seeded from the log on open.
+    pub turn_mode: std::sync::RwLock<crate::agent::TurnMode>,
+    /// Per-context read-only flag — the gate's `mode==ReadOnly` block
+    /// ORs this in, so `TurnMode::Fusion`'s Lead refuses mutations without
+    /// touching the session's shared `approval_mode` (a shared switch
+    /// would lock the Sidekick too — that's the whole reason this exists
+    /// apart from ApprovalMode::ReadOnly). Per-context means escalation
+    /// flips the LEAD's flag only.
+    pub read_only: std::sync::atomic::AtomicBool,
+    /// Live fusion delegation state (agent/fusion.rs) — the Sidekick
+    /// handle, whitelist, verify streak and escalation flag. Empty under
+    /// Standard turns; sub-agent contexts get their own (always empty —
+    /// Sidekicks are Standard, so `fusion.whitelist` doubles as the
+    /// gate marker for "this context is a Sidekick").
+    /// (crate-visible like `read_paths` — a mechanism detail, not a seam)
+    pub(crate) fusion: std::sync::Mutex<crate::agent::fusion::FusionState>,
     /// The session's reasoning-effort override (`/effort`, GUI chip, ACP
     /// ThoughtLevel) — the turn loops read it into `ChatRequest` each
     /// request, so a mid-session change applies to the next stream.
@@ -314,6 +334,7 @@ impl Context {
         let todos = seed_todos(sessions.path());
         let goal = seed_goal(sessions.path());
         let approval_mode = seed_mode(sessions.path());
+        let turn_mode = seed_turn_mode(sessions.path());
         let effort = seed_effort(sessions.path());
         let ptc_store = seed_ptc_store(sessions.path());
         // checkpoints: rebuild `taken`/`seq` from any existing manifest so a
@@ -377,6 +398,13 @@ impl Context {
                 std::collections::HashSet::new(),
             )),
             approval_mode: std::sync::Arc::new(std::sync::RwLock::new(approval_mode)),
+            turn_mode: std::sync::RwLock::new(turn_mode),
+            // Fusion arms it; a resumed fusion log seeds it — the flag
+            // follows the mode, never the shared approval stance
+            read_only: std::sync::atomic::AtomicBool::new(
+                turn_mode == crate::agent::TurnMode::Fusion,
+            ),
+            fusion: std::sync::Mutex::new(crate::agent::fusion::FusionState::default()),
             reasoning_effort: std::sync::Arc::new(std::sync::RwLock::new(effort)),
             readonly_verbs: std::sync::Arc::new(readonly_verbs),
             live_sink: std::sync::OnceLock::new(),
@@ -538,7 +566,7 @@ impl Context {
 
 mod seeds;
 pub(crate) use seeds::tool_timeout_table;
-use seeds::{seed_effort, seed_goal, seed_mode, seed_ptc_store, seed_todos};
+use seeds::{seed_effort, seed_goal, seed_mode, seed_ptc_store, seed_todos, seed_turn_mode};
 
 mod sub_agent;
 pub(crate) use sub_agent::SubCancel;

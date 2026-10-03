@@ -186,6 +186,13 @@ pub(super) async fn build_sub_ctx(
         // the session's stance is shared, not copied — a mid-session /mode
         // switch applies to children already running
         approval_mode: ctx.approval_mode.clone(),
+        // turn mode is per-context, unlike approval_mode: a sub-agent
+        // always runs Standard — a Sidekick can't delegate a second level
+        turn_mode: std::sync::RwLock::new(crate::agent::TurnMode::Standard),
+        // same per-context rule: the Lead's read_only flag is its own —
+        // arming fusion must never lock the child it delegates to
+        read_only: std::sync::atomic::AtomicBool::new(false),
+        fusion: std::sync::Mutex::new(crate::agent::fusion::FusionState::default()),
         // same sharing rule as approval_mode — /effort applies to the
         // whole session, children included
         reasoning_effort: ctx.reasoning_effort.clone(),

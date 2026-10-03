@@ -458,6 +458,20 @@ function renderReplay(events, anim) {
       // surface, so the fold only re-syncs the chip + logs the fact
       setApprovalMode(ev.mode);
       logEv('hook', `approval.mode · ${ev.mode}`);
+    } else if (t === 'turn_mode_change') {
+      // standard ↔ fusion — audit row, same posture as mode_change
+      logEv('hook', `turn.mode · ${ev.mode}`);
+    } else if (t === 'fusion_spec') {
+      // the delegation spec is the audit spine — surface it as a note so
+      // "what the Lead asked" is readable without expanding the evlog
+      const goal = (ev.spec && (ev.spec.goal || ev.spec.objective)) || '(delegation)';
+      addNote(`fusion spec #${ev.seq} → ${ev.sidekick || '?'}\n${goal}`);
+      logEv('hook', `fusion.spec #${ev.seq} · ${ev.sidekick || ''}`);
+    } else if (t === 'fusion_accepted') {
+      logEv('hook', `fusion.accepted #${ev.spec_seq} · ${ev.sidekick || ''}`);
+    } else if (t === 'fusion_escalated') {
+      addNote(`fusion escalated #${ev.spec_seq} — ${ev.reason || ''}`);
+      logEv('hook', `fusion.escalated #${ev.spec_seq} · ${ev.reason || ''}`);
     } else if (t === 'task_done') {
       const host = msgHost();
       append(host, `<div class="notice glass">${ic(ev.ok ? 'check' : 'x', 'i sm')}<span>子代理 <code>${esc(ev.id)}</code> ${ev.ok ? '完成' : '失败'}</span></div>`);

@@ -250,17 +250,35 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, cmd_line: &str, cli
         }
         commands::Command::Mode(arg) => {
             match arg {
-                None => note(commands::mode_list_text(host.agent.approval_mode())),
-                Some(name) => match sunmao_core::agent::ApprovalMode::parse(&name) {
-                    Some(m) => {
-                        host.agent
-                            .set_approval_mode(m, &WsObserver::new(s.live.clone(), sess.clone()))
-                            .await;
-                        let _ = s.live.send(serde_json::json!({
-                            "type":"mode","sess":sess,"mode":m.as_str(),
-                        }));
-                    }
-                    None => note(commands::mode_unknown(&name)),
+                None => {
+                    note(commands::mode_list_text(host.agent.approval_mode()));
+                    note(commands::turn_mode_list_text(host.agent.turn_mode()));
+                }
+                // turn modes parse first — a different axis than the
+                // approval stances
+                Some(name) => match sunmao_core::agent::TurnMode::parse(&name) {
+                    Some(tm) => match host
+                        .agent
+                        .set_turn_mode(tm, &WsObserver::new(s.live.clone(), sess.clone()))
+                        .await
+                    {
+                        Ok(()) => note(format!("[turn mode → {}]", tm.as_str())),
+                        Err(e) => note(format!("[{e}]")),
+                    },
+                    None => match sunmao_core::agent::ApprovalMode::parse(&name) {
+                        Some(m) => {
+                            host.agent
+                                .set_approval_mode(
+                                    m,
+                                    &WsObserver::new(s.live.clone(), sess.clone()),
+                                )
+                                .await;
+                            let _ = s.live.send(serde_json::json!({
+                                "type":"mode","sess":sess,"mode":m.as_str(),
+                            }));
+                        }
+                        None => note(commands::mode_unknown(&name)),
+                    },
                 },
             }
             true

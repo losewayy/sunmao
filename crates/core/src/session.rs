@@ -92,6 +92,29 @@ pub enum SessionEvent {
     /// selector). Audit, not conversation — the fold ignores it, but a
     /// resume reseeds `Context.approval_mode` from the latest one.
     ModeChange { mode: crate::agent::ApprovalMode },
+    /// The turn mode changed (`/mode standard|fusion`) — a dedicated
+    /// event, NOT a ModeChange payload: `ModeChange` carries an
+    /// `ApprovalMode`, and `fusion` is not an approval stance. The fold
+    /// ignores it; a resume reseeds `Context.turn_mode`/`read_only`.
+    TurnModeChange { mode: crate::agent::TurnMode },
+    /// The Lead issued a delegation spec (`FusionExecute`) — the full spec
+    /// is durable because "what the Lead asked the Sidekick to change" is
+    /// the fusion audit spine's whole point. `seq` orders it against the
+    /// accepted/escalated facts; `spec_hash` ties them to one spec.
+    FusionSpec {
+        seq: u64,
+        spec_hash: String,
+        spec: serde_json::Value,
+        /// the sidekick session driving it — its own log carries the run
+        #[serde(default)]
+        sidekick: String,
+    },
+    /// A delegation's verify ran clean — the audit verdict, naming the
+    /// spec it closes so accepted/escalated associate back to it.
+    FusionAccepted { spec_seq: u64, sidekick: String },
+    /// A Sidekick burned through its verify-fail budget — the Lead unlocks
+    /// for the rest of the turn. `reason` names the trigger.
+    FusionEscalated { spec_seq: u64, reason: String },
     /// A `store()` write from a `RunCode` script — durable KV the sandbox
     /// shares across calls and resumes. Fold-ignored (like `Todos`): the
     /// store is state, not transcript; `load()` re-reads the snapshot.

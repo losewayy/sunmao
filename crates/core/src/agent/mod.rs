@@ -20,14 +20,17 @@ mod bare;
 mod cancel;
 mod compact;
 mod effort;
+pub(crate) mod fusion;
 mod gate;
 mod goal;
 mod mcp;
 pub mod mode;
 mod steer;
 mod turn;
+mod turn_mode;
 
 pub use mode::ApprovalMode;
+pub use turn_mode::TurnMode;
 
 #[cfg(test)]
 mod tests;
@@ -457,6 +460,7 @@ impl AgentLoop {
         self.ctx.reseed_goal(&events);
         self.ctx.reseed_ptc_store(&events);
         self.ctx.reseed_effort(&events);
+        self.ctx.reseed_turn_mode(&events);
         let mode = events
             .iter()
             .rev()

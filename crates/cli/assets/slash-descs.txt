@@ -12,7 +12,7 @@ goal	设定持续推进的目标；空参查看，clear 清除
 help	显示可用命令一览
 hooks	列出已加载的 hook 及信任状态；trust/untrust <n> 批准或吊销
 mcp	列出已连接的 MCP 服务器
-mode	查看或切换审批模式
+mode	查看或切换审批模式 / turn 模式（standard·fusion）
 model	列出模型或按选择器切换模型
 multiline	切换多行输入模式（前端本地）
 quit	退出（前端本地）

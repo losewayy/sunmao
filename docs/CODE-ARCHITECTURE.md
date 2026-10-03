@@ -122,7 +122,8 @@ crates/cli     every frontend + flag plumbing. Thin by design — heavy logic
                │   ├── md.rs     pulldown-cmark → styled lines
                │   ├── theme.rs  semantic palette + legacy-glyph fallbacks
                │   └── *_tests.rs / tests.rs — state + render fixtures
-               ├── acp/         ACP v2 server — mod.rs wire, observer.rs outbound adapters
+               ├── acp/         ACP v2 server — mod.rs wire, agent.rs session
+               │                state + factories, observer.rs outbound adapters
                ├── im/          IM gateway — `sunmao im` daemon: channels/*
                │                (telegram getUpdates adapter), config.rs
                │                (channels.json), authz.rs (pairing/

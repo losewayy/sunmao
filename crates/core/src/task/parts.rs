@@ -165,9 +165,6 @@ pub(super) async fn build_sub_ctx(
         depth: ctx.depth + 1,
         lane,
         lane_counter: ctx.lane_counter.clone(),
-        // jobs are per-context filesystem state — the child's own seq, not
-        // the parent's (j-<ms>-<seq> collision scope is a single jobs dir)
-        job_seq: std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
         cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         cancel_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
         // the child runs the same shell — the choice is session-level

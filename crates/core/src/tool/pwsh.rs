@@ -168,30 +168,28 @@ pub async fn run_foreground(
 }
 
 /// Background pwsh job — same `.sunmao/jobs/{id}/` shape as the deno path
-/// so `JobOutput` reads it identically. Output goes to `output.log`; exit
-/// lands in `exit.json`. The `Notify` handle is the cancel wire for the
-/// job — a stopped turn kills a background pwsh too (POSIX jobs are
-/// intentionally detached and unaffected).
+/// so `JobOutput` reads it identically: stdout+stderr merge into
+/// `output.log` (the deno path's try_clone semantics — stderr the model
+/// can't see is a tool that fails silently), exit lands in `exit.json`.
+/// The `Notify` handle is the cancel wire for the job — a stopped turn
+/// kills a background pwsh too (POSIX jobs are intentionally detached
+/// and unaffected).
 pub async fn spawn_background(
     command: &str,
     ctx: &crate::context::Context,
 ) -> anyhow::Result<super::ToolResult> {
-    // ms + the per-Context seq — two spawns in the same millisecond
-    // used to collide on `j-<ms>` and share one output.log.
-    let seq = ctx
-        .job_seq
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let id = format!(
-        "j-{}-{seq}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis(),
-    );
+    let id = super::shell::next_job_id();
     let dir = super::shell::jobs_dir(ctx).join(&id);
-    std::fs::create_dir_all(&dir)?;
     let log_path = dir.join("output.log");
     let exit_path = dir.join("exit.json");
+
+    // spawn BEFORE the dir and the "started" nudge — a missing pwsh used
+    // to leave an empty jobs/{id}/ dir that read as a running job.
+    let mut child = pwsh_command(command)
+        .current_dir(&ctx.cwd)
+        .spawn()
+        .with_context(|| "cannot spawn pwsh (background)")?;
+    std::fs::create_dir_all(&dir)?;
 
     let sink = ctx.live_sink.get().cloned();
     if let Some(s) = &sink {
@@ -201,27 +199,33 @@ pub async fn spawn_background(
         });
     }
 
-    let mut child = pwsh_command(command)
-        .current_dir(&ctx.cwd)
-        .spawn()
-        .with_context(|| "cannot spawn pwsh (background)")?;
     // background jobs stream their own output.log — a chatty long-runner
     // would grow an in-memory Vec unboundedly (and JobOutput reads nothing
     // until exit) if we buffered; drain both pipes straight to disk instead.
+    // Both pipes share the log: opened in append mode so concurrent writes
+    // concatenate rather than overwrite each other's offsets.
     let mut out_pipe = child.stdout.take().unwrap();
     let mut err_pipe = child.stderr.take().unwrap();
     let log_path2 = log_path.clone();
-    let err_path = dir.join("stderr.log");
     tokio::spawn(async move {
         use tokio::io::AsyncWriteExt;
+        async fn open_log(path: &std::path::Path) -> Option<tokio::fs::File> {
+            tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .await
+                .ok()
+        }
+        let err_log = log_path2.clone();
         let write_err = async {
-            if let Ok(mut f) = tokio::fs::File::create(&err_path).await {
+            if let Some(mut f) = open_log(&err_log).await {
                 let _ = tokio::io::copy(&mut err_pipe, &mut f).await;
                 let _ = f.flush().await;
             }
         };
         let write_out = async {
-            if let Ok(mut f) = tokio::fs::File::create(&log_path2).await {
+            if let Some(mut f) = open_log(&log_path2).await {
                 let _ = tokio::io::copy(&mut out_pipe, &mut f).await;
                 let _ = f.flush().await;
             }
@@ -248,4 +252,74 @@ pub async fn spawn_background(
         output: format!("job {id} started; log: {}", log_path.display()),
         ok: true,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    struct StubLlm;
+
+    #[async_trait::async_trait]
+    impl sunmao_llm::ProviderAdapter for StubLlm {
+        async fn stream(
+            &self,
+            _req: sunmao_llm::ChatRequest<'_>,
+        ) -> anyhow::Result<sunmao_llm::DeltaStream> {
+            Ok(Box::pin(futures_util::stream::empty()))
+        }
+    }
+
+    /// A background job's stderr must land in output.log — JobOutput only
+    /// reads that file; a separate stderr.log made the model blind to why
+    /// the job failed (deno merges both into output.log via try_clone).
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn background_stderr_lands_in_output_log() {
+        if std::process::Command::new("pwsh")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return; // no pwsh on this box — the path is untestable here
+        }
+        let dir = crate::fresh_test_dir("pwsh-bg");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ctx = std::sync::Arc::new(crate::context::Context::new(
+            std::sync::Arc::new(StubLlm),
+            crate::session::SessionLog::ephemeral(),
+            crate::tool::builtin_registry(),
+            dir.clone(),
+        ));
+        super::spawn_background(
+            "[Console]::Error.WriteLine('pwsh-err-marker'); 'pwsh-out-marker'",
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+        let jobs = dir.join(".sunmao").join("jobs");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let log = loop {
+            let done = std::fs::read_dir(&jobs).ok().and_then(|rd| {
+                rd.flatten()
+                    .map(|e| e.path())
+                    .find(|p| p.join("exit.json").exists())
+            });
+            if let Some(d) = done {
+                break d.join("output.log");
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "job never wrote exit.json"
+            );
+            // async sleep — a blocking one would starve the spawned copy
+            // and wait tasks on this single-threaded test runtime
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        };
+        // pipe-copy tasks race the exit write — give output.log a beat
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let out = std::fs::read_to_string(&log).unwrap_or_default();
+        assert!(out.contains("pwsh-out-marker"), "stdout: {out}");
+        assert!(out.contains("pwsh-err-marker"), "stderr must merge: {out}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

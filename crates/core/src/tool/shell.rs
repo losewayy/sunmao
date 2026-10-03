@@ -366,24 +366,30 @@ pub(crate) fn jobs_dir(ctx: &crate::context::Context) -> std::path::PathBuf {
     ctx.cwd.join(".sunmao").join("jobs")
 }
 
+/// `j-<ms>-<pid:x>-<seq>` — a per-Context counter collided when two
+/// contexts (main + sub-agent, or two sessions in one cwd) spawned in the
+/// same millisecond: each started at seq 0 and shared one output.log. The
+/// seq is process-global now, and pid covers two sunmao processes running
+/// the same project.
+pub(crate) fn next_job_id() -> String {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    format!(
+        "j-{}-{:x}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+        std::process::id(),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
+}
+
 async fn spawn_background(
     command: &str,
     ctx: &crate::context::Context,
     preamble: String,
 ) -> anyhow::Result<ToolResult> {
-    // `j-<ms>` alone collided when two `background:true` calls landed in the
-    // same millisecond — the per-Context seq makes the id (and its log dir)
-    // unique without a shared registry
-    let seq = ctx
-        .job_seq
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let id = format!(
-        "j-{}-{seq}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-    );
+    let id = next_job_id();
     let dir = jobs_dir(ctx).join(&id);
     std::fs::create_dir_all(&dir)?;
     let log_path = dir.join("output.log");

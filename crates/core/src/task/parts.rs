@@ -15,11 +15,15 @@ use crate::tool::builtin_registry;
 /// Build the child's context: lane claimed *first* so it doubles as the
 /// session-file dedup suffix — two spawns in the same millisecond used to
 /// collide on `sub-<ms>` and share one log file. `def` is pre-resolved by
-/// `resolve_spawn_def` (spawn policy already applied).
-pub(super) async fn spawn_parts(
+/// `resolve_spawn_def` (spawn policy already applied). `sys_prompt`
+/// overrides the def/default system prompt entirely — fusion's Sidekick
+/// carries its own contract (`fusion-sidekick`), not the generic
+/// sub-agent's.
+pub(crate) async fn spawn_parts(
     ctx: &Context,
     def: Option<&crate::agents::AgentDef>,
     llm_override: Option<Arc<dyn ProviderAdapter>>,
+    sys_prompt: Option<String>,
 ) -> (String, Context) {
     let lane = ctx
         .lane_counter
@@ -42,16 +46,18 @@ pub(super) async fn spawn_parts(
             SessionLog::ephemeral()
         }
     };
-    // agents/*.md named def wins; else the `subagent-default` prompt
-    // section — assembled by the same PromptAssembler as everything else.
-    let sys_prompt = def
-        .as_ref()
-        .map(|d| d.system_prompt.clone())
-        .unwrap_or_else(|| {
-            crate::prompt::PromptAssembler::new(&ctx.cwd)
-                .with_extra_roots(&ctx.extra_plugin_roots)
-                .assemble_subagent(def.map(|d| d.name.as_str()))
-        });
+    // an explicit sys_prompt wins (fusion Sidekick); else agents/*.md
+    // named def; else the `subagent-default` prompt section — assembled by
+    // the same PromptAssembler as everything else.
+    let sys_prompt = sys_prompt.unwrap_or_else(|| {
+        def.as_ref()
+            .map(|d| d.system_prompt.clone())
+            .unwrap_or_else(|| {
+                crate::prompt::PromptAssembler::new(&ctx.cwd)
+                    .with_extra_roots(&ctx.extra_plugin_roots)
+                    .assemble_subagent(def.map(|d| d.name.as_str()))
+            })
+    });
     {
         if let Err(e) = log
             .append(&SessionEvent::Message {
@@ -73,7 +79,7 @@ pub(super) async fn spawn_parts(
 /// id and the on-disk log). Model routing, the `tools:`/`spawns:` surface
 /// trim, the `permissions:` deny/ask overlay and per-child seams are
 /// policy, identical on both paths.
-pub(super) async fn build_sub_ctx(
+pub(crate) async fn build_sub_ctx(
     ctx: &Context,
     sub_id: String,
     lane: u16,

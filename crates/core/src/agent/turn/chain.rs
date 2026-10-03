@@ -80,6 +80,23 @@ impl AgentLoop {
                 self.ctx
                     .cancelled
                     .store(false, std::sync::atomic::Ordering::Relaxed);
+                // fusion escalation is per-TURN parole: an escalated Lead
+                // got its write tools back only to finish this turn — the
+                // next turn under Fusion re-arms read_only and a fresh
+                // delegation. A mode flip back to Standard already disarmed
+                // the flag in set_turn_mode; this only touches Fusion stays.
+                {
+                    let mut f = self.ctx.fusion.lock_or_recover();
+                    if f.escalated {
+                        f.escalated = false;
+                        f.verify_fails = 0;
+                        let armed = *self.ctx.turn_mode.read_or_recover()
+                            == crate::agent::TurnMode::Fusion;
+                        self.ctx
+                            .read_only
+                            .store(armed, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
                 // A cancelled turn ends in partial messages only —
                 // indistinguishable from a crash mid-stream on replay. Stamp
                 // the terminal fact so the log can answer "this was stopped,

@@ -278,7 +278,7 @@ fn whitelist_covers(wl: &[std::path::PathBuf], cwd: &std::path::Path, path: &str
     }) else {
         return false;
     };
-    wl.iter().any(|w| cand == *w)
+    wl.contains(&cand)
 }
 
 /// External-directory tier helper — `path` is checked against the

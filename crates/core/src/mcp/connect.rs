@@ -318,6 +318,52 @@ pub(crate) async fn connect_all_with_timeout(
     }
 }
 
+/// rmcp kills a spawned server from `ChildWithCleanup::drop` via a
+/// `tokio::spawn`ed task — a task that can lose the race against runtime
+/// shutdown and be dropped unpolled, orphaning a wedged child (which then
+/// holds the stdio pipes open and drags the whole teardown). Arm the pid
+/// until the connection is fully established so every failure path —
+/// handshake, tools/list, catalog build — leaves no process behind.
+struct ChildGuard(Option<u32>);
+
+impl ChildGuard {
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if let Some(pid) = self.0 {
+            kill_pid(pid);
+        }
+    }
+}
+
+/// Synchronous kill by pid — can't `.await`, can't `spawn` (that is
+/// exactly the race this fixes). `taskkill /T` takes the tree so a
+/// server that spawned grandchildren can't keep the pipes open either.
+fn kill_pid(pid: u32) {
+    #[cfg(windows)]
+    let status = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/F", "/T"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    #[cfg(not(windows))]
+    let status = std::process::Command::new("kill")
+        .arg("-9")
+        .arg(pid.to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    if let Err(e) = status {
+        tracing::warn!("mcp server pid {pid}: kill failed: {e}");
+    }
+}
+
 /// Model-visible tools ride the registry; every tool (incl. app-only)
 /// lands in the handle's catalog so the island bridge can enforce
 /// `visibility` itself — the model never sees `["app"]` tools.
@@ -332,6 +378,7 @@ pub(crate) async fn connect_one(
     let t = timeout;
     let shared = Shared::new(Vec::new(), Vec::new(), Vec::new());
     let handler = SessionHandler::new(name, shared.clone());
+    let mut child = ChildGuard(None);
     let client: ClientHandle = if let Some(url) = &spec.url {
         // remote server over streamable-HTTP — headers/auth/timeout land
         // in the transport config; a credential that can't resolve fails
@@ -353,6 +400,7 @@ pub(crate) async fn connect_one(
             // servers that log startup noise from polluting the protocol
             .stderr(std::process::Stdio::null());
         let transport = TokioChildProcess::new(cmd)?;
+        child.0 = transport.id();
         Arc::new(
             tokio::time::timeout(t, handler.serve(transport))
                 .await
@@ -411,6 +459,7 @@ pub(crate) async fn connect_one(
             }
         }
     }
+    child.disarm();
     Ok((
         McpServerHandle {
             name: name.to_string(),

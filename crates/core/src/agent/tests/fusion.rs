@@ -34,9 +34,7 @@ impl ProviderAdapter for RecProvider {
                     .join(" ")
             })
             .unwrap_or_default();
-        self.requests
-            .lock_or_recover()
-            .push((tools, last));
+        self.requests.lock_or_recover().push((tools, last));
         let deltas = self
             .responses
             .lock_or_recover()
@@ -86,7 +84,9 @@ fn text(s: &str) -> Vec<StreamDelta> {
     ]
 }
 
-fn queued(v: Vec<Vec<StreamDelta>>) -> std::sync::Mutex<std::collections::VecDeque<Vec<StreamDelta>>> {
+fn queued(
+    v: Vec<Vec<StreamDelta>>,
+) -> std::sync::Mutex<std::collections::VecDeque<Vec<StreamDelta>>> {
     std::sync::Mutex::new(std::collections::VecDeque::from(v))
 }
 
@@ -231,12 +231,22 @@ async fn advertised_tools_track_turn_mode() {
     *ctx.turn_mode.write_or_recover() = TurnMode::Fusion;
     let lead: std::collections::BTreeSet<String> = names(&ctx);
     let expect: std::collections::BTreeSet<String> = [
-        "Read", "Grep", "Glob", "WebFetch", "JobOutput", "Bash", "UpdateGoal", "FusionExecute",
+        "Read",
+        "Grep",
+        "Glob",
+        "WebFetch",
+        "JobOutput",
+        "Bash",
+        "UpdateGoal",
+        "FusionExecute",
     ]
     .iter()
     .map(|s| s.to_string())
     .collect();
-    assert_eq!(lead, expect, "the Lead's surface is the read set + delegate");
+    assert_eq!(
+        lead, expect,
+        "the Lead's surface is the read set + delegate"
+    );
 
     ctx.fusion.lock_or_recover().escalated = true;
     let esc = names(&ctx);
@@ -328,11 +338,13 @@ async fn fusion_execute_end_to_end() {
 
     let evs = events(&ctx).await;
     assert!(
-        evs.iter().any(|e| matches!(e, SessionEvent::FusionSpec { .. })),
+        evs.iter()
+            .any(|e| matches!(e, SessionEvent::FusionSpec { .. })),
         "the spec must be durable"
     );
     assert!(
-        evs.iter().any(|e| matches!(e, SessionEvent::FusionAccepted { .. })),
+        evs.iter()
+            .any(|e| matches!(e, SessionEvent::FusionAccepted { .. })),
         "a clean delegation records FusionAccepted"
     );
     // the accepted ToolResult carries the harness verdict
@@ -393,17 +405,18 @@ async fn fusion_whitelist_refuses_outside_writes() {
     );
     // the refusal is durable on the child's own log
     let sub_id = ctx.fusion.lock_or_recover().sidekick_id.clone().unwrap();
-    let child_log = SessionLog::open_path(
-        &dir.join(".sunmao/sessions").join(format!("{sub_id}.jsonl")),
-    )
-    .await
-    .unwrap();
+    let child_log =
+        SessionLog::open_path(&dir.join(".sunmao/sessions").join(format!("{sub_id}.jsonl")))
+            .await
+            .unwrap();
     let child_evs = child_log.events().await.unwrap();
-    let refused = child_evs.iter().any(|e| matches!(
-        e,
-        SessionEvent::ToolResult { name, ok: false, output, .. }
-            if name == "Write" && output.contains("fusion whitelist")
-    ));
+    let refused = child_evs.iter().any(|e| {
+        matches!(
+            e,
+            SessionEvent::ToolResult { name, ok: false, output, .. }
+                if name == "Write" && output.contains("fusion whitelist")
+        )
+    });
     assert!(refused, "the child's log must carry the whitelist refusal");
     assert!(
         child_evs.iter().any(|e| matches!(
@@ -486,10 +499,14 @@ async fn fusion_steer_reworks_then_escalates() {
         })
         .collect();
     assert_eq!(results.len(), 2);
-    assert!(results[0].contains("exit 7"), "the real exit code feeds back");
+    assert!(
+        results[0].contains("exit 7"),
+        "the real exit code feeds back"
+    );
     assert!(results[1].contains("escalated"), "the second miss unlocks");
     assert!(
-        evs.iter().any(|e| matches!(e, SessionEvent::FusionEscalated { .. })),
+        evs.iter()
+            .any(|e| matches!(e, SessionEvent::FusionEscalated { .. })),
         "the escalation is a durable fact"
     );
     assert!(
@@ -510,11 +527,10 @@ async fn fusion_steer_reworks_then_escalates() {
     // both verify runs are durable facts on the child's own log — a rework
     // turn reads the failure it was steered to fix
     let sub_id = ctx.fusion.lock_or_recover().sidekick_id.clone().unwrap();
-    let child_log = SessionLog::open_path(
-        &dir.join(".sunmao/sessions").join(format!("{sub_id}.jsonl")),
-    )
-    .await
-    .unwrap();
+    let child_log =
+        SessionLog::open_path(&dir.join(".sunmao/sessions").join(format!("{sub_id}.jsonl")))
+            .await
+            .unwrap();
     let verify_runs = child_log
         .events()
         .await

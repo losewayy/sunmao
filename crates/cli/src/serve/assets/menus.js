@@ -132,6 +132,7 @@ function act(name, el) {
     case 'win-min': { const w = shellWin(); if (w) w.win('min'); return; }
     case 'win-max': { const w = shellWin(); if (w) w.win('max'); return; }
     case 'win-close': { const w = shellWin(); if (w) w.win('close'); return; }
+    case 'grants-clear': return revokeGrant('*');
     case 'imv-close': return closeImv();
   }
 }
@@ -170,6 +171,7 @@ document.addEventListener('click', e => {
   const w = t.closest('[data-wall]'); if (w) { S.wallpaper = w.dataset.wall; return commit(); }
   const m = t.closest('.tc[data-mode]'); if (m) { S.mode = m.dataset.mode; return commit(); }
   const a = t.closest('[data-act]'); if (a) return act(a.dataset.act, a);
+  const gv = t.closest('[data-gv]'); if (gv) return revokeGrant(gv.dataset.gv);
   const pv = t.closest('[data-pv]'); if (pv) return providerAction(pv.dataset.pv, pv);
   const mc = t.closest('[data-mc]'); if (mc) return toggleCand(mc.dataset.mc);
 });

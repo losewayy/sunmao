@@ -241,6 +241,99 @@ async fn jobs_route_reads_jobs_dir_layout() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// `DELETE /session/{id}/grants` — the `Approval::Session` ledger's revoke
+/// surface: a named key removes its exact entry, `*` clears the table, and
+/// each write lands an `approval.revoke` audit fact. Dormant/unknown ids
+/// have no in-memory ledger → 404.
+#[tokio::test]
+async fn grants_route_revokes_session_ledger() {
+    struct StubLlm;
+    #[async_trait::async_trait]
+    impl sunmao_llm::ProviderAdapter for StubLlm {
+        async fn stream(
+            &self,
+            _req: sunmao_llm::ChatRequest<'_>,
+        ) -> anyhow::Result<sunmao_llm::DeltaStream> {
+            Ok(Box::pin(futures_util::stream::empty()))
+        }
+    }
+    let root = std::env::temp_dir().join(format!("sunmao-grants-{}", std::process::id()));
+    let dir = root.join(".sunmao/sessions");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = shared_at(root.clone());
+    s.factory = crate::serve::SessionFactory {
+        make: Box::new(|log, _approver, cwd| {
+            Box::pin(async move {
+                Ok(sunmao_core::Context::new(
+                    std::sync::Arc::new(StubLlm),
+                    log,
+                    sunmao_core::tool::builtin_registry(),
+                    cwd,
+                ))
+            })
+        }),
+    };
+    let s = std::sync::Arc::new(s);
+    let h = super::HostHandle { s: s.clone() };
+
+    let log = sunmao_core::SessionLog::open(&dir, "s-gr").await.unwrap();
+    let host = s.adopt(log, "test").await.unwrap();
+    let ctx = host.agent.context();
+    ctx.grant_session("Bash", "ls -la");
+    ctx.grant_session("Read", "README.md");
+
+    // one key removes exactly that grant
+    let r = h
+        .request(
+            "DELETE",
+            "/session/s-gr/grants",
+            br#"{"key":"Bash ls -la"}"#,
+        )
+        .await;
+    assert_eq!(r.status, 200);
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    assert_eq!(v["removed"], 1);
+    assert_eq!(v["grants"], serde_json::json!(["Read README.md"]));
+    let text = std::fs::read_to_string(dir.join("s-gr.jsonl")).unwrap();
+    assert!(text.contains("approval.revoke"));
+
+    // a grant that isn't there is a miss, not a silent ok
+    assert_eq!(
+        h.request(
+            "DELETE",
+            "/session/s-gr/grants",
+            br#"{"key":"Bash rm -rf /"}"#
+        )
+        .await
+        .status,
+        404
+    );
+
+    // `*` clears the rest
+    let r = h
+        .request("DELETE", "/session/s-gr/grants", br#"{"key":"*"}"#)
+        .await;
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    assert_eq!(v["removed"], 1);
+    assert_eq!(v["grants"], serde_json::json!([]));
+
+    // dormant log / unknown id: no live ledger to edit
+    std::fs::write(dir.join("s-dormant.jsonl"), "{\"type\":\"started\"}\n").unwrap();
+    assert_eq!(
+        h.request("DELETE", "/session/s-dormant/grants", b"{}")
+            .await
+            .status,
+        404
+    );
+    assert_eq!(
+        h.request("DELETE", "/session/s-nope/grants", b"{}")
+            .await
+            .status,
+        404
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// `GET|PUT /ui` — appearance state round-trips through
 /// `<project>/.sunmao/ui.json`; a missing file answers `{}`, a non-object
 /// body is rejected, and `PUT` emits `ui_changed` on the live bus.

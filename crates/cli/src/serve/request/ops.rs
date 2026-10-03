@@ -5,8 +5,57 @@
 
 use std::sync::Arc;
 
+use sunmao_core::context::MutexRecover;
+
 use super::super::host::{Shared, display_path, log_path, session_project};
 use super::{HostResponse, query_arg};
+
+/// `DELETE /session/{id}/grants` — revoke entries of the `Approval::Session`
+/// ledger (`GET /session`'s `grants` is its read-only side). Body
+/// `{"key":"<grant>"}` removes the one exact-match entry — `key` is the
+/// display form (`"Bash rg --files"`), the stored key is tab-separated, so
+/// the split is on the FIRST space; `{"key":"*"}` or an absent key clears
+/// the ledger. Revocation mirrors the grant's own audit: a durable
+/// `approval.revoke` Hook fact. Grants are live-only state — a dormant
+/// session has no ledger to edit → 404.
+pub(super) async fn grants_delete(s: &Arc<Shared>, id: &str, body: &[u8]) -> HostResponse {
+    let Some(host) = s.host(id) else {
+        return HostResponse::err(404, "no live session".into());
+    };
+    let key = serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v["key"].as_str().map(|k| k.trim().to_string()));
+    let (removed, detail) = {
+        let mut grants = host.agent.context().session_grants.lock_or_recover();
+        match key.as_deref() {
+            Some(k) if k != "*" => {
+                let stored = k.replacen(' ', "\t", 1);
+                if !grants.remove(&stored) {
+                    return HostResponse::err(404, "no such grant".into());
+                }
+                (1, k.to_string())
+            }
+            _ => {
+                let n = grants.len();
+                grants.clear();
+                (n, format!("{n} grant(s)"))
+            }
+        }
+    };
+    {
+        let mut log = host.agent.context().sessions.lock().await;
+        log.append_audit(&sunmao_core::SessionEvent::Hook {
+            event: "approval.revoke".into(),
+            detail,
+        })
+        .await;
+    }
+    HostResponse::json(serde_json::json!({
+        "ok": true,
+        "removed": removed,
+        "grants": host.agent.session_grants(),
+    }))
+}
 
 /// `GET /tasks?sess=…` — 被查看宿主的活动子代理花名册（`task_roster()` 的
 /// JSON 形态，/`tasks` 文本是同一数据的终端版）。`sess` 缺省取第一个

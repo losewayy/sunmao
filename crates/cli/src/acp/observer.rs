@@ -37,22 +37,6 @@ fn next_id(counter: &std::sync::atomic::AtomicU64, kind: &str) -> v2::MessageId 
     v2::MessageId::new(format!("{kind}-{n}"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The counter is session-owned: every observer draws from the same
-    /// sequence, so a second turn's first chunk is `msg-N`, never `msg-0`
-    /// again — a client deduping on MessageId would drop the collision.
-    #[test]
-    fn ids_share_one_monotonic_sequence() {
-        let counter = std::sync::atomic::AtomicU64::new(0);
-        assert_eq!(next_id(&counter, "msg").to_string(), "msg-0");
-        assert_eq!(next_id(&counter, "artifact").to_string(), "artifact-1");
-        assert_eq!(next_id(&counter, "msg").to_string(), "msg-2");
-    }
-}
-
 impl Observer for AcpObserver {
     fn on_event(&self, ev: &LiveEvent) {
         match ev {
@@ -246,5 +230,21 @@ impl sunmao_core::approval::Approver for AcpApprover {
             },
             Err(_) => Approval::Deny { reason: None },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The counter is session-owned: every observer draws from the same
+    /// sequence, so a second turn's first chunk is `msg-N`, never `msg-0`
+    /// again — a client deduping on MessageId would drop the collision.
+    #[test]
+    fn ids_share_one_monotonic_sequence() {
+        let counter = std::sync::atomic::AtomicU64::new(0);
+        assert_eq!(next_id(&counter, "msg").to_string(), "msg-0");
+        assert_eq!(next_id(&counter, "artifact").to_string(), "artifact-1");
+        assert_eq!(next_id(&counter, "msg").to_string(), "msg-2");
     }
 }

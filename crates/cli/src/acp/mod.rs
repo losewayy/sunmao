@@ -21,6 +21,10 @@ mod observer;
 use config::{effort_config, mode_config};
 use observer::{AcpApprover, AcpObserver};
 
+/// Session-id disambiguator — `s-<ms>` alone collides within one
+/// millisecond between concurrent `session/new` calls.
+static SESSION_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 struct SessionState {
     agent: AgentLoop,
     ctx: Arc<Context>,
@@ -155,12 +159,15 @@ pub async fn run(
                 async move |req: v2::NewSessionRequest,
                             responder: Responder<v2::NewSessionResponse>,
                             cx: V2ConnectionTo<Client>| {
+                    // ms + seq — two session/new in the same millisecond
+                    // used to mint the same id (and one sessions-dir file)
                     let id = format!(
-                        "s-{}",
+                        "s-{}-{}",
                         std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
-                            .as_millis()
+                            .as_millis(),
+                        SESSION_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                     );
                     let cwd = req.cwd.clone().into_inner();
                     let preset_roots = match agent.presets(&cwd) {

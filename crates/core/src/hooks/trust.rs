@@ -19,6 +19,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::context::MutexRecover;
+
 /// Which layer a hook source belongs to — decides the default trust.
 /// `Project` is the serde-skip default: an origin we forgot to tag is
 /// untrusted, never accidentally implicit.
@@ -235,6 +237,11 @@ fn record_text(command: &str) -> String {
 /// map removes the file so CONFIG.md's "missing file = feature off" stays
 /// literal.
 pub(crate) fn set_pin(cwd: &Path, source: &Path, command: &str, set: bool) -> Result<(), String> {
+    // read-modify-write races when two surfaces pin at once (serve hosts a
+    // Context per tab) — serialize the whole cycle on a process-wide lock,
+    // same shape as serve's projects.json registry.
+    static LEDGER_WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _g = LEDGER_WRITE.lock_or_recover();
     let path = ledger_path(cwd);
     let mut doc: serde_json::Value = std::fs::read_to_string(&path)
         .ok()
@@ -544,6 +551,33 @@ mod tests {
         let ledger = std::fs::read_to_string(ledger_path(&dir)).unwrap();
         assert!(!ledger.contains("sk-secret-123"), "ledger: {ledger}");
         assert!(ledger.contains("API_KEY"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Parallel writers (serve hosts a Context per tab) must not lose pins
+    /// to a read-modify-write race on the ledger file.
+    #[test]
+    fn concurrent_pins_serialize() {
+        let dir = crate::fresh_test_dir("trust-rmw");
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("hooks.json");
+        std::fs::write(&src, "{}").unwrap();
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let (d, s) = (dir.clone(), src.clone());
+            handles.push(std::thread::spawn(move || {
+                set_pin(&d, &s, &format!("echo {i}"), true).unwrap();
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        for i in 0..8 {
+            assert!(
+                is_trusted(&dir, Layer::Project, &src, &format!("echo {i}")),
+                "pin {i} lost to a racing write"
+            );
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 

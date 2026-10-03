@@ -11,7 +11,10 @@ use sunmao_core::agent::{LiveEvent, Observer};
 pub(super) struct AcpObserver {
     pub connection: V2ConnectionTo<Client>,
     pub session_id: v2::SessionId,
-    pub msg_counter: std::sync::atomic::AtomicU64,
+    /// Shared with the session, not owned per observer — a fresh observer
+    /// (next `session/prompt`, config set, resumed session) minting its own
+    /// `msg-0` collides with chunks the client already deduped.
+    pub msg_counter: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl AcpObserver {
@@ -25,8 +28,28 @@ impl AcpObserver {
     }
 
     fn next_id(&self, kind: &str) -> v2::MessageId {
-        let n = self.msg_counter.fetch_add(1, Ordering::Relaxed);
-        v2::MessageId::new(format!("{kind}-{n}"))
+        next_id(&self.msg_counter, kind)
+    }
+}
+
+fn next_id(counter: &std::sync::atomic::AtomicU64, kind: &str) -> v2::MessageId {
+    let n = counter.fetch_add(1, Ordering::Relaxed);
+    v2::MessageId::new(format!("{kind}-{n}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The counter is session-owned: every observer draws from the same
+    /// sequence, so a second turn's first chunk is `msg-N`, never `msg-0`
+    /// again — a client deduping on MessageId would drop the collision.
+    #[test]
+    fn ids_share_one_monotonic_sequence() {
+        let counter = std::sync::atomic::AtomicU64::new(0);
+        assert_eq!(next_id(&counter, "msg").to_string(), "msg-0");
+        assert_eq!(next_id(&counter, "artifact").to_string(), "artifact-1");
+        assert_eq!(next_id(&counter, "msg").to_string(), "msg-2");
     }
 }
 

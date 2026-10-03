@@ -46,8 +46,8 @@ pub trait Approver: Send + Sync {
 
     /// Turn cancelled — resolve every parked `approve()` as `Cancelled` so
     /// the suspended dispatcher unblocks. No-op default: `AllowAll`/`Piped`
-    /// never park. Serve's card map is the real implementation; the TUI's
-    /// parked card self-dismisses on turn-end render.
+    /// never park. Serve's card map and the TUI's `ApprovalMsg::CancelAll`
+    /// hop are the real implementations.
     fn cancel_pending(&self) {}
 }
 

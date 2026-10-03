@@ -511,18 +511,24 @@ impl Context {
     }
 
     /// The tool declarations the next request advertises. Under the `ptc`
-    /// loop driver the model's surface is `RunCode` alone — every other
-    /// tool stays registered (scripts reach them via `tools.*`) but nothing
-    /// else becomes a model-emittable tool_call.
+    /// loop driver the model's surface is `RunCode` + `SearchTools` — the
+    /// borrowed-tools pair: search for a schema, then call it from a
+    /// script. Every other tool stays registered (scripts reach them via
+    /// `tools.*`) but nothing else becomes a model-emittable tool_call.
+    /// `SearchTools` is withheld under the other drivers too — with every
+    /// declaration already on the wire it's dead schema weight.
     pub fn advertised_tools(&self) -> Vec<sunmao_llm::types::Tool> {
         let decls = self.tools.declarations();
         if self.loop_driver == crate::agent::LoopDriver::Ptc {
             return decls
                 .into_iter()
-                .filter(|t| t.function.name == "RunCode")
+                .filter(|t| matches!(t.function.name.as_str(), "RunCode" | "SearchTools"))
                 .collect();
         }
         decls
+            .into_iter()
+            .filter(|t| t.function.name != "SearchTools")
+            .collect()
     }
 
     /// A prior `Approval::Session` covers this exact call?

@@ -93,8 +93,8 @@ pub struct Cli {
     #[arg(long)]
     preset: Vec<String>,
     /// Loop driver override — `full` (contract loop), `bare` (no hooks,
-    /// no gate, no auto-compaction) or `ptc` (full loop, RunCode-only tool
-    /// surface — every other tool is reachable via the sandbox's `tools.*`).
+    /// no gate, no auto-compaction) or `ptc` (full loop, RunCode+SearchTools
+    /// tool surface — every other tool is reachable via the sandbox's `tools.*`).
     /// Wins over any manifest `loop:` key.
     #[arg(long = "loop", value_parser = parse_driver)]
     driver: Option<sunmao_core::agent::LoopDriver>,

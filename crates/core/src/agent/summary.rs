@@ -20,6 +20,7 @@ pub fn call_summary(name: &str, args: &serde_json::Value) -> String {
         "Task" => &["prompt"],
         "JobOutput" => &["id"],
         "RunCode" => &["code"],
+        "SearchTools" => &["query"],
         "HtmlArtifact" => &["name"],
         _ => &[],
     };
@@ -91,6 +92,7 @@ pub(crate) fn specifier_for(tool: &str, args: &serde_json::Value) -> String {
         "Task" => "prompt",
         "HtmlArtifact" => "name",
         "JobOutput" => "id",
+        "SearchTools" => "query",
         _ => return serde_json::to_string(args).unwrap_or_default(),
     };
     args.get(key)

@@ -183,13 +183,9 @@ async fn dispatch(
         }
         "describe" => {
             let name = args["name"].as_str();
-            let decls: Vec<Tool> = ctx
-                .tools
-                .declarations()
+            let decls: Vec<Tool> = super::callable_catalog(ctx)
                 .into_iter()
-                .filter(|t| {
-                    t.function.name != "RunCode" && name.is_none_or(|n| t.function.name == n)
-                })
+                .filter(|t| name.is_none_or(|n| t.function.name == n))
                 .collect();
             Ok(serde_json::to_string(&decls).unwrap_or_else(|_| "[]".into()))
         }

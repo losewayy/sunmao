@@ -14,6 +14,9 @@ the only capabilities are the ones you invoke:
   overlap instead of serializing.
 - `await describe()` / `await describe(name)` — the callable tool catalog
   (names + argument schemas) when you need to look up a signature.
+- `await tools.SearchTools({query})` — the same catalog filtered by query
+  terms (name/description match, `mcp__*` included); resolves the full
+  declarations as `{ok, output}` like any other nested call.
 - `await store(key, value)` / `await load(key)` — a session-scoped,
   durable JSON key-value store shared across `RunCode` calls and surviving
   resume; `load` returns `undefined` for missing keys.

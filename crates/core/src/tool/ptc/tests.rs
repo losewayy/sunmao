@@ -304,6 +304,125 @@ async fn runcode_doom_loop_resets_on_varied_calls() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `SearchTools` as the model emits it: a query returns matching tools'
+/// full declarations — name + parameters schema — and MCP/extension
+/// (`mcp__*`) entries are discoverable from the same catalog.
+#[tokio::test]
+async fn search_tools_returns_matching_schemas() {
+    let dir = crate::fresh_test_dir("st1");
+    std::fs::create_dir_all(&dir).unwrap();
+    struct FakeMcp;
+    #[async_trait::async_trait]
+    impl ToolImpl for FakeMcp {
+        fn name(&self) -> &'static str {
+            "mcp__docs__lookup"
+        }
+        fn decl(&self) -> Tool {
+            Tool::function(
+                "mcp__docs__lookup",
+                "look up documentation",
+                json!({"type": "object"}),
+            )
+        }
+        async fn call(&self, _a: Value, _c: &Arc<Context>) -> anyhow::Result<ToolResult> {
+            anyhow::bail!("unused")
+        }
+    }
+    let reg = builtin_registry();
+    reg.register(FakeMcp);
+    let ctx = Arc::new(Context::new(
+        Arc::new(StubLlm),
+        SessionLog::ephemeral(),
+        reg,
+        dir.clone(),
+    ));
+    let res = ctx
+        .tools
+        .call("SearchTools", &json!({"query": "grep"}).to_string(), &ctx)
+        .await;
+    assert!(res.ok, "{}", res.output);
+    let hits: Vec<Value> = serde_json::from_str(&res.output).unwrap();
+    assert_eq!(hits.len(), 1, "only Grep matches 'grep': {hits:?}");
+    assert_eq!(hits[0]["function"]["name"], "Grep");
+    assert!(
+        hits[0]["function"]["parameters"].is_object(),
+        "the hit must carry the full schema a script needs: {hits:?}"
+    );
+    // every term must match — 'glob pattern' still lands Glob
+    let res = ctx
+        .tools
+        .call(
+            "SearchTools",
+            &json!({"query": "glob pattern"}).to_string(),
+            &ctx,
+        )
+        .await;
+    let hits: Vec<Value> = serde_json::from_str(&res.output).unwrap();
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!(hits[0]["function"]["name"], "Glob");
+    // MCP tools are in the same catalog
+    let res = ctx
+        .tools
+        .call(
+            "SearchTools",
+            &json!({"query": "documentation"}).to_string(),
+            &ctx,
+        )
+        .await;
+    let hits: Vec<Value> = serde_json::from_str(&res.output).unwrap();
+    assert!(
+        hits.iter()
+            .any(|h| h["function"]["name"] == "mcp__docs__lookup"),
+        "mcp__* tools must be searchable: {hits:?}"
+    );
+    // empty query lists the catalog — RunCode withheld (not script-callable)
+    let res = ctx
+        .tools
+        .call("SearchTools", "{}".to_string().as_str(), &ctx)
+        .await;
+    let hits: Vec<Value> = serde_json::from_str(&res.output).unwrap();
+    assert!(
+        hits.iter().all(|h| h["function"]["name"] != "RunCode"),
+        "RunCode is never a borrowed tool: {hits:?}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The borrowed surface inside the sandbox: `tools.SearchTools` resolves
+/// through the real bridge (a durable PtcCall fact), `describe()` still
+/// lists the catalog, and a tool found by search is callable under its
+/// discovered name — the whole borrow loop in one script.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runcode_searchtools_and_describe() {
+    let dir = crate::fresh_test_dir("ptc-st");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("hit.rs"), "fn main() {}").unwrap();
+    let ctx = test_ctx(&dir);
+    let res = run(
+        &ctx,
+        r#"(async () => {
+            const found = JSON.parse((await tools.SearchTools({query: "glob"})).output);
+            const one = await describe("Glob");
+            // found[0].function.name IS a callable tools.* name — search is
+            // discovery of the same catalog the bridge dispatches
+            const hit = await tools[found[0].function.name]({pattern: "*.rs"});
+            return found.length + ":" + one[0].function.name + ":" + hit.output.trim();
+        })()"#,
+    )
+    .await;
+    assert!(res.ok, "{}", res.output);
+    assert_eq!(res.output, "\"1:Glob:hit.rs\"", "{}", res.output);
+    let evs = ctx.sessions.lock().await.events().await.unwrap();
+    assert!(
+        evs.iter().any(|e| matches!(
+            e,
+            SessionEvent::PtcCall { name, .. } if name == "SearchTools"
+        )),
+        "a nested SearchTools call is the same auditable fact as any tools.* call: {evs:?}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A call the script starts but never awaits (fire-and-forget, or a
 /// `Promise.all` whose join was dropped) still lands its durable PtcCall
 /// fact — the host bridge drains inflight requests after the script

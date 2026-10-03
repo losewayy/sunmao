@@ -28,6 +28,13 @@
 //!   `ToolCall`/`ToolResult` — those would fold into protocol tool messages
 //!   without a matching assistant `tool_call` and corrupt the transcript.
 //!   PtcCall stays out of the fold but replays as a nested transcript row.
+//!
+//! `SearchTools` is the discovery half of the pair. Under the `ptc` loop
+//! driver the model's schema budget holds `RunCode` + `SearchTools` alone;
+//! a search hit returns the tool's full declaration (name, description,
+//! parameters) so the next script knows the exact arg shape to emit.
+//! Discovery only — the `tools.*` bridge already reaches every registered
+//! tool, so a match is information, not authorization.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -234,6 +241,80 @@ fn run_script(ctx: Arc<Context>, code: &str, timeout: Duration) -> Result<String
         serve.await;
         res
     })
+}
+
+/// The script-callable catalog — every declaration `tools.<Name>` can
+/// reach. `RunCode` is withheld (a sandboxed script must not spawn nested
+/// sandboxes); `SearchTools` stays — `tools.SearchTools` is a legitimate
+/// discovery call, and MCP/extension tools land here by registration.
+fn callable_catalog(ctx: &Context) -> Vec<Tool> {
+    ctx.tools
+        .declarations()
+        .into_iter()
+        .filter(|t| t.function.name != "RunCode")
+        .collect()
+}
+
+/// Term-wise AND match over a tool's name + description, case-insensitive.
+/// An empty/whitespace query returns the whole catalog — the same "list
+/// everything" fallback `describe()` gives.
+fn matching_tools(decls: Vec<Tool>, query: &str) -> Vec<Tool> {
+    let terms: Vec<String> = query.split_whitespace().map(|t| t.to_lowercase()).collect();
+    if terms.is_empty() {
+        return decls;
+    }
+    decls
+        .into_iter()
+        .filter(|t| {
+            let hay = format!("{}\n{}", t.function.name, t.function.description).to_lowercase();
+            terms.iter().all(|term| hay.contains(term))
+        })
+        .collect()
+}
+
+/// `SearchTools` — catalog lookup for the borrowed-tools surface. The
+/// model asks for "something that greps" and gets `Grep`'s full schema
+/// back instead of guessing; the call is a model-emitted tool like any
+/// other, so its `ToolResult` IS the durable record a replay reads.
+pub struct SearchToolsTool;
+
+#[async_trait::async_trait]
+impl ToolImpl for SearchToolsTool {
+    fn name(&self) -> &'static str {
+        "SearchTools"
+    }
+
+    fn decl(&self) -> Tool {
+        Tool::function(
+            "SearchTools",
+            "Search the session's tool catalog — returns the full declarations \
+             (name, description, parameters schema) of every tool whose name \
+             or description matches the query terms, including MCP (`mcp__*`) \
+             and extension (`ext__*`) tools. Use it to look up the exact \
+             argument shape a RunCode script should pass to `tools.<Name>`; \
+             an empty or omitted query lists the whole catalog. Discovery \
+             only — a match is callable information, not a permission grant.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Case-insensitive terms; a tool matches when every term appears in its name or description. Empty lists all."}
+                }
+            }),
+        )
+    }
+
+    async fn call(&self, args: Value, ctx: &Arc<Context>) -> anyhow::Result<ToolResult> {
+        #[derive(Deserialize)]
+        struct Args {
+            query: Option<String>,
+        }
+        let a: Args = serde_json::from_value(args).unwrap_or(Args { query: None });
+        let hits = matching_tools(callable_catalog(ctx), a.query.as_deref().unwrap_or(""));
+        Ok(ToolResult {
+            output: serde_json::to_string(&hits).unwrap_or_else(|_| "[]".into()),
+            ok: true,
+        })
+    }
 }
 
 mod install;

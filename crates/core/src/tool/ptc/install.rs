@@ -45,12 +45,9 @@ pub(super) fn install<'js>(
             }),
         ),
     )?;
-    let names: Vec<String> = ctx
-        .tools
-        .declarations()
-        .iter()
-        .map(|t| t.function.name.clone())
-        .filter(|n| n != "RunCode")
+    let names: Vec<String> = super::callable_catalog(ctx)
+        .into_iter()
+        .map(|t| t.function.name)
         .collect();
     // Bracket-access assignments tolerate any tool name (mcp__x__y is a
     // valid identifier anyway, but `tools["..."]` needs no validation).

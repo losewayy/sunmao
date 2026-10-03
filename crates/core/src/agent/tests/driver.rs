@@ -149,6 +149,46 @@ async fn full_driver_still_enforces_gate() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `SearchTools` is registered (scripts and explicit whitelists can reach
+/// it) but stays OFF the wire under `full`/`bare` — with every real
+/// declaration already advertised, a catalog-lookup schema is dead weight.
+#[tokio::test]
+async fn search_tools_hidden_outside_ptc() {
+    let dir = crate::fresh_test_dir("st-hidden");
+    std::fs::create_dir_all(&dir).unwrap();
+    let ctx = Context::new(
+        Arc::new(MockProvider {
+            responses: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }),
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        dir.clone(),
+    );
+    assert_eq!(ctx.loop_driver, LoopDriver::Full);
+    let names: Vec<String> = ctx
+        .advertised_tools()
+        .iter()
+        .map(|t| t.function.name.clone())
+        .collect();
+    assert!(
+        names.iter().any(|n| n == "RunCode"),
+        "full still advertises RunCode — {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n == "SearchTools"),
+        "SearchTools must not consume schema budget outside ptc — {names:?}"
+    );
+    // but it IS registered — a script's tools.SearchTools resolves
+    assert!(
+        ctx.tools
+            .declarations()
+            .iter()
+            .any(|t| t.function.name == "SearchTools")
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Layering: a preset manifest's `loop:` key wins over the project's —
 /// later layers own the driver slot.
 #[tokio::test]
@@ -270,7 +310,11 @@ async fn ptc_driver_advertises_runcode_only() {
 
     let reqs = probe.seen.lock_or_recover().clone();
     assert!(!reqs.is_empty(), "probe saw no requests");
-    assert_eq!(reqs[0], vec!["RunCode"], "ptc advertises RunCode only");
+    assert_eq!(
+        reqs[0],
+        vec!["RunCode", "SearchTools"],
+        "ptc advertises the borrowed-tools pair only"
+    );
 
     // the script ran: its Glob went through the gate and was denied —
     // {ok:false, output} folds into the script's return value

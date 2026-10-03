@@ -87,9 +87,11 @@ pub enum LoopDriver {
     /// air-gapped/minimal deployments where the gate's prompts are noise.
     Bare,
     /// PTC/codemode: the full contract loop, but the model's tool surface
-    /// is `RunCode` alone — every other tool stays registered and callable
-    /// only through the script's `tools.*` bridge (each nested call still
-    /// takes the gate/hook pipeline). See `assets/prompt/ptc-driver.md`.
+    /// is `RunCode` + `SearchTools` — borrowed tools: find a schema by
+    /// query, then call it from a script. Every other tool stays
+    /// registered and callable only through the script's `tools.*` bridge
+    /// (each nested call still takes the gate/hook pipeline). See
+    /// `assets/prompt/ptc-driver.md`.
     Ptc,
 }
 

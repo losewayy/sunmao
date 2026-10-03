@@ -96,6 +96,8 @@
 
 **`RunCode`（PTC/codemode）**：模型写一段 JS 在内嵌 QuickJS 沙箱里编排工具——无 fs/网络/`import`，全部能力是 `tools.<Name>(args)` 回调进宿主。每个子调用走完整分发管线（PreToolUse→gate→exec→PostToolUse），只是喊话通道从 model tool_call 换成脚本代发；中间结果留在沙箱不进上下文，只有脚本返回值回来。子调用的持久记录是 `SessionEvent::PtcCall` 事实（含 name/args/ok/output/depth/lane）——不进消息折叠（不配对的 tool_result 会污染 transcript），但回放渲染成嵌套 `↳` 行、dataflow/export 可归属。
 
+**`SearchTools`（借阅制的目录半）**：返回名称/描述匹配 query 词项的工具完整声明（名称+参数 schema+说明，含 `mcp__*`/`ext__*`）——`ptc` 驱动下与 `RunCode` 是模型仅有的两个直连工具；发现不是授权，`tools.*` 桥本来就够得着全部注册工具，查到的只是信息。`full`/`bare` 驱动下注册保留（脚本 `tools.SearchTools` 可达）但不上线——全量声明已在协议上，目录查询是死 schema 重量。
+
 **Edit 成熟细节（抄 grok-build 作业）**：归一化匹配吃空白漂移（`find_normalized_match_positions` 模式）；`old_string` 为空=建文件；Read 行号锚前缀；Read-before-Write 闸门（改已有文件必须先读过）。
 
 **Windows 立场（差异点）**：`Bash` 首选内嵌 `deno_task_shell`（Rust 跨平台 bash 方言解释器）——模型写的 bash 在 Windows 上原样跑，行为逐字节确定、不依赖 Git Bash；覆盖不了的外部命令落回真 shell。工具描述向模型声明当前 shell 方言。
@@ -147,7 +149,7 @@ hook engine（核心）
   （实现校准：`Agent`=`AgentLoop`——deliver=`run_turn`、cancel=`cancel()`、intercept=PreToolUse/审批缝否决链；`agent/*` 事件域=`LiveEvent` over `Observer`/`ctx.live_sink`：`agent/assistant-stream`→`Content`/`Reasoning`、`agent/status`→`ToolStart`/`ToolDone`/`TurnEnd`/`Usage`/`Artifact`、`agent/request`→`Approver` 回调。事件以类型安全枚举走编译期契约，不走字符串主题总线）
 - `agentLoop` 默认 driver：input → sessions 开 turn → systemPrompt 组装 → llm 流式 → tools 分发 → 事实追加回日志——**它是插件，不是内核特权层**
 - 这保留了 dsh 的"换循环即换产品"能力（极简 loop、PTC code-mode loop、审计严格 loop 都是预设层）
-- ✅ **已落地**：`Context.loop_driver`（`LoopDriver` enum）由 manifest `loop:` 键解析——项目 `plugin.json` → `plugins/*` → preset，后层赢；`--loop` 旗标再压过一切声明。内置驱动三个：`full`（契约循环：hooks+审批闸+auto-compact）、`bare`（`agent/bare.rs`——straight 电路，session 日志/observer/cancel/迭代上限全保留，hooks/gate/compaction 全不跑）、`ptc`（codemode——契约循环原样跑，但广告给模型的工具面只剩 `RunCode`；其余工具只在脚本内 `tools.*` 可达，prompt 的 tool-guidance 段换成 `ptc-driver.md`）。
+- ✅ **已落地**：`Context.loop_driver`（`LoopDriver` enum）由 manifest `loop:` 键解析——项目 `plugin.json` → `plugins/*` → preset，后层赢；`--loop` 旗标再压过一切声明。内置驱动三个：`full`（契约循环：hooks+审批闸+auto-compact）、`bare`（`agent/bare.rs`——straight 电路，session 日志/observer/cancel/迭代上限全保留，hooks/gate/compaction 全不跑）、`ptc`（codemode——契约循环原样跑，但广告给模型的工具面只剩 `RunCode`+`SearchTools`；其余工具只在脚本内 `tools.*` 可达，prompt 的 tool-guidance 段换成 `ptc-driver.md`）。
 - ✅ **goal 自续跑循环已落地**（`agent/goal.rs`）：`/goal <objective>` 或模型 `UpdateGoal` 设定跨轮目标后，每个 Completed 轮尾在 `run_turn` 内链出续跑轮——`SessionEvent::Goal` 持久化（`{type:"goal",goal:{...}}`，末条为准，resume/fork 恢复）+ `LiveEvent::Goal` 实时镜像 + 每请求注入 `[goal round n/m]` 合成尾消息；链终结条件=模型报 complete/blocked/abandoned、`max_rounds` 预算耗尽、取消、或 `ctx.input_pending` 有排队输入（用户输入插队而非等完整条链）；`blocked` 要求同一 blocker 跨 ≥2 轮上报才落定；TUI 底栏 chip 与 GUI composer 顶条展示目标/状态/轮数
 
 ### 4.6 `audit` — 审批与审计

@@ -63,6 +63,21 @@ fn agents_md_lands_in_project_context() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// project-context is a reserved stem — a prompt.d file must REPLACE the
+/// dynamic section (AGENTS.md + skills index), not append before it.
+#[test]
+fn prompt_d_replaces_project_context() {
+    let dir = scratch();
+    std::fs::write(dir.join("AGENTS.md"), "work rules here").unwrap();
+    let pd = dir.join(".sunmao/prompt.d");
+    std::fs::create_dir_all(&pd).unwrap();
+    std::fs::write(pd.join("project-context.md"), "CUSTOM CONTEXT").unwrap();
+    let s = PromptAssembler::new(&dir).assemble(None);
+    assert!(!s.contains("work rules here"), "{s}");
+    assert!(s.contains("CUSTOM CONTEXT"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn subagent_default_and_replacement() {
     let a = PromptAssembler::new(scratch());

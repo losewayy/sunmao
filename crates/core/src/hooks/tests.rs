@@ -115,6 +115,24 @@ fn plugin_root_expands() {
     );
 }
 
+/// A claude-shape `hooks.json` `timeout` field must reach the exec budget,
+/// not deserialize to nothing (serde default ≠ skip).
+#[test]
+fn claude_shape_timeout_field_loads() {
+    let dir = crate::fresh_test_dir("hook-timeout");
+    let sd = dir.join(".sunmao");
+    std::fs::create_dir_all(&sd).unwrap();
+    std::fs::write(
+        sd.join("hooks.json"),
+        r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo x","timeout":7}]}]}}"#,
+    )
+    .unwrap();
+    let engine = HookEngine::load(&dir, "s1", &[]);
+    let group = &engine.groups["PreToolUse"][0];
+    assert_eq!(group.hooks[0].timeout, Some(7));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A hook that detaches a grandchild (`start /b`) inherits our pipe ends —
 /// cmd exits, the pipes never EOF, and the OLD code hung in the drain join
 /// until the grandchild's own lifespan ended. The bounded drain must return

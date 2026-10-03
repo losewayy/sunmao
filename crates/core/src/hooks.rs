@@ -212,9 +212,10 @@ struct HookCommand {
     /// cursor — payload's hook_event_name must echo it verbatim).
     #[serde(skip)]
     event_name: String,
-    /// Per-command timeout in seconds (cursor's per-entry field). Falls
+    /// Per-command timeout in seconds — honored in both dialects (cursor
+    /// stamps it per entry; claude-shape files can declare it too). Falls
     /// back to the global budget when unset.
-    #[serde(skip)]
+    #[serde(default)]
     timeout: Option<u64>,
 }
 

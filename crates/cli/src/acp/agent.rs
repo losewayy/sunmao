@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use agent_client_protocol::schema::v2;
 use agent_client_protocol::Error;
+use agent_client_protocol::schema::v2;
 use sunmao_core::Context;
 use sunmao_core::agent::AgentLoop;
 use sunmao_core::context::{MutexRecover, RwLockRecover};
@@ -56,7 +56,10 @@ impl SunmaoAgent {
     }
 
     /// Model routing seam — same resolution as every other frontend.
-    pub(super) fn new_resolver(&self, cwd: &std::path::Path) -> Arc<sunmao_core::models::ModelResolver> {
+    pub(super) fn new_resolver(
+        &self,
+        cwd: &std::path::Path,
+    ) -> Arc<sunmao_core::models::ModelResolver> {
         Arc::new(sunmao_core::models::ModelResolver::load(
             cwd,
             sunmao_core::models::ProviderDef {

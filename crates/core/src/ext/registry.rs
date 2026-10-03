@@ -438,8 +438,7 @@ impl ExtRegistry {
     pub async fn fire_event(&self, event: &str, payload: &Value, outcome: &mut HookOutcome) {
         let children: Vec<Arc<ExtChild>> = self
             .children
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .iter()
             .filter(|c| c.events.iter().any(|e| e == event))
             .cloned()

@@ -344,9 +344,38 @@ function shellPick(el) {
   }, { align: 'end' });
 }
 
+/* grants page — the `Approval::Session` ledger ("本会话都别问了" verdicts).
+   GET /session reports it read-only; DELETE /session/{id}/grants revokes —
+   per-row or the whole table. `GRANTS` caches the last pull so renders stay
+   synchronous like MODELS/SHELL. */
+let GRANTS = null;
+async function refreshGrants() {
+  try { GRANTS = (await api('/session?id=' + encodeURIComponent(sessionId))).grants || []; } catch { GRANTS = null; }
+  if (view === 'settings' && setPage === 'grants') renderGrants();
+}
+async function revokeGrant(key) {
+  try {
+    const v = await api(`/session/${encodeURIComponent(sessionId)}/grants`, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key }) });
+    GRANTS = v.grants || [];
+    toast(key === '*' ? '已撤销全部授权' : '已撤销 · 下次仍会询问', 'shield');
+  } catch (e) { toast(`撤销失败：${e.message}`, 'alert', 'warn'); }
+  if (view === 'settings' && setPage === 'grants') renderGrants();
+}
+function renderGrants() {
+  if (view !== 'settings' || setPage !== 'grants') return;
+  const host = $('#set-generic');
+  if (!GRANTS) { host.innerHTML = head('已授权命令', '') + '<div class="empty-hint">正在读取授权…</div>'; refreshGrants(); return; }
+  host.innerHTML = head('已授权命令', '审批卡上点了「本会话都别问了」留下的许可 —— 只放行完全相同的一条调用，撤销后下一次仍会询问。')
+    + sec('', '', card([
+      ...GRANTS.map(g => `<div class="cr"><code class="mono" style="flex:1;min-width:0;overflow-wrap:anywhere;text-align:left">${esc(g)}</code><button class="btn ghost sm" data-gv="${esc(g)}" data-tip="撤销这条授权">${ic('trash')}撤销</button></div>`),
+      ...(GRANTS.length > 1 ? [`<div class="cr"><div class="l"><b>全部撤销</b><span>清掉本页列出的所有授权</span></div><button class="btn ghost sm warn" data-act="grants-clear">${ic('trash')}全部撤销</button></div>`] : []),
+    ])) + (GRANTS.length ? '' : '<div class="empty-hint">本会话还没有授权 — 审批时点 A 会把那条调用记到这里</div>');
+}
+
 const PAGES = {
   providers: () => head('模型与提供商', '') + '<div class="empty-hint">正在读取模型配置…</div>',
   channels: () => head('IM 渠道', '') + '<div class="empty-hint">正在读取渠道状态…</div>',
+  grants: () => head('已授权命令', '') + '<div class="empty-hint">正在读取授权…</div>',
   shell: () => head('终端', '') + '<div class="empty-hint">正在读取 shell 配置…</div>',
   keys: () => head('快捷键', '焦点不在输入框时，审批快捷键直接裁决最早的待审批卡。') + sec('', '', card([['新对话', 'Ctrl N'], ['命令面板', 'Ctrl K'], ['打开设置', 'Ctrl ,'], ['显示或隐藏数据面板', 'Ctrl \\'], ['Allow / Deny / Always', 'Y N A'], ['发送（运行中则排队）', 'Enter'], ['插队引导（不打断本轮）', 'Ctrl Enter'], ['换行', 'Shift Enter'], ['关闭弹层或返回', 'Esc']].map(([a, k]) => row(a, '', `<span class="keys">${k.split(' ').map(x => `<kbd>${esc(x)}</kbd>`).join('')}</span>`)))),
   about: () => head('关于', '') + `<div class="card glass cfg"><div class="ab-top">${$('#hero svg').outerHTML}<div><b>sunmao</b><span>Rust 编写的 agent 运行时内核</span></div></div>${row('会话', '', mono(sessionId || '—'))}${row('工作目录', '', mono(cwd || '—'))}${row('本地服务', TAURI ? '内嵌内核 · 自定义协议（无 TCP 监听）' : 'sunmao serve 只绑定本机', mono(location.host))}${row('内核', '', mono('sunmao-core'))}${row('许可', '', mono('MIT OR Apache-2.0'))}</div>`,
@@ -362,6 +391,7 @@ function settingsPage(p) {
   if (isA) { renderWallGrid(); syncSettingsUI(); }
   else if (p === 'providers') { renderProviders(); }
   else if (p === 'channels') { refreshChannels(); }
+  else if (p === 'grants') { renderGrants(); }
   else if (p === 'shell') { renderShell(); }
 }
 

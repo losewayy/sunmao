@@ -241,8 +241,8 @@ pub fn mcp_text(servers: &[McpServerStatus]) -> String {
 
 /// `/status` — the session's vitals, folded by `AgentLoop::status`.
 /// `grants` lists the `Approval::Session` ledger verbatim — a grant covers
-/// the identical call only, so the rows are the audit surface (revocation
-/// is deliberately absent this round: read-only).
+/// the identical call only; the GUI's 已授权命令 settings page revokes
+/// entries through `DELETE /session/{id}/grants`.
 pub fn status_text(s: &SessionStatus) -> String {
     let t = &s.tokens;
     let grants = if s.grants.is_empty() {

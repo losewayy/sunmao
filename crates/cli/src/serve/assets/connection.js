@@ -85,7 +85,7 @@ function route(v) {
       (v.pending || []).forEach(c => approvalCard(c));
       setBusy(!!v.busy);
       refreshSessions(); refreshModels(); refreshProjects();
-      refreshRoster(); refreshJobs();
+      refreshRoster(); refreshJobs(); refreshGrants();
       renderCrumb();
       break;
     case 'live':
@@ -121,7 +121,7 @@ function route(v) {
       (v.pending || []).forEach(c => approvalCard(c));
       steerQ = v.steer || []; inputQ = v.queue || []; renderQueueChips();
       syncWait();
-      refreshSessions(); refreshRoster(); refreshJobs(); renderCrumb();
+      refreshSessions(); refreshRoster(); refreshJobs(); refreshGrants(); renderCrumb();
       break;
     case 'approval':
       waitingSessions.add(sess);
@@ -509,7 +509,7 @@ function renderRail() {
   $('#sessions').innerHTML = html || '<div class="empty-hint">暂无会话记录</div>';
   $$('.nav-i[data-go]').forEach(b => b.classList.toggle('on', b.dataset.go === view));
 }
-const SET_NAV = [['appearance', '外观', 'palette'], ['providers', '模型与提供商', 'cpu'], ['channels', 'IM 渠道', 'shield-check'], ['shell', '终端', 'terminal'], ['keys', '快捷键', 'keyboard'], ['about', '关于', 'info']];
+const SET_NAV = [['appearance', '外观', 'palette'], ['providers', '模型与提供商', 'cpu'], ['channels', 'IM 渠道', 'shield-check'], ['shell', '终端', 'terminal'], ['grants', '已授权命令', 'lock'], ['keys', '快捷键', 'keyboard'], ['about', '关于', 'info']];
 function renderCrumb() {
   const c = $('#crumb');
   let h;

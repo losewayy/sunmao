@@ -43,6 +43,13 @@ pub mod names {
     /// `RunCode` usage semantics — the tool's own decl covers the wire
     /// contract; this section carries the "when/why" for the model.
     pub const PTC: &str = "ptc";
+    /// The fusion Lead's contract — tail-of-request text while
+    /// `TurnMode::Fusion` is armed; never joins the system prompt (the mode
+    /// flips mid-session and a baked section would go stale).
+    pub const FUSION_LEAD: &str = "fusion-lead";
+    /// The fusion Sidekick's system prompt — the same replaceable-section
+    /// discipline as `subagent-default`.
+    pub const FUSION_SIDEKICK: &str = "fusion-sidekick";
     pub const PROJECT_CONTEXT: &str = "project-context";
 }
 
@@ -122,6 +129,28 @@ impl PromptAssembler {
         }
         self.section_or(names::SUBAGENT_DEFAULT, || {
             include_str!("../assets/prompt/subagent-default.md")
+                .trim()
+                .to_string()
+        })
+    }
+
+    /// The fusion Lead's contract — `assets/prompt/fusion-lead.md`,
+    /// replaceable via `prompt.d/fusion-lead.md`. Injected per request by
+    /// the turn loop, not baked into `assemble()`: `/mode fusion` is a
+    /// mid-session switch and a system-prompt section can't un-bake.
+    pub fn assemble_fusion_lead(&self) -> String {
+        self.section_or(names::FUSION_LEAD, || {
+            include_str!("../assets/prompt/fusion-lead.md")
+                .trim()
+                .to_string()
+        })
+    }
+
+    /// The fusion Sidekick's system prompt — `FusionExecute` passes this to
+    /// the child-context builder in place of `subagent-default`.
+    pub fn assemble_fusion_sidekick(&self) -> String {
+        self.section_or(names::FUSION_SIDEKICK, || {
+            include_str!("../assets/prompt/fusion-sidekick.md")
                 .trim()
                 .to_string()
         })
@@ -224,6 +253,8 @@ pub const RESERVED_STEMS: &[&str] = &[
     names::COMPACT,
     names::GOAL_CONTINUE,
     names::PTC,
+    names::FUSION_LEAD,
+    names::FUSION_SIDEKICK,
     names::PROJECT_CONTEXT,
 ];
 

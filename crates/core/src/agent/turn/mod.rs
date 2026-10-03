@@ -140,6 +140,16 @@ impl AgentLoop {
         let mut repeat_key: Option<(String, String)> = None;
         let mut repeat_streak: u32 = 0;
         const REPEAT_LIMIT: u32 = 3;
+        // Fusion Lead's contract — a synthetic tail-of-request message like
+        // todos/goal, assembled once per turn (prompt.d layering is
+        // cold-plug). Dropped the moment the delegation escalates: the text
+        // says "you cannot modify files", which an unlocked Lead would
+        // read as a lie.
+        let fusion_note = (*self.ctx.turn_mode.read_or_recover() == TurnMode::Fusion).then(|| {
+            crate::prompt::PromptAssembler::new(&self.ctx.cwd)
+                .with_extra_roots(&self.ctx.extra_plugin_roots)
+                .assemble_fusion_lead()
+        });
         for iter_n in 0..self.max_iterations {
             if self
                 .ctx
@@ -218,6 +228,11 @@ impl AgentLoop {
                 && g.status == crate::tool::GoalStatus::InProgress
             {
                 messages.push(Message::user(g.inject_text()));
+            }
+            if let Some(note) = &fusion_note
+                && !self.ctx.fusion.lock_or_recover().escalated
+            {
+                messages.push(Message::user(note.clone()));
             }
             let decls = self.ctx.advertised_tools();
             let effort = self.ctx.reasoning_effort.read_or_recover().clone();

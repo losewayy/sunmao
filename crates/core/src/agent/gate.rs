@@ -150,10 +150,22 @@ pub(crate) async fn gate_call(
     }
     // a Sidekick's file whitelist (fusion): Write/Edit outside the granted
     // set is a refusal, not a prompt — the Lead's spec IS the contract.
+    // The arm keys on `is_sidekick`, not list non-emptiness: the Lead's own
+    // context keeps the same paths as a bookkeeping ledger, and an
+    // escalated Lead must not refuse its own writes against the grant.
     // Canonicalize the way outside_project does so `..`/symlinks can't
     // launder a path around the grant.
     {
-        let wl = ctx.fusion.lock_or_recover().whitelist.clone();
+        // the guard drops inside its own statement — `std::MutexGuard` is
+        // !Send and must never live past this line's boundary
+        let wl = {
+            let f = ctx.fusion.lock_or_recover();
+            if f.is_sidekick {
+                f.whitelist.clone()
+            } else {
+                Vec::new()
+            }
+        };
         if !wl.is_empty()
             && ["Write", "Edit"].contains(&tool)
             && let Some(p) = args["path"].as_str()

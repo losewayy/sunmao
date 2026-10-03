@@ -139,8 +139,8 @@ async fn spawn_ids_are_unique_within_a_millisecond() {
         builtin_registry(),
         dir.clone(),
     ));
-    let (a, _) = spawn_parts(&ctx, None, None).await;
-    let (b, _) = spawn_parts(&ctx, None, None).await;
+    let (a, _) = spawn_parts(&ctx, None, None, None).await;
+    let (b, _) = spawn_parts(&ctx, None, None, None).await;
     assert_ne!(a, b, "concurrent spawns must not share a session id");
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -216,7 +216,7 @@ async fn tools_whitelist_and_depth_cap_trim_registry() {
     ));
     let defs: Vec<_> = crate::agents::load_all(&dir, &[]);
     let reader = defs.iter().find(|d| d.name == "reader").unwrap();
-    let (_, reader_ctx) = spawn_parts(&ctx, Some(reader), None).await;
+    let (_, reader_ctx) = spawn_parts(&ctx, Some(reader), None, None).await;
     let names: Vec<_> = reader_ctx
         .tools
         .declarations()
@@ -227,7 +227,7 @@ async fn tools_whitelist_and_depth_cap_trim_registry() {
 
     // a declared spawns whitelist auto-adds Task even if tools omitted it
     let orch = defs.iter().find(|d| d.name == "orch").unwrap();
-    let (_, orch_ctx) = spawn_parts(&ctx, Some(orch), None).await;
+    let (_, orch_ctx) = spawn_parts(&ctx, Some(orch), None, None).await;
     let names: Vec<_> = orch_ctx
         .tools
         .declarations()

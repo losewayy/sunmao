@@ -30,6 +30,12 @@ use sunmao_llm::types::Tool;
 /// `fusion.whitelist` audit fact.
 #[derive(Default)]
 pub(crate) struct FusionState {
+    /// "This context IS a Sidekick" — set on the child at spawn. The gate's
+    /// whitelist arm keys on it, NOT on a non-empty list: the Lead keeps a
+    /// `whitelist` ledger of the same grant on its own context, and without
+    /// the marker an escalated Lead would refuse its own writes against the
+    /// file set it granted away.
+    pub(crate) is_sidekick: bool,
     /// Running/finished Sidekick context — reused across `steer` rework so
     /// the child keeps its transcript, whitelist and read ledger.
     pub(crate) sidekick: Option<Arc<Context>>,
@@ -170,7 +176,11 @@ async fn delegate(ctx: &Arc<Context>, a: &Args) -> anyhow::Result<ToolResult> {
     // whitelist_covers will resolve the child's Write/Edit paths. An
     // unresolvable entry just never matches (fail-closed by symmetry).
     let grant = canonicalize_all(&ctx.cwd, &a.files);
-    sub_ctx.fusion.lock_or_recover().whitelist = grant.clone();
+    {
+        let mut f = sub_ctx.fusion.lock_or_recover();
+        f.is_sidekick = true;
+        f.whitelist = grant.clone();
+    }
     let (seq, hash) = {
         let mut f = ctx.fusion.lock_or_recover();
         f.spec_seq += 1;
@@ -361,7 +371,10 @@ async fn settle(ctx: &Arc<Context>, seq: u64, res: ToolResult) -> anyhow::Result
     let (fails, escalate) = {
         let mut f = ctx.fusion.lock_or_recover();
         f.verify_fails += 1;
-        (f.verify_fails, f.verify_fails >= ESCALATE_AFTER && !f.escalated)
+        (
+            f.verify_fails,
+            f.verify_fails >= ESCALATE_AFTER && !f.escalated,
+        )
     };
     if escalate {
         {
@@ -471,7 +484,10 @@ fn sidekick_prompt(a: &Args) -> String {
     };
     let mut p = format!("# Spec\n{spec}");
     if !a.files.is_empty() {
-        p.push_str(&format!("\n\n# Files you may write\n{}", a.files.join("\n")));
+        p.push_str(&format!(
+            "\n\n# Files you may write\n{}",
+            a.files.join("\n")
+        ));
     }
     if !a.verify_commands.is_empty() {
         p.push_str(&format!(

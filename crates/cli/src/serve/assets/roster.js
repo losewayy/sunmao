@@ -22,10 +22,13 @@ function renderRoster(tasks) {
   box.innerHTML = tasks.map(t => {
     const s = st(t);
     const tag = t.agent ? `<span class="tag">@${esc(t.agent)}</span>` : '';
-    // running rows are steerable — the popover sends a task_steer frame;
-    // finished rows are display-only (resume is the composer's grammar)
+    // running rows are steerable (the popover sends a task_steer frame);
+    // finished rows carry data-sess — the id doubles as the child's log
+    // stem, so click lands on the same resume/menu wiring the rail runs
+    // (click → 接回日志, right-click → 分叉/导出/删除)
     const row = `<i class="sd ${s === 'run' ? 'run' : s === 'done' ? 'done' : 'off'}"></i><span class="rt-id mono">${esc(t.id)}</span>${tag}<span class="rt-p">${esc(t.prompt || '')}</span>${s === 'run' ? ic('chev-r', 'i xs rt-go') : ''}`;
-    return s === 'run' ? `<button class="rt" data-task="${esc(t.id)}" data-tip="发送引导|点击输入要插给它的话">${row}</button>` : `<div class="rt">${row}</div>`;
+    if (s === 'run') return `<button class="rt" data-task="${esc(t.id)}" data-tip="发送引导|点击输入要插给它的话">${row}</button>`;
+    return `<button class="rt" data-sess="${esc(t.id)}" data-tip="${esc(t.id + '.jsonl|点击查看日志 · 右键菜单')}">${row}</button>`;
   }).join('') || '<div class="empty-row">没有子代理在跑</div>';
 }
 function taskSteerPop(anchor, id) {

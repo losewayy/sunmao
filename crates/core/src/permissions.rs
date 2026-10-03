@@ -189,6 +189,7 @@ pub(crate) fn permission_rows(
                     .unwrap_or_else(|| "permissions.json".into()),
                 digest: digest(&path, rule),
                 command: rule.clone(),
+                pin_text: rule.clone(),
                 source: path.clone(),
                 status,
             });

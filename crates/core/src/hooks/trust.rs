@@ -53,13 +53,19 @@ pub enum RowKind {
 /// One roster row for `/hooks` — command text is shown verbatim so the
 /// review is of the real bytes that would execute, not a summary.
 /// Spawn rows (`Mcp`/`Ext`) put the serialized `{command,args,env}` spec
-/// in `command` and the server/plugin name in `matcher`.
+/// in `command` with env VALUES masked (that's where server specs keep
+/// API keys) and the server/plugin name in `matcher`.
 #[derive(Debug)]
 pub struct HookRow {
     pub kind: RowKind,
     pub event: String,
     pub matcher: String,
+    /// Display text — spawn rows mask env values.
     pub command: String,
+    /// The exact text the pin digests — `command` for hooks/perm rules, the
+    /// unmasked spec for spawn rows. `/hooks trust` must pin this, never the
+    /// display twin, or the gate's digest would never match.
+    pub pin_text: String,
     /// The file this command was loaded from (canonicalized).
     pub source: PathBuf,
     /// `user` = implicit trust, `pinned` = ledger hit, `untrusted` = skipped.
@@ -78,6 +84,16 @@ pub fn spec_text(command: &str, args: &[String], env: &HashMap<String, String>) 
     serde_json::json!({"command": command, "args": args, "env": env}).to_string()
 }
 
+/// `spec_text`'s display twin — env VALUES masked. Env is where MCP server
+/// specs keep API keys; the digest still runs over `spec_text` verbatim
+/// (a changed secret must invalidate the pin), but roster rows, audit
+/// lines and the ledger record show only that a value exists.
+pub fn spec_display(command: &str, args: &[String], env: &HashMap<String, String>) -> String {
+    let env: std::collections::BTreeMap<_, _> =
+        env.keys().map(|k| (k, serde_json::json!("···"))).collect();
+    serde_json::json!({"command": command, "args": args, "env": env}).to_string()
+}
+
 /// The gate one spawn spec must pass. There is no user layer for spawned
 /// children — every manifest/scanned source is project-layer by contract,
 /// so an untagged spec fails closed like a mistagged hook origin.
@@ -90,7 +106,12 @@ pub(crate) fn spawn_trusted(cwd: &Path, source: &Path, command: &str) -> bool {
 /// commands. Built live from the same scans `connect_all` runs, so the
 /// listing can never drift from what the gate sees.
 pub(crate) fn spawn_rows(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<HookRow> {
-    let row = |kind: RowKind, event: &str, name: String, source: PathBuf, text: String| {
+    let row = |kind: RowKind,
+               event: &str,
+               name: String,
+               source: PathBuf,
+               text: String,
+               display: String| {
         let status = if is_trusted(cwd, Layer::Project, &source, &text) {
             "pinned"
         } else {
@@ -101,7 +122,8 @@ pub(crate) fn spawn_rows(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<HookRow> {
             event: event.to_string(),
             matcher: name,
             digest: digest(&source, &text),
-            command: text,
+            command: display,
+            pin_text: text,
             source,
             status,
         }
@@ -114,6 +136,7 @@ pub(crate) fn spawn_rows(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<HookRow> {
             plugin,
             manifest,
             spec_text(&spec.command, &spec.args, &spec.env),
+            spec_display(&spec.command, &spec.args, &spec.env),
         ));
     }
     let mut servers: Vec<_> = crate::mcp::resolve_servers(cwd, extra_roots)
@@ -131,6 +154,7 @@ pub(crate) fn spawn_rows(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<HookRow> {
             name,
             source,
             spec_text(command, &spec.args, &spec.env),
+            spec_display(command, &spec.args, &spec.env),
         ));
     }
     rows
@@ -176,10 +200,40 @@ pub(crate) fn is_trusted(cwd: &Path, layer: Layer, source: &Path, command: &str)
     trusted_set(cwd).contains(&digest(source, command))
 }
 
+/// What `set_pin` stores as the record — a serialized spawn spec is
+/// re-rendered with masked env values; a plain hook command goes verbatim
+/// (it has no env bag to leak).
+fn record_text(command: &str) -> String {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(command) else {
+        return command.to_string();
+    };
+    let (Some(cmd), Some(env)) = (
+        v.get("command").and_then(|c| c.as_str()),
+        v.get("env").and_then(|e| e.as_object()),
+    ) else {
+        return command.to_string();
+    };
+    let args: Vec<String> = v
+        .get("args")
+        .and_then(|a| a.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let env: HashMap<String, String> = env
+        .iter()
+        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+        .collect();
+    spec_display(cmd, &args, &env)
+}
+
 /// Write or clear a pin. `set=true` records `{source, command}` under the
-/// digest (the record is review context, not a lookup path); `set=false`
-/// removes the key, and an empty `trusted` map removes the file so
-/// CONFIG.md's "missing file = feature off" stays literal.
+/// digest (the record is review context, not a lookup path — env values
+/// are masked in it); `set=false` removes the key, and an empty `trusted`
+/// map removes the file so CONFIG.md's "missing file = feature off" stays
+/// literal.
 pub(crate) fn set_pin(cwd: &Path, source: &Path, command: &str, set: bool) -> Result<(), String> {
     let path = ledger_path(cwd);
     let mut doc: serde_json::Value = std::fs::read_to_string(&path)
@@ -199,7 +253,9 @@ pub(crate) fn set_pin(cwd: &Path, source: &Path, command: &str, set: bool) -> Re
             key,
             serde_json::json!({
                 "source": source.display().to_string(),
-                "command": command,
+                // env values never reach the ledger — it can outlive the
+                // project (or get committed); the digest covers them anyway
+                "command": record_text(command),
             }),
         );
     } else {
@@ -335,6 +391,7 @@ impl super::HookEngine {
                         event: event.clone(),
                         matcher: g.matcher.clone(),
                         command: h.command.clone(),
+                        pin_text: h.command.clone(),
                         source: h.origin.clone(),
                         status: if h.layer == Layer::User {
                             "user"
@@ -377,7 +434,8 @@ impl super::HookEngine {
         if row.status == "user" {
             return Err(format!("hook #{index} is user-level — implicitly trusted"));
         }
-        set_pin(&self.cwd, &row.source, &row.command, trust_it)?;
+        // pin_text is the digest identity — never the masked display text
+        set_pin(&self.cwd, &row.source, &row.pin_text, trust_it)?;
         Ok(format!(
             "{} {} ({} · {})",
             if trust_it { "trusted" } else { "revoked" },
@@ -447,6 +505,45 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(ledger_path(&dir)).unwrap()).unwrap();
         let entry = v["trusted"].as_object().unwrap().values().next().unwrap();
         assert_eq!(entry["command"], "echo ok");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// MCP/ext specs carry env secrets (API keys). The pin must still
+    /// digest the FULL spec (a changed secret invalidates it) while the
+    /// roster row and the ledger record expose only masked values.
+    #[test]
+    fn spec_pins_digest_full_text_but_leak_no_env() {
+        let dir = crate::fresh_test_dir("trust-env");
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("mcp.json");
+        std::fs::write(&src, "{}").unwrap();
+        let env = HashMap::from([
+            ("API_KEY".to_string(), "sk-secret-123".to_string()),
+            ("DEBUG".to_string(), "1".to_string()),
+        ]);
+        let full = spec_text("srv", &["--go".to_string()], &env);
+        let shown = spec_display("srv", &["--go".to_string()], &env);
+        assert!(!shown.contains("sk-secret-123"));
+        assert!(shown.contains("API_KEY"), "keys stay visible: {shown}");
+
+        // the pin covers the real spec — the gate opens on full text
+        assert!(!is_trusted(&dir, Layer::Project, &src, &full));
+        set_pin(&dir, &src, &full, true).unwrap();
+        assert!(is_trusted(&dir, Layer::Project, &src, &full));
+
+        // a changed secret is a different spec — pin no longer applies
+        let env2 = HashMap::from([("API_KEY".to_string(), "sk-other".to_string())]);
+        assert!(!is_trusted(
+            &dir,
+            Layer::Project,
+            &src,
+            &spec_text("srv", &["--go".to_string()], &env2)
+        ));
+
+        // the ledger record holds context, not the secret
+        let ledger = std::fs::read_to_string(ledger_path(&dir)).unwrap();
+        assert!(!ledger.contains("sk-secret-123"), "ledger: {ledger}");
+        assert!(ledger.contains("API_KEY"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

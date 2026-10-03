@@ -97,9 +97,10 @@ async fn swap_session_reseeds_effort() {
     agent.swap_session(log).await;
     assert_eq!(agent.reasoning_effort().as_deref(), Some("low"));
 
-    let empty = SessionLog::open_path(&dir.join("sessions/s-none.jsonl"))
-        .await
-        .unwrap();
+    let none_path = dir.join("sessions/s-none.jsonl");
+    std::fs::create_dir_all(none_path.parent().unwrap()).unwrap();
+    std::fs::write(&none_path, "").unwrap(); // an existing-but-empty log
+    let empty = SessionLog::open_path(&none_path).await.unwrap();
     agent.swap_session(empty).await;
     assert_eq!(agent.reasoning_effort(), None);
     std::fs::remove_dir_all(&dir).ok();

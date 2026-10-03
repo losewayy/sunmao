@@ -61,11 +61,6 @@ pub struct Context {
     /// Shared lane allocator — sub-contexts clone the same counter so lanes
     /// are unique across the whole spawn tree, not just siblings.
     pub lane_counter: std::sync::Arc<std::sync::atomic::AtomicU16>,
-    /// Background-job sequence — two `background:true` calls landing in the
-    /// same millisecond used to collide on the `j-<ms>` id/log dir. The
-    /// suffix keeps them distinct (the audit's `sub-<ms>-l<lane>` pattern,
-    /// applied to jobs).
-    pub job_seq: std::sync::Arc<std::sync::atomic::AtomicU16>,
     /// Cooperative cancellation — `session/cancel` sets it; the loop checks
     /// between iterations and before each tool call. `Arc` so a child's
     /// `TaskEntry` can hold a cheap cancel handle into it.
@@ -372,7 +367,6 @@ impl Context {
             depth: 0,
             lane: 0,
             lane_counter: std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
-            job_seq: std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
             cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             cancel_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
             shell,

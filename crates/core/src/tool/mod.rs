@@ -218,6 +218,7 @@ pub fn builtin_registry() -> ToolRegistry {
     r.register(WebFetchTool);
     r.register(SendMessageTool);
     r.register(RunCodeTool);
+    r.register(SearchToolsTool);
     r
 }
 
@@ -241,7 +242,7 @@ pub(crate) use goal::GOAL_LINE_PREFIX;
 pub(crate) use goal::apply_blocker;
 pub use goal::{BLOCKED_MIN_ROUNDS, GoalState, GoalStatus, UpdateGoalTool, status_name};
 pub use kind::{ShellBackend, ShellResolution, ShellSource};
-pub use ptc::RunCodeTool;
+pub use ptc::{RunCodeTool, SearchToolsTool};
 pub use search::{GlobTool, GrepTool};
 pub use sendmsg::SendMessageTool;
 pub use shell::{BashTool, JobOutputTool, ShellRun, render_run, run_foreground};
@@ -315,6 +316,31 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.join("t.txt")).unwrap(),
             "bye world"
+        );
+    }
+
+    /// Normalized matching must reach mid-line spans: an old_string whose
+    /// interior whitespace drifts from the file (`f(  a )` vs `f( a )`)
+    /// fails every line-end candidate on a line with trailing code — the
+    /// match can only end mid-line, at a token boundary.
+    #[tokio::test]
+    async fn edit_normalized_match_ends_mid_line() {
+        let dir = fresh_dir("edit-norm");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("t.txt"), "let x = f(  a ); tail();\n").unwrap();
+        let ctx = test_ctx(&dir);
+        ReadTool.call(json!({"path": "t.txt"}), &ctx).await.unwrap();
+        let res = EditTool
+            .call(
+                json!({"path": "t.txt", "old_string": "f( a );", "new_string": "g(b);"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(res.ok, "{}", res.output);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("t.txt")).unwrap(),
+            "let x = g(b); tail();\n"
         );
     }
 

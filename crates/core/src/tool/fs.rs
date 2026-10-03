@@ -284,7 +284,11 @@ fn find_normalized(haystack: &str, needle: &str) -> Option<(usize, usize)> {
     }
     // candidate windows start at position 0 and after every whitespace
     // char — line starts AND mid-line boundaries (a needle beginning
-    // mid-line can still normalize against whitespace drift)
+    // mid-line can still normalize against whitespace drift). They END at
+    // token boundaries — whitespace positions preceded by a non-whitespace
+    // char, plus the window end. Line ends are a subset; a mid-line
+    // needle's whitespace drift (`f(  a )` against `f( a ); tail()`)
+    // only matches if a candidate is allowed to end mid-line.
     let mut found: Option<(usize, usize)> = None;
     let starts = std::iter::once(0).chain(
         haystack
@@ -301,7 +305,7 @@ fn find_normalized(haystack: &str, needle: &str) -> Option<(usize, usize)> {
             window_end -= 1;
         }
         let window = &haystack[start..window_end];
-        for end_off in line_ends(window) {
+        for end_off in token_ends(window) {
             let cand = &window[..end_off];
             if norm(cand) == target {
                 let span = (start, start + end_off);
@@ -315,8 +319,20 @@ fn find_normalized(haystack: &str, needle: &str) -> Option<(usize, usize)> {
     found
 }
 
-fn line_ends(s: &str) -> Vec<usize> {
-    let mut v: Vec<usize> = s.match_indices('\n').map(|(i, _)| i).collect();
+/// Offsets where a candidate may end: whitespace positions preceded by a
+/// non-whitespace char (token boundaries), plus the end of the string.
+/// A needle can never *end* mid-token — it has no whitespace to normalize
+/// there — so token ends alone cover every legal span.
+fn token_ends(s: &str) -> Vec<usize> {
+    let mut v: Vec<usize> = s
+        .char_indices()
+        .scan(true, |prev_ws, (i, c)| {
+            let end = !*prev_ws && c.is_whitespace();
+            *prev_ws = c.is_whitespace();
+            Some(end.then_some(i))
+        })
+        .flatten()
+        .collect();
     v.push(s.len());
     v
 }

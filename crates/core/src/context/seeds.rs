@@ -109,6 +109,26 @@ pub(super) fn seed_mode(path: &std::path::Path) -> crate::agent::ApprovalMode {
     Default::default()
 }
 
+/// The turn shape a reopened log left behind — last `TurnModeChange` wins.
+/// Same line-scan trick as `seed_mode`.
+pub(super) fn seed_turn_mode(path: &std::path::Path) -> crate::agent::TurnMode {
+    if path.as_os_str().is_empty() {
+        return Default::default();
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Default::default();
+    };
+    for line in text.lines().rev() {
+        if line.contains("\"turn_mode_change\"")
+            && let Ok(crate::session::SessionEvent::TurnModeChange { mode }) =
+                serde_json::from_str::<crate::session::SessionEvent>(line)
+        {
+            return mode;
+        }
+    }
+    Default::default()
+}
+
 /// Rebuild the `RunCode` KV store a reopened log left behind — every
 /// `PtcStore` line folds in order so later writes win. Ephemeral logs and
 /// missing files seed empty.
@@ -192,6 +212,30 @@ impl Context {
             _ => None,
         });
         *self.goal.lock_or_recover() = goal;
+    }
+
+    /// Re-point the turn mode at a swapped-in log — last `TurnModeChange`
+    /// wins; the `read_only` gate flag follows the mode (a fusion log
+    /// resumes read-only, a standard one disarms it). Delegation state
+    /// itself does NOT survive: a resumed fusion Lead starts with an
+    /// empty `FusionState` — its next delegation spawns a fresh Sidekick
+    /// (the abandoned one's log stays resumable on disk, like any
+    /// orphaned sub-agent).
+    pub fn reseed_turn_mode(&self, events: &[crate::session::SessionEvent]) {
+        let mode = events
+            .iter()
+            .rev()
+            .find_map(|ev| match ev {
+                crate::session::SessionEvent::TurnModeChange { mode } => Some(*mode),
+                _ => None,
+            })
+            .unwrap_or_default();
+        *self.turn_mode.write_or_recover() = mode;
+        self.read_only.store(
+            mode == crate::agent::TurnMode::Fusion,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        *self.fusion.lock_or_recover() = crate::agent::fusion::FusionState::default();
     }
 
     /// Re-point the effort override at a swapped-in log — last

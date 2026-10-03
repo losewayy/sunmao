@@ -93,6 +93,10 @@ pub fn call_mutates(
 ) -> bool {
     match tool {
         "Read" | "Grep" | "Glob" | "WebFetch" | "JobOutput" => false,
+        // fusion delegation is the Lead's whole point — exempting it lets
+        // a read_only Lead still dispatch work to the Sidekick (the
+        // mutation itself happens in the child's context, under ITS gate)
+        "FusionExecute" => false,
         "Bash" => args
             .get("command")
             .and_then(|v| v.as_str())

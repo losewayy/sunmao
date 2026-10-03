@@ -487,6 +487,26 @@ impl Client {
             "mode" => {
                 let sel = v["sel"].as_str().unwrap_or("");
                 if let Some(h) = self.viewing_host() {
+                    if let Some(tm) = sunmao_core::agent::TurnMode::parse(sel) {
+                        match h
+                            .agent
+                            .set_turn_mode(tm, &WsObserver::new(self.s.live.clone(), h.id.clone()))
+                            .await
+                        {
+                            Ok(()) => {
+                                let _ = self.s.live.send(serde_json::json!({
+                                    "type":"note","sess":h.id,
+                                    "text":format!("[turn mode → {}]", tm.as_str()),
+                                }));
+                            }
+                            Err(e) => {
+                                self.emit(serde_json::json!({
+                                    "type":"note","sess":h.id,"text":format!("[{e}]"),
+                                }));
+                            }
+                        }
+                        return;
+                    }
                     match sunmao_core::agent::ApprovalMode::parse(sel) {
                         Some(m) => {
                             h.agent

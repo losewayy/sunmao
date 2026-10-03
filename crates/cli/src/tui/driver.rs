@@ -146,19 +146,40 @@ pub(super) fn spawn(
                         None => {
                             let _ = tx_msg
                                 .send(Msg::Note(commands::mode_list_text(agent.approval_mode())));
+                            let _ = tx_msg
+                                .send(Msg::Note(commands::turn_mode_list_text(agent.turn_mode())));
                         }
-                        Some(name) => match sunmao_core::agent::ApprovalMode::parse(&name) {
-                            Some(m) => {
-                                agent
-                                    .set_approval_mode(m, &ChanObserver(tx_msg.clone()))
-                                    .await;
-                                let _ = tx_msg.send(Msg::Mode(m));
-                                let _ = tx_msg
-                                    .send(Msg::Note(format!("[approval mode → {}]", m.as_str())));
+                        // turn modes parse first — `standard`/`fusion` are
+                        // a different axis than the approval stances
+                        Some(name) => match sunmao_core::agent::TurnMode::parse(&name) {
+                            Some(tm) => {
+                                match agent.set_turn_mode(tm, &ChanObserver(tx_msg.clone())).await {
+                                    Ok(()) => {
+                                        let _ = tx_msg.send(Msg::Note(format!(
+                                            "[turn mode → {}]",
+                                            tm.as_str()
+                                        )));
+                                    }
+                                    Err(e) => {
+                                        let _ = tx_msg.send(Msg::Note(format!("[{e}]")));
+                                    }
+                                }
                             }
-                            None => {
-                                let _ = tx_msg.send(Msg::Note(commands::mode_unknown(&name)));
-                            }
+                            None => match sunmao_core::agent::ApprovalMode::parse(&name) {
+                                Some(m) => {
+                                    agent
+                                        .set_approval_mode(m, &ChanObserver(tx_msg.clone()))
+                                        .await;
+                                    let _ = tx_msg.send(Msg::Mode(m));
+                                    let _ = tx_msg.send(Msg::Note(format!(
+                                        "[approval mode → {}]",
+                                        m.as_str()
+                                    )));
+                                }
+                                None => {
+                                    let _ = tx_msg.send(Msg::Note(commands::mode_unknown(&name)));
+                                }
+                            },
                         },
                     }
                     continue;

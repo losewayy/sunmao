@@ -255,6 +255,28 @@ impl App {
                     // the stance flip is audit-visible, same as hook events
                     self.push_audit(&format!("approval.mode — {}", mode.as_str()));
                 }
+                E::TurnModeChange { mode } => {
+                    // turn shape flip (standard ↔ fusion) — same audit
+                    // visibility as the approval stance
+                    self.push_audit(&format!("turn.mode — {}", mode.as_str()));
+                }
+                E::FusionSpec { seq, spec, .. } => {
+                    // the delegation spec IS the audit spine — digest the
+                    // payload so replay stays a transcript, not a dump
+                    self.push_audit(&format!(
+                        "fusion.spec #{seq} — {}",
+                        spec.get("goal")
+                            .or_else(|| spec.get("objective"))
+                            .and_then(|g| g.as_str())
+                            .unwrap_or("(delegation)")
+                    ));
+                }
+                E::FusionAccepted { spec_seq, sidekick } => {
+                    self.push_audit(&format!("fusion.accepted #{spec_seq} — {sidekick}"));
+                }
+                E::FusionEscalated { spec_seq, reason } => {
+                    self.push_audit(&format!("fusion.escalated #{spec_seq} — {reason}"));
+                }
                 E::SessionMeta { title } => {
                     // a rename is audit, not conversation — same visibility
                     // rule as approval.mode

@@ -148,12 +148,37 @@ pub(crate) async fn gate_call(
         fire_denied(ctx, tool, specifier, "hook veto", observer).await;
         return Err("denied by hook".into());
     }
+    // a Sidekick's file whitelist (fusion): Write/Edit outside the granted
+    // set is a refusal, not a prompt — the Lead's spec IS the contract.
+    // Canonicalize the way outside_project does so `..`/symlinks can't
+    // launder a path around the grant.
+    {
+        let wl = ctx.fusion.lock_or_recover().whitelist.clone();
+        if !wl.is_empty()
+            && ["Write", "Edit"].contains(&tool)
+            && let Some(p) = args["path"].as_str()
+            && !whitelist_covers(&wl, &ctx.cwd, p)
+        {
+            audit_fact(
+                ctx,
+                "fusion.whitelist.denied",
+                &format!("{tool}: {p}"),
+                observer,
+            )
+            .await;
+            return Err(format!(
+                "blocked by fusion whitelist: {p} is outside the delegated file set"
+            ));
+        }
+    }
     // read_only refuses mutations outright — the refusal is an audit
     // fact, same durability as a denied prompt verdict. Ahead of
     // grants on purpose: a standing answer is not a license to write
     // under a mode that forbids writing.
     let mode = *ctx.approval_mode.read_or_recover();
-    if mode == ApprovalMode::ReadOnly && call_mutates(tool, args, &ctx.readonly_verbs, ctx.shell) {
+    let read_only =
+        mode == ApprovalMode::ReadOnly || ctx.read_only.load(std::sync::atomic::Ordering::Relaxed);
+    if read_only && call_mutates(tool, args, &ctx.readonly_verbs, ctx.shell) {
         let detail = format!("{tool}: {specifier}");
         audit_fact(ctx, "mode.readonly.block", &detail, observer).await;
         return Err(format!("blocked by read_only mode: {tool}"));
@@ -236,6 +261,24 @@ pub(crate) async fn gate_call(
         .await;
     }
     Ok(())
+}
+
+/// Is `path` inside the Sidekick whitelist? Same canonicalization contract
+/// as `outside_project`: a not-yet-existing file resolves against its
+/// nearest canonical ancestor so a `Write` to a new file is judged by
+/// where it would land; an unresolvable side fails closed.
+fn whitelist_covers(wl: &[std::path::PathBuf], cwd: &std::path::Path, path: &str) -> bool {
+    let joined = cwd.join(path);
+    let Ok(cand) = joined.canonicalize().or_else(|_| {
+        joined
+            .parent()
+            .and_then(|p| p.canonicalize().ok())
+            .map(|p| p.join(joined.file_name().unwrap_or_default()))
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no parent"))
+    }) else {
+        return false;
+    };
+    wl.iter().any(|w| cand == *w)
 }
 
 /// External-directory tier helper — `path` is checked against the

@@ -256,14 +256,26 @@ pub async fn run(
                 crate::commands::Command::Mode(arg) => {
                     match arg {
                         None => {
-                            println!("{}", crate::commands::mode_list_text(agent.approval_mode()))
+                            println!("{}", crate::commands::mode_list_text(agent.approval_mode()));
+                            println!(
+                                "{}",
+                                crate::commands::turn_mode_list_text(agent.turn_mode())
+                            );
                         }
-                        Some(name) => match sunmao_core::agent::ApprovalMode::parse(&name) {
-                            Some(m) => {
-                                agent.set_approval_mode(m, &*observer.0).await;
-                                println!("[approval mode → {}]", m.as_str());
-                            }
-                            None => println!("{}", crate::commands::mode_unknown(&name)),
+                        // turn modes parse first — `standard`/`fusion` are
+                        // not approval stances and never were
+                        Some(name) => match sunmao_core::agent::TurnMode::parse(&name) {
+                            Some(tm) => match agent.set_turn_mode(tm, &*observer.0).await {
+                                Ok(()) => println!("[turn mode → {}]", tm.as_str()),
+                                Err(e) => println!("[{e}]"),
+                            },
+                            None => match sunmao_core::agent::ApprovalMode::parse(&name) {
+                                Some(m) => {
+                                    agent.set_approval_mode(m, &*observer.0).await;
+                                    println!("[approval mode → {}]", m.as_str());
+                                }
+                                None => println!("{}", crate::commands::mode_unknown(&name)),
+                            },
                         },
                     }
                     continue;

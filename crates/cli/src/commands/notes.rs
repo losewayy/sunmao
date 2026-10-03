@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use sunmao_core::agent::{ApprovalMode, SessionStatus};
+use sunmao_core::agent::{ApprovalMode, SessionStatus, TurnMode};
 use sunmao_core::context::TaskEntry;
 use sunmao_core::mcp::McpServerStatus;
 use sunmao_core::tool::TodoItem;
@@ -80,7 +80,7 @@ pub fn effort_note(level: Option<&str>) -> String {
 }
 
 /// Bare `/mode` — the current stance plus the full list, `→` marking the
-/// active one.
+/// active one, then the turn-mode row (standard/fusion) on the same note.
 pub fn mode_list_text(cur: ApprovalMode) -> String {
     let list = ApprovalMode::ALL
         .iter()
@@ -93,9 +93,26 @@ pub fn mode_list_text(cur: ApprovalMode) -> String {
     format!("approval mode: {}\n{list}", cur.as_str())
 }
 
-/// Rejected `/mode <name>` stance.
+/// The turn-mode half of bare `/mode` — appended to `mode_list_text` so
+/// `/mode` shows both axes the name now switches.
+pub fn turn_mode_list_text(cur: TurnMode) -> String {
+    let list = TurnMode::ALL
+        .iter()
+        .map(|m| {
+            let mark = if *m == cur { "→" } else { " " };
+            format!("  {mark} {}", m.as_str())
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("turn mode: {}\n{list}", cur.as_str())
+}
+
+/// Rejected `/mode <name>` — names one axis so a typo doesn't read as a
+/// missing stance.
 pub fn mode_unknown(name: &str) -> String {
-    format!("[unknown mode: {name} — always_ask · auto · read_only · full_access]")
+    format!(
+        "[unknown mode: {name} — always_ask · auto · read_only · full_access · standard · fusion]"
+    )
 }
 
 /// `/tasks` — the live sub-agent roster.

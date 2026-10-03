@@ -182,6 +182,26 @@ pub fn markdown(session_id: &str, cwd: &Path, events: &[SessionEvent]) -> String
             SessionEvent::ModeChange { mode } => {
                 out.push_str(&format!("\n> *approval mode → {}*\n", mode.as_str()));
             }
+            SessionEvent::TurnModeChange { mode } => {
+                out.push_str(&format!("\n> *turn mode → {}*\n", mode.as_str()));
+            }
+            SessionEvent::FusionSpec {
+                seq,
+                spec,
+                sidekick,
+                ..
+            } => {
+                out.push_str(&format!(
+                    "\n> *fusion spec #{seq} → {sidekick}*\n\n```json\n{}\n```\n",
+                    serde_json::to_string_pretty(spec).unwrap_or_default()
+                ));
+            }
+            SessionEvent::FusionAccepted { spec_seq, sidekick } => {
+                out.push_str(&format!("\n> *fusion accepted #{spec_seq} ({sidekick})*\n"));
+            }
+            SessionEvent::FusionEscalated { spec_seq, reason } => {
+                out.push_str(&format!("\n> *fusion escalated #{spec_seq} — {reason}*\n"));
+            }
             _ => {} // Started/Todos/Checkpoint/SessionMeta — meta, not transcript
         }
     }

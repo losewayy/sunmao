@@ -62,6 +62,20 @@ if (TAURI) {
   }, { passive: true });
 }
 
+/* Zoom — the shell's Ctrl/Cmd+=/-/0 ladder lives on `S.zoom` like every
+   other appearance pref: the factor lands in `.sunmao/ui.json` via PUT /ui
+   and is re-applied on load (the shim's keydown listener calls into here,
+   `setZoom` is the Rust-side absolute setter). Plain browsers keep their
+   own page zoom — nothing to persist there. */
+const sunmaoZoom = v => {
+  if (!TAURI || !TAURI.setZoom) return;
+  const cur = S.zoom || 1;
+  const f = v === 'in' ? cur * 1.2 : v === 'out' ? cur / 1.2 : v === 'reset' ? 1 : (+v || 1);
+  S.zoom = Math.min(5, Math.max(0.2, f)); save();
+  TAURI.setZoom(S.zoom);
+};
+if (TAURI) window.sunmaoZoom = sunmaoZoom;
+
 /* ================= state ================= */
 let view = 'session', lastMain = 'session', dockOn = true, setPage = 'appearance';
 let sessionId = '', cwd = '', slashList = [], models = [], modelLabel = '', busy = false, connected = false;
@@ -99,7 +113,7 @@ const INITIAL = Object.assign(clone(DEFAULTS), { wallpaper: 'dusk-ridge', dim: 0
    while the fetch is in flight). A failed fetch keeps the cached state. */
 const mergeUi = v => (v && typeof v === 'object') ? Object.assign(clone(INITIAL), v, { fonts: Object.assign({}, INITIAL.fonts, v.fonts || {}) }) : clone(INITIAL);
 let S = (() => { try { return mergeUi(JSON.parse(localStorage.getItem('sunmao.ui'))); } catch { return clone(INITIAL); } })();
-async function loadUi() { try { const v = await api('/ui'); if (v && v.ui) { S = mergeUi(v.ui); apply(); if (S.wallpaper === 'custom') loadCustom(); } } catch {} }
+async function loadUi() { try { const v = await api('/ui'); if (v && v.ui) { S = mergeUi(v.ui); apply(); if (S.wallpaper === 'custom') loadCustom(); if (TAURI && TAURI.setZoom) TAURI.setZoom(S.zoom || 1); } } catch {} }
 let uiSaveT = 0;
 const save = () => {
   try { localStorage.setItem('sunmao.ui', JSON.stringify(S)); } catch {}

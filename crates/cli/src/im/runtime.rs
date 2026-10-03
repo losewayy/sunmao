@@ -120,10 +120,10 @@ async fn open_main_log(
     model: &str,
 ) -> Result<sunmao_core::SessionLog> {
     let dir = workspace.join(".sunmao/sessions");
-    std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{MAIN_SESSION_ID}.jsonl"));
     let fresh = !path.exists();
-    let mut log = sunmao_core::SessionLog::open_path(&path).await?;
+    // open() creates — open_path's contract is existing logs only
+    let mut log = sunmao_core::SessionLog::open(&dir, MAIN_SESSION_ID).await?;
     if fresh {
         log.append(&sunmao_core::SessionEvent::Started {
             model: model.to_string(),

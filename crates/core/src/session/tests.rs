@@ -101,6 +101,40 @@ async fn open_path_heals_crash_truncated_tail() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// open_path is the resume path, not a create path: a missing id must
+/// error (it used to materialize an empty log and silently wipe the
+/// transcript on /resume), and a non-.jsonl file must be refused before
+/// any write — `--resume ~/notes.txt` once got a stray newline appended.
+#[tokio::test]
+async fn open_path_refuses_missing_and_foreign_files() {
+    let dir = crate::fresh_test_dir("open-strict");
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+
+    let missing = dir.join("nope.jsonl");
+    assert!(
+        SessionLog::open_path(&missing).await.is_err(),
+        "a missing log must not be created"
+    );
+    assert!(!missing.exists(), "nothing materialized");
+
+    let notes = dir.join("notes.txt");
+    tokio::fs::write(&notes, b"keep me exactly").await.unwrap();
+    let err = SessionLog::open_path(&notes)
+        .await
+        .err()
+        .expect("a foreign file must be refused");
+    assert!(
+        err.to_string().contains("not a session log"),
+        "ext guard: {err:#}"
+    );
+    assert_eq!(
+        tokio::fs::read(&notes).await.unwrap(),
+        b"keep me exactly",
+        "foreign file untouched"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// LocalShell folds into the message stream on BOTH paths — ephemeral
 /// (in-mem) and file-backed (replayed from disk). The invariant list in
 /// AGENTS.md holds them to identical fold semantics, so one test asserts

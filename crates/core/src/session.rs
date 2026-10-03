@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
@@ -174,16 +175,24 @@ impl SessionLog {
         })
     }
 
-    /// Open an existing log file directly (for --resume).
+    /// Open an existing session log directly (for --resume). Strict
+    /// contract: the file must already exist and carry the `.jsonl`
+    /// extension — an arbitrary path (`--resume ~/notes.txt`) used to get
+    /// a stray `\n` appended, and a bare missing id silently materialized
+    /// an empty log that wiped the transcript on resume. Creating a fresh
+    /// log is `open`'s job.
     pub async fn open_path(path: &std::path::Path) -> anyhow::Result<Self> {
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
+        if path.extension().map(|e| e != "jsonl").unwrap_or(true) {
+            anyhow::bail!(
+                "not a session log (expected a .jsonl file): {}",
+                path.display()
+            );
         }
         let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
             .append(true)
             .open(path)
-            .await?;
+            .await
+            .with_context(|| format!("no such session log: {}", path.display()))?;
         // A crash mid-append can strand a partial last line — the next
         // append would glue its JSON onto that fragment, corrupting both
         // events. A non-empty file that doesn't end in '\n' gets one so

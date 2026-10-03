@@ -215,6 +215,10 @@ pub fn builtin_registry() -> ToolRegistry {
     r.register(TodoWriteTool);
     r.register(UpdateGoalTool);
     r.register(crate::task::TaskTool);
+    // registered unconditionally so filtered surfaces can keep it —
+    // `Context::advertised_tools` hides it everywhere except the fusion
+    // Lead (same posture as SearchTools).
+    r.register(crate::agent::fusion::FusionExecuteTool);
     r.register(WebFetchTool);
     r.register(SendMessageTool);
     r.register(RunCodeTool);

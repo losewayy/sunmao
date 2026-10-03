@@ -24,13 +24,16 @@ use sunmao_llm::types::Tool;
 use crate::context::Context;
 use crate::tool::{ToolImpl, ToolResult};
 
-mod parts;
+// pub(crate): fusion's `FusionExecute` drives a Sidekick through the same
+// spawn pipeline — parts (context assembly) and spawn (roster + turn drive)
+// — without going through the Task tool surface.
+pub(crate) mod parts;
 mod resume;
-mod spawn;
+pub(crate) mod spawn;
 use resume::resume_sub;
 use spawn::{spawn_detached, spawn_one};
 
-const MAX_DEPTH: u8 = 2;
+pub(crate) const MAX_DEPTH: u8 = 2;
 
 pub struct TaskTool;
 

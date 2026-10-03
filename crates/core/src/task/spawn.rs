@@ -99,7 +99,7 @@ impl Observer for RelayObserver {
 
 /// Tell the session's live sink the roster moved — frontends re-pull
 /// `/tasks` on this hook (the roster is pull-state; this is its nudge).
-pub(super) fn roster_changed(sink: &Option<Arc<dyn Observer>>, sub_id: &str) {
+pub(crate) fn roster_changed(sink: &Option<Arc<dyn Observer>>, sub_id: &str) {
     if let Some(s) = sink {
         s.on_event(&LiveEvent::Hook {
             event: "tasks.changed".into(),
@@ -112,7 +112,7 @@ pub(super) fn roster_changed(sink: &Option<Arc<dyn Observer>>, sub_id: &str) {
 /// register; `done` flips when the result lands. `sub_ctx.lane` is the
 /// claimed lane; the `steer` handle lets the parent push mid-run messages
 /// into the child's queue (`Task{steer:}`, `steer_sub`).
-fn register_task(
+pub(crate) fn register_task(
     ctx: &Context,
     sub_id: &str,
     lane: u16,
@@ -157,7 +157,7 @@ fn register_task(
 
 /// Flip the roster entry to finished — the detached completion path and
 /// the foreground return both route here.
-pub(super) fn finish_task(
+pub(crate) fn finish_task(
     tasks: &std::sync::Mutex<Vec<crate::context::TaskEntry>>,
     sub_id: &str,
     ok: bool,
@@ -174,13 +174,13 @@ pub(super) fn finish_task(
 /// /tasks lists a ghost "running" row and `Task{resume}` refuses it as
 /// still-running. The guard fills `done` only when it's still unset — the
 /// happy path's `finish_task` writes the real `ok` first and Drop no-ops.
-pub(super) struct RosterGuard {
+pub(crate) struct RosterGuard {
     tasks: Arc<std::sync::Mutex<Vec<crate::context::TaskEntry>>>,
     id: String,
 }
 
 impl RosterGuard {
-    pub(super) fn new(
+    pub(crate) fn new(
         tasks: &Arc<std::sync::Mutex<Vec<crate::context::TaskEntry>>>,
         id: &str,
     ) -> Self {
@@ -247,7 +247,7 @@ pub(super) async fn spawn_one(
     def: Option<&crate::agents::AgentDef>,
     llm_override: Option<Arc<dyn ProviderAdapter>>,
 ) -> ToolResult {
-    let (sub_id, sub_ctx) = spawn_parts(ctx, def, llm_override).await;
+    let (sub_id, sub_ctx) = spawn_parts(ctx, def, llm_override, None).await;
     drive_foreground(
         ctx,
         sub_id,
@@ -270,7 +270,7 @@ pub(super) async fn spawn_detached(
     def: Option<&crate::agents::AgentDef>,
     llm_override: Option<Arc<dyn ProviderAdapter>>,
 ) -> String {
-    let (sub_id, sub_ctx) = spawn_parts(ctx, def, llm_override).await;
+    let (sub_id, sub_ctx) = spawn_parts(ctx, def, llm_override, None).await;
     // roster entry — `/tasks` reads this; the completion path flips `done`
     let cancel = crate::context::SubCancel::new(&sub_ctx);
     register_task(
@@ -363,7 +363,7 @@ pub(super) async fn detach(
 /// `source` stamps the lifecycle-hook dialect: `"subagent"` for a fresh
 /// spawn, `"subagent-resume"` for a continuation (a capture hook can tell
 /// which path fired it).
-pub(super) async fn run_spawn(
+pub(crate) async fn run_spawn(
     sub_ctx: Arc<Context>,
     prompt: String,
     sink: Option<Arc<dyn Observer>>,

@@ -90,8 +90,8 @@ impl AgentLoop {
                     if f.escalated {
                         f.escalated = false;
                         f.verify_fails = 0;
-                        let armed = *self.ctx.turn_mode.read_or_recover()
-                            == crate::agent::TurnMode::Fusion;
+                        let armed =
+                            *self.ctx.turn_mode.read_or_recover() == crate::agent::TurnMode::Fusion;
                         self.ctx
                             .read_only
                             .store(armed, std::sync::atomic::Ordering::Relaxed);

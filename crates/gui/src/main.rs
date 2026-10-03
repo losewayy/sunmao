@@ -31,6 +31,7 @@ window.__sunmaoShell = {
   openExternal(path) { return window.__TAURI_INTERNALS__.invoke('shell_open', { path }); },
   notify(title, body) { return window.__TAURI_INTERNALS__.invoke('shell_notify', { title, body }); },
   zoom(op) { return window.__TAURI_INTERNALS__.invoke('shell_zoom', { op }); },
+  setZoom(factor) { return window.__TAURI_INTERNALS__.invoke('shell_zoom', { op: factor }); },
   Channel: class {
     constructor() {
       this.onmessage = () => {};
@@ -61,7 +62,9 @@ window.__sunmaoShell = {
 };
 // In-shell zoom: Ctrl/Cmd+= (in), - (out), 0 (reset). Native webview zoom
 // hotkeys stay off (IsZoomControlEnabled=false) so the keydown path is the
-// single authority and the Rust-side level can't desync.
+// single authority and the Rust-side level can't desync. state.js installs
+// `sunmaoZoom` (op → factor → persist into .sunmao/ui.json via PUT /ui);
+// before its scripts land the invoke path is the direct fallback.
 window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && !e.altKey) {
     const op = (e.key === '=' || e.key === '+') ? 'in'
@@ -69,7 +72,8 @@ window.addEventListener('keydown', (e) => {
       : (e.key === '0' || e.key === ')') ? 'reset' : null;
     if (op) {
       e.preventDefault();
-      window.__sunmaoShell.zoom(op);
+      if (window.sunmaoZoom) window.sunmaoZoom(op);
+      else window.__sunmaoShell.zoom(op);
     }
   }
 });
@@ -177,19 +181,27 @@ fn zoom_step(cur: f64, dir: f64) -> f64 {
 
 /// Page zoom driven by the Ctrl/Cmd+=/-/0 keydown listener in SHELL_SHIM.
 /// Native webview hotkeys stay disabled so this map stays the single
-/// source of truth for the factor.
+/// source of truth for the factor. `op` is a ladder step ("in"/"out"/
+/// "reset") or an absolute factor (the page's `setZoom` + the ui.json
+/// restore send numbers — JS numbers serialize into `op` verbatim).
 #[tauri::command]
-fn shell_zoom(win: tauri::WebviewWindow, state: tauri::State<'_, Gui>, op: &str) {
+fn shell_zoom(win: tauri::WebviewWindow, state: tauri::State<'_, Gui>, op: serde_json::Value) {
     let label = win.label().to_string();
-    let next = {
-        let zooms = state.zooms.lock().expect("zoom map");
-        let cur = *zooms.get(&label).unwrap_or(&1.0);
-        match op {
-            "in" => zoom_step(cur, 1.2),
-            "out" => zoom_step(cur, 1.0 / 1.2),
-            "reset" => 1.0,
-            _ => return,
+    let next = match op.as_str() {
+        Some(step) => {
+            let zooms = state.zooms.lock().expect("zoom map");
+            let cur = *zooms.get(&label).unwrap_or(&1.0);
+            match step {
+                "in" => zoom_step(cur, 1.2),
+                "out" => zoom_step(cur, 1.0 / 1.2),
+                "reset" => 1.0,
+                _ => return,
+            }
         }
+        None => match op.as_f64() {
+            Some(f) => f.clamp(0.2, 5.0),
+            None => return,
+        },
     };
     if win.set_zoom(next).is_ok() {
         state.zooms.lock().expect("zoom map").insert(label, next);

@@ -37,7 +37,7 @@ failure, not a clean exit (`TurnOutcome::Cancelled` discriminates it).
 | `presets/<name>/` | plugin dir | same bundle shape as `plugins/<name>/` (plus `permissions.json`), but only active while named via `--preset <name>` — see "Presets" below |
 | `sessions/*.jsonl` | runtime state (gitignored) | session logs — `--resume`/`--fork`/`--dataflow` read these |
 | `shell.txt` | one word: `pwsh` / `powershell` / `posix` / `bash` / `deno` / `auto` | shell backend pin for `Bash` — see "Shell backend" below (the GUI's 终端 settings page writes it through `PUT /shell`) |
-| `ui.json` | `{"mode","accent","background","foreground","wallpaper","dim","panelOpacity","blur","translucentSidebar","contrast","fonts"{ui,code},...}` | GUI appearance preferences — the browser settings page persists via `GET|PUT /ui`; browser localStorage is only a first-frame cache |
+| `ui.json` | `{"mode","accent","background","foreground","wallpaper","dim","panelOpacity","blur","translucentSidebar","contrast","fonts"{ui,code},"zoom",...}` | GUI appearance preferences — the browser settings page persists via `GET|PUT /ui`; browser localStorage is only a first-frame cache. `zoom` is the Tauri shell's webview zoom factor (Ctrl/Cmd+=/-/0), restored on startup |
 | `wallpapers/` | runtime state | uploaded custom wallpaper (`custom.{jpg,png,webp}`, one file — `PUT /wallpaper` rotates it; `GET /wallpaper` serves it) |
 | `checkpoints/{session_id}/` | runtime state | snapshot-before-write ledger — `{seq}-{hash}.bak` blobs + `manifest.jsonl`; `/rewind` restores files from the earliest entry at/after the target turn |
 | `jobs/{id}/` | runtime state | background `Bash` jobs — `output.log` + `exit.json` (on finish) |

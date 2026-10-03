@@ -12,6 +12,7 @@ mod cancel;
 mod compact;
 mod driver;
 mod effort;
+mod fusion;
 mod goal;
 mod hooks;
 mod models;

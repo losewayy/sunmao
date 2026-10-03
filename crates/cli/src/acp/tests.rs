@@ -40,7 +40,7 @@ async fn cancel_session_sets_the_flag_and_wakes_registered_waiters() {
         Arc::new(Mutex::new(SessionState {
             agent: AgentLoop::new(ctx.clone()),
             ctx: ctx.clone(),
-            next_msg: 0,
+            msg_ids: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })),
     );
 

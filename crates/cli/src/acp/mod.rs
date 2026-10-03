@@ -24,7 +24,10 @@ use observer::{AcpApprover, AcpObserver};
 struct SessionState {
     agent: AgentLoop,
     ctx: Arc<Context>,
-    next_msg: u64,
+    /// MessageId counter shared by every observer this session mints —
+    /// prompt turns, config sets and the live_sink relay all draw from it
+    /// so a chunk id never repeats for a deduplicating client.
+    msg_ids: Arc<std::sync::atomic::AtomicU64>,
 }
 
 struct SunmaoAgent {
@@ -192,10 +195,11 @@ pub async fn run(
                     let ctx = Arc::new(ctx_raw);
                     // sub-agent lifecycle + bg task results relay to the
                     // client as session updates, same as the REPL's sink.
+                    let msg_ids = Arc::new(std::sync::atomic::AtomicU64::new(0));
                     let _ = ctx.live_sink.set(Arc::new(AcpObserver {
                         connection: cx.clone(),
                         session_id: session_id.clone(),
-                        msg_counter: std::sync::atomic::AtomicU64::new(0),
+                        msg_counter: msg_ids.clone(),
                     }));
                     {
                         let mut l = ctx.sessions.lock().await;
@@ -241,7 +245,7 @@ pub async fn run(
                         Arc::new(Mutex::new(SessionState {
                             agent: agent_loop,
                             ctx,
-                            next_msg: 0,
+                            msg_ids,
                         })),
                     );
                     responder.respond(
@@ -366,10 +370,11 @@ pub async fn run(
                     });
                     ctx_raw.models = Some(agent.new_resolver(&ctx_raw.cwd.clone()));
                     let ctx = Arc::new(ctx_raw);
+                    let msg_ids = Arc::new(std::sync::atomic::AtomicU64::new(0));
                     let _ = ctx.live_sink.set(Arc::new(AcpObserver {
                         connection: cx.clone(),
                         session_id: req.session_id.clone(),
-                        msg_counter: std::sync::atomic::AtomicU64::new(0),
+                        msg_counter: msg_ids.clone(),
                     }));
                     // SessionStart(source=resume) — same fact a --resume
                     // startup would record; extensions must be up first.
@@ -395,7 +400,7 @@ pub async fn run(
                         Arc::new(Mutex::new(SessionState {
                             agent: agent_loop,
                             ctx,
-                            next_msg: 0,
+                            msg_ids,
                         })),
                     );
                     responder.respond(v2::ResumeSessionResponse::new().config_options(options))
@@ -424,14 +429,19 @@ pub async fn run(
                             ));
                         }
                     };
-                    let (agent_loop, ctx, session_id) = {
+                    let (agent_loop, ctx, session_id, msg_ids) = {
                         let st = session.lock_or_recover();
-                        (st.agent.clone(), st.ctx.clone(), req.session_id.clone())
+                        (
+                            st.agent.clone(),
+                            st.ctx.clone(),
+                            req.session_id.clone(),
+                            st.msg_ids.clone(),
+                        )
                     };
                     let obs = observer::AcpObserver {
                         connection: cx.clone(),
                         session_id: session_id.clone(),
-                        msg_counter: std::sync::atomic::AtomicU64::new(0),
+                        msg_counter: msg_ids,
                     };
                     match req.config_id.to_string().as_str() {
                         "mode" => {
@@ -512,9 +522,11 @@ pub async fn run(
                         blocks::prompt_blocks(&req.prompt, &session_cwd);
 
                     let user_msg_id = {
-                        let mut st = session.lock_or_recover();
-                        st.next_msg += 1;
-                        v2::MessageId::new(format!("user-{}", st.next_msg))
+                        let st = session.lock_or_recover();
+                        let n = st
+                            .msg_ids
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        v2::MessageId::new(format!("user-{}", n + 1))
                     };
                     responder.respond(v2::PromptResponse::new(user_msg_id))?;
 
@@ -526,7 +538,7 @@ pub async fn run(
                             let obs = AcpObserver {
                                 connection: cx.clone(),
                                 session_id: session_id.clone(),
-                                msg_counter: std::sync::atomic::AtomicU64::new(0),
+                                msg_counter: session.lock_or_recover().msg_ids.clone(),
                             };
                             let _ = cx.send_notification(v2::UpdateSessionNotification::new(
                                 session_id.clone(),

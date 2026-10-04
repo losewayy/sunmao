@@ -154,20 +154,7 @@ pub(super) async fn put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> H
     view(s, sess).await
 }
 
-/// `POST /models/knowledge` — the "刷新知识库" action: pull OpenRouter's
-/// catalog, keep the mainstream families, write `~/.sunmao/model-knowledge.json`
-/// (the user layer). Reloads every live resolver so fills refresh at once.
-/// Optional freshness — the compiled-in seed keeps working offline.
-pub(super) async fn knowledge(s: &Arc<Shared>) -> HostResponse {
-    match sunmao_core::model_knowledge::refresh_user_layer().await {
-        Ok(count) => {
-            for id in s.live_ids() {
-                if let Some(h) = s.host(&id) {
-                    h.agent.reload_models();
-                }
-            }
-            HostResponse::json(serde_json::json!({ "entries": count }))
-        }
-        Err(e) => HostResponse::err(502, format!("{e:#}")),
-    }
-}
+// Knowledge refresh was removed: gateway guesses kept overwriting the
+// doc-verified level sets. The layers stay file-editable (user/project
+// `model-knowledge.json`), maintained by the agent via provider docs —
+// see the sunmao-config skill's knowledge-table section.

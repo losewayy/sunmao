@@ -63,15 +63,41 @@ impl std::error::Error for SubSteerError {}
 /// Shared roster lookup: steer and cancel take identical happy paths —
 /// find the entry, refuse a finished child, clone the caller's handle out.
 fn live_handle<T: Clone>(
-    tasks: &std::sync::MutexGuard<'_, Vec<super::TaskEntry>>,
+    tasks: &std::sync::MutexGuard<'_, Vec<TaskEntry>>,
     sub_id: &str,
-    pick: impl Fn(&super::TaskEntry) -> Option<T>,
+    pick: impl Fn(&TaskEntry) -> Option<T>,
 ) -> Result<T, SubSteerError> {
     match tasks.iter().find(|t| t.id == sub_id) {
         None => Err(SubSteerError::NoSuch(sub_id.to_string())),
         Some(t) if t.done.is_some() => Err(SubSteerError::Finished(sub_id.to_string())),
         Some(t) => pick(t).ok_or_else(|| SubSteerError::NoHandle(sub_id.to_string())),
     }
+}
+
+/// One detached sub-agent in the roster.
+#[derive(Debug, Clone)]
+pub struct TaskEntry {
+    /// The `sub-…-l<lane>` id — doubles as the child log's file stem.
+    pub id: String,
+    /// The lane this spawn claimed — unique across the spawn tree; lets a
+    /// frontend (or a test) prove distinctness without racing live events.
+    pub lane: u16,
+    /// Agent def name, or None for a generic spawn.
+    pub agent: Option<String>,
+    /// One-line digest of the prompt it was given.
+    pub prompt: String,
+    /// None while running; Some(ok) once TaskDone landed.
+    pub done: Option<bool>,
+    /// Steer-queue handle into the child's context — a clone of its
+    /// `Context.steer`. `Task{steer:id, message}` and `steer_sub` push
+    /// through here; None for entries registered before the handle was
+    /// threaded (legacy roster rows can't be steered).
+    pub(crate) steer: Option<crate::context::SteerQueue>,
+    /// Cancel handle into the child's context — `AgentLoop::cancel`
+    /// cascades through it so killing a turn also kills its running
+    /// sub-agents (otherwise a foreground Task keeps churning after the
+    /// user hit stop). None on legacy rows.
+    pub(crate) cancel: Option<SubCancel>,
 }
 
 impl Context {

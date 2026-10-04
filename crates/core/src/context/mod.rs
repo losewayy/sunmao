@@ -173,6 +173,21 @@ pub struct Context {
     /// the CLI overrides after the fact. `Bare` turns skip hooks, the
     /// dispatch gate and compaction but keep the session log and observer.
     pub loop_driver: crate::agent::LoopDriver,
+    /// The driver the log's `Started` event recorded, if any. A persisted
+    /// pick outranks manifest resolution — the baked system prompt in the
+    /// log described that surface, and resume must match it. `None` means
+    /// an old log or ephemeral session: manifests resolve as before.
+    pub persisted_driver: Option<crate::agent::LoopDriver>,
+    /// PostToolUse hook output (extra_context, block reasons) buffered
+    /// until the iteration's sibling calls all settle — appending a user
+    /// message between a tool_call and a sibling's tool_result straddles
+    /// the pair and folds to duplicate results. The turn loop drains it
+    /// after the last sibling's result lands.
+    pub hook_tail: std::sync::Mutex<Vec<String>>,
+    /// Cold tools `SearchTools` has already surfaced — they join the
+    /// advertised set on later requests (promote-on-search). Only matters
+    /// once the lazy surface kicks in; small by construction.
+    pub promoted_tools: std::sync::Mutex<std::collections::BTreeSet<String>>,
     /// Live sub-agent roster — detached `Task` spawns register here,
     /// completion flips `done`. `/tasks` reads it; sub-agent contexts get
     /// their own (a child's roster is its own spawn tree's, not ours).
@@ -262,31 +277,9 @@ impl<T> RwLockRecover<T> for std::sync::RwLock<T> {
     }
 }
 
-/// One detached sub-agent in the roster.
-#[derive(Debug, Clone)]
-pub struct TaskEntry {
-    /// The `sub-…-l<lane>` id — doubles as the child log's file stem.
-    pub id: String,
-    /// The lane this spawn claimed — unique across the spawn tree; lets a
-    /// frontend (or a test) prove distinctness without racing live events.
-    pub lane: u16,
-    /// Agent def name, or None for a generic spawn.
-    pub agent: Option<String>,
-    /// One-line digest of the prompt it was given.
-    pub prompt: String,
-    /// None while running; Some(ok) once TaskDone landed.
-    pub done: Option<bool>,
-    /// Steer-queue handle into the child's context — a clone of its
-    /// `Context.steer`. `Task{steer:id, message}` and `steer_sub` push
-    /// through here; None for entries registered before the handle was
-    /// threaded (legacy roster rows can't be steered).
-    pub(crate) steer: Option<SteerQueue>,
-    /// Cancel handle into the child's context — `AgentLoop::cancel`
-    /// cascades through it so killing a turn also kills its running
-    /// sub-agents (otherwise a foreground Task keeps churning after the
-    /// user hit stop). None on legacy rows.
-    pub(crate) cancel: Option<SubCancel>,
-}
+// `TaskEntry` lives with the roster controls in `sub_agent.rs` — it's the
+// row shape that module's steer/cancel paths operate on.
+pub use sub_agent::TaskEntry;
 
 impl Context {
     pub fn new(
@@ -296,9 +289,33 @@ impl Context {
         cwd: PathBuf,
     ) -> Self {
         let permissions = crate::permissions::Permissions::load(&cwd, &[]);
-        let mut risk_table = std::fs::read_to_string(cwd.join(".sunmao/risky-patterns.txt"))
-            .map(|t| crate::approval::parse_table(&t))
-            .unwrap_or_else(|_| crate::approval::builtin_table());
+        // a project risky-patterns table widens nothing — it can only
+        // replace the builtin ask table, and unpinned replacement would
+        // disarm it entirely. Untrusted file = additive merge (tighten-
+        // only direction); pinned = the author's wholesale replacement.
+        let risk_path = cwd.join(".sunmao/risky-patterns.txt");
+        let mut risk_table = match std::fs::read_to_string(&risk_path) {
+            Ok(text)
+                if crate::hooks::trust::is_trusted(
+                    &cwd,
+                    crate::hooks::trust::Layer::Project,
+                    &risk_path,
+                    &text,
+                ) =>
+            {
+                crate::approval::parse_table(&text)
+            }
+            Ok(text) => {
+                tracing::warn!(
+                    "{}: unpinned risky-patterns merged additively — /hooks trust to replace the builtin table",
+                    risk_path.display()
+                );
+                let mut t = crate::approval::builtin_table();
+                t.extend(crate::approval::parse_table(&text));
+                t
+            }
+            Err(_) => crate::approval::builtin_table(),
+        };
         // plugin bundles can tighten the gate too — same additive merge as
         // presets; wholesale replacement stays a project-file privilege
         for extra in std::iter::once(cwd.join(".sunmao").join("plugin"))
@@ -318,9 +335,12 @@ impl Context {
                 risk_table.extend(crate::approval::parse_table(&text));
             }
         }
-        // project/plugin manifests may name a loop driver — resolve before
-        // `cwd` moves into the struct below.
-        let loop_driver = crate::agent::LoopDriver::resolve(&cwd, &[]);
+        // the log's own `Started.driver` outranks manifest resolution — it
+        // is what the baked system prompt described; the manifest scan is
+        // the fallback for logs written before the field existed.
+        let persisted_driver = crate::session::started_driver(sessions.path());
+        let loop_driver =
+            persisted_driver.unwrap_or_else(|| crate::agent::LoopDriver::resolve(&cwd, &[]));
         // the log's file stem is the session id — file-backed and ephemeral
         // logs share the fallback so every consumer sees the same value.
         let session_id = sessions
@@ -358,11 +378,26 @@ impl Context {
                 .map(|e| e.path().join("readonly-verbs.txt")),
         ) {
             if let Ok(text) = std::fs::read_to_string(&f) {
-                verb_extra.extend(
-                    text.lines()
-                        .filter(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
-                        .map(|l| l.trim().to_string()),
-                );
+                // every entry widens read-only's verb set — a checked-out
+                // repo could name `rm`/`iex` read-only, so unpinned files
+                // are skipped like untrusted allow rules
+                if crate::hooks::trust::is_trusted(
+                    &cwd,
+                    crate::hooks::trust::Layer::Project,
+                    &f,
+                    &text,
+                ) {
+                    verb_extra.extend(
+                        text.lines()
+                            .filter(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
+                            .map(|l| l.trim().to_string()),
+                    );
+                } else {
+                    tracing::warn!(
+                        "{}: unpinned readonly-verbs skipped — /hooks trust to enable",
+                        f.display()
+                    );
+                }
             }
         }
         let readonly_verbs = crate::agent::mode::readonly_verbs(&verb_extra);
@@ -414,6 +449,9 @@ impl Context {
             ext: Arc::new(ExtRegistry::new()),
             mcp_servers: Vec::new(),
             loop_driver,
+            persisted_driver,
+            hook_tail: std::sync::Mutex::new(Vec::new()),
+            promoted_tools: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             todos: std::sync::Mutex::new(todos),
             ptc_store: std::sync::Mutex::new(ptc_store),
@@ -480,25 +518,12 @@ impl Context {
         }
         // presets re-resolve the loop driver — a preset's `loop:` key is
         // the last layer scanned, so it wins over project/plugin choices.
-        self.loop_driver = crate::agent::LoopDriver::resolve(&self.cwd, &self.extra_plugin_roots);
+        // A persisted `Started.driver` outranks even that (see the field).
+        if self.persisted_driver.is_none() {
+            self.loop_driver =
+                crate::agent::LoopDriver::resolve(&self.cwd, &self.extra_plugin_roots);
+        }
         self
-    }
-
-    pub fn mark_read(&self, path: &std::path::Path) {
-        if let Ok(canon) = path.canonicalize() {
-            self.read_paths.lock_or_recover().insert(canon);
-        }
-        self.read_paths.lock_or_recover().insert(path.to_path_buf());
-    }
-
-    pub fn has_read(&self, path: &std::path::Path) -> bool {
-        let set = self.read_paths.lock_or_recover();
-        if set.contains(path) {
-            return true;
-        }
-        path.canonicalize()
-            .map(|c| set.contains(&c))
-            .unwrap_or(false)
     }
 
     /// The adapter the next request uses — override wins over the baseline.
@@ -509,81 +534,10 @@ impl Context {
             .clone()
             .unwrap_or_else(|| self.llm.clone())
     }
-
-    /// The tool declarations the next request advertises. Under the `ptc`
-    /// loop driver the model's surface is `RunCode` + `SearchTools` — the
-    /// borrowed-tools pair: search for a schema, then call it from a
-    /// script. Every other tool stays registered (scripts reach them via
-    /// `tools.*`) but nothing else becomes a model-emittable tool_call.
-    /// `SearchTools` is withheld under the other drivers too — with every
-    /// declaration already on the wire it's dead schema weight.
-    pub fn advertised_tools(&self) -> Vec<sunmao_llm::types::Tool> {
-        let decls = self.tools.declarations();
-        if self.loop_driver == crate::agent::LoopDriver::Ptc {
-            return decls
-                .into_iter()
-                .filter(|t| matches!(t.function.name.as_str(), "RunCode" | "SearchTools"))
-                .collect();
-        }
-        // FusionExecute joins the registry with the builtins so the Lead's
-        // surface can keep it — under Standard it must never appear (same
-        // posture as SearchTools: dead schema weight for a call the shape
-        // can't use). The fusion surface itself (armed Lead's read set,
-        // escalated Lead back to standard-minus-delegate) is
-        // `fusion::lead_decl`'s call — the table lives with the policy.
-        if *self.turn_mode.read_or_recover() == crate::agent::TurnMode::Fusion {
-            let escalated = self.fusion.lock_or_recover().escalated;
-            return decls
-                .into_iter()
-                .filter(|t| crate::agent::fusion::lead_decl(&t.function.name, escalated))
-                .collect();
-        }
-        decls
-            .into_iter()
-            .filter(|t| t.function.name != "SearchTools" && t.function.name != "FusionExecute")
-            .collect()
-    }
-
-    /// A prior `Approval::Session` covers this exact call?
-    pub fn session_granted(&self, tool: &str, specifier: &str) -> bool {
-        self.session_grants
-            .lock()
-            .unwrap()
-            .contains(&format!("{tool}\t{specifier}"))
-    }
-
-    /// Record a session-scoped grant.
-    pub fn grant_session(&self, tool: &str, specifier: &str) {
-        self.session_grants
-            .lock()
-            .unwrap()
-            .insert(format!("{tool}\t{specifier}"));
-    }
-
-    /// Checkpoint a file before a tool mutates it — the first write in the
-    /// session preserves the pre-state under `.sunmao/checkpoints/`; repeat
-    /// writes and out-of-scope paths (`.sunmao`, outside the project) are
-    /// no-ops. A taken snapshot is also a durable `SessionEvent::Checkpoint`
-    /// — the audit spine carries which files a turn preserved. Errors
-    /// propagate: a write proceeding without its snapshot would make the
-    /// rewind surface lie.
-    pub async fn checkpoint_file(&self, path: &std::path::Path) -> anyhow::Result<()> {
-        let turn = self.checkpoints.lock_or_recover().turn;
-        if let Some(rel) =
-            crate::checkpoints::snapshot_if_new(&self.checkpoints, &self.cwd, path, turn).await?
-        {
-            let mut log = self.sessions.lock().await;
-            log.append(&crate::session::SessionEvent::Checkpoint {
-                turn,
-                files: vec![rel],
-            })
-            .await?;
-        }
-        Ok(())
-    }
 }
 
 mod seeds;
+mod surface;
 pub(crate) use seeds::tool_timeout_table;
 use seeds::{seed_effort, seed_goal, seed_mode, seed_ptc_store, seed_todos, seed_turn_mode};
 

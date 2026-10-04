@@ -53,10 +53,15 @@ pub(crate) struct Gui {
 /// by `HostHandle::client` verbatim, same as a new ws connection), then
 /// forward every outbound frame as a parsed JSON object — the page's
 /// `onmessage` receives objects, not strings.
+///
+/// `Window`, not `WebviewWindow`: once a dock browser tab adds a guest
+/// child webview, `is_webview_window()` is false and a `WebviewWindow`
+/// argument stops resolving, which would take the whole transport down
+/// (see the trap note in `shell.rs`).
 #[tauri::command]
 async fn session_events(
     events: tauri::ipc::Channel<serde_json::Value>,
-    win: tauri::WebviewWindow,
+    win: tauri::Window,
     state: tauri::State<'_, Gui>,
 ) -> Result<(), String> {
     let host = state.host.clone();
@@ -108,11 +113,12 @@ async fn session_events(
 
 /// One inbound frame from the page (`prompt`, `view`, `approval`, …) —
 /// same dispatch the ws loop runs, routed to the *calling window's*
-/// client so sibling windows stay independent tabs.
+/// client so sibling windows stay independent tabs. `Window` for the
+/// same reason `session_events` takes it.
 #[tauri::command]
 async fn host_call(
     msg: serde_json::Value,
-    win: tauri::WebviewWindow,
+    win: tauri::Window,
     state: tauri::State<'_, Gui>,
 ) -> Result<(), String> {
     let rt = state.rt.clone();
@@ -142,7 +148,9 @@ fn scheme_response(r: sunmao::HostResponse) -> tauri::http::Response<Vec<u8>> {
 /// the host. Every URL also goes out on each window's events channel as
 /// `{"type":"deep_link","url":…}` so the page can grow its own routing.
 fn open_deep_link(app: &tauri::AppHandle, url: &str) {
-    if let Some(w) = app.get_webview_window("main") {
+    // `get_window`, not `get_webview_window`: the latter is None for a
+    // window hosting a dock guest, which would silently drop the focus.
+    if let Some(w) = app.get_window("main") {
         let _ = w.unminimize();
         let _ = w.set_focus();
     }
@@ -335,7 +343,11 @@ fn main() {
                     .tooltip("sunmao")
                     .on_menu_event(|app, e| match e.id().as_ref() {
                         "show" => {
-                            for w in app.webview_windows().values() {
+                            // `windows()`, not `webview_windows()`: the dock's
+                            // guest webview makes the main window stop being a
+                            // "webview window", and hiding to tray would then
+                            // leave no way back
+                            for w in app.windows().values() {
                                 let _ = w.show();
                                 let _ = w.set_focus();
                             }
@@ -350,7 +362,7 @@ fn main() {
                             ..
                         } = e
                         {
-                            for w in tray.app_handle().webview_windows().values() {
+                            for w in tray.app_handle().windows().values() {
                                 let _ = w.show();
                                 let _ = w.set_focus();
                             }

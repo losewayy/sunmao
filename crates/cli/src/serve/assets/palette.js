@@ -102,6 +102,7 @@ function palSource() {
     ...(TAURI && TAURI.win ? [{ g: '操作', t: '新窗口', i: 'monitor', run: () => TAURI.win('new') }] : []),
     { g: '操作', t: '打开设置', i: 'settings', k: 'Ctrl ,', run: () => go('settings') },
     { g: '操作', t: '定时任务', i: 'clock', run: () => go('schedules') },
+    { g: '操作', t: railOn ? '隐藏会话侧栏' : '显示会话侧栏', i: 'panel-l', k: 'Ctrl B', run: toggleRail },
     { g: '操作', t: dockOn ? '隐藏数据面板' : '显示数据面板', i: 'panel-r', k: 'Ctrl \\', run: toggleDock },
     { g: '操作', t: '执行记录', i: 'history', run: () => pop($('[data-act="events"]'), eventsHTML(), { align: 'end', cls: 'events' }) },
     { g: '操作', t: '在对话中查找', i: 'search', k: 'Ctrl F', run: openFind },

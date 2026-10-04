@@ -37,15 +37,30 @@ const nativeBr = () => !!(TAURI && TAURI.webview);
 
 /* ---- tab strip ---- */
 function renderDockTabs() {
-  const cur = $('#dock').dataset.tab;
-  $('#dt-dyn').innerHTML = sessionTabs().map(t => {
+  const tabs = sessionTabs(), cur = $('#dock').dataset.tab;
+  $('#dt-dyn').innerHTML = tabs.map(t => {
     if (t.kind === 'pane') {
       const m = PANE_META[t.pane] || {};
       return `<button class="dock-tab" role="tab" data-act="dock-tab" data-tab="${esc(t.pane)}" aria-selected="${cur === t.pane}"><svg class="i"><use href="#i-${m.i}"/></svg><span>${esc(m.t)}</span>${m.num ? `<i class="dt-num" id="${m.num}"></i>` : ''}<i class="dt-x" data-bclose="${t.id}">×</i></button>`;
     }
     return `<button class="dock-tab dock-dyn" role="tab" data-act="dock-tab" data-tab="br:${t.id}" aria-selected="${cur === 'br:' + t.id}" data-tip="${esc(t.url || '新标签页')}"><svg class="i"><use href="#i-globe"/></svg><span>${esc(brTitle(t))}</span><i class="dt-x" data-bclose="${t.id}">×</i></button>`;
   }).join('');
-  $('#dock-empty').hidden = sessionTabs().length > 0;
+  // empty panel = the launcher itself: the strip goes away and the body
+  // is a vertical menu of everything you can add (KanaMi's shape)
+  $('#dock-tabs').hidden = !tabs.length;
+  $('#dock-empty').hidden = tabs.length > 0;
+  if (!tabs.length) {
+    $('#de-rows').innerHTML = [
+      ...Object.entries(PANE_META).map(([v, m]) => ({ v, t: m.t, i: m.i })),
+      { v: 'browser', t: '浏览器标签页', i: 'globe' },
+    ].map(o => `<button class="de-row" data-deadd="${o.v}"><svg class="i"><use href="#i-${o.i}"/></svg><span>${esc(o.t)}</span></button>`).join('');
+  }
+}
+
+function dockAddKind(v) {
+  if (v === 'browser') return brNew();
+  sessionTabs().push({ id: brSeq++, kind: 'pane', pane: v });
+  save(); renderDockTabs(); dockTab(v);
 }
 
 function dockAdd(el) {
@@ -54,12 +69,7 @@ function dockAdd(el) {
     .filter(([k]) => !have.has(k))
     .map(([v, m]) => ({ v, t: m.t, icon: m.i }));
   items.push({ v: 'browser', t: '浏览器标签页', icon: 'globe' });
-  menuPop(el, items, v => {
-    if (v === 'browser') return brNew();
-    const t = { id: brSeq++, kind: 'pane', pane: v };
-    sessionTabs().push(t);
-    save(); renderDockTabs(); dockTab(v);
-  }, { place: 'bottom', align: 'end' });
+  menuPop(el, items, dockAddKind, { place: 'bottom', align: 'end' });
 }
 
 function brNew() {
@@ -254,6 +264,10 @@ $('#dt-dyn').addEventListener('click', e => {
   if (!x) return;
   e.preventDefault(); e.stopPropagation();
   dockClose(x.dataset.bclose);
+});
+$('#de-rows').addEventListener('click', e => {
+  const row = e.target.closest('[data-deadd]');
+  if (row) dockAddKind(row.dataset.deadd);
 });
 // framed-as-embed: a browser pane loaded this page — mount the strip so
 // the UI looks right, but EMBED suppresses the auto-load inside

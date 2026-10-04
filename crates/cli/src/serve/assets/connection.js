@@ -448,6 +448,11 @@ function go(v) {
   if (v === 'settings') { show('settings'); return settingsPage(setPage); }
   show(v);
 }
+function toggleRail() {
+  railOn = !railOn;
+  app.dataset.rail = railOn ? 'on' : 'off';
+  $('#rail-btn').classList.toggle('on', railOn);
+}
 function toggleDock() {
   dockOn = !dockOn;
   app.dataset.dock = view === 'session' && dockOn ? 'on' : 'off';

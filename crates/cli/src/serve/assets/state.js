@@ -102,7 +102,7 @@ const sunmaoZoom = v => {
 if (TAURI) window.sunmaoZoom = sunmaoZoom;
 
 /* ================= state ================= */
-let view = 'session', lastMain = 'session', dockOn = true, setPage = 'appearance';
+let view = 'session', lastMain = 'session', dockOn = true, railOn = true, setPage = 'appearance';
 let sessionId = '', cwd = '', slashList = [], models = [], modelLabel = '', busy = false, connected = false;
 let clientId = 0; // hello assigns this tab's id — directed frames name it
 // per-session rail state — every host frame carries `sess`; the transcript

@@ -5,14 +5,12 @@
 /* one glass panel: a compact tab strip on top + one scrollable pane below.
    Tab ids line up with data-tab/data-pane so switching never touches data —
    every pane keeps its own scroll position and render state. */
-.dock{position:absolute;right:var(--s-gutter);top:var(--h-3xl);width:var(--w-dock);display:flex;flex-direction:column;z-index:var(--z-dock);border-radius:var(--r-xl);overflow:hidden;max-height:calc(100vh - var(--h-3xl) - var(--s-16));transition:transform var(--dur-slow) var(--ease-in-out),visibility var(--dur-slow);container-type:inline-size;container-name:dock}
+.dock{position:absolute;right:var(--s-gutter);top:var(--h-3xl);bottom:var(--s-gutter);width:var(--w-dock);display:flex;flex-direction:column;z-index:var(--z-dock);border-radius:var(--r-xl);overflow:hidden;transition:transform var(--dur-slow) var(--ease-in-out),visibility var(--dur-slow);container-type:inline-size;container-name:dock}
 #app:not([data-dock="on"]) .dock{transform:translateX(calc(100% + var(--s-16)));visibility:hidden}
-/* a browser pane has no intrinsic height — while one's active the dock
-   takes its full height budget instead of shrink-wrapping content */
-.dock[data-tab^="br:"]{height:calc(100vh - var(--h-3xl) - var(--s-16))}
 /* every tab is dynamic now — compact pills left-aligned, × on hover,
    + always at the strip's end; the row scrolls sideways if it overflows */
 .dock-tabs{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-6) var(--s-8);padding-left:var(--s-16);border-bottom:var(--bw-hairline) solid var(--c-stroke);flex:none;overflow-x:auto;scrollbar-width:none}
+.dock-tabs[hidden]{display:none}
 .dock-tabs::-webkit-scrollbar{display:none}
 .dock-tab{display:inline-flex;align-items:center;justify-content:center;gap:var(--s-4);height:var(--h-md);padding:0 var(--s-6);border-radius:var(--r-full);color:var(--c-text-3);font-size:var(--fs-xs);cursor:pointer;flex:0 1 auto;min-width:0;max-width:var(--w-dock-tab-dyn);transition:background var(--dur-instant) var(--ease-out),color var(--dur-instant) var(--ease-out)}
 .dock-tab>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -37,9 +35,20 @@
 /* left-edge drag — the dock is right-anchored so its width lives on the
    left border; a transparent hit strip owns the resize cursor */
 .dock-edge{position:absolute;left:0;top:0;bottom:0;width:var(--s-8);cursor:ew-resize;z-index:var(--z-l2)}
-.dock-empty{position:absolute;inset:var(--h-3xl) 0 0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--s-6);color:var(--c-text-3);font-size:var(--fs-sm);text-align:center;padding:var(--s-12)}
-.dock-empty .i{width:var(--icon-2xl);height:var(--icon-2xl);opacity:.5}
-.dock-empty small{font-size:var(--fs-2xs);color:var(--c-text-3);line-height:var(--lh-code)}
+/* hover/drag affordance — a hairline spine so the resize gesture is
+   discoverable without a permanent visual */
+.dock-edge::after{content:'';position:absolute;left:0;top:var(--s-16);bottom:var(--s-16);width:var(--bw-hairline);background:var(--c-stroke);opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
+.dock-edge:hover::after,.dock-edge:active::after{opacity:1}
+/* empty panel IS the launcher — it must live in flow so the dock grows
+   to fit it (absolute children give the card zero height) */
+.dock-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--s-10);padding:var(--s-16) var(--s-12);min-height:45vh}
+.dock-empty[hidden]{display:none}
+.de-rows{display:flex;flex-direction:column;gap:var(--s-6);width:calc(var(--w-dock-tab-dyn) + var(--s-32))}
+.de-row{display:flex;align-items:center;gap:var(--s-8);padding:var(--s-8) var(--s-12);border-radius:var(--r-md);background:var(--c-fill-1);color:var(--c-text-2);font-size:var(--fs-sm);text-align:left;cursor:pointer;transition:background var(--dur-instant) var(--ease-out),color var(--dur-instant) var(--ease-out)}
+.de-row .i{width:var(--icon-sm);height:var(--icon-sm);color:var(--c-text-3);flex:none}
+.de-row:hover{background:var(--c-fill-2);color:var(--c-text)}
+.de-row:hover .i{color:var(--c-text-2)}
+.dock-empty small{font-size:var(--fs-2xs);color:var(--c-text-3);text-align:center;line-height:var(--lh-code)}
 
 /* ---- browser pane ---- */
 .dock-pane.br{padding:0;gap:0;overflow:hidden;position:relative}

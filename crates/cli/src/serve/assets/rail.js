@@ -185,3 +185,27 @@ function syncRailMode() {
   b.dataset.tip = proj ? '按时间排列' : '按项目分组';
   b.classList.toggle('on', proj);
 }
+
+/* rail resize — right edge drags set --w-rail on #app so .stage's calc
+   follows live; S.railW persists per project (same seam as the dock's) */
+(function railResize() {
+  const edge = $('#rail-edge'), rail = $('#rail'), app = $('#app');
+  if (S.railW) app.style.setProperty('--w-rail', S.railW + 'px');
+  edge.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    edge.setPointerCapture(e.pointerId);
+    const move = ev => {
+      const w = Math.max(180, Math.min(innerWidth * 0.5, ev.clientX - rail.getBoundingClientRect().left));
+      app.style.setProperty('--w-rail', w + 'px');
+      S.railW = Math.round(w);
+    };
+    const up = () => {
+      edge.removeEventListener('pointermove', move);
+      edge.removeEventListener('pointerup', up);
+      save();
+      if (typeof brSyncAll === 'function') brSyncAll();
+    };
+    edge.addEventListener('pointermove', move);
+    edge.addEventListener('pointerup', up);
+  });
+})();

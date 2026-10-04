@@ -48,7 +48,12 @@ code{font-family:var(--font-mono)}
 
 /* ---------- layout ---------- */
 #app{position:fixed;inset:0;z-index:var(--z-app)}
-.rail{position:absolute;left:var(--s-gutter);top:var(--s-gutter);bottom:var(--s-gutter);width:var(--w-rail);border-radius:var(--r-xl);display:flex;flex-direction:column;overflow:hidden;z-index:var(--z-rail)}
+.rail{position:absolute;left:var(--s-gutter);top:var(--s-gutter);bottom:var(--s-gutter);width:var(--w-rail);border-radius:var(--r-xl);display:flex;flex-direction:column;overflow:hidden;z-index:var(--z-rail);transition:transform var(--dur-slow) var(--ease-in-out),visibility var(--dur-slow)}
+#app[data-rail="off"] .rail{transform:translateX(calc(-100% - var(--s-16)));visibility:hidden}
+#app[data-rail="off"] .stage{left:var(--s-gutter)}
+.rail-edge{position:absolute;right:0;top:0;bottom:0;width:var(--s-8);cursor:ew-resize;z-index:var(--z-l2)}
+.rail-edge::after{content:'';position:absolute;right:0;top:var(--s-16);bottom:var(--s-16);width:var(--bw-hairline);background:var(--c-stroke);opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
+.rail-edge:hover::after,.rail-edge:active::after{opacity:1}
 .rail.solid{--ga:var(--glass-float)}
 .stage{position:absolute;top:0;bottom:0;left:calc(var(--w-rail) + var(--s-gutter) * 2);right:0;transition:right var(--dur-slow) var(--ease-in-out)}
 #app[data-dock="on"] .stage{right:calc(var(--w-dock) + var(--s-gutter) * 2)}

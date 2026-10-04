@@ -91,6 +91,7 @@ function act(name, el) {
     case 'palette-close': return closePalette();
     case 'events': if (popAnchor === el) return closePop(); return pop(el, eventsHTML(), { align: 'end', cls: 'events' });
     case 'dock': return toggleDock();
+    case 'rail': return toggleRail();
     case 'dock-tab': return dockTab(el.dataset.tab);
     case 'crumb':
       if (view !== 'session' || !sessionId) return;
@@ -224,6 +225,7 @@ document.addEventListener('keydown', e => {
   if (mod && k === 'n') { e.preventDefault(); return newChat(); }
   if (mod && e.key === ',') { e.preventDefault(); return go('settings'); }
   if (mod && e.key === '\\') { e.preventDefault(); return toggleDock(); }
+  if (mod && k === 'b') { e.preventDefault(); return toggleRail(); }
   if (e.target.classList && e.target.classList.contains('note-add') === false && e.target.closest && e.target.closest('.note-add') && e.target.matches('input') && e.key === 'Enter') return submitNote(e.target.dataset.name, e.target);
   if (!typing && !mod && !e.altKey && pendingApprovals.size && $('#palette').hidden) {
     if (k === 'y') decide('once'); else if (k === 'n') decide('deny'); else if (k === 'a') decide('session');

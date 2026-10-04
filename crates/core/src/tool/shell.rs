@@ -210,12 +210,15 @@ async fn run_parsed(
             // the children but the future must resolve (aborted code) to
             // keep the pipe readers and JoinHandles drained.
             let mut exec = std::pin::pin!(exec);
-            let cancel_fut = async {
-                match &cancel {
-                    Some(n) => n.notified().await,
-                    None => std::future::pending::<()>().await,
-                }
-            };
+            // arm the waiter BEFORE the select — `notified()` registers
+            // on first poll, so a `notify_waiters` fired in the setup gap
+            // (spawn_blocking scheduling is real latency) would slip past
+            // and leave the run unabortable
+            let cancel_fut = cancel.as_ref().map(|n| n.notified());
+            tokio::pin!(cancel_fut);
+            if let Some(f) = cancel_fut.as_mut().as_pin_mut() {
+                f.enable();
+            }
             let (code, stdout, stderr, ended) = rt.block_on(async {
                 // Readers drain *while* the pipeline runs — waiting for exec
                 // to finish first deadlocks any child that fills the pipe
@@ -242,7 +245,12 @@ async fn run_parsed(
                 let end = tokio::select! {
                     c = &mut exec => End::Natural(c),
                     () = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs)) => End::Timeout,
-                    () = cancel_fut => End::Cancelled,
+                    _ = async {
+                        match cancel_fut.as_mut().as_pin_mut() {
+                            Some(f) => f.await,
+                            None => std::future::pending::<()>().await,
+                        }
+                    } => End::Cancelled,
                 };
                 let (code, ended) = match end {
                     End::Natural(c) => (c, None),

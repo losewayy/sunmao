@@ -63,7 +63,10 @@ code{font-family:var(--font-mono)}
 .capsule.capsule-l{left:var(--s-12);right:auto;z-index:var(--z-chrome)}
 /* the rail's top band is free space — let it drag the window like the
    titlebar does; sits under the fold capsule so the button stays live */
-.drag-l{position:absolute;left:0;top:0;width:calc(var(--w-rail) + var(--s-gutter) * 2);height:var(--h-3xl);z-index:calc(var(--z-chrome) - 1)}
+/* full-width underlay across the whole top band — every gap between the
+   capsules stays a drag surface even where the titlebar's own region is
+   pointer-transparent; interactive chrome sits above it via z-chrome */
+.drag-l{position:absolute;left:0;right:0;top:0;height:var(--h-3xl);z-index:calc(var(--z-chrome) - 1)}
 .rail.solid{--ga:var(--glass-float)}
 .stage{position:absolute;top:0;bottom:0;left:calc(var(--w-rail) + var(--s-gutter) * 2);right:0;transition:left var(--dur-slow) var(--ease-in-out),right var(--dur-slow) var(--ease-in-out)}
 #app[data-dock="on"] .stage{right:calc(var(--w-dock) + var(--s-gutter) * 2)}

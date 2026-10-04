@@ -465,11 +465,7 @@
         "audio",
         "video"
       ],
-      "thinking": [
-        "minimal",
-        "low",
-        "high"
-      ],
+      "reasoning": true,
       "tools": true,
       "structured": true
     },
@@ -557,7 +553,6 @@
       ],
       "thinking": [
         "minimal",
-        "low",
         "high"
       ]
     },
@@ -1339,13 +1334,6 @@
         "image",
         "file"
       ],
-      "thinking": [
-        "none",
-        "low",
-        "medium",
-        "high",
-        "xhigh"
-      ],
       "structured": true
     },
     {
@@ -1566,11 +1554,6 @@
         "image",
         "file"
       ],
-      "thinking": [
-        "low",
-        "medium",
-        "high"
-      ],
       "structured": true
     },
     {
@@ -1580,11 +1563,6 @@
       "input": [
         "file",
         "image"
-      ],
-      "thinking": [
-        "low",
-        "medium",
-        "high"
       ],
       "structured": true
     },
@@ -1833,11 +1811,6 @@
       "match": "gpt-oss-safeguard-20b",
       "context": 131072,
       "max_output": 65536,
-      "thinking": [
-        "low",
-        "medium",
-        "high"
-      ],
       "tools": true,
       "structured": true
     },
@@ -2318,10 +2291,6 @@
         "image",
         "file"
       ],
-      "thinking": [
-        "none",
-        "high"
-      ],
       "tools": true,
       "structured": true
     },
@@ -2631,7 +2600,6 @@
       "match": "qwen3-30b-a3b-instruct-2507",
       "context": 262144,
       "max_output": 32000,
-      "reasoning": true,
       "tools": true,
       "structured": true
     },
@@ -2951,7 +2919,6 @@
       "match": "qwen3-coder",
       "context": 262144,
       "max_output": 66536,
-      "reasoning": true,
       "tools": true,
       "structured": true
     },
@@ -2959,7 +2926,6 @@
       "match": "qwen3-coder-30b-a3b-instruct",
       "context": 262144,
       "max_output": 32768,
-      "reasoning": true,
       "tools": true,
       "structured": true
     },
@@ -2967,14 +2933,12 @@
       "match": "qwen3-coder-flash",
       "context": 1000000,
       "max_output": 65536,
-      "reasoning": true,
       "tools": true
     },
     {
       "match": "qwen3-coder-next",
       "context": 262144,
       "max_output": 65536,
-      "reasoning": true,
       "tools": true,
       "structured": true
     },
@@ -2982,7 +2946,6 @@
       "match": "qwen3-coder-plus",
       "context": 1000000,
       "max_output": 65536,
-      "reasoning": true,
       "tools": true,
       "structured": true
     },
@@ -3006,7 +2969,6 @@
       "match": "qwen3-next-80b-a3b-instruct",
       "context": 262144,
       "max_output": 65536,
-      "reasoning": true,
       "tools": true,
       "structured": true
     },
@@ -3025,7 +2987,6 @@
       "input": [
         "image"
       ],
-      "reasoning": true,
       "tools": true,
       "structured": true
     },
@@ -3047,7 +3008,6 @@
       "input": [
         "image"
       ],
-      "reasoning": true,
       "tools": true,
       "structured": true
     },
@@ -3069,7 +3029,6 @@
       "input": [
         "image"
       ],
-      "reasoning": true,
       "tools": true,
       "structured": true
     },
@@ -3080,7 +3039,6 @@
       "input": [
         "image"
       ],
-      "reasoning": true,
       "tools": true,
       "structured": true
     },

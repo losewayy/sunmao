@@ -69,6 +69,17 @@ impl Delivery {
             if row.channel != self.adapter.channel() {
                 continue;
             }
+            // a poison row would retry its full budget on every restart
+            // forever — enough physical attempts → dead-letter it
+            if row.attempts >= 15 {
+                let _ = self.store.deliver_dead(row.id);
+                tracing::warn!(
+                    "im delivery {} dead-lettered after {} attempts",
+                    row.id,
+                    row.attempts
+                );
+                continue;
+            }
             let text = if row.state == "attempting" {
                 format!("{}{}", super::messages::get("redelivery_prefix"), row.text)
             } else {

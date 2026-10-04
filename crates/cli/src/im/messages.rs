@@ -24,6 +24,7 @@ mod tests {
             "pairing_row",
             "pairing_approved",
             "stopped",
+            "stopped_idle",
             "redelivery_prefix",
             "status_line",
             "mode_fixed",

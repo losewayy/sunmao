@@ -35,10 +35,12 @@ const SEED: &str = include_str!("../assets/model-knowledge.json");
 /// uniform guess got all of those wrong).
 const LEVELS: &str = include_str!("../assets/thinking-levels.txt");
 
-/// What a family accepts: a level vocabulary, or a bare toggle.
+/// What a family accepts: a level vocabulary, a bare toggle, or
+/// (for a known non-thinking member of a thinking family) nothing at all.
 enum LevelSet {
     Levels(Vec<String>),
     Toggle,
+    None,
 }
 
 /// Tiny glob: `*` spans any run; no wildcard = exact match. Patterns run
@@ -80,6 +82,8 @@ fn level_set(norm: &str) -> Option<LevelSet> {
         if globs.split(',').any(|g| glob_match(g.trim(), norm)) {
             return if rhs.trim() == "-" {
                 Some(LevelSet::Toggle)
+            } else if rhs.trim() == "!" {
+                Some(LevelSet::None)
             } else {
                 Some(LevelSet::Levels(
                     rhs.split(',')
@@ -179,6 +183,10 @@ impl Knowledge {
                                 e.thinking.clear();
                                 e.reasoning = true;
                             }
+                            Some(LevelSet::None) => {
+                                e.thinking.clear();
+                                e.reasoning = false;
+                            }
                             None => {}
                         }
                         by_key.insert(normalize(key), e);
@@ -259,6 +267,7 @@ mod tests {
         let lv = |id| match level_set(&normalize(id)) {
             Some(LevelSet::Levels(v)) => v.join(","),
             Some(LevelSet::Toggle) => "-".into(),
+            Some(LevelSet::None) => "!".into(),
             None => "?".into(),
         };
         assert_eq!(lv("cn:deepseek-v4-pro"), "high,max");
@@ -276,8 +285,18 @@ mod tests {
         assert_eq!(lv("qwen3-8-max"), "low,medium,xhigh");
         assert_eq!(lv("gemini-3-5-flash"), "minimal,low,medium,high");
         assert_eq!(lv("grok-4-6"), "low,medium,high,xhigh");
-        assert_eq!(lv("minimax-m3"), "-");
+        assert_eq!(lv("minimax-m2-7"), "-");
         assert_eq!(lv("seed-2-1-pro"), "minimal,low,medium,high");
+        // the new-generation rows the table gained in 2026-10
+        assert_eq!(lv("gpt-6-astra"), "low,medium,high,xhigh,max");
+        assert_eq!(lv("gpt-6-1-sol"), "low,medium,high");
+        assert_eq!(lv("minimax-m3"), "none,high");
+        assert_eq!(lv("gemini-3-1-flash-lite"), "minimal,low,high");
+        assert_eq!(lv("deepseek-v4-1-flash"), "high,max");
+        // `!` actively suppresses non-thinking members of thinking families
+        assert_eq!(lv("deepseek-chat"), "!");
+        assert_eq!(lv("kimi-k2"), "!");
+        assert_eq!(lv("kimi-k2-6"), "-");
         // unlisted families fall through to the caller's fallback
         assert_eq!(lv("llama-4-scout"), "?");
     }

@@ -250,8 +250,8 @@
       "match": "command-a",
       "context": 256000,
       "max_output": 8192,
-      "structured": true,
-      "reasoning": true
+      "reasoning": true,
+      "structured": true
     },
     {
       "match": "command-a-plus",
@@ -269,38 +269,33 @@
       "context": 128000,
       "max_output": 4096,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "command-r-plus-08-2024",
       "context": 128000,
       "max_output": 4096,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "command-r7b-12-2024",
       "context": 128000,
       "max_output": 4096,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "deepseek-chat",
       "context": 163840,
       "max_output": 16384,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "deepseek-chat-v3-0324",
       "context": 163840,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "deepseek-chat-v3-1",
@@ -337,23 +332,23 @@
       "match": "deepseek-v3-2",
       "context": 163840,
       "max_output": 65536,
-      "tools": true,
-      "structured": true,
       "thinking": [
         "high",
         "max"
-      ]
+      ],
+      "tools": true,
+      "structured": true
     },
     {
       "match": "deepseek-v3-2-exp",
       "context": 163840,
       "max_output": 65536,
-      "tools": true,
-      "structured": true,
       "thinking": [
         "high",
         "max"
-      ]
+      ],
+      "tools": true,
+      "structured": true
     },
     {
       "match": "deepseek-v4-1-flash",
@@ -457,8 +452,8 @@
       "input": [
         "image"
       ],
-      "structured": true,
-      "reasoning": true
+      "reasoning": true,
+      "structured": true
     },
     {
       "match": "gemini-2-5-flash-lite",
@@ -470,7 +465,11 @@
         "audio",
         "video"
       ],
-      "reasoning": true,
+      "thinking": [
+        "minimal",
+        "low",
+        "high"
+      ],
       "tools": true,
       "structured": true
     },
@@ -544,7 +543,6 @@
       "thinking": [
         "minimal",
         "low",
-        "medium",
         "high"
       ],
       "tools": true,
@@ -560,7 +558,6 @@
       "thinking": [
         "minimal",
         "low",
-        "medium",
         "high"
       ]
     },
@@ -577,7 +574,6 @@
       "thinking": [
         "minimal",
         "low",
-        "medium",
         "high"
       ],
       "tools": true,
@@ -651,7 +647,6 @@
       "thinking": [
         "minimal",
         "low",
-        "medium",
         "high"
       ],
       "tools": true,
@@ -740,13 +735,13 @@
       "input": [
         "image"
       ],
-      "tools": true,
-      "structured": true,
       "thinking": [
         "low",
         "medium",
         "high"
-      ]
+      ],
+      "tools": true,
+      "structured": true
     },
     {
       "match": "gemini-3-pro-image-preview",
@@ -755,12 +750,12 @@
       "input": [
         "image"
       ],
-      "structured": true,
       "thinking": [
         "low",
         "medium",
         "high"
-      ]
+      ],
+      "structured": true
     },
     {
       "match": "gemma-2-27b-it",
@@ -1207,7 +1202,8 @@
         "none",
         "low",
         "medium",
-        "high"
+        "high",
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1254,15 +1250,15 @@
         "file",
         "image"
       ],
-      "tools": true,
-      "structured": true,
       "thinking": [
         "none",
         "low",
         "medium",
         "high",
         "xhigh"
-      ]
+      ],
+      "tools": true,
+      "structured": true
     },
     {
       "match": "gpt-5-2-codex",
@@ -1570,12 +1566,12 @@
         "image",
         "file"
       ],
-      "structured": true,
       "thinking": [
         "low",
         "medium",
         "high"
-      ]
+      ],
+      "structured": true
     },
     {
       "match": "gpt-5-image-mini",
@@ -1585,12 +1581,12 @@
         "file",
         "image"
       ],
-      "structured": true,
       "thinking": [
         "low",
         "medium",
         "high"
-      ]
+      ],
+      "structured": true
     },
     {
       "match": "gpt-5-mini",
@@ -1682,7 +1678,8 @@
         "low",
         "medium",
         "high",
-        "xhigh"
+        "xhigh",
+        "max"
       ],
       "tools": true,
       "structured": true
@@ -1699,7 +1696,8 @@
         "low",
         "medium",
         "high",
-        "xhigh"
+        "xhigh",
+        "max"
       ],
       "tools": true,
       "structured": true
@@ -1713,6 +1711,7 @@
         "image"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
         "high",
@@ -1730,6 +1729,7 @@
         "image"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
         "high",
@@ -1747,6 +1747,7 @@
         "image"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
         "high",
@@ -1764,6 +1765,7 @@
         "image"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
         "high",
@@ -1810,8 +1812,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -1823,8 +1824,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -1833,7 +1833,11 @@
       "match": "gpt-oss-safeguard-20b",
       "context": 131072,
       "max_output": 65536,
-      "reasoning": true,
+      "thinking": [
+        "low",
+        "medium",
+        "high"
+      ],
       "tools": true,
       "structured": true
     },
@@ -1855,8 +1859,8 @@
         "image",
         "file"
       ],
-      "structured": true,
-      "reasoning": true
+      "reasoning": true,
+      "structured": true
     },
     {
       "match": "grok-4-3",
@@ -1960,38 +1964,36 @@
       "match": "hy3",
       "context": 262144,
       "max_output": 128000,
+      "reasoning": true,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "hy3-preview",
       "context": 262144,
-      "tools": true,
-      "reasoning": true
+      "reasoning": true,
+      "tools": true
     },
     {
       "match": "hy4-preview",
       "context": 1048576,
       "max_output": 64000,
+      "reasoning": true,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "kimi-k2",
       "context": 131072,
       "max_output": 16384,
-      "tools": true,
-      "reasoning": true
+      "tools": true
     },
     {
       "match": "kimi-k2-0905",
       "context": 262144,
       "max_output": 100352,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "kimi-k2-5",
@@ -2244,7 +2246,10 @@
         "image",
         "video"
       ],
-      "reasoning": true,
+      "thinking": [
+        "none",
+        "high"
+      ],
       "tools": true,
       "structured": true
     },
@@ -2313,12 +2318,12 @@
         "image",
         "file"
       ],
-      "tools": true,
-      "structured": true,
       "thinking": [
         "none",
         "high"
-      ]
+      ],
+      "tools": true,
+      "structured": true
     },
     {
       "match": "mistral-medium-3-1",
@@ -2327,12 +2332,12 @@
         "image",
         "file"
       ],
-      "tools": true,
-      "structured": true,
       "thinking": [
         "none",
         "high"
-      ]
+      ],
+      "tools": true,
+      "structured": true
     },
     {
       "match": "mistral-medium-3-5",
@@ -2369,11 +2374,7 @@
       "match": "mistral-small-24b-instruct-2501",
       "context": 32768,
       "max_output": 16384,
-      "structured": true,
-      "thinking": [
-        "none",
-        "high"
-      ]
+      "structured": true
     },
     {
       "match": "mistral-small-2603",
@@ -2395,11 +2396,7 @@
         "image"
       ],
       "tools": true,
-      "structured": true,
-      "thinking": [
-        "none",
-        "high"
-      ]
+      "structured": true
     },
     {
       "match": "mistral-small-3-2-24b-instruct",
@@ -2409,11 +2406,7 @@
         "image"
       ],
       "tools": true,
-      "structured": true,
-      "thinking": [
-        "none",
-        "high"
-      ]
+      "structured": true
     },
     {
       "match": "mixtral-8x22b-instruct",
@@ -2440,13 +2433,13 @@
         "image",
         "file"
       ],
-      "tools": true,
-      "structured": true,
       "thinking": [
         "low",
         "medium",
         "high"
-      ]
+      ],
+      "tools": true,
+      "structured": true
     },
     {
       "match": "o1-pro",
@@ -2456,12 +2449,12 @@
         "image",
         "file"
       ],
-      "structured": true,
       "thinking": [
         "low",
         "medium",
         "high"
-      ]
+      ],
+      "structured": true
     },
     {
       "match": "o3",
@@ -2471,13 +2464,13 @@
         "image",
         "file"
       ],
-      "tools": true,
-      "structured": true,
       "thinking": [
         "low",
         "medium",
         "high"
-      ]
+      ],
+      "tools": true,
+      "structured": true
     },
     {
       "match": "o3-mini",
@@ -2486,13 +2479,13 @@
       "input": [
         "file"
       ],
-      "tools": true,
-      "structured": true,
       "thinking": [
         "low",
         "medium",
         "high"
-      ]
+      ],
+      "tools": true,
+      "structured": true
     },
     {
       "match": "o3-mini-high",
@@ -2517,13 +2510,13 @@
         "file",
         "image"
       ],
-      "tools": true,
-      "structured": true,
       "thinking": [
         "low",
         "medium",
         "high"
-      ]
+      ],
+      "tools": true,
+      "structured": true
     },
     {
       "match": "o4-mini",
@@ -2533,13 +2526,13 @@
         "image",
         "file"
       ],
-      "tools": true,
-      "structured": true,
       "thinking": [
         "low",
         "medium",
         "high"
-      ]
+      ],
+      "tools": true,
+      "structured": true
     },
     {
       "match": "o4-mini-high",
@@ -2615,9 +2608,9 @@
     {
       "match": "qwen3-235b-a22b-2507",
       "context": 262144,
+      "reasoning": true,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "qwen3-235b-a22b-thinking-2507",
@@ -2638,9 +2631,9 @@
       "match": "qwen3-30b-a3b-instruct-2507",
       "context": 262144,
       "max_output": 32000,
+      "reasoning": true,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "qwen3-30b-a3b-thinking-2507",
@@ -2890,13 +2883,13 @@
         "image",
         "video"
       ],
-      "tools": true,
-      "structured": true,
       "thinking": [
         "low",
         "medium",
         "xhigh"
-      ]
+      ],
+      "tools": true,
+      "structured": true
     },
     {
       "match": "qwen3-8-max-0902",
@@ -2939,71 +2932,67 @@
         "audio",
         "video"
       ],
-      "tools": true,
-      "structured": true,
       "thinking": [
         "low",
         "medium",
         "xhigh"
-      ]
+      ],
+      "tools": true,
+      "structured": true
     },
     {
       "match": "qwen3-8b",
       "context": 131072,
       "max_output": 40960,
-      "tools": true,
-      "thinking": [
-        "low",
-        "medium",
-        "xhigh"
-      ]
+      "reasoning": true,
+      "tools": true
     },
     {
       "match": "qwen3-coder",
       "context": 262144,
       "max_output": 66536,
+      "reasoning": true,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "qwen3-coder-30b-a3b-instruct",
       "context": 262144,
       "max_output": 32768,
+      "reasoning": true,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "qwen3-coder-flash",
       "context": 1000000,
       "max_output": 65536,
-      "tools": true,
-      "reasoning": true
+      "reasoning": true,
+      "tools": true
     },
     {
       "match": "qwen3-coder-next",
       "context": 262144,
       "max_output": 65536,
+      "reasoning": true,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "qwen3-coder-plus",
       "context": 1000000,
       "max_output": 65536,
+      "reasoning": true,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "qwen3-max",
       "context": 262144,
       "max_output": 65536,
+      "reasoning": true,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "qwen3-max-thinking",
@@ -3017,9 +3006,9 @@
       "match": "qwen3-next-80b-a3b-instruct",
       "context": 262144,
       "max_output": 65536,
+      "reasoning": true,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "qwen3-next-80b-a3b-thinking",
@@ -3036,9 +3025,9 @@
       "input": [
         "image"
       ],
+      "reasoning": true,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "qwen3-vl-235b-a22b-thinking",
@@ -3058,9 +3047,9 @@
       "input": [
         "image"
       ],
+      "reasoning": true,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "qwen3-vl-30b-a3b-thinking",
@@ -3080,9 +3069,9 @@
       "input": [
         "image"
       ],
+      "reasoning": true,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "qwen3-vl-8b-instruct",
@@ -3091,9 +3080,9 @@
       "input": [
         "image"
       ],
+      "reasoning": true,
       "tools": true,
-      "structured": true,
-      "reasoning": true
+      "structured": true
     },
     {
       "match": "qwen3-vl-8b-thinking",
@@ -3188,14 +3177,14 @@
         "image",
         "video"
       ],
-      "tools": true,
-      "structured": true,
       "thinking": [
         "minimal",
         "low",
         "medium",
         "high"
-      ]
+      ],
+      "tools": true,
+      "structured": true
     },
     {
       "match": "voxtral-small-24b-2507",

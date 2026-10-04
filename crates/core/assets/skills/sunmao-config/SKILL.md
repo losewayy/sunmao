@@ -120,16 +120,20 @@ JSON，agent 直接编辑就等价于用户在设置页里操作。能改的层�
 | Claude Opus 4.6/Sonnet 4.6 | `low`,`medium`,`high`,`max`（无 xhigh） | 同上 |
 | Claude ≤4.5 | adaptive thinking → `reasoning:true` | `thinking` |
 | GPT-5.1 | `none`,`low`,`medium`,`high` | `reasoning_effort`/`reasoning.effort` |
-| GPT-5.5+ / 5.6 | 同上 +`xhigh`（5.6 +`max`） | 同上 |
-| GPT-5 及更早、o 系列 | `low`,`medium`,`high` | 同上 |
+| GPT-5.5+ / 5.6 | 同上 +`xhigh`（5.6 +`max`、`minimal`） | 同上 |
+| GPT-6 Astra | `low`,`medium`,`high`,`xhigh`,`max`（无 none） | 同上 |
+| GPT-6.1 Sol | `low`,`medium`,`high`（无 none/minimal） | 同上 |
+| GPT-6 其余（sol/luna/terra） | `none`~`xhigh` | 同上 |
+| GPT-5 及更早、o 系列、gpt-oss | `low`,`medium`,`high` | 同上 |
 | Qwen3.8 | `low`,`medium`,`xhigh`（默认 xhigh） | `reasoning_effort` |
 | Qwen3 混合系 | `enable_thinking`+`thinking_budget` → `reasoning:true` | — |
-| Gemini 3.x | `minimal`,`low`,`medium`,`high`（3.1-pro 无 minimal） | `thinkingLevel` |
+| Gemini 3.x | `minimal`,`low`,`medium`,`high`（3.1-pro 无 minimal；flash-lite 无 medium） | `thinkingLevel` |
 | Gemini ≤2.5 | `thinkingBudget` → `reasoning:true` | — |
 | Grok-4.6 | `low`,`medium`,`high`,`xhigh` | `reasoning_effort` |
 | Grok-4.5/4.3 | `low`,`medium`,`high`（4.3 另有 `none`） | 同上 |
-| Seed-2.x/Doubao | `minimal`,`low`,`medium`,`high` | `reasoning_effort` |
-| MiniMax M3/M2.x | 开关/强制思考 → `reasoning:true`（OAI effort 只是兼容，不调深度） | — |
+| Seed-2.x/Doubao/seed-evolving | `minimal`,`low`,`medium`,`high` | `reasoning_effort` |
+| MiniMax M3 | `none`,`high`（其余值仅兼容，不调深度） | `reasoning.effort` |
+| MiniMax M2.x | 强制思考 → `reasoning:true` | — |
 | 混元 hy3/hy4、MiMo、command-a | 仅开关 → `reasoning:true` | `thinking.type` |
 | Mistral small/medium-3.5 | `none`,`high`（只有这两档有语义差异） | `reasoning_effort` |
 

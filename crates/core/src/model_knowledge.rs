@@ -8,9 +8,11 @@
 //!
 //! Three layers merge by `match` key, later wins:
 //!   1. the compiled-in seed (`assets/model-knowledge.json` — cold-plug,
-//!      generated from OpenRouter's `/api/v1/models`)
-//!   2. `~/.sunmao/model-knowledge.json` (user layer — the "刷新知识库"
-//!      button writes here)
+//!      curated; `thinking`/`reasoning` rows are normalized through the
+//!      doc-verified `assets/thinking-levels.txt` table at load)
+//!   2. `~/.sunmao/model-knowledge.json` (user layer — hand-editable;
+//!      the old OpenRouter refresh that wrote here was removed because
+//!      gateway guesses kept clobbering verified fields)
 //!   3. `.sunmao/model-knowledge.json` (project layer — per-pool overrides)
 //!
 //! Fills are *defaults, not verdicts*: `fill` only writes fields the entry
@@ -25,25 +27,71 @@ use crate::models::CatalogEntry;
 
 const SEED: &str = include_str!("../assets/model-knowledge.json");
 
-/// OpenRouter vendor slugs the refresh pulls — mainstream families only;
-/// the full catalog (~500 rows, mostly niche) is noise for this table.
-const FAMILIES: &[&str] = &[
-    "deepseek",
-    "qwen",
-    "z-ai",
-    "openai",
-    "anthropic",
-    "google",
-    "moonshotai",
-    "mistralai",
-    "meta-llama",
-    "x-ai",
-    "minimax",
-    "tencent",
-    "cohere",
-    "bytedance-seed",
-    "xiaomi",
-];
+/// `assets/thinking-levels.txt` — the doc-verified effort vocabulary per
+/// model family. Refresh consults it BEFORE trusting a gateway's bare
+/// `supported_parameters` list: `reasoning_effort` appearing there only
+/// says *a* level field exists, never which strings it accepts (DeepSeek
+/// takes high|max, GLM-5.3 low|high|max, Qwen3.8 low|medium|xhigh — the
+/// uniform guess got all of those wrong).
+const LEVELS: &str = include_str!("../assets/thinking-levels.txt");
+
+/// What a family accepts: a level vocabulary, or a bare toggle.
+enum LevelSet {
+    Levels(Vec<String>),
+    Toggle,
+}
+
+/// Tiny glob: `*` spans any run; no wildcard = exact match. Patterns run
+/// against `normalize()`d ids (`glm-5.3-flash` → `glm-5-3-flash`).
+fn glob_match(pat: &str, s: &str) -> bool {
+    if !pat.contains('*') {
+        return pat == s;
+    }
+    let mut rest = s;
+    let mut first = true;
+    let anchored = !pat.starts_with('*');
+    for part in pat.split('*') {
+        if part.is_empty() {
+            continue;
+        }
+        if first && anchored {
+            if !rest.starts_with(part) {
+                return false;
+            }
+            rest = &rest[part.len()..];
+        } else if let Some(p) = rest.find(part) {
+            rest = &rest[p + part.len()..];
+        } else {
+            return false;
+        }
+        first = false;
+    }
+    pat.ends_with('*') || rest.is_empty()
+}
+
+/// First table row whose glob hits the normalized id wins.
+fn level_set(norm: &str) -> Option<LevelSet> {
+    for line in LEVELS.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (globs, rhs) = line.split_once('|')?;
+        if globs.split(',').any(|g| glob_match(g.trim(), norm)) {
+            return if rhs.trim() == "-" {
+                Some(LevelSet::Toggle)
+            } else {
+                Some(LevelSet::Levels(
+                    rhs.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect(),
+                ))
+            };
+        }
+    }
+    None
+}
 
 /// One curated capability guess, keyed on the normalized `match` id.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -118,7 +166,21 @@ impl Knowledge {
                     let Some(key) = row.get("match").and_then(|k| k.as_str()) else {
                         continue;
                     };
-                    if let Ok(e) = serde_json::from_value::<KnowledgeEntry>(row.clone()) {
+                    if let Ok(mut e) = serde_json::from_value::<KnowledgeEntry>(row.clone()) {
+                        // the curated table heals stale guesses in older
+                        // layers — a refresh-era `low,medium,high,max`
+                        // on deepseek/glm gets overwritten by the real set
+                        match level_set(&normalize(key)) {
+                            Some(LevelSet::Levels(ls)) => {
+                                e.thinking = ls;
+                                e.reasoning = false;
+                            }
+                            Some(LevelSet::Toggle) => {
+                                e.thinking.clear();
+                                e.reasoning = true;
+                            }
+                            None => {}
+                        }
                         by_key.insert(normalize(key), e);
                     }
                 }
@@ -176,134 +238,6 @@ impl Knowledge {
     }
 }
 
-/// Pull OpenRouter's catalog + litellm's community registry, keep the
-/// mainstream families, write the user layer
-/// (`~/.sunmao/model-knowledge.json`). OpenRouter is the structural source
-/// (modalities, supported_parameters); litellm is the curated source for
-/// `max_output` — provider self-reports there are documented limits, not
-/// the "context × 0.9" formulas gateways hand back. An optional
-/// freshness action, never a runtime dependency.
-pub async fn refresh_user_layer() -> anyhow::Result<usize> {
-    let client = reqwest::Client::builder()
-        .user_agent("sunmao/0.1")
-        .timeout(std::time::Duration::from_secs(30))
-        .build()?;
-    // OpenRouter is required (it carries the structure); litellm is the
-    // correction layer — a failed pull degrades to OR-only rather than
-    // failing the whole refresh
-    let v: serde_json::Value = client
-        .get("https://openrouter.ai/api/v1/models")
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    let ltm_raw: serde_json::Value = match client
-        .get("https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json")
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-    {
-        Ok(r) => r.json().await.unwrap_or_default(),
-        Err(e) => {
-            tracing::warn!("litellm registry pull failed, refreshing OR-only: {e:#}");
-            serde_json::Value::Null
-        }
-    };
-    let rows = v
-        .get("data")
-        .and_then(|d| d.as_array())
-        .ok_or_else(|| anyhow::anyhow!("listing has no data[]"))?;
-    // litellm keys carry provider prefixes (`azure_ai/x`, `sail/z-ai/Y`)
-    // and duplicates disagree — bucket by normalized basename, and per
-    // model take the largest sane value: provider-limited deployments
-    // report LOW ceilings (a 32k-window host caps output at 32k), while
-    // the documented model cap is the biggest believable one
-    let mut ltm: HashMap<String, Vec<u64>> = HashMap::new();
-    if let Some(map) = ltm_raw.as_object() {
-        for (k, e) in map {
-            if let Some(m) = e.get("max_output_tokens").and_then(|x| x.as_u64()) {
-                ltm.entry(normalize(k)).or_default().push(m);
-            }
-        }
-    }
-    let mut out: Vec<serde_json::Value> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for row in rows {
-        let Some(id) = row.get("id").and_then(|i| i.as_str()) else {
-            continue;
-        };
-        let vendor = id.split('/').next().unwrap_or("").trim_start_matches('~');
-        if !FAMILIES.contains(&vendor) || id.starts_with('~') || id.ends_with(":batch") {
-            continue;
-        }
-        let ctx = row
-            .get("context_length")
-            .or_else(|| row.pointer("/top_provider/context_length"))
-            .and_then(|c| c.as_u64());
-        let Some(ctx) = ctx else { continue };
-        let key = normalize(id);
-        if !seen.insert(key.clone()) {
-            continue;
-        }
-        let sp: Vec<&str> = row
-            .get("supported_parameters")
-            .and_then(|s| s.as_array())
-            .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
-            .unwrap_or_default();
-        let mut e = serde_json::json!({"match": key, "context": ctx});
-        // max_output: prefer the curated registry's largest sane value;
-        // the gateway's own report is only a fallback (it shrugs in
-        // "context × 0.9" formulas that fail the sanity bands)
-        let ltm_best = ltm
-            .get(&key)
-            .into_iter()
-            .flatten()
-            .filter_map(|&m| crate::models::sane_max_output(Some(ctx), Some(m)))
-            .max();
-        let or_best = crate::models::sane_max_output(
-            Some(ctx),
-            row.pointer("/top_provider/max_completion_tokens")
-                .and_then(|m| m.as_u64()),
-        );
-        if let Some(mo) = ltm_best.or(or_best) {
-            e["max_output"] = mo.into();
-        }
-        if let Some(serde_json::Value::Array(inp)) = row.pointer("/architecture/input_modalities") {
-            let kinds: Vec<&serde_json::Value> =
-                inp.iter().filter(|m| m.as_str() != Some("text")).collect();
-            if !kinds.is_empty() {
-                e["input"] = serde_json::json!(kinds);
-            }
-        }
-        if sp.contains(&"reasoning_effort") {
-            e["thinking"] = serde_json::json!(["low", "medium", "high", "max"]);
-        } else if sp.iter().any(|s| s.contains("reasoning")) {
-            e["reasoning"] = serde_json::json!(true);
-        }
-        if sp.contains(&"tools") {
-            e["tools"] = true.into();
-        }
-        if sp.contains(&"structured_outputs") {
-            e["structured"] = true.into();
-        }
-        out.push(e);
-    }
-    out.sort_by(|a, b| {
-        a["match"]
-            .as_str()
-            .unwrap_or("")
-            .cmp(b["match"].as_str().unwrap_or(""))
-    });
-    let dir = sunmao_home();
-    std::fs::create_dir_all(&dir)?;
-    std::fs::write(
-        dir.join("model-knowledge.json"),
-        serde_json::to_string_pretty(&serde_json::json!({"models": out}))?,
-    )?;
-    Ok(out.len())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,6 +252,44 @@ mod tests {
         // not a pool tag
         assert_eq!(normalize("openai/o3:batch"), "o3-batch");
         assert_eq!(normalize("gemini-2.0-flash:free"), "gemini-2-0-flash-free");
+    }
+
+    #[test]
+    fn level_table_matches_doc_verified_families() {
+        let lv = |id| match level_set(&normalize(id)) {
+            Some(LevelSet::Levels(v)) => v.join(","),
+            Some(LevelSet::Toggle) => "-".into(),
+            None => "?".into(),
+        };
+        assert_eq!(lv("cn:deepseek-v4-pro"), "high,max");
+        assert_eq!(lv("deepseek-v3-2"), "high,max");
+        assert_eq!(lv("glm-5-3"), "low,high,max");
+        assert_eq!(lv("glm-5-2"), "none,minimal,low,medium,high,xhigh,max");
+        assert_eq!(lv("glm-4-6"), "-");
+        assert_eq!(lv("kimi-k3"), "low,high,max");
+        assert_eq!(lv("kimi-k2-6"), "-");
+        assert_eq!(lv("claude-opus-4-6"), "low,medium,high,max");
+        assert_eq!(lv("claude-opus-5"), "low,medium,high,xhigh,max");
+        assert_eq!(lv("claude-sonnet-4-5"), "-");
+        assert_eq!(lv("openai/gpt-5-1"), "none,low,medium,high");
+        assert_eq!(lv("openai/o3"), "low,medium,high");
+        assert_eq!(lv("qwen3-8-max"), "low,medium,xhigh");
+        assert_eq!(lv("gemini-3-5-flash"), "minimal,low,medium,high");
+        assert_eq!(lv("grok-4-6"), "low,medium,high,xhigh");
+        assert_eq!(lv("minimax-m3"), "-");
+        assert_eq!(lv("seed-2-1-pro"), "minimal,low,medium,high");
+        // unlisted families fall through to the caller's fallback
+        assert_eq!(lv("llama-4-scout"), "?");
+    }
+
+    #[test]
+    fn glob_handles_anchors_and_spans() {
+        assert!(glob_match("deepseek-v4*", "deepseek-v4-pro-0813"));
+        assert!(!glob_match("deepseek-v4*", "deepseek-v3-2"));
+        assert!(glob_match("gemini-*pro*", "gemini-3-1-pro-preview"));
+        assert!(!glob_match("gemini-*pro*", "gemini-3-5-flash"));
+        assert!(glob_match("o4-*", "o4-mini"));
+        assert!(!glob_match("o4-*", "o3"));
     }
 
     #[test]

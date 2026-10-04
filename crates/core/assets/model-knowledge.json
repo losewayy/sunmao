@@ -12,6 +12,7 @@
         "low",
         "medium",
         "high",
+        "xhigh",
         "max"
       ],
       "tools": true,
@@ -29,6 +30,7 @@
         "low",
         "medium",
         "high",
+        "xhigh",
         "max"
       ],
       "tools": true,
@@ -98,6 +100,7 @@
         "low",
         "medium",
         "high",
+        "xhigh",
         "max"
       ],
       "tools": true,
@@ -115,6 +118,7 @@
         "low",
         "medium",
         "high",
+        "xhigh",
         "max"
       ],
       "tools": true,
@@ -132,6 +136,7 @@
         "low",
         "medium",
         "high",
+        "xhigh",
         "max"
       ],
       "tools": true,
@@ -149,6 +154,7 @@
         "low",
         "medium",
         "high",
+        "xhigh",
         "max"
       ],
       "tools": true,
@@ -206,6 +212,7 @@
         "low",
         "medium",
         "high",
+        "xhigh",
         "max"
       ],
       "tools": true,
@@ -223,6 +230,7 @@
         "low",
         "medium",
         "high",
+        "xhigh",
         "max"
       ],
       "tools": true,
@@ -242,7 +250,8 @@
       "match": "command-a",
       "context": 256000,
       "max_output": 8192,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "command-a-plus",
@@ -260,33 +269,38 @@
       "context": 128000,
       "max_output": 4096,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "command-r-plus-08-2024",
       "context": 128000,
       "max_output": 4096,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "command-r7b-12-2024",
       "context": 128000,
       "max_output": 4096,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "deepseek-chat",
       "context": 163840,
       "max_output": 16384,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "deepseek-chat-v3-0324",
       "context": 163840,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "deepseek-chat-v3-1",
@@ -323,17 +337,23 @@
       "match": "deepseek-v3-2",
       "context": 163840,
       "max_output": 65536,
-      "reasoning": true,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "high",
+        "max"
+      ]
     },
     {
       "match": "deepseek-v3-2-exp",
       "context": 163840,
       "max_output": 65536,
-      "reasoning": true,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "high",
+        "max"
+      ]
     },
     {
       "match": "deepseek-v4-1-flash",
@@ -343,8 +363,6 @@
         "image"
       ],
       "thinking": [
-        "low",
-        "medium",
         "high",
         "max"
       ],
@@ -356,8 +374,6 @@
       "context": 1048576,
       "max_output": 393216,
       "thinking": [
-        "low",
-        "medium",
         "high",
         "max"
       ],
@@ -369,8 +385,6 @@
       "context": 1048576,
       "max_output": 393216,
       "thinking": [
-        "low",
-        "medium",
         "high",
         "max"
       ],
@@ -385,8 +399,6 @@
         "image"
       ],
       "thinking": [
-        "low",
-        "medium",
         "high",
         "max"
       ],
@@ -398,8 +410,6 @@
       "context": 1048576,
       "max_output": 393216,
       "thinking": [
-        "low",
-        "medium",
         "high",
         "max"
       ],
@@ -411,8 +421,6 @@
       "context": 1048576,
       "max_output": 393216,
       "thinking": [
-        "low",
-        "medium",
         "high",
         "max"
       ],
@@ -449,7 +457,8 @@
       "input": [
         "image"
       ],
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "gemini-2-5-flash-lite",
@@ -500,10 +509,10 @@
         "image"
       ],
       "thinking": [
+        "minimal",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "structured": true
     },
@@ -515,10 +524,10 @@
         "image"
       ],
       "thinking": [
+        "minimal",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "structured": true
     },
@@ -533,10 +542,10 @@
         "audio"
       ],
       "thinking": [
+        "minimal",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -549,10 +558,10 @@
         "image"
       ],
       "thinking": [
+        "minimal",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ]
     },
     {
@@ -566,10 +575,10 @@
         "audio"
       ],
       "thinking": [
+        "minimal",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -587,8 +596,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -606,8 +614,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -623,10 +630,10 @@
         "audio"
       ],
       "thinking": [
+        "minimal",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -642,10 +649,10 @@
         "audio"
       ],
       "thinking": [
+        "minimal",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -661,10 +668,10 @@
         "audio"
       ],
       "thinking": [
+        "minimal",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -680,10 +687,10 @@
         "audio"
       ],
       "thinking": [
+        "minimal",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -699,10 +706,10 @@
         "audio"
       ],
       "thinking": [
+        "minimal",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -718,10 +725,10 @@
         "video"
       ],
       "thinking": [
+        "minimal",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -733,9 +740,13 @@
       "input": [
         "image"
       ],
-      "reasoning": true,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "low",
+        "medium",
+        "high"
+      ]
     },
     {
       "match": "gemini-3-pro-image-preview",
@@ -744,8 +755,12 @@
       "input": [
         "image"
       ],
-      "reasoning": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "low",
+        "medium",
+        "high"
+      ]
     },
     {
       "match": "gemma-2-27b-it",
@@ -908,9 +923,12 @@
       "context": 1048576,
       "max_output": 262144,
       "thinking": [
+        "none",
+        "minimal",
         "low",
         "medium",
         "high",
+        "xhigh",
         "max"
       ],
       "tools": true,
@@ -922,7 +940,6 @@
       "max_output": 262144,
       "thinking": [
         "low",
-        "medium",
         "high",
         "max"
       ],
@@ -939,7 +956,6 @@
       ],
       "thinking": [
         "low",
-        "medium",
         "high",
         "max"
       ],
@@ -956,7 +972,6 @@
       ],
       "thinking": [
         "low",
-        "medium",
         "high",
         "max"
       ],
@@ -968,7 +983,6 @@
       "max_output": 131072,
       "thinking": [
         "low",
-        "medium",
         "high",
         "max"
       ],
@@ -1144,8 +1158,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -1159,10 +1172,10 @@
         "file"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -1175,10 +1188,10 @@
         "image"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -1191,10 +1204,10 @@
         "image"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -1207,10 +1220,10 @@
         "image"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -1224,10 +1237,11 @@
         "image"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1241,7 +1255,14 @@
         "image"
       ],
       "tools": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
     },
     {
       "match": "gpt-5-2-codex",
@@ -1251,10 +1272,11 @@
         "image"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1268,10 +1290,11 @@
         "file"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1285,10 +1308,11 @@
         "file"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1302,10 +1326,11 @@
         "file"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1319,10 +1344,11 @@
         "file"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "structured": true
     },
@@ -1335,10 +1361,11 @@
         "image"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1352,10 +1379,11 @@
         "image"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1369,10 +1397,11 @@
         "file"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1386,10 +1415,11 @@
         "image"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1403,10 +1433,11 @@
         "image"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1420,9 +1451,12 @@
         "image"
       ],
       "thinking": [
+        "none",
+        "minimal",
         "low",
         "medium",
         "high",
+        "xhigh",
         "max"
       ],
       "tools": true,
@@ -1437,9 +1471,12 @@
         "image"
       ],
       "thinking": [
+        "none",
+        "minimal",
         "low",
         "medium",
         "high",
+        "xhigh",
         "max"
       ],
       "tools": true,
@@ -1454,9 +1491,12 @@
         "image"
       ],
       "thinking": [
+        "none",
+        "minimal",
         "low",
         "medium",
         "high",
+        "xhigh",
         "max"
       ],
       "tools": true,
@@ -1471,9 +1511,12 @@
         "image"
       ],
       "thinking": [
+        "none",
+        "minimal",
         "low",
         "medium",
         "high",
+        "xhigh",
         "max"
       ],
       "tools": true,
@@ -1488,9 +1531,12 @@
         "image"
       ],
       "thinking": [
+        "none",
+        "minimal",
         "low",
         "medium",
         "high",
+        "xhigh",
         "max"
       ],
       "tools": true,
@@ -1505,9 +1551,12 @@
         "image"
       ],
       "thinking": [
+        "none",
+        "minimal",
         "low",
         "medium",
         "high",
+        "xhigh",
         "max"
       ],
       "tools": true,
@@ -1521,8 +1570,12 @@
         "image",
         "file"
       ],
-      "reasoning": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "low",
+        "medium",
+        "high"
+      ]
     },
     {
       "match": "gpt-5-image-mini",
@@ -1532,8 +1585,12 @@
         "file",
         "image"
       ],
-      "reasoning": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "low",
+        "medium",
+        "high"
+      ]
     },
     {
       "match": "gpt-5-mini",
@@ -1546,8 +1603,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -1563,8 +1619,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -1578,10 +1633,7 @@
         "file"
       ],
       "thinking": [
-        "low",
-        "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -1597,8 +1649,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -1614,8 +1665,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -1632,7 +1682,7 @@
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1649,7 +1699,7 @@
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1666,7 +1716,7 @@
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1683,7 +1733,7 @@
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1700,7 +1750,7 @@
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1717,7 +1767,7 @@
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1805,13 +1855,8 @@
         "image",
         "file"
       ],
-      "thinking": [
-        "low",
-        "medium",
-        "high",
-        "max"
-      ],
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "grok-4-3",
@@ -1822,10 +1867,10 @@
         "file"
       ],
       "thinking": [
+        "none",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -1840,8 +1885,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -1858,7 +1902,7 @@
         "low",
         "medium",
         "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -1873,8 +1917,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -1917,51 +1960,38 @@
       "match": "hy3",
       "context": 262144,
       "max_output": 128000,
-      "thinking": [
-        "low",
-        "medium",
-        "high",
-        "max"
-      ],
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "hy3-preview",
       "context": 262144,
-      "thinking": [
-        "low",
-        "medium",
-        "high",
-        "max"
-      ],
-      "tools": true
+      "tools": true,
+      "reasoning": true
     },
     {
       "match": "hy4-preview",
       "context": 1048576,
       "max_output": 64000,
-      "thinking": [
-        "low",
-        "medium",
-        "high",
-        "max"
-      ],
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "kimi-k2",
       "context": 131072,
       "max_output": 16384,
-      "tools": true
+      "tools": true,
+      "reasoning": true
     },
     {
       "match": "kimi-k2-0905",
       "context": 262144,
       "max_output": 100352,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "kimi-k2-5",
@@ -2013,7 +2043,6 @@
       ],
       "thinking": [
         "low",
-        "medium",
         "high",
         "max"
       ],
@@ -2161,7 +2190,8 @@
       "context": 1000192,
       "input": [
         "image"
-      ]
+      ],
+      "reasoning": true
     },
     {
       "match": "minimax-m1",
@@ -2203,7 +2233,8 @@
     {
       "match": "minimax-m2-her",
       "context": 65536,
-      "max_output": 2048
+      "max_output": 2048,
+      "reasoning": true
     },
     {
       "match": "minimax-m3",
@@ -2283,7 +2314,11 @@
         "file"
       ],
       "tools": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "none",
+        "high"
+      ]
     },
     {
       "match": "mistral-medium-3-1",
@@ -2293,7 +2328,11 @@
         "file"
       ],
       "tools": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "none",
+        "high"
+      ]
     },
     {
       "match": "mistral-medium-3-5",
@@ -2304,10 +2343,8 @@
         "file"
       ],
       "thinking": [
-        "low",
-        "medium",
-        "high",
-        "max"
+        "none",
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -2332,7 +2369,11 @@
       "match": "mistral-small-24b-instruct-2501",
       "context": 32768,
       "max_output": 16384,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "none",
+        "high"
+      ]
     },
     {
       "match": "mistral-small-2603",
@@ -2341,10 +2382,8 @@
         "image"
       ],
       "thinking": [
-        "low",
-        "medium",
-        "high",
-        "max"
+        "none",
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -2356,7 +2395,11 @@
         "image"
       ],
       "tools": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "none",
+        "high"
+      ]
     },
     {
       "match": "mistral-small-3-2-24b-instruct",
@@ -2366,7 +2409,11 @@
         "image"
       ],
       "tools": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "none",
+        "high"
+      ]
     },
     {
       "match": "mixtral-8x22b-instruct",
@@ -2393,9 +2440,13 @@
         "image",
         "file"
       ],
-      "reasoning": true,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "low",
+        "medium",
+        "high"
+      ]
     },
     {
       "match": "o1-pro",
@@ -2405,8 +2456,12 @@
         "image",
         "file"
       ],
-      "reasoning": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "low",
+        "medium",
+        "high"
+      ]
     },
     {
       "match": "o3",
@@ -2416,9 +2471,13 @@
         "image",
         "file"
       ],
-      "reasoning": true,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "low",
+        "medium",
+        "high"
+      ]
     },
     {
       "match": "o3-mini",
@@ -2427,9 +2486,13 @@
       "input": [
         "file"
       ],
-      "reasoning": true,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "low",
+        "medium",
+        "high"
+      ]
     },
     {
       "match": "o3-mini-high",
@@ -2441,8 +2504,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -2455,9 +2517,13 @@
         "file",
         "image"
       ],
-      "reasoning": true,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "low",
+        "medium",
+        "high"
+      ]
     },
     {
       "match": "o4-mini",
@@ -2467,9 +2533,13 @@
         "image",
         "file"
       ],
-      "reasoning": true,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "low",
+        "medium",
+        "high"
+      ]
     },
     {
       "match": "o4-mini-high",
@@ -2482,8 +2552,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -2547,7 +2616,8 @@
       "match": "qwen3-235b-a22b-2507",
       "context": 262144,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "qwen3-235b-a22b-thinking-2507",
@@ -2569,7 +2639,8 @@
       "context": 262144,
       "max_output": 32000,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "qwen3-30b-a3b-thinking-2507",
@@ -2775,8 +2846,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -2792,8 +2862,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -2808,8 +2877,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -2822,9 +2890,13 @@
         "image",
         "video"
       ],
-      "reasoning": true,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "low",
+        "medium",
+        "xhigh"
+      ]
     },
     {
       "match": "qwen3-8-max-0902",
@@ -2837,8 +2909,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -2854,8 +2925,7 @@
       "thinking": [
         "low",
         "medium",
-        "high",
-        "max"
+        "xhigh"
       ],
       "tools": true,
       "structured": true
@@ -2869,57 +2939,71 @@
         "audio",
         "video"
       ],
-      "reasoning": true,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "low",
+        "medium",
+        "xhigh"
+      ]
     },
     {
       "match": "qwen3-8b",
       "context": 131072,
       "max_output": 40960,
-      "reasoning": true,
-      "tools": true
+      "tools": true,
+      "thinking": [
+        "low",
+        "medium",
+        "xhigh"
+      ]
     },
     {
       "match": "qwen3-coder",
       "context": 262144,
       "max_output": 66536,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "qwen3-coder-30b-a3b-instruct",
       "context": 262144,
       "max_output": 32768,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "qwen3-coder-flash",
       "context": 1000000,
       "max_output": 65536,
-      "tools": true
+      "tools": true,
+      "reasoning": true
     },
     {
       "match": "qwen3-coder-next",
       "context": 262144,
       "max_output": 65536,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "qwen3-coder-plus",
       "context": 1000000,
       "max_output": 65536,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "qwen3-max",
       "context": 262144,
       "max_output": 65536,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "qwen3-max-thinking",
@@ -2934,7 +3018,8 @@
       "context": 262144,
       "max_output": 65536,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "qwen3-next-80b-a3b-thinking",
@@ -2952,7 +3037,8 @@
         "image"
       ],
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "qwen3-vl-235b-a22b-thinking",
@@ -2973,7 +3059,8 @@
         "image"
       ],
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "qwen3-vl-30b-a3b-thinking",
@@ -2994,7 +3081,8 @@
         "image"
       ],
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "qwen3-vl-8b-instruct",
@@ -3004,7 +3092,8 @@
         "image"
       ],
       "tools": true,
-      "structured": true
+      "structured": true,
+      "reasoning": true
     },
     {
       "match": "qwen3-vl-8b-thinking",
@@ -3050,10 +3139,10 @@
         "video"
       ],
       "thinking": [
+        "minimal",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -3067,10 +3156,10 @@
         "video"
       ],
       "thinking": [
+        "minimal",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -3084,10 +3173,10 @@
         "video"
       ],
       "thinking": [
+        "minimal",
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ],
       "tools": true,
       "structured": true
@@ -3099,9 +3188,14 @@
         "image",
         "video"
       ],
-      "reasoning": true,
       "tools": true,
-      "structured": true
+      "structured": true,
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
     },
     {
       "match": "voxtral-small-24b-2507",

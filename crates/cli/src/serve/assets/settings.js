@@ -221,6 +221,18 @@ function renderProviders() {
   };
   const am = host.querySelector('[data-f="addmodel"]');
   if (am) am.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); providerAction('addmodel', am); } });
+  const cklDrag = host.querySelector('.pv-ckl-drag');
+  if (cklDrag) cklDrag.addEventListener('pointerdown', e => {
+    const ckl = host.querySelector('.pv-ckl');
+    if (!ckl) return;
+    e.preventDefault();
+    cklDrag.setPointerCapture(e.pointerId);
+    const y0 = e.clientY, h0 = ckl.getBoundingClientRect().height;
+    const mv = ev => ckl.style.setProperty('--pv-ckl-h', Math.max(120, Math.min(innerHeight * 0.7, h0 + ev.clientY - y0)) + 'px');
+    const up = () => { cklDrag.removeEventListener('pointermove', mv); cklDrag.removeEventListener('pointerup', up); };
+    cklDrag.addEventListener('pointermove', mv);
+    cklDrag.addEventListener('pointerup', up);
+  });
 }
 function provForm(n, p) {
   const v = pvEdit || {};
@@ -231,7 +243,7 @@ function provForm(n, p) {
   // capability toggle chips. Fetched entries arrive knowledge-filled;
   // the user edits whatever the guess got wrong.
   const mchip = (m, kind, label) => {
-    const mods = m.input_modalities || [];
+    const mods = (m.input_modalities && m.input_modalities.length) ? m.input_modalities : ['file'];
     return `<button class="pv-chip${mods.includes(kind) ? ' on' : ''}" data-mf="mod" data-mk="${kind}" data-mid="${esc(m.id)}" data-tip="输入模态 · ${kind}">${label}</button>`;
   };
   const mflag = (m, key, label, tip) => `<button class="pv-chip${m[key] ? ' on' : ''}" data-mf="flag" data-mk="${key}" data-mid="${esc(m.id)}" data-tip="${tip}">${label}</button>`;
@@ -246,11 +258,11 @@ function provForm(n, p) {
     return `<div class="pv-ckr"><button class="pv-ck" data-mc="${esc(m.id)}">${ic(v.sel && v.sel.has(m.id) ? 'square-check' : 'square', 'i sm')}<span class="mono">${esc(m.id)}</span></button>`
       + `<div class="pv-cf"><label class="pv-f">上下文<input class="pv-num" data-cx="${esc(m.id)}" value="${m.context_length || ''}" placeholder="—" spellcheck="false" data-tip="上下文窗口（tokens）"></label><label class="pv-f">输出<input class="pv-num" data-mo="${esc(m.id)}" value="${m.max_output || ''}" placeholder="—" spellcheck="false" data-tip="单次输出上限（tokens）"></label></div>`
       + `<div class="pv-cf"><span class="pv-fl">思考</span><span class="pv-chips">${chips}<button class="pv-chip${tgl ? ' on' : ''}" data-mf="tgl" data-mid="${esc(m.id)}" data-tip="模型只提供思考开关，没有档位">仅开关</button></span></div>`
-      + `<div class="pv-cf"><span class="pv-fl">输入</span><span class="pv-chips">${mchip(m, 'image', '图')}${mchip(m, 'audio', '音')}${mchip(m, 'video', '视')}${mchip(m, 'file', '文')}<i class="pv-sep"></i>${mflag(m, 'supports_tools', '具', '支持工具调用')}${mflag(m, 'structured_outputs', '构', '支持结构化输出')}</span></div>`
+      + `<div class="pv-cf"><span class="pv-fl">输入</span><span class="pv-chips">${mchip(m, 'file', '文')}${mchip(m, 'image', '图')}${mchip(m, 'video', '视')}${mchip(m, 'audio', '音')}<i class="pv-sep"></i>${mflag(m, 'supports_tools', '具', '支持工具调用')}${mflag(m, 'structured_outputs', '构', '支持结构化输出')}</span></div>`
       + `</div>`;
   };
   const list = cands.length
-    ? `<div class="pv-ckl scroll">${cands.map(mrow).join('')}</div>`
+    ? `<div class="pv-ckl scroll">${cands.map(mrow).join('')}</div><div class="pv-ckl-drag" data-tip="拖动调整列表高度"></div>`
     : `<div class="pv-empty">${v.fetching ? '拉取中…' : '未拉取 — 也可在下方直接填 model id'}</div>`;
   return `<div class="pv-form">
     <label>名称<input data-f="name" value="${esc(n)}" ${n ? 'disabled' : ''} placeholder="如 default、deepseek"></label>

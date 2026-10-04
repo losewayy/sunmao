@@ -28,8 +28,9 @@ architecture: components joined by seams, every seam a contract.
   list is a pure fold over facts. `--resume` to continue, `--dataflow` for a
   "what data went where" report, `--sessions` to list
 - **Ten native tools** — `Read` / `Write` / `Edit` (whitespace-normalized
-  match) / `Bash` (embedded POSIX shell — identical syntax on Windows) /
-  `Glob` / `Grep` (managed `rg` subprocess, no shell) / `JobOutput`
+  match) / `Bash` (PowerShell 7 on Windows when available; embedded POSIX
+  for cross-platform syntax and fallback) / `Glob` / `Grep` (managed `rg`
+  subprocess, no shell) / `JobOutput`
   (filesystem-state background jobs) / `HtmlArtifact` / `WebFetch` /
   `Task` (depth-capped nested agents with named `.md` definitions —
   `model:` routes their adapter, `tools:`/`spawns:` whitelist their

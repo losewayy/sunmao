@@ -3,7 +3,7 @@
 > This file is the design contract — what we build, and the lines we
 > deliberately don't cross.
 
-> 状态：v0.2 在库进行中。已落地：SSE/协议栈（OAI + Anthropic + Responses 三方言）、事件溯源会话（resume/fork/dataflow）、十二原生工具 + Task 子代理（steer 下行 + SendMessage 上行双向消息）、Read-before-Write 闸门、deno_task_shell Bash + 后台 job、compaction、Claude 契约 hooks（含 `.claude/settings*.json` 兼容加载）、MCP client（stdio + HTTP）、ACP v2 server、TUI（CJK 原生、块式 transcript、审批卡、slash 菜单、markdown、tokyonight 主题）、审批闸（风险命令分级问询）、PromptAssembler 分层提示词、shell/preflight（spawnfate 预判）、AGENTS.md/skills 生态加载。
+> 状态：v0.2 在库进行中。已落地：SSE/协议栈（OAI + Anthropic + Responses 三方言）、事件溯源会话（resume/fork/dataflow）、十二原生工具 + Task 子代理（steer 下行 + SendMessage 上行双向消息）、Read-before-Write 闸门、Bash 双后端（PowerShell 7 + deno_task_shell POSIX）与后台 job、compaction、Claude 契约 hooks（含 `.claude/settings*.json` 兼容加载）、MCP client（stdio + HTTP）、ACP v2 server、TUI（CJK 原生、块式 transcript、审批卡、slash 菜单、markdown、tokyonight 主题）、审批闸（风险命令分级问询）、PromptAssembler 分层提示词、shell/preflight（spawnfate 预判）、AGENTS.md/skills 生态加载。
 > **sunmao（榫卯）** — joinery by seams; the repo is the contract.
 
 ## 1. 定位
@@ -100,7 +100,7 @@
 
 **Edit 成熟细节（抄 grok-build 作业）**：归一化匹配吃空白漂移（`find_normalized_match_positions` 模式）；`old_string` 为空=建文件；Read 行号锚前缀；Read-before-Write 闸门（改已有文件必须先读过）。
 
-**Windows 立场（差异点）**：`Bash` 首选内嵌 `deno_task_shell`（Rust 跨平台 bash 方言解释器）——模型写的 bash 在 Windows 上原样跑，行为逐字节确定、不依赖 Git Bash；覆盖不了的外部命令落回真 shell。工具描述向模型声明当前 shell 方言。
+**Windows 立场（差异点）**：`Bash` 在 Windows 自动选择 PowerShell 7（PATH 中有 `pwsh` 时）；没有 `pwsh` 时回退到内嵌 `deno_task_shell` POSIX 后端。显式选择 POSIX 可保留跨平台一致的 Bash 方言，不依赖 Git Bash；显式选择 PowerShell 则使用 Windows 原生 PowerShell 语法。当前后端同时决定执行器、审批分类器和发给模型的 Shell 方言。POSIX 后端的 Windows 参数风险由 `shell/preflight` 预检并向模型给出建议。
 
 **吸收 FastCtx（yc-duan/fastctx，Apache-2.0）的设计模式——吸模式不吸源码**：
 
@@ -154,8 +154,8 @@ hook engine（核心）
 
 ### 4.6 `audit` — 审批与审计
 
-- 审批缝：`tools/*` 执行前可挂 policy（always_ask / auto / full-access 模式；`tool_input` 级规则）✅ `Context.approval_mode`（`agent/mode.rs`）：always_ask/auto/read_only/full_access 四档，`gate.rs` 裁决链 deny→grants→mode→ask→classify；Bash mutation 走 deno_task_shell AST（重定向/命令替换/动态 verb），动词白名单 `assets/readonly-verbs.txt` 可冷插；`/mode`（REPL+TUI）+ GUI composer chip + ACP `set_config_option` 三端入口，切换写 `mode_change` SessionEvent 可审计；规则 specifier 支持 `!` 否定与 `re:` 正则（`deny: Read(**/.env)` + `Read(!**/.env.example)` 这类例外可写），子代理 `agents/*.md` 的 `permissions:` 只允许 deny/ask overlay——def 能收窄自己的裁决面，不能放宽会话规则
-- **`shell/preflight`（差异化原语）**：Bash 命令执行前过 spawnfate 引擎——模拟 Windows spawn 各层（deno_task_shell 的 which 解析→CreateProcess→argv 序列化→目标 argv 拆分），预测命令会死在哪层/被怎么改写；结果进审计日志+警告回模型。spawnfate 同时以 MCP 形态对外发布（MCP client 的 dogfood + "我们给生态供货"的证明）
+- 审批缝：`tools/*` 执行前可挂 policy（always_ask / auto / full-access 模式；`tool_input` 级规则）✅ `Context.approval_mode`（`agent/mode.rs`）：always_ask/auto/read_only/full_access 四档，`gate.rs` 裁决链 deny→grants→mode→ask→classify；Bash mutation 按选定方言分类：POSIX 后端走 deno_task_shell AST 与可冷插的动词白名单 `assets/readonly-verbs.txt`；PowerShell 后端走引号感知的命令分段与动词规则；`/mode`（REPL+TUI）+ GUI composer chip + ACP `set_config_option` 三端入口，切换写 `mode_change` SessionEvent 可审计；规则 specifier 支持 `!` 否定与 `re:` 正则（`deny: Read(**/.env)` + `Read(!**/.env.example)` 这类例外可写），子代理 `agents/*.md` 的 `permissions:` 只允许 deny/ask overlay——def 能收窄自己的裁决面，不能放宽会话规则
+- **`shell/preflight`（差异化原语）**：POSIX 后端在 Windows 执行前过 spawnfate 引擎——模拟 Windows spawn 各层（deno_task_shell 的 which 解析→CreateProcess→argv 序列化→目标 argv 拆分），预测命令会死在哪层/被怎么改写；结果进审计日志+警告回模型。spawnfate 同时以 MCP 形态对外发布（MCP client 的 dogfood + "我们给生态供货"的证明）
 - 审计流：每一次 hook 决策、每一次外部动作（exec/网络/写盘）、每一次上下文注入——全部进 SessionEvent 日志
 - **data-flow 文档是一等功能**：`sunmao --dataflow` 从日志生成"什么数据去了哪"的机器可读报告
 
@@ -268,10 +268,10 @@ seam-first 的最大风险是自反的：**接缝本身就是抽象税**。纪�
 |---|---|
 | `tokio` / `reqwest` / `serde` / `clap` | async runtime / HTTP / 序列化 / CLI 解析——基础设施层不造 |
 | `rmcp`（官方 Rust MCP SDK） | MCP client——fastctx 实战背书 |
-| `deno_task_shell` | `Bash` 工具的跨平台方言解释器；其 parser AST 同时供 `shell/preflight` 与审批缝分段（命令边界 `&&`/`;`/`||` 拆开，pipeline 保持整段——`| sh` 族模式要在 join 上匹配）。SPEC 曾列 `tree-sitter-bash`，实装弃用：执行器的语法是唯一权威语法，第二解析器只会引入口径漂移还白加依赖 |
+| `deno_task_shell` | `Bash` 的内嵌 POSIX 后端；其 parser AST 是该后端执行、`shell/preflight` 与审批分段的语法权威（命令边界 `&&`/`;`/`||` 拆开，pipeline 保持整段——`| sh` 族模式要在 join 上匹配）。`tree-sitter-bash` 未引入：POSIX 执行器自带 parser，第二解析器会引入口径漂移 |
 | `ratatui` | TUI 渲染 |
 | `rg.exe`（ripgrep 二进制） | `Grep` 后端，RG_BIN_PATH 式注入（受管子进程②档） |
-| `tree-sitter-bash` | ~~`Bash` 命令结构化解析~~ **弃用，未引入**——deno_task_shell 自带 parser，执行器语法即权威语法 |
+| `tree-sitter-bash` | ~~`Bash` 命令结构化解析~~ **弃用，未引入**——POSIX 后端以 deno_task_shell parser 为语法权威 |
 | `agent-client-protocol` crate | ACP 传输/类型基元 |
 | 现有生态整体 | MCP servers、Claude 契约 hooks、skills、plugins——**消费，不实现** |
 

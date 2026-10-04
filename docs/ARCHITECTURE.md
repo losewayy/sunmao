@@ -71,8 +71,9 @@ table (`assets/stderr-hints.txt`).
 
 ```text
 fs.rs      Read (line numbers) / Write / Edit (whitespace-normalized match)
-shell.rs   Bash (deno_task_shell — POSIX on Windows) + JobOutput (jobs are
-           files under .sunmao/jobs/{id}/, inspectable while running)
+shell.rs   Bash — PowerShell 7 on Windows when auto-detected and available;
+           deno_task_shell for the POSIX backend + JobOutput (jobs live under
+           .sunmao/jobs/{id}/ and are inspectable while running)
 search.rs  Glob (200-entry cap) + Grep (managed rg child, no shell)
 artifact.rs HtmlArtifact — emits durable Artifact session facts
 todo.rs    TodoWrite — the model's task list; durable Todos events feed a

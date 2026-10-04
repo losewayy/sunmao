@@ -103,64 +103,9 @@ pub(crate) fn spawn_trusted(cwd: &Path, source: &Path, command: &str) -> bool {
     is_trusted(cwd, Layer::Project, source, command)
 }
 
-/// The spawn half of the `/hooks` roster: every ext spec and every MCP
-/// `command:` spec the session *would* launch, as rows alongside the hook
-/// commands. Built live from the same scans `connect_all` runs, so the
-/// listing can never drift from what the gate sees.
-pub(crate) fn spawn_rows(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<HookRow> {
-    let row = |kind: RowKind,
-               event: &str,
-               name: String,
-               source: PathBuf,
-               text: String,
-               display: String| {
-        let status = if is_trusted(cwd, Layer::Project, &source, &text) {
-            "pinned"
-        } else {
-            "untrusted"
-        };
-        HookRow {
-            kind,
-            event: event.to_string(),
-            matcher: name,
-            digest: digest(&source, &text),
-            command: display,
-            pin_text: text,
-            source,
-            status,
-        }
-    };
-    let mut rows = Vec::new();
-    for (manifest, spec, plugin) in crate::ext::resolve_specs(cwd, extra_roots) {
-        rows.push(row(
-            RowKind::Ext,
-            "ext:spawn",
-            plugin,
-            manifest,
-            spec_text(&spec.command, &spec.args, &spec.env),
-            spec_display(&spec.command, &spec.args, &spec.env),
-        ));
-    }
-    let mut servers: Vec<_> = crate::mcp::resolve_servers(cwd, extra_roots)
-        .into_iter()
-        .collect();
-    servers.sort_by(|a, b| a.0.cmp(&b.0));
-    for (name, (spec, source)) in servers {
-        // url transports never spawn a local command — nothing to pin
-        let Some(command) = &spec.command else {
-            continue;
-        };
-        rows.push(row(
-            RowKind::Mcp,
-            "mcp:connect",
-            name,
-            source,
-            spec_text(command, &spec.args, &spec.env),
-            spec_display(command, &spec.args, &spec.env),
-        ));
-    }
-    rows
-}
+// `config_rows`/`spawn_rows` — the roster's non-hook rows (privileged
+// config files, ext/MCP spawn surfaces) — live in `trust_rows.rs`: same
+// ledger, different scan surface.
 
 /// The ledger path — same `.sunmao/` bucket as every other per-project
 /// runtime file. Format: `{"trusted": {"<sha256>": {"source", "command"}}}`.
@@ -415,7 +360,8 @@ impl super::HookEngine {
                 }
             }
         }
-        rows.extend(spawn_rows(&self.cwd, &self.extra_roots));
+        rows.extend(super::trust_rows::spawn_rows(&self.cwd, &self.extra_roots));
+        rows.extend(super::trust_rows::config_rows(&self.cwd, &self.extra_roots));
         rows.extend(crate::permissions::permission_rows(
             &self.cwd,
             &self.extra_roots,

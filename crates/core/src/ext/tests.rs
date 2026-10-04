@@ -108,7 +108,7 @@ async fn untrusted_extension_never_spawns() {
         "the skip must be durable"
     );
     // the /hooks roster sees the gated row
-    let rows = crate::hooks::trust::spawn_rows(&dir, &[]);
+    let rows = crate::hooks::trust_rows::spawn_rows(&dir, &[]);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].kind, crate::hooks::trust::RowKind::Ext);
     assert_eq!(rows[0].matcher, "evil");

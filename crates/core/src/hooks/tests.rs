@@ -44,7 +44,10 @@ fn json_injects_context() {
         "",
         &mut o,
     );
-    assert_eq!(o.extra_context, vec!["hi", "ctx"]);
+    assert_eq!(o.extra_context, vec!["ctx"]);
+    // systemMessage is a user-facing warning in the contract — notices,
+    // not transcript context
+    assert_eq!(o.notices, vec!["hi"]);
     assert!(o.block_reason.is_none());
 }
 

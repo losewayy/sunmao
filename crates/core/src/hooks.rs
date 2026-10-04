@@ -50,6 +50,7 @@ mod dialect;
 mod exec;
 mod fire;
 pub mod trust;
+pub(crate) mod trust_rows;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -147,6 +148,10 @@ pub struct HookInput<'a> {
     pub tool_input: Option<&'a Value>,
     /// Serialized tool output (PostToolUse).
     pub tool_response: Option<&'a str>,
+    /// Sub-agent type name — the SubagentStart/SubagentStop matcher key
+    /// (Claude matches those events on the agent name, same way session
+    /// lifecycle events match on `source`).
+    pub agent_name: Option<&'a str>,
     /// Connected MCP server names (SessionStart payload field
     /// `mcp_servers`) — owned because the caller builds the list off
     /// `ctx.mcp_servers`, not a borrowable field.
@@ -161,6 +166,10 @@ pub struct HookOutcome {
     /// Extra context to inject into the transcript (systemMessage /
     /// additionalContext from hook stdout JSON).
     pub extra_context: Vec<String>,
+    /// `systemMessage` warnings — user-facing in the Claude dialect, not
+    /// model context. Callers with a live observer render them as hook
+    /// notices; they never enter the transcript.
+    pub notices: Vec<String>,
     /// Last `permissionDecision` verdict seen (deny > ask > allow ordering
     /// is resolved by the caller — later hooks may override earlier ones).
     pub permission_decision: Option<HookPermission>,
@@ -412,6 +421,9 @@ impl HookEngine {
             "cwd": cwd.display().to_string().replace("\\\\?\\", ""),
             "hook_event_name": event.as_str(),
             "prompt": input.prompt,
+            // Notification's contract field is `message` — carry the same
+            // text under both spellings so either dialect reads it
+            "message": input.prompt,
             "source": input.source,
             "tool_name": input.tool_name,
             "tool_use_id": input.tool_use_id,

@@ -273,7 +273,7 @@ async fn preset_dir_fires_its_hooks() {
             },
         )
         .await;
-    assert_eq!(out.extra_context, vec!["strict preset fired".to_string()]);
+    assert_eq!(out.notices, vec!["strict preset fired".to_string()]);
     std::fs::remove_dir_all(&dir).ok();
 }
 

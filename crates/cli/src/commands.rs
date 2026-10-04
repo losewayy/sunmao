@@ -259,7 +259,11 @@ pub fn parse(cmd_line: &str) -> Command {
 }
 
 /// Names the `/` menu should offer: builtins + every `<name>.md` found in
-/// the convention dirs under `cwd` plus the enabled preset roots.
+/// the convention dirs under `cwd` plus the enabled preset roots, and
+/// skill names — `/<skill>` resolves through `command_body`'s skill
+/// fallback into a read-the-SKILL-file instruction. Skill names that
+/// shadow a builtin or carry chars the parser can't tokenize are
+/// filtered: they'd appear in the menu yet never reach the skill.
 pub fn candidates(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<String> {
     let mut names: Vec<String> = BUILTINS.iter().map(|s| s.to_string()).collect();
     for dir in command_dirs(cwd, extra_roots) {
@@ -274,6 +278,15 @@ pub fn candidates(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<String> {
             }
         }
     }
+    let is_builtin = |n: &str| BUILTINS.contains(&n);
+    for (n, ..) in sunmao_core::prompt::skills_index(cwd, extra_roots) {
+        if !is_builtin(&n)
+            && n.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            names.push(n);
+        }
+    }
     names.sort();
     names.dedup();
     names
@@ -281,6 +294,9 @@ pub fn candidates(cwd: &Path, extra_roots: &[PathBuf]) -> Vec<String> {
 
 /// `/review` → `.sunmao/commands/review.md` or `.claude/commands/review.md`
 /// (same convention, both dirs scanned). Returns the file body.
+/// A name that matches no file command but IS a known skill resolves to a
+/// progressive-disclosure instruction — `/skill-name` loads the skill the
+/// same way the prompt index advertises.
 pub fn command_body(cwd: &Path, extra_roots: &[PathBuf], name: &str) -> Option<String> {
     if !name
         .chars()
@@ -292,6 +308,14 @@ pub fn command_body(cwd: &Path, extra_roots: &[PathBuf], name: &str) -> Option<S
         let p = dir.join(format!("{name}.md"));
         if let Ok(t) = std::fs::read_to_string(&p) {
             return Some(t);
+        }
+    }
+    for (n, _desc, path) in sunmao_core::prompt::skills_index(cwd, extra_roots) {
+        if n == name {
+            return Some(format!(
+                "The user invoked the `/{name}` skill. Read {} and follow it.",
+                path.display().to_string().replace("\\\\?\\", "")
+            ));
         }
     }
     None

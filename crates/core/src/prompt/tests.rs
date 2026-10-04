@@ -1,3 +1,4 @@
+use super::skills::*;
 use super::*;
 
 fn scratch() -> PathBuf {

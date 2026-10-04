@@ -17,7 +17,7 @@ function renderRoster(tasks) {
   if (!box) return;
   // badge lives inside the tab chip now — the tab label already says WHAT,
   // so the count is a bare number, not a phrase that would overflow the pill
-  $('#dt-count').textContent = tasks.length ? String(tasks.length) : '';
+  const dc = $('#dt-count'); if (dc) dc.textContent = tasks.length ? String(tasks.length) : '';
   const st = t => t.done === null || t.done === undefined ? 'run' : t.done ? 'done' : 'err';
   box.innerHTML = tasks.map(t => {
     const s = st(t);

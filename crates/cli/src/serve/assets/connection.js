@@ -63,6 +63,7 @@ function route(v) {
   switch (v.type) {
     case 'hello':
       sessionId = v.session || '';
+      if (typeof dockSessionSwap === 'function') dockSessionSwap();
       clientId = v.client || 0;
       cwd = String(v.cwd || '').replace(/^\\\\\?\\/, '');
       slashList = v.slash || []; // [{name, desc}] — desc is the one-line zh blurb
@@ -180,6 +181,7 @@ function route(v) {
       // UI but keeps prompts/approvals hitting the abandoned session.
       if (v.client != null ? v.client === clientId : (!v.from || v.from === sessionId)) {
         sessionId = v.id || sessionId;
+        if (typeof dockSessionSwap === 'function') dockSessionSwap();
         // the frame itself carries no replay — clear the transcript +
         // per-session caches NOW (renderReplay([]) tears islands down and
         // wipes the DOM) so the old session's transcript / cards / chips
@@ -284,7 +286,7 @@ async function newChat(project) {
     // loop = the session's frozen driver (ptc codemode vs standard) —
     // empty means "let --loop/manifest decide", picked in the new-chat pop
     const r = await api('/session/new', jpost({ ...(project ? { cwd: project } : {}), ...(S.loopDriver ? { loop: S.loopDriver } : {}) }));
-    if (r && r.session) { sessionId = r.session; wsSend({ type: 'view', id: r.session }); }
+    if (r && r.session) { sessionId = r.session; if (typeof dockSessionSwap === 'function') dockSessionSwap(); wsSend({ type: 'view', id: r.session }); }
     renderCrumb(); refreshSessions();
   } catch (e) { toast(`新会话失败：${e.message}`, 'alert', 'warn'); }
 }
@@ -439,6 +441,7 @@ function show(v) {
   $('#dock-btn').classList.toggle('on', dockOn && v === 'session');
   $('#rail-main').hidden = v === 'settings'; $('#rail-settings').hidden = v !== 'settings';
   renderRail(); renderCrumb();
+  if (typeof brSyncAll === 'function') brSyncAll();
 }
 function go(v) {
   if (v === 'back') return show(lastMain);
@@ -449,6 +452,7 @@ function toggleDock() {
   dockOn = !dockOn;
   app.dataset.dock = view === 'session' && dockOn ? 'on' : 'off';
   $('#dock-btn').classList.toggle('on', dockOn && view === 'session');
+  if (typeof brSyncAll === 'function') brSyncAll();
 }
 
 /* Dock tabs: pure view swap — every pane keeps its own scroll position and
@@ -460,6 +464,7 @@ function dockTab(name) {
   $$('.dock-tab', dock).forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
   $$('.dock-pane', dock).forEach(p => { p.hidden = p.dataset.pane !== name; });
   try { localStorage.setItem('sunmao.dock.tab', name); } catch {}
+  if (typeof brSyncAll === 'function') brSyncAll();
 }
 try { dockTab(localStorage.getItem('sunmao.dock.tab') || 'overview'); } catch {}
 

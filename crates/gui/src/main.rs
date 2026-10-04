@@ -11,7 +11,9 @@
 //! The frameless titlebar/drag region the DESIGN.md workbench mandates is
 //! rendered by the page itself (enabled under `window.__sunmaoShell`).
 
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+//! Daily driver is the dev binary — the template's `not(debug_assertions)`
+//! guard would hand every launch a console window before the GUI shows.
+#![windows_subsystem = "windows"]
 
 use clap::Parser;
 use tauri::Manager;

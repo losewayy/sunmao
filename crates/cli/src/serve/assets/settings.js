@@ -106,7 +106,7 @@ function motionPop(anchor) {
 const ctxLen = n => typeof n === 'number' && Number.isFinite(n)
   ? (n >= 1000 ? Math.round(n / 1000) + 'k' : String(n))
   : (n ? String(n) : '');
-const MOD_MARK = { image: '图', audio: '音', video: '视', file: '文' };
+const MOD_MARK = { image: '图', audio: '音', video: '视', file: '档' };
 const modMarks = m => ((m.input_modalities && m.input_modalities.length) ? m.input_modalities : (m.vision ? ['image'] : [])).map(k => MOD_MARK[k] || k).join('');
 const mbadge = m => `${modMarks(m) ? `<span class="tag">${modMarks(m)}</span>` : ''}${m.context_length ? `<span class="tag">${esc(ctxLen(m.context_length))}</span>` : ''}${m.max_output ? `<span class="tag">出${esc(ctxLen(m.max_output))}</span>` : ''}${(m.thinking || []).length ? `<span class="tag">思:${esc((m.thinking || []).map(t => String(t)).join('/'))}</span>` : ''}${m.reasoning && !(m.thinking || []).length ? '<span class="tag">思</span>' : ''}${m.supports_tools ? '<span class="tag">具</span>' : ''}`;
 function renderModelRows(p, q) {
@@ -262,7 +262,7 @@ function provForm(n, p) {
   // capability toggle chips. Fetched entries arrive knowledge-filled;
   // the user edits whatever the guess got wrong.
   const mchip = (m, kind, label) => {
-    const mods = (m.input_modalities && m.input_modalities.length) ? m.input_modalities : ['file'];
+    const mods = m.input_modalities || [];
     return `<button class="pv-chip${mods.includes(kind) ? ' on' : ''}" data-mf="mod" data-mk="${kind}" data-mid="${esc(m.id)}" data-tip="输入模态 · ${kind}">${label}</button>`;
   };
   const mflag = (m, key, label, tip) => `<button class="pv-chip${m[key] ? ' on' : ''}" data-mf="flag" data-mk="${key}" data-mid="${esc(m.id)}" data-tip="${tip}">${label}</button>`;
@@ -277,7 +277,7 @@ function provForm(n, p) {
     return `<div class="pv-ckr"><button class="pv-ck" data-mc="${esc(m.id)}">${ic(v.sel && v.sel.has(m.id) ? 'square-check' : 'square', 'i sm')}<span class="mono">${esc(m.id)}</span></button>`
       + `<div class="pv-cf"><label class="pv-f">上下文<input class="pv-num" data-cx="${esc(m.id)}" value="${m.context_length || ''}" placeholder="—" spellcheck="false" data-tip="上下文窗口（tokens）"></label><label class="pv-f">输出<input class="pv-num" data-mo="${esc(m.id)}" value="${m.max_output || ''}" placeholder="—" spellcheck="false" data-tip="单次输出上限（tokens）"></label></div>`
       + `<div class="pv-cf"><span class="pv-fl">思考</span><span class="pv-chips">${chips}<button class="pv-chip${tgl ? ' on' : ''}" data-mf="tgl" data-mid="${esc(m.id)}" data-tip="模型只提供思考开关，没有档位">仅开关</button></span></div>`
-      + `<div class="pv-cf"><span class="pv-fl">输入</span><span class="pv-chips">${mchip(m, 'file', '文')}${mchip(m, 'image', '图')}${mchip(m, 'video', '视')}${mchip(m, 'audio', '音')}<i class="pv-sep"></i>${mflag(m, 'supports_tools', '具', '支持工具调用')}${mflag(m, 'structured_outputs', '构', '支持结构化输出')}</span></div>`
+      + `<div class="pv-cf"><span class="pv-fl">输入</span><span class="pv-chips"><button class="pv-chip on" data-tip="文本输入 · 所有模型的基线" aria-disabled="true">文</button>${mchip(m, 'image', '图')}${mchip(m, 'video', '视')}${mchip(m, 'audio', '音')}${mchip(m, 'file', '档')}<i class="pv-sep"></i>${mflag(m, 'supports_tools', '具', '支持工具调用')}${mflag(m, 'structured_outputs', '构', '支持结构化输出')}</span></div>`
       + `</div>`;
   };
   const list = cands.length

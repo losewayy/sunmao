@@ -33,7 +33,8 @@ use super::store::Store;
 
 /// The daemon's session id under dmScope=main — stable across restarts so
 /// `/resume`/`im:main` routing always lands on the same log.
-const MAIN_SESSION_ID: &str = "im-main";
+// `im:main`'s deterministic session id resolves through session_id_for —
+// no separate constant, the route key is the single source.
 /// Sender slot on queued inputs — IM never switches GUI tabs, so the
 /// ticket's client field just needs a stable non-client marker.
 const IM_CLIENT: u64 = u64::MAX;
@@ -56,9 +57,8 @@ pub(crate) fn pairing(op: &PairingOp) -> Result<()> {
                 println!("{ch}:{sender}\t{role}");
             }
         }
-        PairingOp::Approve { code } => match store.pairing_consume(code) {
-            Some((ch, sender)) => {
-                let role = store.allow_add(&ch, &sender)?;
+        PairingOp::Approve { code } => match store.pairing_approve(code)? {
+            Some((ch, sender, role)) => {
                 println!("approved {ch}:{sender} — role {role}");
             }
             None => anyhow::bail!("no live pairing code {code:?}"),
@@ -103,34 +103,79 @@ pub enum PairingOp {
     },
 }
 
-/// Everything the daemon needs once channels.json parsed.
-struct Gateway {
-    cfg: ChannelsConfig,
-    store: Arc<Store>,
+/// One live session lane — the host plus the progress state its turn_end
+/// replies flow through. `main` scope has exactly one; `per_channel_peer`
+/// spawns one lazily per session_key.
+struct HostLane {
     host: Arc<Host>,
     progress: progress::Shared,
 }
 
-/// Open (or seed) the shared DM session log under the IM workspace.
-/// `im-main.jsonl` is the dmScope=main anchor — resume-safe because the
-/// id is deterministic; `seed` runs exactly once (the Started+system pair
-/// a fresh log needs before a turn can fold).
-async fn open_main_log(
+/// Everything the daemon needs once channels.json parsed.
+struct Gateway {
+    cfg: ChannelsConfig,
+    store: Arc<Store>,
+    /// the serve registry — adopts per-peer hosts lazily
+    shared: Arc<crate::serve::host::Shared>,
+    workspace: std::path::PathBuf,
+    model: String,
+    roots: Vec<std::path::PathBuf>,
+    driver: Option<sunmao_core::agent::LoopDriver>,
+    /// session_key → live lane. Under main scope it only ever holds
+    /// `im:main`; under per_channel_peer each first contact binds one.
+    lanes: tokio::sync::Mutex<std::collections::HashMap<String, HostLane>>,
+    adapters: Vec<Arc<dyn ChannelAdapter>>,
+    deliveries: Vec<Arc<Delivery>>,
+}
+
+/// A session_key's deterministic session id — `im:telegram:dm:123` →
+/// `im-telegram-dm-123`. Same resume-safety rule as im-main: the id
+/// survives restarts because it's derived, not generated.
+fn session_id_for(session_key: &str) -> String {
+    session_key
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// Open (or seed) a DM session log under the IM workspace. Deterministic
+/// ids make logs resume-safe; `seed` runs exactly once (the Started+system
+/// pair a fresh log needs before a turn can fold).
+async fn open_session_log(
     workspace: &std::path::Path,
+    session_id: &str,
     model: &str,
+    roots: &[std::path::PathBuf],
+    driver: Option<sunmao_core::agent::LoopDriver>,
 ) -> Result<sunmao_core::SessionLog> {
     let dir = workspace.join(".sunmao/sessions");
-    let path = dir.join(format!("{MAIN_SESSION_ID}.jsonl"));
+    let path = dir.join(format!("{session_id}.jsonl"));
     let fresh = !path.exists();
     // open() creates — open_path's contract is existing logs only
-    let mut log = sunmao_core::SessionLog::open(&dir, MAIN_SESSION_ID).await?;
+    let mut log = sunmao_core::SessionLog::open(&dir, session_id).await?;
     if fresh {
         log.append(&sunmao_core::SessionEvent::Started {
             model: model.to_string(),
             cwd: workspace.display().to_string(),
+            driver: Some(
+                driver
+                    .unwrap_or_else(|| sunmao_core::agent::LoopDriver::resolve(workspace, roots))
+                    .as_str()
+                    .into(),
+            ),
         })
         .await?;
-        let prompt = sunmao_core::prompt::PromptAssembler::new(workspace).assemble(None);
+        let mut asm = sunmao_core::prompt::PromptAssembler::new(workspace).with_extra_roots(roots);
+        if let Some(d) = driver {
+            asm = asm.with_driver(d);
+        }
+        let prompt = asm.assemble(None);
         log.append(&sunmao_core::SessionEvent::Message {
             message: sunmao_llm::types::Message::system(prompt),
         })
@@ -162,57 +207,54 @@ pub(crate) async fn run(cli: &Cli) -> Result<()> {
     cli2.session_dir = workspace.join(".sunmao/sessions");
     let mut spec = crate::host_spec(&cli2).await?;
     spec.first_log = None; // the gateway owns session bootstrap, not --resume
+    let (spec_roots, spec_driver) = (spec.roots.clone(), spec.driver_override);
     let handle = crate::serve::spawn_host(spec, 0).await?;
     let shared = &handle.s;
 
-    let log = open_main_log(&workspace, &cli.model).await?;
-    let host = shared.adopt(log, "startup").await?;
-    // pinned at adopt — IM sessions are full_access end to end (no
-    // buttons on the channel side); `deny` rules still bind in the gate.
-    // set_approval_mode writes a durable ModeChange so restarts keep it.
-    host.agent
-        .set_approval_mode(
-            ApprovalMode::FullAccess,
-            &crate::serve::host::WsObserver::new(shared.live.clone(), host.id.clone()),
-        )
-        .await;
-
     let store = Arc::new(Store::open(&super::config::state_dir())?);
-    store.route_put("im:main", &host.id)?;
 
-    // per-channel: adapter + delivery lane + progress subscriber
+    // per-channel: adapter + delivery lane (progress lanes bind per
+    // session lane — one under main, one per peer under per_channel_peer)
     let (tx, mut rx) = mpsc::channel::<InboundMsg>(256);
-    let state = progress::new_shared();
     let mut deliveries: Vec<Arc<Delivery>> = Vec::new();
+    let mut adapters: Vec<Arc<dyn ChannelAdapter>> = Vec::new();
 
     if let Some(tg) = cfg.telegram() {
         let adapter: Arc<dyn ChannelAdapter> = Arc::new(TelegramAdapter::new(tg, store.clone())?);
         let delivery = Arc::new(Delivery::new(store.clone(), adapter.clone()));
         delivery.resend_outstanding().await;
-        let prog = progress::run(
-            host.id.clone(),
-            shared.live.subscribe(),
-            state.clone(),
-            adapter.clone(),
-            delivery.clone(),
-        );
-        tokio::spawn(prog);
         let a = adapter.clone();
         tokio::spawn(async move { a.poll(tx).await });
         deliveries.push(delivery);
+        adapters.push(adapter);
         // connection liveness lands in the status file the serve page reads
         write_status(&["telegram"]);
     }
 
     let gw = Gateway {
         cfg: cfg.clone(),
-        store,
-        host,
-        progress: state,
+        store: store.clone(),
+        shared: shared.clone(),
+        workspace: workspace.clone(),
+        model: cli.model.clone(),
+        roots: spec_roots.clone(),
+        driver: spec_driver,
+        lanes: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+        adapters,
+        deliveries,
     };
-    eprintln!("sunmao im — telegram polling, dmScope=main, full_access");
+    // dmScope=main eagerly binds the shared lane — same warm session the
+    // daemon has always started with; per_channel_peer binds lazily on
+    // each chat's first message
+    if matches!(gw.cfg.dm_scope, super::config::DmScope::Main) {
+        gw.lane_for("im:main").await?;
+    }
+    eprintln!(
+        "sunmao im — telegram polling, dmScope={:?}, full_access",
+        gw.cfg.dm_scope
+    );
     while let Some(msg) = rx.recv().await {
-        if let Err(e) = gw.dispatch(&msg, &deliveries).await {
+        if let Err(e) = gw.dispatch(&msg).await {
             tracing::warn!("im inbound: {e:#}");
         }
     }
@@ -238,10 +280,58 @@ fn lane<'a>(deliveries: &'a [Arc<Delivery>], channel: &str) -> Option<&'a Arc<De
 }
 
 impl Gateway {
+    /// Resolve (or lazily bind) the live lane for a session_key — one
+    /// shared host under `main`, one host per chat under
+    /// `per_channel_peer`. Binding adopts the deterministic session id so
+    /// restarts re-open the same transcript.
+    async fn lane_for(&self, session_key: &str) -> Result<(Arc<Host>, progress::Shared)> {
+        if let Some(l) = self.lanes.lock().await.get(session_key) {
+            return Ok((l.host.clone(), l.progress.clone()));
+        }
+        let session_id = session_id_for(session_key);
+        let log = open_session_log(
+            &self.workspace,
+            &session_id,
+            &self.model,
+            &self.roots,
+            self.driver,
+        )
+        .await?;
+        let host = self.shared.adopt(log, "startup").await?;
+        // pinned at adopt — IM sessions are full_access end to end (no
+        // buttons on the channel side); `deny` rules still bind in the gate.
+        host.agent
+            .set_approval_mode(
+                ApprovalMode::FullAccess,
+                &crate::serve::host::WsObserver::new(self.shared.live.clone(), host.id.clone()),
+            )
+            .await;
+        let progress = progress::new_shared();
+        // one progress subscriber per (lane, channel) — each filters the
+        // shared live bus to this session's frames
+        for (adapter, delivery) in self.adapters.iter().zip(self.deliveries.iter()) {
+            tokio::spawn(progress::run(
+                host.id.clone(),
+                self.shared.live.subscribe(),
+                progress.clone(),
+                adapter.clone(),
+                delivery.clone(),
+            ));
+        }
+        self.lanes.lock().await.insert(
+            session_key.to_string(),
+            HostLane {
+                host: host.clone(),
+                progress: progress.clone(),
+            },
+        );
+        Ok((host, progress))
+    }
+
     /// One inbound DM through the whole pipeline. Control commands resolve
     /// HERE, before the FIFO — `/stop` on a busy session must trip the
     /// cancel flag immediately, not queue behind the turn it's stopping.
-    async fn dispatch(&self, msg: &InboundMsg, deliveries: &[Arc<Delivery>]) -> Result<()> {
+    async fn dispatch(&self, msg: &InboundMsg) -> Result<()> {
         let src = &msg.source;
         let text = msg.text.trim();
 
@@ -250,45 +340,45 @@ impl Gateway {
             // admission first: /pairing mgmt needs owner, the rest needs a
             // seat at all — a stranger's "/stop" must not cancel a session
             if !super::authz::admitted(&self.cfg, &self.store, src) {
-                return self.authz_reply(src, deliveries).await;
+                return self.authz_reply(src).await;
             }
-            return self.control(src, cmd, deliveries).await;
+            return self.control(src, cmd).await;
         }
 
         // ── admission ──
         if !super::authz::admitted(&self.cfg, &self.store, src) {
-            return self.authz_reply(src, deliveries).await;
+            return self.authz_reply(src).await;
         }
 
         // ── route + dispatch into the session ──
         let route = route::route_for(self.cfg.dm_scope, src);
+        let (host, progress) = self.lane_for(&route.session_key).await?;
         // first contact on this key binds the route to the live session —
         // rewrites are no-ops once bound
-        if self.store.route_get(&route.session_key).as_deref() != Some(&self.host.id) {
-            self.store.route_put(&route.session_key, &self.host.id)?;
+        if self.store.route_get(&route.session_key).as_deref() != Some(&host.id) {
+            self.store.route_put(&route.session_key, &host.id)?;
         }
+        let prompt = route::prompt_text(src, text);
+        let busy = host.busy.load(std::sync::atomic::Ordering::Relaxed) > 0;
         progress::expect_reply(
-            &self.progress,
+            &progress,
             ChatKey {
                 channel: src.channel.clone(),
                 chat_id: src.chat_id.clone(),
             },
+            busy,
         );
-        let prompt = route::prompt_text(src, text);
-        let busy = self.host.busy.load(std::sync::atomic::Ordering::Relaxed) > 0;
         if busy {
             // steer — the running turn folds this at its next request
             // boundary; the running tool and any sub-agents are untouched
-            self.host.agent.push_steer(IM_CLIENT, prompt);
+            host.agent.push_steer(IM_CLIENT, prompt);
         } else {
             // idle → FIFO; the driver's dispatch_input paints the bubble
             // and runs the turn
-            let id = self
-                .host
+            let id = host
                 .queue_next_id
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            self.host
-                .queue
+            host.queue
                 .lock()
                 .unwrap()
                 .push_back(crate::serve::host::Input {
@@ -297,25 +387,40 @@ impl Gateway {
                     text: prompt,
                     attachments: Vec::new(),
                 });
-            self.host
-                .agent
+            host.agent
                 .context()
                 .input_pending
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            self.host.queue_notify.notify_one();
+            host.queue_notify.notify_one();
         }
         Ok(())
     }
 
     /// Control commands — `/stop` and the owner's `/pairing` mgmt. All
     /// replies are ledgered final-style sends (plain text).
-    async fn control(&self, src: &ImSource, cmd: &str, deliveries: &[Arc<Delivery>]) -> Result<()> {
+    async fn control(&self, src: &ImSource, cmd: &str) -> Result<()> {
         let reply = match cmd.split_whitespace().next().unwrap_or("") {
             "stop" => {
+                // arming cancel while IDLE poisons the next turn — the
+                // flag only clears at a run_turn end that never comes.
                 // main-agent stop only — sub-agents keep running (owner
-                // decision §7-5; the cascade form is `agent.cancel()`)
-                self.host.agent.cancel_main();
-                super::messages::get("stopped")
+                // decision §7-5; the cascade form is `agent.cancel()`).
+                // The lane must already exist — a /stop doesn't create one.
+                let route = route::route_for(self.cfg.dm_scope, src);
+                let host = self
+                    .lanes
+                    .lock()
+                    .await
+                    .get(&route.session_key)
+                    .map(|l| l.host.clone());
+                if let Some(host) = host
+                    && host.busy.load(std::sync::atomic::Ordering::Relaxed) > 0
+                {
+                    host.agent.cancel_main();
+                    super::messages::get("stopped")
+                } else {
+                    super::messages::get("stopped_idle")
+                }
             }
             "pairing" => {
                 if !super::authz::is_owner(&self.cfg, &self.store, src) {
@@ -338,7 +443,7 @@ impl Gateway {
             _ => super::messages::get("help"),
         };
         if !reply.is_empty()
-            && let Some(d) = lane(deliveries, &src.channel)
+            && let Some(d) = lane(&self.deliveries, &src.channel)
         {
             let _ = d.send_final(&src.chat_id, &reply).await;
         }
@@ -347,9 +452,9 @@ impl Gateway {
 
     /// What a stranger gets back — the code offer, a cooldown note, or
     /// silence, per `unauthorized_dm_behavior`.
-    async fn authz_reply(&self, src: &ImSource, deliveries: &[Arc<Delivery>]) -> Result<()> {
+    async fn authz_reply(&self, src: &ImSource) -> Result<()> {
         if let Verdict::Reply(text) = super::authz::authorize(&self.cfg, &self.store, src)
-            && let Some(d) = lane(deliveries, &src.channel)
+            && let Some(d) = lane(&self.deliveries, &src.channel)
         {
             let _ = d.send_final(&src.chat_id, &text).await;
         }

@@ -61,6 +61,10 @@ impl Store {
         let conn = rusqlite::Connection::open(dir.join("state.db"))
             .with_context(|| format!("open {}", dir.join("state.db").display()))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        // WAL lets the pairing CLI read, but two WRITERS (daemon +
+        // `sunmao pairing approve`) still collide — a short busy retry
+        // turns that SQLITE_BUSY into a wait instead of an error
+        conn.pragma_update(None, "busy_timeout", 2000u64)?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS routes(
                session_key TEXT PRIMARY KEY,
@@ -139,8 +143,9 @@ impl Store {
             .ok()
     }
 
-    /// `sunmao pairing approve <code>` — admit the sender, returning the
-    /// role they got (`owner` when no owner existed yet — bootstrap rule).
+    /// Admit a sender directly — the test + mgmt path; `pairing_approve`
+    /// is the transactional production path.
+    #[cfg(test)]
     pub fn allow_add(&self, channel: &str, sender: &str) -> anyhow::Result<String> {
         let role = if self.has_owner() { "user" } else { "owner" };
         self.conn.lock().unwrap().execute(
@@ -160,6 +165,7 @@ impl Store {
         )? > 0)
     }
 
+    #[cfg(test)]
     pub fn has_owner(&self) -> bool {
         self.conn
             .lock()
@@ -256,12 +262,16 @@ impl Store {
         Ok(())
     }
 
-    /// Consume a code → the (channel, sender) it belongs to. Expired or
-    /// unknown codes resolve `None`; approval deletes the row — the
-    /// allowlist is the surviving fact.
-    pub fn pairing_consume(&self, code: &str) -> Option<(String, String)> {
-        let conn = self.conn.lock().unwrap();
-        let row = conn
+    /// `pairing approve` as ONE transaction — consume the code and admit
+    /// the sender atomically. The two-step form could strand a consumed
+    /// code if the process died before the allowlist insert: the sender
+    /// would have to re-pair for no reason they could see.
+    /// Returns the (channel, sender, role) on a live code, None on an
+    /// expired/unknown one.
+    pub fn pairing_approve(&self, code: &str) -> anyhow::Result<Option<(String, String, String)>> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let row = tx
             .query_row(
                 "SELECT channel, sender, expires FROM pairing WHERE code=?1",
                 [code],
@@ -273,15 +283,32 @@ impl Store {
                     ))
                 },
             )
-            .ok()?;
-        if row.2 <= now() {
-            return None;
+            .ok();
+        let Some((channel, sender, expires)) = row else {
+            return Ok(None);
+        };
+        if expires <= now() {
+            return Ok(None);
         }
-        let _ = conn.execute(
+        let has_owner: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM allowlist WHERE role='owner')",
+            [],
+            |r| r.get(0),
+        )?;
+        let role = if has_owner { "user" } else { "owner" };
+        tx.execute(
             "DELETE FROM pairing WHERE channel=?1 AND sender=?2",
-            [&row.0, &row.1],
-        );
-        Some((row.0, row.1))
+            [&channel, &sender],
+        )?;
+        tx.execute(
+            concat!(
+                "INSERT OR REPLACE INTO allowlist(",
+                "channel, sender, role, created) VALUES(?1,?2,?3,?4)"
+            ),
+            rusqlite::params![channel, sender, role, now()],
+        )?;
+        tx.commit()?;
+        Ok(Some((channel, sender, role.to_string())))
     }
 
     // ── delivery ledger ──
@@ -317,6 +344,16 @@ impl Store {
     pub fn deliver_done(&self, id: i64) -> anyhow::Result<()> {
         self.conn.lock().unwrap().execute(
             "UPDATE delivery SET state='delivered', updated=?2 WHERE id=?1",
+            rusqlite::params![id, now()],
+        )?;
+        Ok(())
+    }
+
+    /// Dead-letter a row that exhausted its retry budget — it stays in
+    /// the ledger (audit) but leaves the replay set.
+    pub fn deliver_dead(&self, id: i64) -> anyhow::Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE delivery SET state='dead', updated=?2 WHERE id=?1",
             rusqlite::params![id, now()],
         )?;
         Ok(())
@@ -406,15 +443,18 @@ mod tests {
         })
         .unwrap();
         assert_eq!(s.pairing_live("telegram").len(), 1);
-        // first approval bootstraps owner
-        let (ch, sender) = s.pairing_consume("ABCD2345").unwrap();
-        assert_eq!((ch.as_str(), sender.as_str()), ("telegram", "7"));
-        assert_eq!(s.allow_add(&ch, &sender).unwrap(), "owner");
+        // first approval bootstraps owner — consume+admit is one
+        // transaction now
+        let (ch, sender, role) = s.pairing_approve("ABCD2345").unwrap().unwrap();
+        assert_eq!(
+            (ch.as_str(), sender.as_str(), role.as_str()),
+            ("telegram", "7", "owner")
+        );
         assert_eq!(s.allow_role("telegram", "7").as_deref(), Some("owner"));
         // second sender never inherits owner
         assert_eq!(s.allow_add("telegram", "8").unwrap(), "user");
         // consumed codes are single-use
-        assert!(s.pairing_consume("ABCD2345").is_none());
+        assert!(s.pairing_approve("ABCD2345").unwrap().is_none());
         std::fs::remove_dir_all(dir).ok();
     }
 

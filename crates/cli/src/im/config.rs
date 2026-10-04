@@ -70,6 +70,11 @@ pub enum UnauthorizedBehavior {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChannelSpec {
     Telegram(TelegramSpec),
+    /// A kind this binary doesn't know — the doc comment promises
+    /// warn-and-skip, so it must survive parse or one newer config entry
+    /// would take down the whole daemon.
+    #[serde(other)]
+    Unknown,
 }
 
 impl ChannelSpec {
@@ -77,6 +82,7 @@ impl ChannelSpec {
     pub fn kind_name(&self) -> &'static str {
         match self {
             Self::Telegram(_) => "telegram",
+            Self::Unknown => "unknown",
         }
     }
 }

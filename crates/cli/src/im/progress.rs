@@ -46,6 +46,12 @@ struct Draft {
 pub struct ProgressState {
     /// chats awaiting the current turn's reply
     pending: HashSet<ChatKey>,
+    /// chats whose message went in as a STEER — if the running turn ends
+    /// before the steer is consumed, the kernel runs it as the next turn,
+    /// whose reply this chat must still receive. Re-armed for one extra
+    /// turn_end; under dmScope=main a consumed steer's re-arm is the same
+    /// shared-brain fanout every other chat already gets.
+    steered: HashSet<ChatKey>,
     /// per-chat draft handles
     drafts: HashMap<ChatKey, Draft>,
     /// the latest assistant text segment — resets when a tool starts
@@ -67,9 +73,16 @@ pub fn new_shared() -> Shared {
 }
 
 /// Register a chat whose message entered the pipeline — its reply arrives
-/// at the next `turn_end` regardless of steer-vs-queue path.
-pub fn expect_reply(state: &Shared, key: ChatKey) {
-    state.lock().unwrap().pending.insert(key);
+/// at the next `turn_end`. `steered` marks a message pushed into a RUNNING
+/// turn: it may land after the last drain and become the *next* turn, so
+/// the chat survives one extra turn_end before clearing.
+pub fn expect_reply(state: &Shared, key: ChatKey, steered: bool) {
+    let mut st = state.lock().unwrap();
+    if steered {
+        st.steered.insert(key);
+    } else {
+        st.pending.insert(key);
+    }
 }
 
 /// The draft's body — status text only, no answer fragments.
@@ -126,9 +139,10 @@ pub async fn run(
     }
 }
 
-/// Read the pending set without holding the lock across awaits.
+/// Read the reply set without holding the lock across awaits — steered
+/// chats are owed this turn's answer just like queued ones.
 fn pending_of(st: &ProgressState) -> Vec<ChatKey> {
-    st.pending.iter().cloned().collect()
+    st.pending.union(&st.steered).cloned().collect()
 }
 
 /// Fold a live event into progress state. `tool_start` clears the
@@ -246,7 +260,9 @@ async fn flush_on_turn_end(
         let keys = pending_of(&st);
         let outcome = frame["event"]["outcome"].as_str().unwrap_or("").to_string();
         let text = std::mem::take(&mut st.latest_text);
-        st.pending.clear();
+        // unconsumed steers become the NEXT turn — those chats re-arm
+        // once; everything else settles with this turn's reply
+        st.pending = std::mem::take(&mut st.steered);
         st.last_tool.clear();
         st.turn_started = None;
         // drafts stay keyed — a stale draft message just sits in the chat;

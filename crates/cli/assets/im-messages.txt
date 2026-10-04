@@ -6,6 +6,7 @@ pairing_pending	待批准的配对请求：
 pairing_row	{code} · sender {sender} · 剩 {mins} 分钟
 pairing_approved	✅ 已批准 — 你可以开始对话了。
 stopped	🛑 已停止。
+stopped_idle	当前没有正在运行的任务。
 redelivery_prefix	♻️ 可能重复：
 status_line	⟳ {elapsed}s · {last}
 mode_fixed	IM 会话固定 full_access — 无按钮审批面；/mode 在 IM 下不可用。

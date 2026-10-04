@@ -307,6 +307,7 @@ async function atCheck(hide) {
   }
   atEl.innerHTML = '<div class="lbl">@ 文件提及 — Enter 选中，目录可继续下钻</div>'
     + atItems.map((p, i) => `<button class="mi${i === atIdx ? ' hl' : ''}" data-p="${esc(p)}">${ic(p.endsWith('/') ? 'folder' : 'file', 'i sm')}<span class="mt mono"><span>${esc(p)}</span></span></button>`).join('');
+  atEl.querySelector('.hl')?.scrollIntoView({ block: 'nearest' });
 }
 function pickAt(p) {
   const ta = $('#input'), f = atFragment();
@@ -354,6 +355,9 @@ function renderSlash() {
   if (!slashEl) return;
   slashEl.innerHTML = '<div class="lbl">/ 命令 — Enter 执行，Tab 补全</div>'
     + slashItems.map((c, i) => `<button class="mi${i === slashIdx ? ' hl' : ''}" data-c="${esc(c.name)}">${ic('terminal', 'i sm')}<span class="mt mono"><span>/${esc(c.name)}</span>${c.desc ? `<small>${esc(c.desc)}</small>` : ''}</span></button>`).join('');
+  // keyboard nav must drag the viewport — the highlight re-renders on
+  // every arrow, so scroll the fresh .hl into the scroller's nearest edge
+  slashEl.querySelector('.hl')?.scrollIntoView({ block: 'nearest' });
 }
 function pickSlash(cmd) {
   const ta = $('#input');

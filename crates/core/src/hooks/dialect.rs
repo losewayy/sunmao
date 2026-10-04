@@ -33,7 +33,17 @@ pub(crate) fn apply_ext_reply(reply: &Value, outcome: &mut HookOutcome) {
         outcome.updated_input = Some(updated.clone());
     }
     match reply.get("permissionDecision").and_then(|d| d.as_str()) {
-        Some("deny") => outcome.permission_decision = Some(HookPermission::Deny),
+        Some("deny") => {
+            outcome.permission_decision = Some(HookPermission::Deny);
+            // double-latch like the command dialect: permission_decision
+            // is last-writer-wins across sequential replies, block_reason
+            // is not — a later child's `allow` must not erase a deny
+            let reason = reply
+                .get("permissionDecisionReason")
+                .and_then(|r| r.as_str())
+                .unwrap_or("denied by extension");
+            outcome.block_reason = Some(reason.to_string());
+        }
         Some("ask") => outcome.permission_decision = Some(HookPermission::Ask),
         Some("allow") => outcome.permission_decision = Some(HookPermission::Allow),
         _ => {}
@@ -69,8 +79,12 @@ pub(super) fn apply_result(code: i32, stdout: &str, stderr: &str, outcome: &mut 
                     .to_string(),
             );
         }
+        // `systemMessage` is a USER-facing warning in the Claude dialect,
+        // not model context — it lands on the notices channel, which
+        // frontends render as a warning line instead of folding it into
+        // the transcript as `[hook context]`.
         if let Some(msg) = v.get("systemMessage").and_then(|m| m.as_str()) {
-            outcome.extra_context.push(msg.to_string());
+            outcome.notices.push(msg.to_string());
         }
         if let Some(ctx) = v
             .pointer("/hookSpecificOutput/additionalContext")
@@ -101,13 +115,19 @@ pub(super) fn apply_result(code: i32, stdout: &str, stderr: &str, outcome: &mut 
         if let Some(updated) = v.pointer("/hookSpecificOutput/updatedInput") {
             outcome.updated_input = Some(updated.clone());
         }
-        // PreToolUse/PostToolUse "decision": "block" (older dialect spelling)
-        if v.get("decision").and_then(|d| d.as_str()) == Some("block") {
-            let reason = v
-                .get("reason")
-                .and_then(|r| r.as_str())
-                .unwrap_or("blocked by hook");
-            outcome.block_reason = Some(reason.to_string());
+        // PreToolUse/PostToolUse "decision" — block refuses (older
+        // spelling); "approve" is a permission allowance, same verdict
+        // channel as permissionDecision's `allow`
+        match v.get("decision").and_then(|d| d.as_str()) {
+            Some("block") => {
+                let reason = v
+                    .get("reason")
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("blocked by hook");
+                outcome.block_reason = Some(reason.to_string());
+            }
+            Some("approve") => outcome.permission_decision = Some(HookPermission::Allow),
+            _ => {}
         }
     }
 }

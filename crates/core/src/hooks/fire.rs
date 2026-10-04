@@ -63,11 +63,19 @@ impl HookEngine {
             return (planned, skipped);
         };
         for group in groups {
-            // cursor matchers filter on THEIR tool names (Shell, MCP:<t>)
-            // — everything else matches the native name.
+            // matcher key per event class: tools → tool name, lifecycle
+            // (SessionStart, PreCompact) → `source` qualifier
+            // (`startup`/`resume`/`manual`/`auto`), sub-agent lifecycle →
+            // the agent type name. A matcher written against the event's
+            // documented key used to silently never match.
+            let native = input
+                .tool_name
+                .or(input.source)
+                .or(input.agent_name)
+                .unwrap_or("");
             let match_name = match group.dialect {
-                cursor::Dialect::Cursor => cursor::cursor_tool_name(input.tool_name.unwrap_or("")),
-                cursor::Dialect::Claude => input.tool_name.unwrap_or("").to_string(),
+                cursor::Dialect::Cursor => cursor::cursor_tool_name(native),
+                cursor::Dialect::Claude => native.to_string(),
             };
             if !matches(&group.matcher, &match_name) {
                 continue;
@@ -174,6 +182,17 @@ impl HookEngine {
                 }
                 Err(e) => {
                     tracing::warn!("hook failed to spawn: {e:#}");
+                    // fail-open must still be reconstructible — a crashed
+                    // hook leaves a durable row like a skipped one does
+                    if let Some(log) = &self.sessions {
+                        log.lock()
+                            .await
+                            .append_audit(&crate::session::SessionEvent::Hook {
+                                event: "hook.failed".into(),
+                                detail: format!("{}: {e:#}", hook.command),
+                            })
+                            .await;
+                    }
                 }
             }
         }

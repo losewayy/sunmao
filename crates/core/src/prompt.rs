@@ -401,80 +401,35 @@ fn project_context(cwd: &Path, extra_roots: &[PathBuf]) -> String {
             out.push_str(&format!("## {name}\n{text}\n\n"));
         }
     }
-    let mut skills_dirs = vec![
-        cwd.join(".sunmao").join("skills"),
-        cwd.join(".claude").join("skills"),
-        cwd.join(".sunmao").join("plugin").join("skills"),
-    ];
-    // plugin bundles: .sunmao/plugins/<name>/skills/, .claude/plugins/<name>/skills/
-    for base in [
-        cwd.join(".sunmao").join("plugins"),
-        cwd.join(".claude").join("plugins"),
-    ] {
-        for p in crate::sorted_entries(&base) {
-            skills_dirs.push(p.path().join("skills"));
-        }
-    }
-    // ecosystem scan — sunmao's own user layer first (builtin skills
-    // materialize here), then skills authored for other harnesses
-    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
-        let h = std::path::Path::new(&home);
-        skills_dirs.push(h.join(".sunmao").join("skills"));
-        skills_dirs.push(h.join(".claude").join("skills"));
-        skills_dirs.push(h.join(".agents").join("skills"));
-    }
-    // preset bundles contribute skills the same way, layered last
-    for root in extra_roots {
-        skills_dirs.push(root.join("skills"));
-    }
     let mut lines = Vec::new();
-    for skills_dir in skills_dirs {
-        for e in crate::sorted_entries(&skills_dir) {
-            // a skill dir may speak either doc language — SKILL.md (the
-            // ecosystem contract) or SKILL.html (the first-class payload:
-            // a page for the human, structured text for the agent)
-            let mut skill = e.path().join("SKILL.md");
-            let is_html_skill = if skill.exists() {
-                false
-            } else {
-                let html = e.path().join("SKILL.html");
-                if html.exists() {
-                    skill = html;
-                    true
-                } else {
-                    continue;
-                }
-            };
-            if let Ok(text) = std::fs::read_to_string(&skill) {
-                let (name, desc) = if is_html_skill {
-                    html_skill_meta(&text)
-                } else {
-                    md_skill_meta(&text, &e.file_name().to_string_lossy())
-                };
-                // bundled .html resources surface in the index — a template
-                // the agent can copy/Read is discoverable, not invisible
-                let resources: Vec<String> = crate::sorted_entries(&e.path())
+    for (name, desc, skill) in skills_index(cwd, extra_roots) {
+        // bundled .html resources surface in the index — a template
+        // the agent can copy/Read is discoverable, not invisible
+        let resources: Vec<String> = skill
+            .parent()
+            .map(|d| {
+                crate::sorted_entries(d)
                     .into_iter()
                     .filter(|f| {
                         let s = f.file_name().to_string_lossy().to_string();
                         s.ends_with(".html") && s != "SKILL.html"
                     })
                     .map(|f| f.file_name().to_string_lossy().to_string())
-                    .collect();
-                let res_note = if resources.is_empty() {
-                    String::new()
-                } else {
-                    format!(" +{} .html", resources.len())
-                };
-                lines.push(format!(
-                    "- {} — {} ({}{})",
-                    name,
-                    desc,
-                    skill.display().to_string().replace("\\\\?\\", ""),
-                    res_note
-                ));
-            }
-        }
+                    .collect()
+            })
+            .unwrap_or_default();
+        let res_note = if resources.is_empty() {
+            String::new()
+        } else {
+            format!(" +{} .html", resources.len())
+        };
+        lines.push(format!(
+            "- {} — {} ({}{})",
+            name,
+            desc,
+            skill.display().to_string().replace("\\\\?\\", ""),
+            res_note
+        ));
     }
     if !lines.is_empty() {
         out.push_str("## Available skills (Read the SKILL file path to load)\n");
@@ -503,76 +458,6 @@ fn project_context(cwd: &Path, extra_roots: &[PathBuf]) -> String {
     out
 }
 
-/// `SKILL.md` frontmatter parse: first 20 lines for `name:`/`description:`,
-/// dir name as the fallback.
-fn md_skill_meta(text: &str, fallback: &str) -> (String, String) {
-    let mut name = fallback.to_string();
-    let mut desc = String::new();
-    for line in text.lines().take(20) {
-        if let Some(v) = line.strip_prefix("name:") {
-            name = v.trim().to_string();
-        }
-        if let Some(v) = line.strip_prefix("description:") {
-            desc = v.trim().to_string();
-        }
-    }
-    (name, desc)
-}
-
-/// `SKILL.html` meta — the page already carries its identity: `<title>`
-/// is the name, `<meta name="description">` the description. Falls back
-/// to the first <h1> for the name; description may be empty.
-fn html_skill_meta(text: &str) -> (String, String) {
-    let tag_text = |open: &str, close: &str| -> Option<String> {
-        let start = text.find(open)? + open.len();
-        let end = text[start..].find(close)? + start;
-        Some(html_unescape(text[start..end].trim()))
-    };
-    let name = tag_text("<title>", "</title>")
-        .or_else(|| tag_text("<h1>", "</h1>"))
-        .unwrap_or_default();
-    let desc = html_meta_description(text).unwrap_or_default();
-    (name, desc)
-}
-
-/// Scan `<meta>` tags for `name="description"` and read its `content`
-/// attribute — attribute order varies in the wild.
-fn html_meta_description(text: &str) -> Option<String> {
-    let mut rest = text;
-    while let Some(i) = rest.find("<meta") {
-        let tail = &rest[i..];
-        let end = tail.find('>')? + 1;
-        let tag = &tail[..end];
-        if tag.contains("name=\"description\"") || tag.contains("name='description'") {
-            return attr_value(tag, "content").map(|v| html_unescape(v.trim()));
-        }
-        rest = &tail[end..];
-    }
-    None
-}
-
-/// `attr="..."` or `attr='...'` inside a tag — returns the quoted body.
-fn attr_value<'a>(tag: &'a str, attr: &str) -> Option<&'a str> {
-    for pat in [format!("{attr}=\""), format!("{attr}='")] {
-        if let Some(i) = tag.find(&pat) {
-            let s = i + pat.len();
-            let q = tag.as_bytes()[s - 1] as char;
-            return tag[s..].find(q).map(|e| &tag[s..s + e]);
-        }
-    }
-    None
-}
-
-/// The tiny escape set HTML skill titles realistically use — entities we
-/// can fix without a parser; unknown entities pass through untouched.
-fn html_unescape(s: &str) -> String {
-    s.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-}
-
 /// One goal-chain round's kick prompt — the layered `goal-continue`
 /// template with `{objective}` / `{round}` / `{max}` filled in. The text
 /// lands as a real user-role message (it IS a turn), so substitutions are
@@ -585,6 +470,9 @@ pub fn goal_continue_prompt(cwd: &Path, objective: &str, round: u32, max: u32) -
         .replace("{round}", &round.to_string())
         .replace("{max}", &max.to_string())
 }
+
+mod skills;
+pub use skills::{skills_dirs, skills_index};
 
 #[cfg(test)]
 mod tests;

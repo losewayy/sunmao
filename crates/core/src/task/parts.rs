@@ -48,16 +48,17 @@ pub(crate) async fn spawn_parts(
     };
     // an explicit sys_prompt wins (fusion Sidekick); else agents/*.md
     // named def; else the `subagent-default` prompt section — assembled by
-    // the same PromptAssembler as everything else.
-    let sys_prompt = sys_prompt.unwrap_or_else(|| {
+    // the same PromptAssembler as everything else. Either way the
+    // environment tail (guidance/dialect/+ptc) is appended: a contract
+    // names the child's job, never the session facts it runs under.
+    let assembler = crate::prompt::PromptAssembler::new(&ctx.cwd)
+        .with_extra_roots(&ctx.extra_plugin_roots)
+        .with_driver(ctx.loop_driver);
+    let sys_prompt = assembler.subagent_prompt(sys_prompt.unwrap_or_else(|| {
         def.as_ref()
             .map(|d| d.system_prompt.clone())
-            .unwrap_or_else(|| {
-                crate::prompt::PromptAssembler::new(&ctx.cwd)
-                    .with_extra_roots(&ctx.extra_plugin_roots)
-                    .assemble_subagent(def.map(|d| d.name.as_str()))
-            })
-    });
+            .unwrap_or_else(|| assembler.assemble_subagent(def.map(|d| d.name.as_str())))
+    }));
     {
         if let Err(e) = log
             .append(&SessionEvent::Message {
@@ -111,12 +112,27 @@ pub(crate) async fn build_sub_ctx(
         {
             names.push("Task".into());
         }
+        // under `ptc` the only model-emittable tools are RunCode+SearchTools
+        // — a whitelist without them leaves the child zero usable tools
+        if ctx.loop_driver == crate::agent::LoopDriver::Ptc {
+            for n in ["RunCode", "SearchTools"] {
+                if !names.iter().any(|x| x == n) {
+                    names.push(n.into());
+                }
+            }
+        }
         names
     });
-    let tools = match &allow_names {
-        Some(names) => builtin_registry().filtered(names),
-        None => builtin_registry(),
-    };
+    let mut tools = builtin_registry();
+    // seed the parent's drained MCP catalog into the child's registry — the
+    // shared handles reset seen_version on clone, so without this the child
+    // waits for a list_changed bump that only the parent's drain loop sees
+    for srv in ctx.mcp_servers.iter() {
+        tools.replace_prefixed(&format!("mcp__{}__", srv.name), srv.tool_impls());
+    }
+    if let Some(names) = &allow_names {
+        tools = tools.filtered(names);
+    }
     if ctx.depth + 1 >= super::MAX_DEPTH {
         tools.remove("Task");
     }
@@ -216,6 +232,9 @@ pub(crate) async fn build_sub_ctx(
         // the parent's driver applies — a preset-named loop is
         // session-level, not per-agent
         loop_driver: ctx.loop_driver,
+        persisted_driver: ctx.persisted_driver,
+        hook_tail: std::sync::Mutex::new(Vec::new()),
+        promoted_tools: std::sync::Mutex::new(std::collections::BTreeSet::new()),
         live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         // the child's list is its own plan, not a copy of the parent's —
         // sub-session logs only carry their own Todos events.

@@ -14,16 +14,19 @@ the only capabilities are the ones you invoke:
   overlap instead of serializing.
 - `await describe()` / `await describe(name)` — the callable tool catalog
   (names + argument schemas) when you need to look up a signature.
-- `await tools.SearchTools({query})` — the same catalog filtered by query
-  terms (name/description match, `mcp__*` included); resolves the full
-  declarations as `{ok, output}` like any other nested call.
+- `await tools.SearchTools({query, detail?})` — the same catalog filtered
+  by query terms (name/description match, `mcp__*` included); resolves
+  `{ok, output}` like any other nested call. `detail` shapes the payload:
+  `names`/`desc`/`schema` (default full declarations).
 - `await store(key, value)` / `await load(key)` — a session-scoped,
   durable JSON key-value store shared across `RunCode` calls and surviving
   resume; `load` returns `undefined` for missing keys.
 
 Write `code` so its completion value is what you want back — end with an
-expression, or wrap the body in `(async () => { ... })()` and `return` the
-result. Intermediate computation (globs, greps, bulk reads, aggregation)
+expression, or `return` the result. Top-level `await` is legal: `await
+tools.X(…)` alone, `const r = await tools.X(…); …; return r`, and a
+trailing expression all reach the transcript. Intermediate computation
+(globs, greps, bulk reads, aggregation)
 stays in the sandbox and never enters this transcript — prefer RunCode when
 a task fans out over many files or chains tool outputs, instead of
 dispatching calls one at a time.

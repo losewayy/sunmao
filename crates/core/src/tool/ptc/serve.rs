@@ -349,14 +349,15 @@ async fn tool_call(
             },
         );
     }
+    // buffer, not append — this nested call runs inside RunCode's
+    // dispatch, so a user message here would sit between the RunCode
+    // tool_call and its tool_result; the turn loop flushes the tail
+    // after the pair settles (same rule as direct dispatch)
     {
-        let mut log = ctx.sessions.lock().await;
-        for extra in post.extra_context {
-            log.append(&SessionEvent::Message {
-                message: sunmao_llm::types::Message::user(format!("[hook context] {extra}")),
-            })
-            .await
-            .unwrap_or_else(|e| tracing::warn!("hook context append failed: {e:#}"));
+        let mut tail = ctx.hook_tail.lock_or_recover();
+        tail.extend(post.extra_context);
+        if let Some(reason) = post.block_reason {
+            tail.push(format!("PostToolUse hook on {name} says: {reason}"));
         }
     }
     Ok(json!({"ok": result.ok, "output": result.output}).to_string())

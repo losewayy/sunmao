@@ -45,6 +45,70 @@ async fn run(ctx: &Arc<Context>, code: &str) -> ToolResult {
         .await
 }
 
+/// Top-level `await`/`return` — the spellings the Script goal can't take —
+/// work through the async-wrapper fallback: `await expr` keeps its
+/// completion value, `const r = await …; return r` runs as statements.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runcode_top_level_await_and_return() {
+    let dir = crate::fresh_test_dir("ptc-tla");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("t.txt"), "tla").unwrap();
+    let ctx = test_ctx(&dir);
+    let res = run(&ctx, "await 1").await;
+    assert_eq!(res.output, "1", "{}", res.output);
+    let res = run(
+        &ctx,
+        r#"const r = await tools.Read({path: "t.txt"}); return r.output"#,
+    )
+    .await;
+    assert!(res.ok, "{}", res.output);
+    assert!(res.output.contains("tla"), "{}", res.output);
+    let res = run(&ctx, "return typeof tools").await;
+    assert_eq!(res.output, "\"object\"", "{}", res.output);
+    let res = run(&ctx, "await tools.Read({path: \"t.txt\"})").await;
+    assert!(res.ok, "{}", res.output);
+    assert!(res.output.contains("\"ok\":true"), "{}", res.output);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The wrapper fallback must never re-run a script that already reached a
+/// tool call: `tools.X(); eval("(")` throws a runtime SyntaxError AFTER the
+/// invocation. A retry would produce a wrapped "script rejected" — the
+/// un-retried original failure keeps the plain "eval error:" shape.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runcode_no_retry_after_side_effects() {
+    let dir = crate::fresh_test_dir("ptc-noretry");
+    std::fs::create_dir_all(&dir).unwrap();
+    let ctx = test_ctx(&dir);
+    let res = run(&ctx, r#"tools.Glob({pattern: "x"}); eval("(");"#).await;
+    assert!(!res.ok, "{}", res.output);
+    assert!(
+        res.output.starts_with("eval error:"),
+        "a retried run rejects inside the wrapper instead: {}",
+        res.output
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A plain parse failure reaches the model as a legible line — engine
+/// message + position — not the Debug dump of the CaughtError.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runcode_syntax_error_is_legible() {
+    let dir = crate::fresh_test_dir("ptc-syn");
+    std::fs::create_dir_all(&dir).unwrap();
+    let ctx = test_ctx(&dir);
+    let res = run(&ctx, "const x = ;").await;
+    assert!(!res.ok);
+    assert!(
+        res.output.contains("unexpected token") || res.output.contains("expecting"),
+        "{}",
+        res.output
+    );
+    assert!(res.output.contains("eval_script:1:"), "{}", res.output);
+    assert!(!res.output.contains("Some("), "{}", res.output);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A script that awaits one tool call end to end.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn runcode_single_call() {

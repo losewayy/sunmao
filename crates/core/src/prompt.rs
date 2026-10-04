@@ -8,9 +8,10 @@
 //! | order | section | source |
 //! |---|---|---|
 //! | 10..30 | `identity`, `tool-guidance`, `shell-dialect` | `assets/prompt/*.md` baked into the binary |
+//! | 35 | `ptc` | `assets/prompt/ptc.md` (RunCode contract — all drivers) |
 //! | 40 | `prompt.md` + `prompt.d/*.md` | `~/.sunmao/` |
 //! | 50 | `prompt.md` + `prompt.d/*.md` | `<cwd>/.sunmao/` |
-//! | 60 | `project-context` | `AGENTS.md` / `CLAUDE.md` + the skills index (dynamic) |
+//! | 60 | `project-context` | `AGENTS.md` / `CLAUDE.md` + skills/agent indexes (dynamic) |
 //!
 //! A later file whose name matches an earlier section **replaces** it in
 //! place — `~/.sunmao/prompt.d/identity.md` swaps the identity section
@@ -63,10 +64,12 @@ pub struct PromptAssembler {
     /// resolved the same way `Context::new` does, so sub-agent prompts
     /// (built without a Context) still match the session's backend.
     shell: crate::tool::ShellBackend,
-    /// The session's loop driver — under `ptc` the tool-guidance slot
-    /// carries the codemode contract (`RunCode` is the only callable tool)
-    /// instead of the default call-per-tool guidance.
-    driver: crate::agent::LoopDriver,
+    /// Explicit loop driver (`--loop` / serve's per-session pick). `None`
+    /// resolves the same way `Context::new` does — manifest scan over cwd +
+    /// extra roots — so a forgotten `.with_driver` still matches the
+    /// session's actual tool surface instead of baking `tool-guidance.md`
+    /// into a `ptc` session.
+    driver: Option<crate::agent::LoopDriver>,
 }
 
 impl PromptAssembler {
@@ -76,7 +79,7 @@ impl PromptAssembler {
             shell: crate::tool::ShellBackend::resolve(&cwd),
             cwd,
             extra_roots: Vec::new(),
-            driver: crate::agent::LoopDriver::default(),
+            driver: None,
         }
     }
 
@@ -90,8 +93,15 @@ impl PromptAssembler {
     /// The loop driver this prompt is assembled for — pass the Context's
     /// resolved driver so the guidance matches the advertised surface.
     pub fn with_driver(mut self, driver: crate::agent::LoopDriver) -> Self {
-        self.driver = driver;
+        self.driver = Some(driver);
         self
+    }
+
+    /// The effective driver: explicit pick, else the manifest scan
+    /// `Context::new` applies (same cwd + extra roots = same answer).
+    fn driver(&self) -> crate::agent::LoopDriver {
+        self.driver
+            .unwrap_or_else(|| crate::agent::LoopDriver::resolve(&self.cwd, &self.extra_roots))
     }
 
     /// The session system prompt. `complete` (`--system`) wins outright.
@@ -99,7 +109,7 @@ impl PromptAssembler {
         if let Some(full) = complete {
             return full.to_string();
         }
-        let mut sections = builtin_sections(self.shell, self.driver);
+        let mut sections = builtin_sections(self.shell, self.driver());
         // the dynamic section joins BEFORE the layers so it lives under the
         // same-stem replacement contract as every other reserved stem — a
         // prompt.d/project-context.md swaps it in place (order survives the
@@ -115,6 +125,35 @@ impl PromptAssembler {
         apply_layer(&mut sections, &user_layer_dir(), 40);
         apply_layer(&mut sections, &self.cwd.join(".sunmao"), 50);
         render(sections)
+    }
+
+    /// Finish a child contract into a full sub-agent prompt: the contract
+    /// (a def body, `subagent-default`, or `fusion-sidekick`) plus the
+    /// environment facts every child needs regardless of which contract
+    /// won — the session's tool-guidance and shell dialect (driver-aware,
+    /// layer-replaceable like every other section), and under `ptc` the
+    /// RunCode section. Without this tail a Ptc child saw a trimmed
+    /// RunCode+SearchTools surface with no `tools.*` contract to use it.
+    pub fn subagent_prompt(&self, contract: String) -> String {
+        let mut parts = vec![
+            contract,
+            self.section_or(names::TOOL_GUIDANCE, || {
+                guidance_text(self.driver()).trim().to_string()
+            }),
+            self.section_or(names::SHELL_DIALECT, || {
+                dialect_text(self.shell).trim().to_string()
+            }),
+        ];
+        if self.driver() == crate::agent::LoopDriver::Ptc {
+            parts.push(self.section_or(names::PTC, || {
+                include_str!("../assets/prompt/ptc.md").trim().to_string()
+            }));
+        }
+        parts
+            .into_iter()
+            .filter(|s| !s.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n")
     }
 
     /// The Task sub-agent's prompt: a named `agents/*.md` def wins; otherwise
@@ -205,6 +244,26 @@ impl PromptAssembler {
 /// `driver` picks the tool-guidance section: `ptc` advertises RunCode as
 /// the whole surface, so the default "prefer dedicated tools" guidance
 /// would describe a call shape the model can't emit.
+fn dialect_text(shell: crate::tool::ShellBackend) -> &'static str {
+    match shell {
+        crate::tool::ShellBackend::Posix => {
+            include_str!("../assets/prompt/shell-dialect.md")
+        }
+        crate::tool::ShellBackend::Pwsh => {
+            include_str!("../assets/prompt/shell-dialect-pwsh.md")
+        }
+    }
+}
+
+fn guidance_text(driver: crate::agent::LoopDriver) -> &'static str {
+    // same section slot either way: a prompt.d/tool-guidance.md override
+    // replaces the driver's default too — cold-plug beats the driver pick.
+    match driver {
+        crate::agent::LoopDriver::Ptc => include_str!("../assets/prompt/ptc-driver.md"),
+        _ => include_str!("../assets/prompt/tool-guidance.md"),
+    }
+}
+
 fn builtin_sections(
     shell: crate::tool::ShellBackend,
     driver: crate::agent::LoopDriver,
@@ -214,20 +273,8 @@ fn builtin_sections(
         order,
         text: text.trim().to_string(),
     };
-    let dialect = match shell {
-        crate::tool::ShellBackend::Posix => {
-            include_str!("../assets/prompt/shell-dialect.md")
-        }
-        crate::tool::ShellBackend::Pwsh => {
-            include_str!("../assets/prompt/shell-dialect-pwsh.md")
-        }
-    };
-    // same section slot either way: a prompt.d/tool-guidance.md override
-    // replaces the driver's default too — cold-plug beats the driver pick.
-    let guidance = match driver {
-        crate::agent::LoopDriver::Ptc => include_str!("../assets/prompt/ptc-driver.md"),
-        _ => include_str!("../assets/prompt/tool-guidance.md"),
-    };
+    let dialect = dialect_text(shell);
+    let guidance = guidance_text(driver);
     vec![
         mk(
             names::IDENTITY,
@@ -432,6 +479,23 @@ fn project_context(cwd: &Path, extra_roots: &[PathBuf]) -> String {
         for l in &lines {
             out.push_str(l);
             out.push('\n');
+        }
+    }
+    // agent defs get the same index treatment as skills — names + one-line
+    // descriptions in the prompt, bodies load only when spawned
+    let defs = crate::agents::load_all(cwd, extra_roots);
+    if !defs.is_empty() {
+        out.push_str("## Available sub-agents (Task's `subagent_type` names one of these)\n");
+        for d in &defs {
+            out.push_str(&format!(
+                "- {} — {}\n",
+                d.name,
+                if d.description.is_empty() {
+                    "specialist agent"
+                } else {
+                    &d.description
+                }
+            ));
         }
     }
     out

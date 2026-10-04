@@ -88,6 +88,17 @@ impl Observer for RelayObserver {
                     });
                 }
             }
+            // the child's own state events must never touch the parent's
+            // UI: a lane's `compacted` would clear the whole transcript,
+            // its Todos/Goal would clobber the parent's chips. They carry
+            // no lane field on the wire, so there's nothing to forward.
+            LiveEvent::Compacted { .. }
+            | LiveEvent::Todos { .. }
+            | LiveEvent::Goal { .. }
+            | LiveEvent::TurnBoundary { .. } => {}
+            // Reasoning forwards verbatim — no lane field exists on the
+            // wire shape; parallel lanes' think text interleaves into one
+            // fold (a wire limitation, not a choice).
             _ => {
                 if let Some(s) = &self.sink {
                     s.on_event(ev);
@@ -372,65 +383,110 @@ pub(crate) async fn run_spawn(
     let lane = sub_ctx.lane;
     // the child runs a real session (own JSONL) — lifecycle hooks fire the
     // same way the main session's do, source names the spawn path so a
-    // capture hook can tell it apart from startup/resume
-    let _ = sub_ctx
-        .hooks
-        .fire(
+    // capture hook can tell it apart from startup/resume. Their
+    // additionalContext is real context: prefix it onto the child's first
+    // user message under the same `[hook context]` convention a main
+    // session's UserPromptSubmit injection uses.
+    let mut prompt = prompt;
+    let task_json = json!({"prompt": prompt});
+    for (event, input) in [
+        (
             crate::hooks::HookEvent::SessionStart,
-            &sub_ctx.cwd,
-            &crate::hooks::HookInput {
+            crate::hooks::HookInput {
                 source: Some(source),
+                mcp_servers: Some(sub_ctx.mcp_servers.iter().map(|s| s.name.clone()).collect()),
                 ..Default::default()
             },
-        )
-        .await;
-    let _ = sub_ctx
-        .hooks
-        .fire(
+        ),
+        (
             crate::hooks::HookEvent::SubagentStart,
-            &sub_ctx.cwd,
-            &crate::hooks::HookInput {
+            crate::hooks::HookInput {
                 source: Some(source),
-                tool_input: Some(&json!({"prompt": prompt})),
+                agent_name: sub_ctx.agent_name.as_deref(),
+                tool_input: Some(&task_json),
                 ..Default::default()
             },
-        )
-        .await;
+        ),
+    ] {
+        let out = sub_ctx.hooks.fire(event, &sub_ctx.cwd, &input).await;
+        for ctx_text in out.extra_context {
+            prompt = format!("[hook context] {ctx_text}\n\n{prompt}");
+        }
+    }
     let agent = AgentLoop::new(sub_ctx.clone()).with_max_iterations(24);
-    let obs = RelayObserver {
+    let obs = std::sync::Arc::new(RelayObserver {
         text: std::sync::Mutex::new(String::new()),
         sink,
         lane,
-    };
-    let outcome = agent.run_turn(&prompt, &obs).await;
-    let _ = sub_ctx
-        .hooks
-        .fire(
-            crate::hooks::HookEvent::SubagentStop,
-            &sub_ctx.cwd,
-            &crate::hooks::HookInput::default(),
-        )
-        .await;
-    let _ = sub_ctx
-        .hooks
-        .fire(
-            crate::hooks::HookEvent::SessionEnd,
-            &sub_ctx.cwd,
-            &crate::hooks::HookInput::default(),
-        )
-        .await;
+    });
+    // the child's hook audit lane (untrusted skips, exec failures) relays
+    // to the parent's UI with the lane prefix — otherwise a skipped child
+    // hook is invisible everywhere but its own log
+    sub_ctx.hooks.set_live(obs.clone());
+    let outcome = agent.run_turn(&prompt, &*obs).await;
+    // advisory events — a wedged capture hook must not hold the child's
+    // result (or the parent's turn) hostage
+    crate::hooks::HookEngine::fire_detached(
+        &sub_ctx.hooks,
+        crate::hooks::HookEvent::SubagentStop,
+        &sub_ctx.cwd,
+        &crate::hooks::HookInput {
+            agent_name: sub_ctx.agent_name.as_deref(),
+            ..Default::default()
+        },
+    );
+    crate::hooks::HookEngine::fire_detached(
+        &sub_ctx.hooks,
+        crate::hooks::HookEvent::SessionEnd,
+        &sub_ctx.cwd,
+        &crate::hooks::HookInput::default(),
+    );
     // child's extension children die with its session — graceful path
     // before the context drop falls back to the detached reaper.
     sub_ctx.ext.shutdown().await;
+    // steers pushed after the last drain (or raced against the child's
+    // death — `steer_sub` can win the roster check and still orphan) are
+    // undelivered by definition. Drop them with an audit row instead of
+    // letting the parent's `task.steer` fact stand alone — the trail
+    // then says "pushed AND lost", not just "pushed".
+    {
+        let orphans: Vec<String> = sub_ctx
+            .steer
+            .lock_or_recover()
+            .drain(..)
+            .map(|(_, t)| t)
+            .collect();
+        if !orphans.is_empty() {
+            sub_ctx
+                .sessions
+                .lock()
+                .await
+                .append_audit(&SessionEvent::Hook {
+                    event: "task.steer.dropped".into(),
+                    detail: format!("{} undelivered: {}", orphans.len(), orphans.join(" | ")),
+                })
+                .await;
+        }
+    }
     let text = obs.text.lock_or_recover().clone();
     match outcome {
         // a killed child is a clean exit but NOT a success — the roster
         // must not mark it `done`. `Cancelled` is its own variant precisely
         // so this arm can discriminate without string-matching.
-        Ok(crate::agent::TurnOutcome::Cancelled) => ToolResult {
-            output: "[sub-agent cancelled]".into(),
-            ok: false,
-        },
+        Ok(crate::agent::TurnOutcome::Cancelled) => {
+            // the child's detached spawns (grandchildren) register on ITS
+            // roster — a parent cancel reaches them only through here, or
+            // an orphan keeps writing into a dead session's log
+            for entry in sub_ctx.live_tasks.lock_or_recover().iter() {
+                if let Some(c) = &entry.cancel {
+                    c.cancel();
+                }
+            }
+            ToolResult {
+                output: "[sub-agent cancelled]".into(),
+                ok: false,
+            }
+        }
         Ok(_) => ToolResult {
             output: if text.is_empty() {
                 "[sub-agent finished with no text output]".into()

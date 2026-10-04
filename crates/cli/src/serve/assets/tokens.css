@@ -56,16 +56,30 @@
   --lh-tight:1.3;--lh-ui:1.5;--lh-body:1.7;--lh-code:1.6;
   --ls-display:-.01em;--ls-metric:-.03em;
 
-  /* spacing / heights / widths (§5) */
+  /* spacing / borders / heights / widths (§5) */
   --s-0:0;--s-2:2px;--s-4:4px;--s-6:6px;--s-8:8px;--s-10:10px;--s-12:12px;
   --s-16:16px;--s-20:20px;--s-24:24px;--s-32:32px;--s-40:40px;--s-64:64px;
   --s-gutter:var(--s-8);
-  --h-xs:20px;--h-sm:24px;--h-md:28px;--h-lg:32px;--h-xl:36px;--h-2xl:40px;--h-3xl:48px;
+  --bw-hairline:1px;
+  --h-xs:20px;--h-sm:24px;--h-md:28px;--h-lg:32px;--h-xl:36px;--h-2xl:40px;--h-3xl:48px;--h-theme-preview:86px;--h-provider-model-list:220px;--h-attachment-preview:160px;--h-range-input:18px;
   --w-rail:252px;--w-dock:264px;--w-read:720px;--w-bubble-you:600px;
-  --w-settings:760px;--w-palette:580px;
+  --w-settings:760px;--w-palette:580px;--w-wallpaper-tile:100px;--w-setting-control:220px;--w-model-level:160px;--w-chip-text:220px;--w-attachment-preview:220px;
   --w-pop:220px;--w-pop-max:380px;
-  --icon-xs:12px;--icon-sm:14px;--icon-md:16px;--icon-lg:20px;
-  --icon-stroke:1.75;--icon-stroke-bold:2.4;
+  --w-crumb-seg:180px;--w-crumb-title:340px;--w-field-sm:180px;
+  --w-caption-cluster:146px;--w-att-name:140px;--w-dock-tab-dyn:150px;
+  --w-events:460px;--w-ev-kind:94px;--w-an-box:300px;--w-rev-num:34px;
+  --w-pop-slash:320px;--w-models:400px;--w-models-min:360px;
+  --w-at-pop:420px;--w-slash-pop:360px;--w-jobview:560px;
+  --h-ev-list:320px;--h-pop-list:300px;--h-pop-min:72px;--h-pal-list:380px;
+  --h-input:52px;--h-input-max:168px;--h-pop-slash:280px;
+  --h-island:206px;--h-island-tall:540px;--h-island-min:80px;--h-island-max:1400px;
+  --off-palette-top:92px;--off-toasts:124px;--off-hero-bottom:150px;
+  --s-48:48px;
+  --icon-xs:12px;--icon-sm:14px;--icon-md:16px;--icon-lg:20px;--icon-2xl:34px;
+  --icon-stroke:1.75;--icon-stroke-bold:2.4;--icon-stroke-thin:1;--icon-stroke-metric:1.6;--icon-stroke-hero:1.5;
+  --lh-none:1;--bw-annotate:1.5px;
+  --ring-swatch-on:0 0 0 2px rgb(var(--glass-rgb)),0 0 0 4px var(--_c);
+  --c-island-chip:rgb(var(--island-rgb) / .62);
 
   /* radii (§6) */
   --r-xs:4px;--r-sm:6px;--r-md:8px;--r-lg:12px;--r-xl:16px;--r-2xl:20px;--r-full:999px;
@@ -94,7 +108,7 @@
   --ring-accent:inset 0 0 0 1px var(--c-accent-line);
   --ring-focus:0 0 0 3px color-mix(in srgb,var(--c-accent) 45%,transparent);
   --focus-outline:2px solid color-mix(in srgb,var(--c-accent) 80%,transparent);
-  --blur-edge:10px;
+  --blur-edge:20px;
 
   /* stacking (§7.3) */
   --z-wall:0;--z-app:1;--z-hero:2;--z-edge:3;--z-rail:4;--z-dock:5;
@@ -179,6 +193,7 @@
 @property --ga{syntax:'<number>';inherits:false;initial-value:.56}
 
 @keyframes k-spin{to{transform:rotate(360deg)}}
+@keyframes k-fade{from{opacity:0}}
 @keyframes k-breathe{50%{opacity:.4}}
 @keyframes k-rise{from{opacity:0;transform:translateY(var(--move-2))}}
 @keyframes k-drop{from{opacity:0;transform:translateY(calc(var(--move-2) * -1)) scale(var(--scale-pop))}}

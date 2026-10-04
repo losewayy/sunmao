@@ -110,6 +110,54 @@ pub(super) fn hooks_list(s: &Arc<Shared>, sess: Option<String>) -> HostResponse 
     HostResponse::json(serde_json::json!({"hooks": hooks}))
 }
 
+/// `PUT /hooks?sess=…` `{index, trusted}` — the settings page's trust
+/// toggle: same roster index `/hooks trust|untrust <n>` uses, same
+/// `set_hook_trust` ledger write + audit fact it lands.
+pub(super) async fn hooks_put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> HostResponse {
+    let v: serde_json::Value = match serde_json::from_slice(body) {
+        Ok(v) => v,
+        Err(e) => return HostResponse::err(400, format!("bad json: {e}")),
+    };
+    let index = v["index"].as_u64().unwrap_or(0) as usize;
+    let trusted = v["trusted"].as_bool().unwrap_or(false);
+    let host = sess
+        .as_deref()
+        .and_then(|id| s.host(id))
+        .or_else(|| s.newest_live_id().and_then(|id| s.host(&id)));
+    let Some(h) = host else {
+        return HostResponse::err(404, "no live session".into());
+    };
+    match h.agent.set_hook_trust(index, trusted).await {
+        Ok(detail) => HostResponse::json(serde_json::json!({"detail": detail})),
+        Err(e) => HostResponse::err(400, e),
+    }
+}
+
+/// `GET /mcp?sess=…` — the viewed session's MCP server roster
+/// (`mcp_roster()` status structs; `/mcp` text is the terminal rendering).
+pub(super) fn mcp_list(s: &Arc<Shared>, sess: Option<String>) -> HostResponse {
+    let host = sess
+        .as_deref()
+        .and_then(|id| s.host(id))
+        .or_else(|| s.newest_live_id().and_then(|id| s.host(&id)));
+    let servers = host
+        .map(|h| {
+            h.agent
+                .mcp_roster()
+                .iter()
+                .map(|m| {
+                    serde_json::json!({
+                        "name": m.name, "transport": m.transport,
+                        "tools": m.tools, "prompts": m.prompts,
+                        "resources": m.resources, "connected": m.connected,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    HostResponse::json(serde_json::json!({"servers": servers}))
+}
+
 /// `sess` 指向的项目目录：活动宿主报它自己的 `session_cwd`；休眠日志从
 /// `<project>/.sunmao/sessions/<id>.jsonl` 反推项目；都找不到时用启动
 /// 目录兜底（jobs 是按项目分桶的，不是按会话）。

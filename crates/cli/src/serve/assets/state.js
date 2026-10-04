@@ -19,15 +19,40 @@ const motion = (() => {
     ease: k => css(`--ease-${k}`) || 'ease-out',
     hold: k => ms(`--hold-${k}`, 2600),
     delay: k => ms(`--delay-${k}`, 400),
+    // length tokens JS needs verbatim (input heights, pop widths)
+    px: (n, d = 0) => { const v = parseFloat(css(n)); return isNaN(v) ? d : v; },
     reduced: () => root.dataset.motionEff === 'reduce',
     wait: k => new Promise(r => setTimeout(r, motion.dur(k))),
-    // one-shot WAAPI height tween; no-op when reduced
-    height(el, from, to, k = 'slow') {
-      if (motion.reduced()) return;
-      el.animate([{ height: from + 'px' }, { height: to + 'px' }], { duration: motion.dur(k), easing: motion.ease('out') });
+    // one-shot WAAPI height tween (overflow clipped for the run); resolves
+    // when finished — callers can chain the display flip off it
+    async height(el, from, to, k = 'slow') {
+      if (motion.reduced() || !el.animate) return;
+      const prev = el.style.overflow; el.style.overflow = 'hidden';
+      try { await el.animate([{ height: from + 'px' }, { height: to + 'px' }], { duration: motion.dur(k), easing: motion.ease('out') }).finished; } catch {}
+      el.style.overflow = prev;
+    },
+    // expand/collapse a class-toggled body (tool rows, think blocks, tool
+    // groups): open = add class then tween 0→h; close = tween h→0 then the
+    // class comes off (which is what display:none's the body)
+    async fold(container, body, open, cls = 'open') {
+      if (container.classList.contains(cls) === open) return;
+      if (motion.reduced()) { container.classList.toggle(cls, open); return; }
+      if (open) { container.classList.add(cls); await motion.height(body, 0, body.offsetHeight); }
+      else { await motion.height(body, body.offsetHeight, 0); container.classList.remove(cls); }
     },
   };
 })();
+// fade an element out, swap its contents, fade back — session/view rebuilds
+async function fadeSwap(el, fn) {
+  if (!el || motion.reduced()) return fn();
+  el.style.transition = `opacity ${motion.dur('fast')}ms ${motion.ease('in')}`;
+  el.style.opacity = '0';
+  await motion.wait('fast');
+  fn();
+  el.style.transition = `opacity ${motion.dur('base')}ms ${motion.ease('out')}`;
+  el.style.opacity = '';
+  el.addEventListener('transitionend', () => { el.style.transition = ''; }, { once: true });
+}
 /* debounces aren't motion — named constants, gate exempts the references */
 const DEBOUNCE_DATAFLOW = 400, DEBOUNCE_RESIZE = 160, DEBOUNCE_ROSTER = 700, DEBOUNCE_UI_SAVE = 400;
 const clock = sec => { const d = new Date(); return pad(d.getHours()) + ':' + pad(d.getMinutes()) + (sec ? ':' + pad(d.getSeconds()) : ''); };
@@ -83,6 +108,7 @@ let clientId = 0; // hello assigns this tab's id — directed frames name it
 // per-session rail state — every host frame carries `sess`; the transcript
 // only renders the viewed session, the rail tracks them all
 const busySessions = new Set(), waitingSessions = new Set();
+let driver = ''; // loop driver the viewed session froze at creation ('' = not a live view yet)
 let approvalMode = 'auto'; // kernel-reported stance — the only source of truth
 const MODE_LABELS = { always_ask: '请求批准', auto: '自动', read_only: '只读', full_access: '完全访问' };
 const MODE_ICONS = { always_ask: 'shield-check', auto: 'shield', read_only: 'eye', full_access: 'lock' };
@@ -106,7 +132,7 @@ function setEffort(level, levels) {
 let SESSION_IDS = [], SESSION_META = {};
 const EVLOG = [];
 
-const DEFAULTS = { mode: 'dark', motion: 'system', accent: '#339CFF', background: '#16181F', foreground: '#E8E9F0', wallpaper: 'graphite', dim: 0.16, panelOpacity: 0.72, blur: 24, translucentSidebar: false, contrast: 50, fonts: { ui: 'HarmonyOS Sans SC', code: 'Maple Mono CN' } };
+const DEFAULTS = { mode: 'dark', motion: 'system', accent: '#339CFF', background: '#16181F', foreground: '#E8E9F0', wallpaper: 'graphite', dim: 0.16, panelOpacity: 0.72, blur: 24, translucentSidebar: false, contrast: 50, railGroup: 'time', railFold: {}, loopDriver: '', fonts: { ui: 'HarmonyOS Sans SC', code: 'Maple Mono CN' } };
 const INITIAL = Object.assign(clone(DEFAULTS), { wallpaper: 'dusk-ridge', dim: 0.08, panelOpacity: 0.56, translucentSidebar: true });
 /* state source of truth: `<project>/.sunmao/ui.json` via GET/PUT /ui;
    localStorage is only a first-frame cache (prevents a flash of defaults

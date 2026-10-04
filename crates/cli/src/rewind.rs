@@ -67,6 +67,14 @@ pub async fn list(agent: &AgentLoop) -> String {
 /// The fork's checkpoint ledger inherits the prefix's snapshots (truncated
 /// to < n) so rewinds inside the fork stay honest.
 pub async fn run(agent: &AgentLoop, project: &Path, n: u64, mode: Mode) -> Result<Outcome, String> {
+    // file restore has no fence against a running turn — a Write that
+    // lands mid-restore would get clobbered by the checkpoint snapshot.
+    // (Session-mode rewinds only copy log bytes — safe mid-turn.)
+    if mode != Mode::Session && agent.context().turn_lock.try_lock().is_err() {
+        return Err(
+            "[turn in progress — wait for it to finish (or cancel) before rewinding files]".into(),
+        );
+    }
     let src = agent.session_path().await;
     let src_id = src
         .file_stem()

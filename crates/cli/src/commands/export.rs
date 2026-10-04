@@ -287,6 +287,7 @@ mod tests {
             SessionEvent::Started {
                 model: "m".into(),
                 cwd: "/x".into(),
+                driver: None,
             },
             SessionEvent::Message {
                 message: Message::user("hello"),
@@ -350,6 +351,7 @@ mod tests {
             SessionEvent::Started {
                 model: "m".into(),
                 cwd: dir.display().to_string(),
+                driver: None,
             },
             SessionEvent::Message {
                 message: sunmao_llm::types::Message::user("hello"),

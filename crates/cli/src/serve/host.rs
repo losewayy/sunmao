@@ -15,6 +15,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 mod approve;
 mod projects;
+pub(crate) mod sched;
 
 use super::client::Client;
 use super::driver;
@@ -89,6 +90,10 @@ pub(crate) struct Shared {
     pub(crate) prompt_override: Option<String>,
     /// `--loop` override — new-session prompts are assembled for this driver.
     pub(crate) driver_override: Option<sunmao_core::agent::LoopDriver>,
+    /// Per-session loop picks (`POST /session/new {loop}`) staged for the
+    /// adopting Context — keyed by session id, popped once in `adopt`.
+    /// `--loop` still outranks them (the gate before stamping).
+    pub(crate) pending_drivers: Mutex<HashMap<String, sunmao_core::agent::LoopDriver>>,
     /// process-wide approval id space (see Pending)
     pub(crate) approval_ids: Arc<AtomicU64>,
     /// host-management channel — session drivers can't `await adopt`
@@ -217,7 +222,15 @@ impl Shared {
         let approver = Arc::new(ServeApprover {
             pending: pending.clone(),
         });
-        let ctx = self.factory.build(log, approver, session_cwd).await?;
+        let mut ctx = self.factory.build(log, approver, session_cwd).await?;
+        // a per-creation loop pick stamps the fresh Context before any
+        // turn reads it — cold-plug stays cold, just not manifest-bound
+        if self.driver_override.is_none()
+            && let Some(d) = self.pending_drivers.lock_or_recover().remove(&id)
+            && let Some(c) = Arc::get_mut(&mut ctx)
+        {
+            c.loop_driver = d;
+        }
         let agent = AgentLoop::new(ctx.clone());
         agent.set_live_sink(Arc::new(WsObserver::new(self.live.clone(), id.clone())));
         let host = Arc::new(Host {
@@ -236,17 +249,7 @@ impl Shared {
         tokio::spawn(driver::driver(self.clone(), host.clone()));
         // SessionStart fires on every adopt — same lifecycle a fresh
         // launch or TUI --resume produces; capture hooks see which path
-        ctx.hooks
-            .fire(
-                sunmao_core::hooks::HookEvent::SessionStart,
-                &ctx.cwd,
-                &sunmao_core::hooks::HookInput {
-                    source: Some(source),
-                    mcp_servers: Some(host.agent.mcp_server_names()),
-                    ..Default::default()
-                },
-            )
-            .await;
+        ctx.fire_session_start(source).await;
         self.emit(serde_json::json!({"type":"sessions_changed"}));
         Ok(host)
     }
@@ -378,6 +381,16 @@ pub(crate) async fn rewind_session(
 ) -> Result<serde_json::Value> {
     let src = log_path(s, id).context("no such session")?;
     let project = session_project(s, &src);
+    // file restore has no fence against a running turn — a Write that
+    // lands mid-restore would get clobbered by the checkpoint snapshot.
+    // Refuse rather than queue: the caller can wait or cancel first.
+    // (Session-mode rewinds only copy log bytes — safe mid-turn.)
+    if mode != RewindMode::Session
+        && s.host(id)
+            .is_some_and(|h| h.busy.load(std::sync::atomic::Ordering::Relaxed) > 0)
+    {
+        anyhow::bail!("session is mid-turn — wait or cancel first");
+    }
     let bounds = sunmao_core::checkpoints::turn_boundaries(&src);
     let boundary = bounds
         .iter()
@@ -439,6 +452,7 @@ pub(crate) async fn rewind_session(
 pub(crate) async fn new_session(
     s: &Arc<Shared>,
     cwd: Option<std::path::PathBuf>,
+    loop_drv: Option<sunmao_core::agent::LoopDriver>,
 ) -> Result<serde_json::Value> {
     let cwd = match cwd {
         Some(p) => {
@@ -457,8 +471,11 @@ pub(crate) async fn new_session(
         .as_millis();
     let id = format!("{}-{}", crate::session_id(), ms % 1000);
     let dir = cwd.join(".sunmao/sessions");
+    // precedence: --loop flag > explicit per-creation pick > manifest scan —
+    // the GUI's 执行模式 picker is the middle tier
     let driver = s
         .driver_override
+        .or(loop_drv)
         .unwrap_or_else(|| sunmao_core::agent::LoopDriver::resolve(&cwd, &s.roots));
     let prompt = match &s.prompt_override {
         Some(p) => p.clone(),
@@ -467,10 +484,14 @@ pub(crate) async fn new_session(
             .with_driver(driver)
             .assemble(None),
     };
+    if let Some(d) = loop_drv {
+        s.pending_drivers.lock_or_recover().insert(id.clone(), d);
+    }
     let mut log = sunmao_core::SessionLog::open(&dir, &id).await?;
     log.append(&SessionEvent::Started {
         model: s.model_label.clone(),
         cwd: display_path(&cwd),
+        driver: Some(driver.as_str().into()),
     })
     .await?;
     log.append(&SessionEvent::Message {

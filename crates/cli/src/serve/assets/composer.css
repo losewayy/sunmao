@@ -1,9 +1,10 @@
 /* composer — the prompt bar: status strip, queue chips (steer + queued
    prompts), attachment chips, input row and its mode/model/send buttons. */
 /* ---------- composer ---------- */
-.composer{position:absolute;left:50%;bottom:var(--s-16);transform:translateX(-50%);width:min(var(--w-read),calc(100% - 48px));border-radius:var(--r-2xl);--ga:var(--glass-raised);border-color:var(--c-stroke-2);box-shadow:var(--sh-inset-hi),var(--sh-2);z-index:var(--z-composer)}
-.cmp-top{display:flex;align-items:center;gap:var(--s-2);height:var(--h-xl);padding:0 var(--s-6);border-radius:calc(var(--r-2xl) - 1px) calc(var(--r-2xl) - 1px) 0 0;background:var(--c-fill-1)}/* token-exempt: §6 nested-corner rule */
+.composer{position:absolute;left:50%;bottom:var(--s-16);transform:translateX(-50%);width:min(var(--w-read),calc(100% - var(--s-48)));border-radius:var(--r-2xl);--ga:var(--glass-raised);border-color:var(--c-stroke-2);box-shadow:var(--sh-inset-hi),var(--sh-2);z-index:var(--z-composer)}
+.cmp-top{display:flex;align-items:center;gap:var(--s-2);height:var(--h-xl);padding:0 var(--s-6);border-radius:calc(var(--r-2xl) - var(--bw-hairline)) calc(var(--r-2xl) - var(--bw-hairline)) 0 0;background:var(--c-fill-1)}/* token-exempt: §6 nested-corner rule */
 .cmp-top[hidden]{display:none}
+.cmp-top,.cmp-atts,.cmp-queue{animation:k-rise var(--dur-fast) var(--ease-out)}
 .cmp-top .sp{flex:1}
 .cmp-wait{display:inline-flex;align-items:center;gap:var(--s-6);margin-right:var(--s-6);font-size:var(--fs-xs);color:var(--c-warn)}
 .cmp-wait[hidden]{display:none}
@@ -14,8 +15,13 @@
 .cmp-goal{min-width:0;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-xs);color:var(--c-text-2)}
 .cmp-goal b{color:var(--c-accent);font-weight:normal;margin-right:var(--s-2)}
 .cmp-goal[hidden]{display:none}
-.cmp-row{display:flex;align-items:flex-end;gap:var(--s-6);padding:var(--s-8)}
-.cmp-row textarea{flex:1;min-width:0;height:var(--h-xl);max-height:168px;resize:none;border:0;outline:0;background:none;padding:var(--s-6) var(--s-6);color:var(--c-text);font:var(--fs-md)/var(--lh-ui) var(--font-ui);overflow-y:auto}
+/* the text is the main thing — it gets its own full-width row; the chips
+   ride a dedicated bottom bar (ChatGPT/Devin convention), never squeezed
+   into the textarea's line box */
+.cmp-row{display:flex;padding:var(--s-8) var(--s-8) 0}
+.cmp-row textarea{flex:1;min-width:0;height:var(--h-input);min-height:var(--h-input);max-height:var(--h-input-max);resize:none;border:0;outline:0;background:none;padding:var(--s-6) var(--s-6);color:var(--c-text);font:var(--fs-md)/var(--lh-ui) var(--font-ui);overflow-y:auto}
+.cmp-bar{display:flex;align-items:center;gap:var(--s-6);padding:var(--s-6) var(--s-8) var(--s-8)}
+.cmp-bar .sp{flex:1}
 .cmp-row textarea::placeholder{color:var(--c-text-3)}
 .cb{display:inline-flex;align-items:center;gap:var(--s-6);height:var(--h-xl);border-radius:var(--r-full);flex:none;color:var(--c-text-2);transition:background var(--dur-instant) var(--ease-out),color var(--dur-instant) var(--ease-out),filter var(--dur-instant) var(--ease-out)}
 .cb:hover,.cb.pressed{background:var(--c-fill-2);color:var(--c-text)}
@@ -33,22 +39,23 @@
 .cb.send.stop{background:var(--c-err);color:var(--c-on-accent)}
 .cb.send.stop:hover{background:var(--c-err);color:var(--c-on-accent);filter:brightness(1.1)}
 .cb.send.off{background:var(--c-fill-3);color:var(--c-text-3)}
+.cb.icon{width:var(--h-xl);justify-content:center}
 .cmp-queue{display:flex;flex-wrap:wrap;gap:var(--s-6);padding:var(--s-6) var(--s-8) 0}
 .cmp-queue[hidden]{display:none}
-.chip{display:inline-flex;align-items:center;gap:var(--s-4);padding:var(--s-2) var(--s-4) var(--s-2) var(--s-8);border-radius:var(--r-full);background:var(--c-fill-2);color:var(--c-text-2);font-size:var(--fs-xs);box-shadow:var(--ring-1)}
-.chip-x{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:var(--r-full);color:var(--c-text-3);font-size:var(--fs-xs);line-height:1}
+.chip{display:inline-flex;align-items:center;gap:var(--s-4);animation:k-rise var(--dur-fast) var(--ease-out);padding:var(--s-2) var(--s-4) var(--s-2) var(--s-8);border-radius:var(--r-full);background:var(--c-fill-2);color:var(--c-text-2);font-size:var(--fs-xs);box-shadow:var(--ring-1)}
+.chip-x{display:inline-flex;align-items:center;justify-content:center;width:var(--s-16);height:var(--s-16);border-radius:var(--r-full);color:var(--c-text-3);font-size:var(--fs-xs);line-height:var(--lh-none)}
 .chip-x:hover{background:var(--c-fill-3);color:var(--c-err)}
 /* queue chips — steer (⚡, boundary injection) vs queued prompts (FIFO,
    reorderable/editable). Same pill; the accent + controls differ. */
 .chip.q-steer{color:var(--c-accent);background:var(--c-accent-soft)}
 .chip.q-in{color:var(--c-text)}
-.chip-btn{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:var(--r-full);color:var(--c-text-3);line-height:1}
+.chip-btn{display:inline-flex;align-items:center;justify-content:center;width:var(--s-16);height:var(--s-16);border-radius:var(--r-full);color:var(--c-text-3);line-height:var(--lh-none)}
 .chip-btn:hover{background:var(--c-fill-3);color:var(--c-text)}
-.chip-t{color:inherit;background:none;border:0;padding:0;font:inherit;cursor:text;text-align:left;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip-t{color:inherit;background:none;border:0;padding:0;font:inherit;cursor:text;text-align:left;max-width:var(--w-chip-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chip-t:hover{color:var(--c-accent)}
-.cmp-queue input{font:inherit;font-size:var(--fs-xs);color:var(--c-text);background:var(--c-fill-1);border:1px solid var(--c-accent);border-radius:var(--r-sm);padding:0 var(--s-4);min-width:180px;outline:none}
+.cmp-queue input{font:inherit;font-size:var(--fs-xs);color:var(--c-text);background:var(--c-fill-1);border:var(--bw-hairline) solid var(--c-accent);border-radius:var(--r-sm);padding:0 var(--s-4);min-width:var(--w-field-sm);outline:none}
 .cmp-atts{display:flex;flex-wrap:wrap;gap:var(--s-6);padding:var(--s-6) var(--s-8) 0}
 .cmp-atts[hidden]{display:none}
 .att-chip{display:inline-flex;align-items:center;gap:var(--s-6);padding:var(--s-2) var(--s-4) var(--s-2) var(--s-2);border-radius:var(--r-md);background:var(--c-fill-2);box-shadow:var(--ring-1);cursor:zoom-in}
 .att-chip img{width:var(--s-24);height:var(--s-24);border-radius:var(--r-sm);object-fit:cover;display:block}
-.att-chip .att-n{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-2xs);color:var(--c-text-2)}
+.att-chip .att-n{max-width:var(--w-att-name);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-2xs);color:var(--c-text-2)}

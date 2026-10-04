@@ -486,7 +486,12 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, cmd_line: &str, cli
             true
         }
         commands::Command::Annotate(name, text) => {
-            note(commands::annotate(&host.agent.session_cwd(), &name, &text));
+            note(commands::annotate(
+                &host.agent.session_cwd(),
+                &name,
+                &text,
+                None,
+            ));
             true
         }
         commands::Command::Help => {

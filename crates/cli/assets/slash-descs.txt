@@ -1,26 +1,26 @@
 # 内置斜杠命令的一行中文说明 — 斜杠菜单、命令面板与 TUI 补全共用。
 # 格式：命令名（不带 /）<TAB> 一行说明。文件命令与 /srv:prompt 无条目。
-annotate	给 artifact 追加一条批注
-artifacts	列出 .sunmao/artifacts 下的产物
+annotate	为生成的页面添加批注
+artifacts	查看生成的文件
 clear	清空当前对话视图（前端本地）
-compact	把当前对话压缩进事件日志
-effort	查看或设置思考强度（reasoning effort）
+compact	整理较早的对话内容，保留当前任务重点
+effort	调整模型的思考强度
 export-md	导出会话为 Markdown 文件
-export-zip	导出调试包（转录 + 原始事件日志压缩包）
-fork	复制该会话日志，新开一支继续
-goal	设定持续推进的目标；空参查看，clear 清除
-help	显示可用命令一览
-hooks	列出已加载的 hook 及信任状态；trust/untrust <n> 批准或吊销
-mcp	列出已连接的 MCP 服务器
-mode	查看或切换审批模式 / turn 模式（standard·fusion）
-model	列出模型或按选择器切换模型
-multiline	切换多行输入模式（前端本地）
-quit	退出（前端本地）
-resume	恢复某条历史会话
-rewind	回退到某一轮，可连带恢复文件
-search	跨会话全文搜索
-sessions	最近的会话列表
-status	显示会话状态（模型/目录/token 等）
-stop	终止一个正在运行的子代理
-tasks	查看运行中的子代理
-todos	查看模型的任务清单
+export-zip	导出会话内容与诊断信息
+fork	基于当前会话新建对话
+goal	设置、查看或清除当前目标
+help	显示可用命令
+hooks	查看自动化规则与授权
+mcp	查看已连接的扩展工具
+mode	查看或切换审批与执行模式
+model	查看或切换模型
+multiline	开启或关闭多行输入
+quit	退出 sunmao
+resume	恢复一条历史会话
+rewind	回到之前某一轮，可还原文件修改
+search	搜索所有会话内容
+sessions	查看最近的会话
+status	查看当前会话状态与用量
+stop	停止正在运行的后台任务
+tasks	查看正在运行的后台任务
+todos	查看任务清单

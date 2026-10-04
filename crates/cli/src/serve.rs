@@ -24,7 +24,9 @@
 //!         POST /artifacts/{name}/annotate · GET /dataflow[/{id}] ·
 //!         GET /tasks?sess= · GET /jobs?sess= · GET /jobs/{id}/output ·
 //!         POST /attachments[?sess&ext] · GET /attachments/{name} ·
-//!         GET|PUT /ui[?sess=] · GET|PUT /shell[?sess=]
+//!         GET|PUT /ui[?sess=] · GET|PUT /shell[?sess=] ·
+//!         GET|POST /schedules · PUT|DELETE /schedules/{id} ·
+//!         POST /schedules/{id}/run · GET /fs/pick|/fs/browse
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
@@ -75,8 +77,11 @@ const SETTINGS_JS: &str = include_str!("serve/assets/settings.js");
 const DIFF_JS: &str = include_str!("serve/assets/diff.js");
 const MD_JS: &str = include_str!("serve/assets/md.js");
 const TRANSCRIPT_JS: &str = include_str!("serve/assets/transcript.js");
+const APPROVALS_JS: &str = include_str!("serve/assets/approvals.js");
 const ISLANDS_JS: &str = include_str!("serve/assets/islands.js");
 const CONNECTION_JS: &str = include_str!("serve/assets/connection.js");
+const RAIL_JS: &str = include_str!("serve/assets/rail.js");
+const SCHEDULES_JS: &str = include_str!("serve/assets/schedules.js");
 const COMPOSER_JS: &str = include_str!("serve/assets/composer.js");
 const PALETTE_JS: &str = include_str!("serve/assets/palette.js");
 const FIND_JS: &str = include_str!("serve/assets/find.js");
@@ -84,6 +89,7 @@ const MENUS_JS: &str = include_str!("serve/assets/menus.js");
 const ROSTER_JS: &str = include_str!("serve/assets/roster.js");
 const JOBS_JS: &str = include_str!("serve/assets/jobs.js");
 const CHANNELS_JS: &str = include_str!("serve/assets/channels.js");
+const DOCK_JS: &str = include_str!("serve/assets/dock.js");
 const BOOT_JS: &str = include_str!("serve/assets/boot.js");
 
 /// MCP Apps sandbox proxy — a separate origin serving a single static
@@ -160,6 +166,7 @@ pub(crate) async fn spawn_host(spec: HostSpec, sandbox_port: u16) -> Result<Host
         factory: spec.factory,
         prompt_override: spec.prompt_override,
         driver_override: spec.driver_override,
+        pending_drivers: Mutex::new(HashMap::new()),
         model_label: spec.model_label,
         sandbox_port,
         approval_ids: Arc::new(AtomicU64::new(0)),
@@ -168,6 +175,8 @@ pub(crate) async fn spawn_host(spec: HostSpec, sandbox_port: u16) -> Result<Host
         adopt_seq: AtomicU64::new(0),
     });
     tokio::spawn(host::mgmt_loop(shared.clone(), mgmt_rx));
+    // the 定时任务 tick — same loop for both transports (axum + scheme)
+    tokio::spawn(host::sched::run(shared.clone()));
 
     // bootstrap session: `first_log` carries --resume/--fork; otherwise a
     // fresh seeded log — the host, not main.rs, owns session assembly
@@ -176,7 +185,7 @@ pub(crate) async fn spawn_host(spec: HostSpec, sandbox_port: u16) -> Result<Host
             shared.adopt(log, source).await?;
         }
         None => {
-            host::new_session(&shared, None).await?;
+            host::new_session(&shared, None, None).await?;
         }
     }
     Ok(HostHandle { s: shared })

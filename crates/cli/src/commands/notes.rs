@@ -328,8 +328,10 @@ pub fn artifacts_text(cwd: &Path) -> String {
 /// `/annotate <name> <note>` — append a human note to the artifact's
 /// `state.json` sidecar (SPEC §4.10 interaction回流): the note becomes
 /// agent input on the next Read. `section` may be empty — it's just the
-/// margin the note points at.
-pub fn annotate(cwd: &Path, name: &str, note: &str) -> String {
+/// margin the note points at. `sel` carries the GUI's element pick
+/// (`{tag,id,cls,text,css,rect}`) so the note anchors to what was pointed
+/// at, not just the page.
+pub fn annotate(cwd: &Path, name: &str, note: &str, sel: Option<&serde_json::Value>) -> String {
     if !name
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
@@ -359,11 +361,15 @@ pub fn annotate(cwd: &Path, name: &str, note: &str) -> String {
     if !arr.is_array() {
         return format!("[{name}.state.json: 'annotations' is not an array]");
     }
-    arr.as_array_mut().unwrap().push(serde_json::json!({
+    let mut entry = serde_json::json!({
         "section": "",
         "note": note,
         "at": today(),
-    }));
+    });
+    if let Some(sel) = sel {
+        entry["sel"] = sel.clone();
+    }
+    arr.as_array_mut().unwrap().push(entry);
     match std::fs::write(&state, serde_json::to_string_pretty(&doc).unwrap()) {
         Ok(()) => format!("[annotated {name} — the agent sees it on next Read]"),
         Err(e) => format!("[write failed: {e}]"),

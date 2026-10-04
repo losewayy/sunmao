@@ -87,13 +87,11 @@ pub(super) async fn approve(_s: &Arc<Shared>, body: &[u8]) -> HostResponse {
     let Ok(store) = Store::open(&config::state_dir()) else {
         return HostResponse::err(500, "store unavailable".into());
     };
-    match store.pairing_consume(&code) {
-        Some((ch, sender)) => match store.allow_add(&ch, &sender) {
-            Ok(role) => HostResponse::json(serde_json::json!({
-                "ok": true, "channel": ch, "sender": sender, "role": role,
-            })),
-            Err(e) => HostResponse::err(500, format!("{e:#}")),
-        },
-        None => HostResponse::err(404, "no live pairing code".into()),
+    match store.pairing_approve(&code) {
+        Ok(Some((ch, sender, role))) => HostResponse::json(serde_json::json!({
+            "ok": true, "channel": ch, "sender": sender, "role": role,
+        })),
+        Ok(None) => HostResponse::err(404, "no live pairing code".into()),
+        Err(e) => HostResponse::err(500, format!("{e:#}")),
     }
 }

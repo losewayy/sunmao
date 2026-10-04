@@ -1,8 +1,6 @@
 /* transcript blocks, live fold, approvals, event log, replay — markdown
-   render itself lives in md.js (highlight/mdInline/mdRender/mdTable/
-   texMath), loaded just before this file */
+   render lives in md.js (highlight/mdInline/mdRender/mdTable/texMath) */
 'use strict';
-
 
 /* ================= transcript blocks ================= */
 const stIcon = st => `<span class="st ${st}">${ic(st === 'ok' ? 'check' : st === 'err' ? 'x' : 'rotate')}</span>`;
@@ -16,7 +14,25 @@ function toolHTML([st, nm, sm, tm, out], o = {}) {
 }
 // replayed prompts carry no timestamp in the log — only a live send shows
 // the wall clock, rather than stamping history with "now"
-const youHTML = (text, anim, at) => `<div class="msg you"><div class="msg-h${anim ? ' enter' : ''}"><i class="dot"></i><span>你</span>${at ? `<time>${at}</time>` : ''}</div><div class="bubble glass${anim ? ' enter' : ''}">${esc(text)}</div></div>`;
+// turnSeq mirrors the log's turn_boundaries scan — the Nth stamped
+// .msg.you is what `POST /rewind {turn:N}` trims to
+let turnSeq = 0;
+const rwBtn = `<button class="ib rw" data-act="rewind-turn" data-tip="回退到这条之前 · 同时还原改过的文件" aria-label="回退到这条之前">${ic('reset', 'i sm')}</button>`;
+// turn: number → stamped + rewind button · 'pending' → awaits the kernel's
+// turn_boundary event (echoes of slash commands/vetoed prompts never get
+// one — no boundary, no rewind) · falsy → plain bubble
+const youHTML = (text, anim, at, turn) => `<div class="msg you"${turn === 'pending' ? ' data-pending' : turn ? ` data-turn="${turn}"` : ''}><div class="msg-h${anim ? ' enter' : ''}"><i class="dot"></i><span>你</span>${at ? `<time>${at}</time>` : ''}${turn && turn !== 'pending' ? rwBtn : ''}</div><div class="bubble glass${anim ? ' enter' : ''}">${esc(text)}</div></div>`;
+// the kernel committed a user-message boundary: stamp the oldest pending
+// you-bubble with its ordinal (and mount the rewind control), else the
+// ordinal is bookkeeping only — turnSeq still tracks for the replay path
+const stampBoundary = (n) => {
+  turnSeq = Math.max(turnSeq, n);
+  const p = TX.querySelector('.msg.you[data-pending]');
+  if (!p) return;
+  p.dataset.turn = n;
+  p.removeAttribute('data-pending');
+  p.querySelector('.msg-h')?.insertAdjacentHTML('beforeend', rwBtn);
+};
 // message.content may be a bare string (old logs) or a block array
 // [{type:'text'|'image',…}] — the same normalization the kernel's
 // content_text() applies. msgText flattens for text surfaces; msgParts
@@ -35,14 +51,13 @@ const attImgs = m => msgParts(m).filter(b => b.type === 'image')
   .map(b => `<img class="att" src="${attURL(b.path)}" alt="${esc(attBase(b.path))}" title="${esc(b.path)}">`).join('');
 const botHead = anim => `<div class="msg-h${anim ? ' enter' : ''}"><i class="dot"></i><span>sunmao</span>${modelLabel ? `<span class="model">${esc(modelLabel.replace(/^global:/, ''))}</span>` : ''}</div>`;
 const TX = $('#tx');
-// force=false by default — a streamed tool/island/note must not yank the
-// scroller while the user is reading earlier output; only the user's own
-// bubble (send/steer fold) and replay's settle scroll force it
+// force=false by default — streamed output must not yank the scroller
+// while the user reads earlier output; only own bubbles/settle force it
 function append(parent, html, force) { const t = document.createElement('template'); t.innerHTML = html.trim(); const first = t.content.firstElementChild; parent.appendChild(t.content); keepBottom(!!force); return first; }
 function keepBottom(force) { const sc = $('#scroller'); if (force || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 240) sc.scrollTop = sc.scrollHeight; }
 /* ---- work cards: a run of tool calls (+ the short narration between
    them) shares one card; 3+ calls earn a summary header and fold once
-   the run settles. Failed calls stay visible through the fold. ---- */
+   the run settles. Failed calls stay visible. ---- */
 const TG_MANY = 3, STEP_MAX = 400;
 function toolGroup(host) {
   const last = host.lastElementChild;
@@ -97,9 +112,13 @@ function refreshGroup(g) {
   $('.tg-n', g).textContent = live ? '进行中' : `${tools.length} 步`;
 }
 function foldGroup(g, on) {
+  if (g.classList.contains('fold') === on) return;
+  const h0 = g.offsetHeight;
   g.classList.toggle('fold', on);
   const h = $('.tg-h', g); if (h) h.setAttribute('aria-expanded', String(!on));
+  motion.height(g, h0, g.offsetHeight, 'base');
 }
+
 // settle every live card that the user hasn't opened/closed by hand
 function foldSettled(root, except) {
   for (const g of $$('.tools', root)) {
@@ -129,7 +148,7 @@ let curBubble = null;   // streaming bubble element inside curMsg
 let curText = '';       // accumulated markdown for curBubble
 let curThink = null, curThinkText = '';
 const runningTools = [];   // {el, name, lane, depth, t0}
-const pendingApprovals = new Map();  // id -> card element
+// pendingApprovals + the card lifecycle live in approvals.js
 // the session's standing goal — SessionEvent::Goal (replay) and
 // LiveEvent::goal frames both fold into this; a goal keeps the top strip
 // open even while idle so its round counter stays visible
@@ -139,7 +158,14 @@ function msgHost() {
   if (!curMsg) { curMsg = append(TX, `<div class="msg bot">${botHead(true)}</div>`); curMsg.classList.add('enter'); }
   return curMsg;
 }
-function closeMsg() { curMsg = curBubble = curThink = null; curText = curThinkText = ''; }
+function closeMsg() { sealThink(); curMsg = curBubble = null; curText = ''; }
+// one fold = one contiguous reasoning stream — any later event seals it;
+// the next reasoning delta opens a NEW fold in timeline position
+function sealThink() {
+  if (!curThink) return;
+  curThink.previousElementSibling?.classList.remove('live');
+  curThink = null; curThinkText = '';
+}
 function bubble() {
   const host = msgHost();
   if (!curBubble) { curBubble = append(host, '<div class="bubble glass enter"></div>'); curText = ''; }
@@ -147,6 +173,7 @@ function bubble() {
 }
 function contentDelta(t) {
   if (!t) return;
+  sealThink(); // reply text seals the reasoning stream that preceded it
   const b = bubble();
   curText += t;
   b.innerHTML = mdRender(curText);
@@ -155,10 +182,7 @@ function contentDelta(t) {
 function reasoningDelta(t) {
   if (!t) return;
   const host = msgHost();
-  if (!curThink) {
-    curThink = append(host, `<button class="think glass live enter" data-act="think">${ic('chev-r', 'i xs')}思考</button><div class="think-o glass"></div>`).nextElementSibling;
-    curThinkText = '';
-  }
+  if (!curThink) curThink = append(host, `<button class="think glass live enter" data-act="think">${ic('chev-r', 'i xs')}思考</button><div class="think-o glass"></div>`).nextElementSibling, curThinkText = '';
   curThinkText += t;
   curThink.textContent = curThinkText;
   keepBottom();
@@ -174,7 +198,7 @@ function toolStart(ev) {
   const el = append(g, toolHTML(['run', name, ev.summary || '', '', ''], { cls: 'enter', start: performance.now(), body: editPreviewHTML(ev.name, ev.args) }));
   refreshGroup(g);
   runningTools.push({ el, name: ev.name, lane: ev.lane || 0, depth: ev.depth || 0, call_id: ev.call_id || null, t0: performance.now() });
-  curBubble = null; // text after a tool call starts a new bubble
+  curBubble = null; sealThink(); // next text/reasoning opens fresh blocks in timeline position
 }
 function toolDone(ev) {
   // exact join key first — same-name calls in one turn mispair without it;
@@ -189,7 +213,7 @@ function toolDone(ev) {
   if (!t) {
     const host = msgHost();
     let g = toolGroup(host);
-    append(g, toolHTML([ev.ok ? 'ok' : 'err', ev.name || '?', '', '', capOut(ev.output || '')]));
+    append(g, toolHTML([ev.ok ? 'ok' : 'err', ev.name || '?', '', '', capOut(ev.output || '')], { cls: 'enter' }));
     return;
   }
   runningTools.splice(i, 1);
@@ -205,7 +229,7 @@ function islandHTML(ev) {
       ${ic('file-code', 'i fi')}
       <span class="nm">HtmlArtifact</span>
       <span class="fn">${esc(nm)}.html</span>
-      <button class="notes-pill" data-act="notes" data-tip="批注">${ic('note', 'i xs')}<span>批注</span></button>
+      <button class="notes-pill" data-act="annotate" data-tip="批注|点击页面元素或拖拽选区域">${ic('note', 'i xs')}<span>批注</span></button>
       <span class="revs" hidden>
         <button class="ib" data-act="rev-prev" data-tip="上一版本" aria-label="上一版本">${ic('chev-l')}</button>
         <span class="rev-n">v1/1</span>
@@ -213,11 +237,10 @@ function islandHTML(ev) {
       </span>
       <span class="sp"></span>
       <span class="meta">${fmtBytes(ev.bytes || 0)}</span>
-      <button class="ib" data-act="sandbox" data-tip="沙箱：禁网 · 无同源 · 无脚本桥出" aria-label="沙箱">${ic('lock')}</button>
       <button class="ib" data-act="island-tall" data-tip="展开" aria-label="展开">${ic('expand')}</button>
-      <button class="ib" data-act="island-open" data-tip="在浏览器中打开" aria-label="在浏览器中打开">${ic('external')}</button>
+      <button class="ib" data-act="island-open" data-tip="在浏览器中打开|沙箱内脚本禁用 · 禁网" aria-label="在浏览器中打开">${ic('external')}</button>
     </div>
-    <iframe title="${esc(nm)}" sandbox="" loading="lazy" src="/artifacts/${encodeURIComponent(nm)}?sess=${encodeURIComponent(sessionId)}"></iframe>
+    <iframe title="${esc(nm)}" sandbox="allow-same-origin" loading="lazy" src="/artifacts/${encodeURIComponent(nm)}?sess=${encodeURIComponent(sessionId)}"></iframe>
     <div class="notes"></div>
   </div>`;
 }
@@ -225,59 +248,14 @@ function addArtifact(ev) {
   const host = msgHost();
   const el = append(host, islandHTML(ev));
   el.classList.add('enter');
-  curBubble = null;
+  curBubble = null; sealThink();
   refreshNotes(el, ev.name);
   refreshRevs(el, ev.name, ev.rev || 0);
   probeApp(el, ev.name);
 }
 
-
 function addNote(text) {
-  append(TX, `<div class="note-line glass enter">${esc(text)}</div>`);
-}
-function approvalCard(ev) {
-  const host = msgHost();
-  const card = append(host, `<div class="approve glass enter" data-apid="${ev.id}">
-    <div class="ap-h"><span class="ai">${ic('alert')}</span><span>需要你的批准</span><span class="why">${esc(ev.tool || '')} · ${esc(ev.why || '')}</span></div>
-    <div class="cmd"><span class="pr">$</span>${esc(ev.detail || '')}</div>
-    <div class="acts">
-      <button class="btn allow" data-ap="once">${ic('check')}Allow<kbd>Y</kbd></button>
-      <button class="btn ghost" data-ap="deny">Deny<kbd>N</kbd></button>
-      <button class="btn ghost" data-ap="session">Always<kbd>A</kbd></button>
-      <span class="hint">Always：本会话内相同命令不再询问</span>
-    </div>
-  </div>`);
-  pendingApprovals.set(ev.id, card);
-  syncWait();
-  return card;
-}
-function collapse(card, html) {
-  const h0 = card.offsetHeight; card.style.overflow = 'hidden';
-  card.innerHTML = html; card.classList.add('done');
-  const h1 = card.offsetHeight;
-  motion.height(card, h0, h1);
-}
-function syncWait() {
-  $('#cmp-wait').hidden = pendingApprovals.size === 0;
-  $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy && !curGoal;
-  renderRail();
-}
-function decide(verdict, id) {
-  let card, aid;
-  if (id != null) { card = pendingApprovals.get(id); aid = id; }
-  else { aid = [...pendingApprovals.keys()][0]; card = pendingApprovals.get(aid); }
-  if (!card) return;
-  pendingApprovals.delete(aid);
-  wsSend({ type: 'approval', id: aid, sess: sessionId, verdict });
-  const [st, title, note] = { once: ['ok', '已允许', '仅本次'], session: ['ok', '已允许', '本会话内相同命令不再询问'], deny: ['err', '已拒绝', '操作未执行'] }[verdict] || ['err', '已拒绝', ''];
-  const detail = $('.cmd', card) ? $('.cmd', card).textContent.trim() : '';
-  collapse(card, `<div class="ap-done">${stIcon(st)}<b>${title}</b><code>${esc(detail)}</code><span>${note}</span></div>`);
-  logEv('approval', `verdict ${verdict} · ${aid}`);
-  syncWait();
-}
-function abortTurn() {
-  closeMsg();
-  for (const t of runningTools.splice(0)) setTool(t.el, 'err', '已中断');
+  sealThink(); append(TX, `<div class="note-line glass enter">${esc(text)}</div>`);
 }
 function setBusy(on) {
   busy = !!on;
@@ -324,8 +302,9 @@ function logEv(type, detail) {
   if (EVLOG.length > 500) EVLOG.splice(0, EVLOG.length - 500);
   if (popEl && popEl.classList.contains('events')) popEl.innerHTML = eventsHTML();
 }
+const EV_LABELS = { started: '开始', message: '对话', tool_call: '工具调用', tool_result: '工具结果', approval: '审批', artifact: '生成内容', usage: '用量', hook: '状态', note: '记录', goal: '目标' };
 function eventsHTML() {
-  return `<div class="ev-h">事件日志<span>${esc(sessionId)}.jsonl</span></div><div class="ev-list scroll">${EVLOG.map(e => `<div class="ev-l"><span class="t">${e[0]}</span><span class="e ${e[1]}">${e[1]}</span><span class="d">${esc(e[2])}</span></div>`).join('') || '<div class="empty-row">尚无事件</div>'}</div><div class="ev-f"><span>共 ${EVLOG.length} 条 · 事件源日志的实时镜像</span><span class="mono">${esc(cwd)}/.sunmao/sessions</span></div>`;
+  return `<div class="ev-h">执行记录<span>${EVLOG.length} 条</span></div><div class="ev-list scroll">${EVLOG.map(e => `<div class="ev-l"><span class="t">${e[0]}</span><span class="e ${e[1]}">${esc(EV_LABELS[e[1]] || e[1])}</span><span class="d">${esc(e[2])}</span></div>`).join('') || '<div class="empty-row">暂无记录</div>'}</div>`;
 }
 
 /* ================= replay ================= */
@@ -347,7 +326,7 @@ function renderReplay(events, anim) {
   // app islands about to be dropped get a resource-teardown first —
   // SEP-1865 says the View releases its side on this request
   for (const isl of $$('.island')) teardownIsland(isl);
-  TX.innerHTML = ''; EVLOG.length = 0;
+  TX.innerHTML = ''; EVLOG.length = 0; turnSeq = 0;
   pendingApprovals.clear(); runningTools.length = 0;
   closeMsg(); syncWait();
   // the goal is session state the replay re-derives — wipe it here so a
@@ -361,10 +340,10 @@ function renderReplay(events, anim) {
       $('#cmp-model').textContent = modelLabel || '…';
       // chrome, not transcript — model + cwd already live in the composer;
       // the event log keeps the fact. An empty session shows the hero.
-      logEv('started', `${ev.model || '?'} · cwd=${String(ev.cwd || '').replace(/^\\\\\?\\/, '')}`);
+      logEv('started', '会话已开始');
     } else if (t === 'message') {
       const m = ev.message || {};
-      if (m.role === 'system') { logEv('message', 'system · (identity, hidden)'); continue; }
+      if (m.role === 'system') continue;
       if (m.role === 'user') {
         const c = msgText(m);
         if (c.startsWith('[hook context]')) {
@@ -379,14 +358,14 @@ function renderReplay(events, anim) {
           continue;
         }
         closeMsg();
-        append(TX, youHTML(c, anim), true);
+        append(TX, youHTML(c, anim, undefined, c ? ++turnSeq : 0), true);
         const imgs = attImgs(m);
-        if (imgs) append(TX, `<div class="msg you"><div class="att-row">${imgs}</div></div>`);
-        logEv('message', 'user · ' + c.slice(0, 60));
+        if (imgs) append(TX, `<div class="msg you enter"><div class="att-row">${imgs}</div></div>`);
+        logEv('message', '你：' + c.slice(0, 60));
       } else if (m.role === 'assistant') {
         const c = msgText(m);
         if (c) { const h = msgHost(); append(h, `<div class="bubble glass">${mdRender(c)}</div>`); }
-        logEv('message', 'assistant · ' + c.slice(0, 60) + (m.tool_calls ? ` (+${m.tool_calls.length} calls)` : ''));
+        logEv('message', 'sunmao：' + c.slice(0, 60) + (m.tool_calls ? ` (+${m.tool_calls.length} calls)` : ''));
       } else if (m.role === 'tool') {
         continue; // paired tool_result covers it
       }
@@ -474,7 +453,7 @@ function renderReplay(events, anim) {
       logEv('hook', `fusion.escalated #${ev.spec_seq} · ${ev.reason || ''}`);
     } else if (t === 'task_done') {
       const host = msgHost();
-      append(host, `<div class="notice glass">${ic(ev.ok ? 'check' : 'x', 'i sm')}<span>子代理 <code>${esc(ev.id)}</code> ${ev.ok ? '完成' : '失败'}</span></div>`);
+      append(host, `<div class="notice glass enter">${ic(ev.ok ? 'check' : 'x', 'i sm')}<span>子代理 <code>${esc(ev.id)}</code> ${ev.ok ? '完成' : '失败'}</span></div>`);
       logEv('tool_result', `task ${ev.id} ${ev.ok ? 'ok' : 'err'}`);
     } else if (t === 'todos') {
       // durable state, not transcript — a replay shows it once, as a note
@@ -503,9 +482,13 @@ function renderReplay(events, anim) {
   requestAnimationFrame(() => { $('#scroller').scrollTop = $('#scroller').scrollHeight; });
 }
 function updateHero() {
-  const empty = !TX.children.length;
-  $('#hero').hidden = !empty;
-  if (empty) { const h = $('#hero'); h.classList.remove('play'); void h.offsetWidth; h.classList.add('play'); }
+  // transition-only: live frames arrive per-token while a session is still
+  // empty — re-running the play scene on each would strobe the mark
+  const h = $('#hero'), empty = !TX.children.length;
+  if (h.hidden === !empty) return;
+  if (empty) { h.hidden = false; h.classList.remove('out', 'play'); void h.offsetWidth; h.classList.add('play'); return; }
+  h.classList.add('out'); // the 560ms staged entrance earns a fade, not a cut
+  setTimeout(() => { if (!h.classList.contains('play')) h.hidden = true; }, motion.dur('fast'));
 }
 
 /* ================= live events ================= */
@@ -519,7 +502,7 @@ function liveEvent(raw) {
   const t = ev.type;
   if (!t) return; // {} — unserializable tuple variant placeholder
   const text = ev.text ?? ev.content ?? ev.delta ?? (typeof ev[0] === 'string' ? ev[0] : null);
-  if (t === 'content') { if (text == null) return; if (!curText) logEv('message', 'assistant · …'); contentDelta(text); }
+  if (t === 'content') { if (text == null) return; if (!curText) logEv('message', 'sunmao：…'); contentDelta(text); }
   else if (t === 'reasoning') { if (text == null) return; reasoningDelta(text); }
   else if (t === 'tool_start') { toolStart(ev); logEv('tool_call', `${ev.name} ${ev.summary || ''}`.slice(0, 140)); }
   else if (t === 'tool_done') { toolDone(ev); logEv('tool_result', `${ev.name} ${ev.ok ? 'ok' : 'err'}`); refreshDataflowSoon(); }
@@ -535,7 +518,7 @@ function liveEvent(raw) {
   }
   else if (t === 'task_done') {
     const host = msgHost();
-    append(host, `<div class="notice glass">${ic(ev.ok ? 'check' : 'x', 'i sm')}<span>子代理 <code>${esc(ev.id)}</code> ${ev.ok ? '完成' : '失败'}</span></div>`);
+    sealThink(); append(host, `<div class="notice glass enter">${ic(ev.ok ? 'check' : 'x', 'i sm')}<span>子代理 <code>${esc(ev.id)}</code> ${ev.ok ? '完成' : '失败'}</span></div>`);
     logEv('tool_result', `task ${ev.id} ${ev.ok ? 'ok' : 'err'}`);
   }
   // the kernel's live mirror of the durable user message — emitted when a
@@ -547,11 +530,12 @@ function liveEvent(raw) {
     // thumbs row after
     const m = { role: 'user', content: ev.content || [] };
     const c = msgText(m);
-    if (c) { closeMsg(); append(TX, youHTML(c, true, clock()), true); }
+    if (c) { closeMsg(); append(TX, youHTML(c, true, clock(), 'pending'), true); }
     const imgs = attImgs(m);
-    if (imgs) append(TX, `<div class="msg you"><div class="att-row">${imgs}</div></div>`);
-    logEv('message', 'user · ' + c.slice(0, 60));
+    if (imgs) append(TX, `<div class="msg you enter"><div class="att-row">${imgs}</div></div>`);
+    logEv('message', '你：' + c.slice(0, 60));
   }
+  else if (t === 'turn_boundary') { stampBoundary(ev.ordinal || 0); }
   else if (t === 'todos') {
     const items = ev.items || [];
     if (items.length) {
@@ -571,9 +555,9 @@ function liveEvent(raw) {
       // a queued message just folded into the turn — its durable Message
       // renders this same user bubble on replay
       closeMsg();
-      append(TX, youHTML(ev.detail || '', true, clock()), true);
+      append(TX, youHTML(ev.detail || '', true, clock(), ev.detail ? 'pending' : 0), true);
       steerQ.shift(); renderQueueChips();
-      logEv('message', 'user · ' + String(ev.detail || '').slice(0, 60));
+      logEv('message', '你：' + String(ev.detail || '').slice(0, 60));
     } else logEv('hook', `${ev.event} · ${ev.detail}`);
   }
   else if (t === 'turn_end') {

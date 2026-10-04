@@ -7,31 +7,55 @@
    every pane keeps its own scroll position and render state. */
 .dock{position:absolute;right:var(--s-gutter);top:var(--h-3xl);width:var(--w-dock);display:flex;flex-direction:column;z-index:var(--z-dock);border-radius:var(--r-xl);overflow:hidden;max-height:calc(100vh - var(--h-3xl) - var(--s-16));transition:transform var(--dur-slow) var(--ease-in-out),visibility var(--dur-slow);container-type:inline-size;container-name:dock}
 #app:not([data-dock="on"]) .dock{transform:translateX(calc(100% + var(--s-16)));visibility:hidden}
+/* a browser pane has no intrinsic height — while one's active the dock
+   takes its full height budget instead of shrink-wrapping content */
+.dock[data-tab^="br:"]{height:calc(100vh - var(--h-3xl) - var(--s-16))}
 /* four tabs ≈294px vs 248px inner — share the row equally; container query drops icons when cramped, ellipsis below that. Never clips mid-glyph. */
-.dock-tabs{display:flex;align-items:center;gap:2px;padding:var(--s-6) var(--s-8);border-bottom:1px solid var(--c-stroke);flex:none}
+.dock-tabs{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-6) var(--s-8);border-bottom:var(--bw-hairline) solid var(--c-stroke);flex:none}
 .dock-tab{display:inline-flex;align-items:center;justify-content:center;gap:var(--s-4);height:var(--h-md);padding:0 var(--s-6);border-radius:var(--r-full);color:var(--c-text-3);font-size:var(--fs-xs);cursor:pointer;flex:1;min-width:0;transition:background var(--dur-instant) var(--ease-out),color var(--dur-instant) var(--ease-out)}
 .dock-tab>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dock-tab .i{width:var(--icon-sm);height:var(--icon-sm);flex:none}
-@container dock (max-width:300px){.dock-tab .i{display:none}.dock-tab{gap:2px}}
+@container dock (max-width:300px){.dock-tab .i{display:none}.dock-tab{gap:var(--s-2)}}
 .dock-tab:hover{background:var(--c-fill-1);color:var(--c-text-2)}
-.dock-tab[aria-selected="true"]{background:var(--c-fill-2);color:var(--c-text);box-shadow:inset 0 0 0 1px var(--c-stroke-2)}
+.dock-tab[aria-selected="true"]{background:var(--c-fill-2);color:var(--c-text);box-shadow:inset 0 0 0 var(--bw-hairline) var(--c-stroke-2)}
 .dock-tab .dt-num{font:var(--fs-2xs) var(--font-mono);color:var(--c-text-3);font-style:normal;flex:none}
 .dock-tab[aria-selected="true"] .dt-num{color:var(--c-text-2)}
-.dock-pane{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:var(--s-8);padding:var(--s-10) var(--s-10) var(--s-12)}
+.dock-pane{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:var(--s-8);padding:var(--s-10) var(--s-10) var(--s-12);animation:k-rise var(--dur-fast) var(--ease-out)}
 .dock-pane[hidden]{display:none}
+
+/* ---- dynamic tabs + launcher: fixed tabs share the width, browser
+   tabs cap at 150px with a hover ×, + sits at the strip's end ---- */
+#dt-dyn{display:contents}
+.dock-tab.dock-dyn{flex:0 1 auto;min-width:0;max-width:var(--w-dock-tab-dyn);padding-right:var(--s-2);animation:k-rise var(--dur-fast) var(--ease-out)}
+.dock-tab .dt-x{font-style:normal;font-size:var(--fs-sm);line-height:var(--lh-none);color:var(--c-text-3);padding:var(--s-2) var(--s-4);border-radius:var(--r-xs)}
+.dock-tab .dt-x:hover{background:var(--c-fill-3);color:var(--c-text)}
+.dock-add{flex:none;display:inline-flex;align-items:center;justify-content:center;width:var(--h-md);height:var(--h-md);border-radius:var(--r-full);color:var(--c-text-3)}
+.dock-add:hover{background:var(--c-fill-1);color:var(--c-text)}
+
+/* ---- browser pane ---- */
+.dock-pane.br{padding:0;gap:0;overflow:hidden;position:relative}
+.br-bar{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-4) var(--s-6);border-bottom:var(--bw-hairline) solid var(--c-stroke);flex:none}
+.br-bar .ib[disabled]{opacity:.35;pointer-events:none}
+.br-url{flex:1;min-width:0;height:var(--h-md);padding:0 var(--s-10);border:0;outline:0;border-radius:var(--r-full);background:var(--c-fill-1);font-size:var(--fs-xs);color:var(--c-text)}
+.br-url:focus{background:var(--c-fill-2)}
+.br-proxy.on{background:var(--c-accent-soft-2);color:var(--c-text)}
+.br-view{position:relative;flex:1;min-height:0}
+.br-view iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:var(--c-sunken)}
+.br-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--s-6);color:var(--c-text-3);font-size:var(--fs-sm);text-align:center;padding:var(--s-12)}
+.br-empty .i{width:var(--icon-2xl);height:var(--icon-2xl);opacity:.5}
+.br-empty small{font-size:var(--fs-2xs);color:var(--c-text-3);line-height:var(--lh-code)}
 .df{border-radius:var(--r-lg);padding:var(--s-12) var(--s-12) var(--s-12);background:var(--c-fill-1)}
 .df-h{display:flex;align-items:center;justify-content:space-between;gap:var(--s-10);font-size:var(--fs-xs);color:var(--c-text-2)}
 .df-h .live{display:inline-flex;align-items:center;gap:var(--s-6);color:var(--c-text-3)}
-.df-h .live i{width:6px;height:6px;border-radius:var(--r-full);background:var(--c-ok)}
+.df-h .live i{width:var(--s-6);height:var(--s-6);border-radius:var(--r-full);background:var(--c-ok)}
 .df-h .live.off i{background:var(--c-err)}
-.df-h .mono{font-size:var(--fs-2xs);color:var(--c-text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .df-big{display:flex;align-items:center;gap:var(--s-10);margin-top:var(--s-12)}
-.df-big .i{width:var(--icon-lg);height:var(--icon-lg);color:var(--c-accent);stroke-width:1.6;fill:var(--c-accent-soft)}
+.df-big .i{width:var(--icon-lg);height:var(--icon-lg);color:var(--c-accent);stroke-width:var(--icon-stroke-metric);fill:var(--c-accent-soft)}
 .df-big .v{font:var(--fw-medium) var(--fs-metric)/var(--lh-tight) var(--font-mono);letter-spacing:var(--ls-metric);font-variant-numeric:tabular-nums}
 .df-big .v.idle{color:var(--c-text-3)}
 .empty-row{padding:var(--s-12) 0 var(--s-4);font-size:var(--fs-xs);color:var(--c-text-3)}
 .df-sub{margin-top:var(--s-8);font:var(--fs-2xs) var(--font-mono);color:var(--c-text-2)}
-.bar{margin-top:var(--s-12);height:4px;border-radius:var(--r-full);background:var(--c-fill-3);overflow:hidden}
+.bar{margin-top:var(--s-12);height:var(--s-4);border-radius:var(--r-full);background:var(--c-fill-3);overflow:hidden}
 .bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--c-accent),color-mix(in oklab,var(--c-accent),var(--c-on-accent) 48%));transition:width var(--dur-scene) var(--ease-out)}
 .kv{margin:var(--s-10) 0 0;padding:0}
 .kv div{display:flex;align-items:center;justify-content:space-between;height:var(--h-md)}
@@ -42,15 +66,15 @@
 .fl-t .i{width:var(--icon-sm);height:var(--icon-sm);color:var(--c-text-3)}
 .fl-t b{margin-left:auto;font:var(--fw-medium) var(--fs-2xs) var(--font-mono);color:var(--c-text)}
 .fl-i{padding-left:var(--s-20);font:var(--fs-2xs)/var(--lh-body) var(--font-mono);color:color-mix(in srgb,var(--c-text-2) 85%,transparent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rt-list{display:flex;flex-direction:column;gap:2px;margin-top:var(--s-8)}
+.rt-list{display:flex;flex-direction:column;gap:var(--s-2);margin-top:var(--s-8)}
 .rt{display:flex;align-items:center;gap:var(--s-6);min-height:var(--h-sm);padding:var(--s-2) var(--s-6);border-radius:var(--r-md);font-size:var(--fs-xs);color:var(--c-text-2);text-align:left}
 button.rt:hover{background:var(--c-fill-2);color:var(--c-text)}
 .rt .rt-id{font:var(--fs-2xs) var(--font-mono);color:var(--c-text)}
 .rt .rt-p{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rt .rt-go{color:var(--c-text-3);flex:none}
 .rt .rt-when{font:var(--fs-2xs) var(--font-mono);color:var(--c-text-3);flex:none}
-.pop.jobview-pop{max-width:min(560px,calc(100vw - var(--s-32)))}
-.pop .jobview{max-height:300px;margin:var(--s-2) var(--s-6) var(--s-4);padding:var(--s-6) var(--s-8);border-radius:var(--r-md);background:var(--c-sunken);font:var(--fs-2xs)/var(--lh-body) var(--font-mono);white-space:pre-wrap;word-break:break-all;color:var(--c-text-2);overflow-y:auto}
+.pop.jobview-pop{max-width:min(var(--w-jobview),calc(100vw - var(--s-32)))}
+.pop .jobview{max-height:var(--h-pop-list);margin:var(--s-2) var(--s-6) var(--s-4);padding:var(--s-6) var(--s-8);border-radius:var(--r-md);background:var(--c-sunken);font:var(--fs-2xs)/var(--lh-body) var(--font-mono);white-space:pre-wrap;word-break:break-all;color:var(--c-text-2);overflow-y:auto}
 
-/* dock hidden below this width — the stage takes the full row */
-@media (max-width:1180px){#app[data-dock="on"] .stage{right:0}#app .dock{display:none}}
+/* dock overlays the stage below this width */
+@media (max-width:1180px){#app[data-dock="on"] .stage{right:0}#app[data-dock="on"] .hero{right:calc(var(--w-dock) + var(--s-gutter) * 2)}}

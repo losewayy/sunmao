@@ -1,0 +1,79 @@
+# reasoning-effort level sets per model family — what `thinking` actually
+# accepts on the wire, verified against each provider's API docs.
+# Format: `globs | levels` per line — comma-separated globs share a row;
+# the glob matches the NORMALIZED model id (vendor/pool stripped,
+# non-alnum folded to '-'); first match wins.
+#   levels = comma list of accepted effort levels → `thinking`
+#   `-`    = thinking is a plain toggle (or always-on), no level vocab
+#            → `reasoning` flag only
+# Rows not listed inherit the refresh-time fallback (a supported
+# reasoning_effort param earns the OAI-baseline low/medium/high guess).
+
+# — OpenAI (reasoning_effort / reasoning.effort) —
+gpt-6-1* | low,medium,high
+gpt-6* | low,medium,high,xhigh
+gpt-5-6* | none,minimal,low,medium,high,xhigh,max
+gpt-5-5* | none,low,medium,high,xhigh
+gpt-5-1* | none,low,medium,high
+gpt-5-pro* | high
+gpt-5-2*,gpt-5-3*,gpt-5-4* | none,low,medium,high,xhigh
+gpt-5*,gpt-4-5-preview | low,medium,high
+o1*,o3*,o4-* | low,medium,high
+
+# — Anthropic (output_config.effort; ≤4.5 is adaptive-thinking toggle) —
+claude-fable-5*,claude-mythos-5*,claude-opus-5*,claude-sonnet-5*,claude-opus-4-8*,claude-opus-4-7* | low,medium,high,xhigh,max
+claude-opus-4-6*,claude-sonnet-4-6* | low,medium,high,max
+claude-* | -
+
+# — DeepSeek (reasoning_effort high|max; low/medium map→high, xhigh→max) —
+deepseek-v4*,deepseek-v3-2* | high,max
+deepseek-* | -
+
+# — Zhipu GLM (effort only 5.2+; thinking.type toggle otherwise) —
+glm-5-3* | low,high,max
+glm-5-2* | none,minimal,low,medium,high,xhigh,max
+glm-* | -
+
+# — Moonshot Kimi (effort on k3 only; k2.x is a thinking.type toggle) —
+kimi-k3* | low,high,max
+kimi-* | -
+
+# — MiniMax (M3 toggle adaptive/disabled; M2.x always-on — OAI effort
+#   accepted but does not tune depth, so it declares no levels) —
+minimax-* | -
+
+# — Alibaba Qwen (3.8 takes low|medium|xhigh; 3.x hybrids take
+#   enable_thinking + thinking_budget — a budget, not levels) —
+qwen3-8* | low,medium,xhigh
+qwen3*,qwq-*,qvq-* | -
+
+# — Google (thinkingLevel on gemini-3; 2.x is thinkingBudget only) —
+gemini-3-*pro* | low,medium,high
+gemini-3* | minimal,low,medium,high
+gemini-* | -
+
+# — xAI Grok —
+grok-4-20* | -
+grok-4-6* | low,medium,high,xhigh
+grok-4-3* | none,low,medium,high
+grok-4* | low,medium,high
+grok-3-mini* | low,high
+grok-* | -
+
+# — ByteDance Seed / Doubao (volcengine: minimal..high ladder) —
+doubao-seed-2*,seed-2* | minimal,low,medium,high
+seed-*,doubao-* | -
+
+# — Tencent Hunyuan / Hy — thinking.type toggle only —
+hy4*,hy3*,hunyuan-* | -
+
+# — Xiaomi MiMo — thinking toggle only —
+mimo-* | -
+
+# — Mistral — API accepts the enum but docs expose only high (full
+#   thinking chunk) vs none (suppressed); magistral always-on —
+mistral-small*,mistral-medium* | none,high
+magistral* | -
+
+# — Cohere — command-a reasoning is a toggle —
+command-* | -

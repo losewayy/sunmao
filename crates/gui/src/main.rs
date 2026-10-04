@@ -33,6 +33,7 @@ window.__sunmaoShell = {
   zoom(op) { return window.__TAURI_INTERNALS__.invoke('shell_zoom', { op }); },
   setZoom(factor) { return window.__TAURI_INTERNALS__.invoke('shell_zoom', { op: factor }); },
   pickDir(dir) { return window.__TAURI_INTERNALS__.invoke('shell_pick_dir', { dir }); },
+  webview(op) { return window.__TAURI_INTERNALS__.invoke('shell_webview', { op }); },
   Channel: class {
     constructor() {
       this.onmessage = () => {};
@@ -195,6 +196,77 @@ fn zoom_step(cur: f64, dir: f64) -> f64 {
 }
 
 /// Page zoom driven by the Ctrl/Cmd+=/-/0 keydown listener in SHELL_SHIM.
+/// Child webviews for the dock's browser tabs — real guest webviews
+/// (WebView2 on Windows) composited over a pane rect, not iframes, so
+/// X-Frame-Options can't refuse them (github.com etc. embed fine). The
+/// page keeps them aligned by sending the pane's rect on every move;
+/// `visible:false` parks them offscreen rather than tearing down.
+#[tauri::command]
+fn shell_webview(win: tauri::WebviewWindow, op: serde_json::Value) -> Result<(), String> {
+    let label = format!("br-{}", op["id"].as_i64().unwrap_or(0));
+    let rect = |v: &serde_json::Value| -> (tauri::LogicalPosition<f64>, tauri::LogicalSize<f64>) {
+        (
+            tauri::LogicalPosition::new(
+                v["x"].as_f64().unwrap_or(0.0),
+                v["y"].as_f64().unwrap_or(0.0),
+            ),
+            tauri::LogicalSize::new(
+                v["w"].as_f64().unwrap_or(1.0).max(1.0),
+                v["h"].as_f64().unwrap_or(1.0).max(1.0),
+            ),
+        )
+    };
+    let find = || win.app_handle().get_webview(&label);
+    match op["op"].as_str().unwrap_or("") {
+        "create" => {
+            if find().is_some() {
+                return Ok(());
+            }
+            let url = op["url"]
+                .as_str()
+                .unwrap_or("about:blank")
+                .parse::<tauri::Url>()
+                .map_err(|e| e.to_string())?;
+            let (pos, size) = rect(&op["rect"]);
+            let window = win
+                .app_handle()
+                .get_window(win.label())
+                .ok_or("main window gone")?;
+            window
+                .add_child(
+                    tauri::webview::WebviewBuilder::new(label, tauri::WebviewUrl::External(url)),
+                    pos,
+                    size,
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        "rect" => {
+            let (pos, size) = rect(&op["rect"]);
+            if let Some(w) = find() {
+                let _ = w.set_position(pos);
+                let _ = w.set_size(size);
+            }
+        }
+        "nav" => {
+            if let Some(w) = find()
+                && let Ok(url) = op["url"]
+                    .as_str()
+                    .unwrap_or("about:blank")
+                    .parse::<tauri::Url>()
+            {
+                let _ = w.navigate(url);
+            }
+        }
+        "close" => {
+            if let Some(w) = find() {
+                let _ = w.close();
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 /// Native webview hotkeys stay disabled so this map stays the single
 /// source of truth for the factor. `op` is a ladder step ("in"/"out"/
 /// "reset") or an absolute factor (the page's `setZoom` + the ui.json
@@ -476,6 +548,7 @@ fn main() {
             shell_notify,
             shell_zoom,
             shell_pick_dir,
+            shell_webview,
             session_events,
             host_call
         ])

@@ -10,9 +10,11 @@
 /* a browser pane has no intrinsic height — while one's active the dock
    takes its full height budget instead of shrink-wrapping content */
 .dock[data-tab^="br:"]{height:calc(100vh - var(--h-3xl) - var(--s-16))}
-/* four tabs ≈294px vs 248px inner — share the row equally; container query drops icons when cramped, ellipsis below that. Never clips mid-glyph. */
-.dock-tabs{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-6) var(--s-8);border-bottom:var(--bw-hairline) solid var(--c-stroke);flex:none}
-.dock-tab{display:inline-flex;align-items:center;justify-content:center;gap:var(--s-4);height:var(--h-md);padding:0 var(--s-6);border-radius:var(--r-full);color:var(--c-text-3);font-size:var(--fs-xs);cursor:pointer;flex:1;min-width:0;transition:background var(--dur-instant) var(--ease-out),color var(--dur-instant) var(--ease-out)}
+/* every tab is dynamic now — compact pills left-aligned, × on hover,
+   + always at the strip's end; the row scrolls sideways if it overflows */
+.dock-tabs{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-6) var(--s-8);padding-left:var(--s-16);border-bottom:var(--bw-hairline) solid var(--c-stroke);flex:none;overflow-x:auto;scrollbar-width:none}
+.dock-tabs::-webkit-scrollbar{display:none}
+.dock-tab{display:inline-flex;align-items:center;justify-content:center;gap:var(--s-4);height:var(--h-md);padding:0 var(--s-6);border-radius:var(--r-full);color:var(--c-text-3);font-size:var(--fs-xs);cursor:pointer;flex:0 1 auto;min-width:0;max-width:var(--w-dock-tab-dyn);transition:background var(--dur-instant) var(--ease-out),color var(--dur-instant) var(--ease-out)}
 .dock-tab>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dock-tab .i{width:var(--icon-sm);height:var(--icon-sm);flex:none}
 @container dock (max-width:300px){.dock-tab .i{display:none}.dock-tab{gap:var(--s-2)}}
@@ -26,11 +28,18 @@
 /* ---- dynamic tabs + launcher: fixed tabs share the width, browser
    tabs cap at 150px with a hover ×, + sits at the strip's end ---- */
 #dt-dyn{display:contents}
-.dock-tab.dock-dyn{flex:0 1 auto;min-width:0;max-width:var(--w-dock-tab-dyn);padding-right:var(--s-2);animation:k-rise var(--dur-fast) var(--ease-out)}
+.dock-tab.dock-dyn{padding-right:var(--s-2);animation:k-rise var(--dur-fast) var(--ease-out)}
 .dock-tab .dt-x{font-style:normal;font-size:var(--fs-sm);line-height:var(--lh-none);color:var(--c-text-3);padding:var(--s-2) var(--s-4);border-radius:var(--r-xs)}
 .dock-tab .dt-x:hover{background:var(--c-fill-3);color:var(--c-text)}
 .dock-add{flex:none;display:inline-flex;align-items:center;justify-content:center;width:var(--h-md);height:var(--h-md);border-radius:var(--r-full);color:var(--c-text-3)}
 .dock-add:hover{background:var(--c-fill-1);color:var(--c-text)}
+
+/* left-edge drag — the dock is right-anchored so its width lives on the
+   left border; a transparent hit strip owns the resize cursor */
+.dock-edge{position:absolute;left:0;top:0;bottom:0;width:var(--s-8);cursor:ew-resize;z-index:var(--z-l2)}
+.dock-empty{position:absolute;inset:var(--h-3xl) 0 0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--s-6);color:var(--c-text-3);font-size:var(--fs-sm);text-align:center;padding:var(--s-12)}
+.dock-empty .i{width:var(--icon-2xl);height:var(--icon-2xl);opacity:.5}
+.dock-empty small{font-size:var(--fs-2xs);color:var(--c-text-3);line-height:var(--lh-code)}
 
 /* ---- browser pane ---- */
 .dock-pane.br{padding:0;gap:0;overflow:hidden;position:relative}

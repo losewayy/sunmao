@@ -13,7 +13,7 @@ tauri-build = { version = "2", features = [] }
 clap = { workspace = true, features = ["env"] }
 serde_json.workspace = true
 sunmao = { path = "../cli" }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-deep-link = "2.6.1"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2.5.1"

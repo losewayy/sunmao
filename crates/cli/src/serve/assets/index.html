@@ -245,14 +245,12 @@
   </main>
 
   <aside class="dock glass" id="dock" aria-label="数据面板">
+    <div class="dock-edge" id="dock-edge" data-tip="拖动调整宽度"></div>
     <nav class="dock-tabs" id="dock-tabs" role="tablist" aria-label="数据面板分页">
-      <button class="dock-tab" role="tab" data-act="dock-tab" data-tab="overview" aria-selected="true"><svg class="i"><use href="#i-zap"/></svg><span>概览</span></button>
-      <button class="dock-tab" role="tab" data-act="dock-tab" data-tab="agents" aria-selected="false"><svg class="i"><use href="#i-blocks"/></svg><span>子代理</span><i class="dt-num" id="dt-count"></i></button>
-      <button class="dock-tab" role="tab" data-act="dock-tab" data-tab="jobs" aria-selected="false"><svg class="i"><use href="#i-clock"/></svg><span>后台</span><i class="dt-num" id="dj-count"></i></button>
-      <button class="dock-tab" role="tab" data-act="dock-tab" data-tab="flow" aria-selected="false"><svg class="i"><use href="#i-file-code"/></svg><span>流向</span></button>
       <span id="dt-dyn"></span>
       <button class="dock-add" data-act="dock-add" data-tip="新建标签页" aria-label="新建标签页"><svg class="i"><use href="#i-plus"/></svg></button>
     </nav>
+    <div class="dock-empty" id="dock-empty" hidden><svg class="i"><use href="#i-plus"/></svg><p>空白面板</p><small>点 + 把要用的视图放进来 — 每个会话各配各的</small></div>
 
     <div class="dock-pane" data-pane="overview">
       <section class="df">

@@ -213,6 +213,7 @@ document.addEventListener('click', e => {
   const a = t.closest('[data-act]'); if (a) return act(a.dataset.act, a);
   const pv = t.closest('[data-pv]'); if (pv) return providerAction(pv.dataset.pv, pv);
   const mc = t.closest('[data-mc]'); if (mc) return toggleCand(mc.dataset.mc);
+  const mf = t.closest('[data-mf]'); if (mf) return toggleField(mf.dataset.mf, mf.dataset.mk, mf.dataset.mid);
 });
 document.addEventListener('keydown', e => {
   const typing = e.target.closest && e.target.closest('input,textarea,[contenteditable]');

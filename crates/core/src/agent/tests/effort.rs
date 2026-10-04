@@ -158,24 +158,17 @@ async fn effort_levels_read_the_catalog() {
             catalog: vec![
                 crate::models::CatalogEntry {
                     id: "m-levels".into(),
-                    vision: false,
-                    context_length: None,
                     thinking: vec!["low".into(), "high".into()],
-                    reasoning: false,
+                    ..Default::default()
                 },
                 crate::models::CatalogEntry {
                     id: "m-hint".into(),
-                    vision: false,
-                    context_length: None,
-                    thinking: vec![],
                     reasoning: true,
+                    ..Default::default()
                 },
                 crate::models::CatalogEntry {
                     id: "m-plain".into(),
-                    vision: false,
-                    context_length: None,
-                    thinking: vec![],
-                    reasoning: false,
+                    ..Default::default()
                 },
             ],
         },

@@ -12,6 +12,7 @@ pub mod context;
 pub mod ext;
 pub mod hooks;
 pub mod mcp;
+pub mod model_knowledge;
 pub mod models;
 pub mod permissions;
 pub mod plugin;

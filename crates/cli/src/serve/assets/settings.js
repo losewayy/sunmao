@@ -97,7 +97,9 @@ function motionPop(anchor) {
 const ctxLen = n => typeof n === 'number' && Number.isFinite(n)
   ? (n >= 1000 ? Math.round(n / 1000) + 'k' : String(n))
   : (n ? String(n) : '');
-const mbadge = m => `${m.vision ? '<span class="tag">图</span>' : ''}${m.context_length ? `<span class="tag">${esc(ctxLen(m.context_length))}</span>` : ''}${(m.thinking || []).length ? `<span class="tag">思:${esc((m.thinking || []).map(t => String(t)).join('/'))}</span>` : ''}${m.reasoning && !(m.thinking || []).length ? '<span class="tag">思</span>' : ''}`;
+const MOD_MARK = { image: '图', audio: '音', video: '视', file: '文' };
+const modMarks = m => ((m.input_modalities && m.input_modalities.length) ? m.input_modalities : (m.vision ? ['image'] : [])).map(k => MOD_MARK[k] || k).join('');
+const mbadge = m => `${modMarks(m) ? `<span class="tag">${modMarks(m)}</span>` : ''}${m.context_length ? `<span class="tag">${esc(ctxLen(m.context_length))}</span>` : ''}${m.max_output ? `<span class="tag">出${esc(ctxLen(m.max_output))}</span>` : ''}${(m.thinking || []).length ? `<span class="tag">思:${esc((m.thinking || []).map(t => String(t)).join('/'))}</span>` : ''}${m.reasoning && !(m.thinking || []).length ? '<span class="tag">思</span>' : ''}${m.supports_tools ? '<span class="tag">具</span>' : ''}`;
 function renderModelRows(p, q) {
   q = (q || '').toLowerCase();
   const rows = [];
@@ -189,20 +191,30 @@ function renderProviders() {
         + `<span class="tag">${p.api_key_set ? 'key 已配置' : '无 key'}</span>${n === MODELS.default_provider ? '<span class="tag">本会话</span>' : ''}`
         + `<div class="pv-acts"><button class="btn ghost sm" data-pv="edit" data-n="${esc(n)}" data-tip="编辑">${ic('pen', 'i sm')}</button><button class="btn ghost sm" data-pv="del" data-n="${esc(n)}" data-tip="删除">${ic('trash', 'i sm')}</button></div></div>`
         + (cat.length
-          ? `<div class="pv-cat">${cat.slice(0, 8).map(m => `<span class="tag" data-tip="${esc(n + '/' + m.id)}">${esc(m.id)}${m.vision ? ' ·图' : ''}${m.context_length ? ' ·' + esc(ctxLen(m.context_length)) : ''}${(m.thinking || []).length || m.reasoning ? ' ·思' : ''}</span>`).join('')}${cat.length > 8 ? `<span class="tag">等 ${cat.length} 个</span>` : ''}</div>`
+          ? `<div class="pv-cat">${cat.slice(0, 8).map(m => `<span class="tag" data-tip="${esc(n + '/' + m.id)}">${esc(m.id)}${modMarks(m) ? ' ·' + modMarks(m) : ''}${m.context_length ? ' ·' + esc(ctxLen(m.context_length)) : ''}${(m.thinking || []).length || m.reasoning ? ' ·思' : ''}</span>`).join('')}${cat.length > 8 ? `<span class="tag">等 ${cat.length} 个</span>` : ''}</div>`
           : '');
     }
     html += `<div class="card glass cfg pv">${body}</div>`;
   }
   html += `<div class="card glass cfg pv">${pvEdit && pvEdit.name === null ? provForm('', null) : `<button class="btn ghost sm" data-pv="add">${ic('plus')}添加 provider</button>`}</div>`;
   host.innerHTML = html;
-  // thinking-levels inputs write straight into pvEdit.cands — the save path
-  // serializes them verbatim into catalog entries (comma-separated levels)
+  // capability inputs write straight into pvEdit.cands — the save path
+  // serializes them verbatim into catalog entries
   host.oninput = e => {
-    const i = e.target.closest('.pv-tk');
-    if (!i || !pvEdit) return;
-    const c = pvEdit.cands.find(m => m.id === i.dataset.tk);
-    if (c) c.thinking = i.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (!pvEdit) return;
+    const tk = e.target.closest('.pv-tk');
+    if (tk) {
+      const c = pvEdit.cands.find(m => m.id === tk.dataset.tk);
+      if (c) c.thinking = tk.value.split(',').map(s => s.trim()).filter(Boolean);
+      return;
+    }
+    const num = e.target.closest('.pv-num');
+    if (!num) return;
+    const c = pvEdit.cands.find(m => m.id === (num.dataset.cx || num.dataset.mo));
+    if (!c) return;
+    const n = parseInt(num.value.replace(/[^\d]/g, ''), 10);
+    const key = num.dataset.cx ? 'context_length' : 'max_output';
+    if (Number.isFinite(n) && n > 0) c[key] = n; else delete c[key];
   };
   const am = host.querySelector('[data-f="addmodel"]');
   if (am) am.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); providerAction('addmodel', am); } });
@@ -211,15 +223,25 @@ function provForm(n, p) {
   const v = pvEdit || {};
   const val = (k, d) => esc(v[k] != null ? v[k] : (p && p[k] != null ? p[k] : d || ''));
   const cands = v.cands || [];
+  // capability editor — every field writes back into pvEdit.cands and
+  // rides `setCatalog` on save: numeric ctx/out inputs, modality + wire
+  // capability toggle chips. Fetched entries arrive knowledge-filled;
+  // the user edits whatever the guess got wrong.
+  const mchip = (m, kind, label) => {
+    const mods = m.input_modalities || [];
+    return `<button class="pv-chip${mods.includes(kind) ? ' on' : ''}" data-mf="mod" data-mk="${kind}" data-mid="${esc(m.id)}" data-tip="输入模态 · ${kind}">${label}</button>`;
+  };
+  const mflag = (m, key, label, tip) => `<button class="pv-chip${m[key] ? ' on' : ''}" data-mf="flag" data-mk="${key}" data-mid="${esc(m.id)}" data-tip="${tip}">${label}</button>`;
+  const mrow = m => `<div class="pv-ckr"><div class="pv-ckh"><button class="pv-ck" data-mc="${esc(m.id)}">${ic(v.sel && v.sel.has(m.id) ? 'square-check' : 'square', 'i sm')}<span class="mono">${esc(m.id)}</span>${m.supports_tools ? '<span class="tag">具</span>' : ''}</button><input class="pv-tk" data-tk="${esc(m.id)}" value="${esc((m.thinking || []).join(','))}" placeholder="思考档位 low,medium,high" spellcheck="false" data-tip="逗号分隔 — 该模型可选的思考强度；空 = 不声明"></div><div class="pv-cf"><label class="pv-f" data-tip="上下文窗口（tokens）">上下文<input class="pv-num" data-cx="${esc(m.id)}" value="${m.context_length || ''}" placeholder="—" spellcheck="false"></label><label class="pv-f" data-tip="单次输出上限（tokens）">输出<input class="pv-num" data-mo="${esc(m.id)}" value="${m.max_output || ''}" placeholder="—" spellcheck="false"></label><span class="pv-f">输入${mchip(m, 'image', '图')}${mchip(m, 'audio', '音')}${mchip(m, 'video', '视')}${mchip(m, 'file', '文')}</span>${mflag(m, 'supports_tools', '具', '支持工具调用')}${mflag(m, 'structured_outputs', '构', '支持结构化输出')}</div></div>`;
   const list = cands.length
-    ? `<div class="pv-ckl scroll">${cands.map(m => `<div class="pv-ckr"><button class="pv-ck" data-mc="${esc(m.id)}">${ic(v.sel && v.sel.has(m.id) ? 'square-check' : 'square', 'i sm')}<span class="mono">${esc(m.id)}</span>${m.vision ? '<span class="tag">图</span>' : ''}${m.context_length ? `<span class="tag">${esc(ctxLen(m.context_length))}</span>` : ''}</button><input class="pv-tk" data-tk="${esc(m.id)}" value="${esc((m.thinking || []).join(','))}" placeholder="思考档位 low,medium,high" spellcheck="false" data-tip="逗号分隔 — 该模型可选的思考强度；空 = 不声明"></div>`).join('')}</div>`
+    ? `<div class="pv-ckl scroll">${cands.map(mrow).join('')}</div>`
     : `<div class="pv-empty">${v.fetching ? '拉取中…' : '未拉取 — 也可在下方直接填 model id'}</div>`;
   return `<div class="pv-form">
     <label>名称<input data-f="name" value="${esc(n)}" ${n ? 'disabled' : ''} placeholder="如 default、deepseek"></label>
     <label>Base URL<input data-f="base_url" value="${val('base_url')}" placeholder="https://api.example.com/v1"></label>
     <label>协议<button class="pv-sel" type="button" data-pv="dialect" data-v="${val('dialect', 'openai')}"><span>${esc(DIALECTS.find(d => d.v === val('dialect', 'openai'))?.t || 'OpenAI 兼容')}</span>${ic('chev-d')}</button></label>
     <label>API Key<input data-f="api_key" type="password" value="${val('api_key')}" placeholder="${p && p.api_key_set ? '已配置 — 留空保持不变' : 'sk-… 或留空（本地服务）'}"></label>
-    <div class="pv-mh"><span class="pv-ml">模型（勾选要用的）</span><button class="btn ghost sm" data-pv="fetch" ${v.fetching ? 'disabled' : ''}>${ic('download')}${v.fetched ? '重新拉取' : '拉取模型'}</button></div>
+    <div class="pv-mh"><span class="pv-ml">模型（勾选要用的）</span><span class="pv-mr"><button class="btn ghost sm" data-pv="knowledge" ${v.krefresh ? 'disabled' : ''} data-tip="从 OpenRouter 刷新模型能力表 — 网关不报的能力按模型名推断填入">${v.krefresh ? '刷新中…' : ic('download') + '刷新知识'}</button><button class="btn ghost sm" data-pv="fetch" ${v.fetching ? 'disabled' : ''}>${ic('download')}${v.fetched ? '重新拉取' : '拉取模型'}</button></span></div>
     ${list}
     <div class="pv-add"><input data-f="addmodel" placeholder="手写 model id" spellcheck="false"><button class="btn ghost sm" data-pv="addmodel">${ic('plus')}添加</button></div>
     <div class="pv-acts"><button class="btn allow sm" data-pv="save">${ic('check')}保存</button><button class="btn ghost sm" data-pv="cancel">取消</button></div>
@@ -264,6 +286,18 @@ async function providerAction(kind, el) {
     return renderProviders();
   }
   if (kind === 'del') { return saveProviders({ name: n, del: true }, '已删除 ' + n); }
+  if (kind === 'knowledge') {
+    if (!pvEdit) return;
+    pvEdit.krefresh = true;
+    renderProviders();
+    try {
+      const r = await api('/models/knowledge', jpost({}));
+      toast(`知识库已刷新 · ${r.entries} 条`, 'check');
+      refreshModels();
+    } catch (e) { toast(`刷新失败：${e.message}`, 'alert', 'warn'); }
+    if (pvEdit) pvEdit.krefresh = false;
+    return renderProviders();
+  }
   if (kind === 'fetch') {
     if (!pvEdit) return;
     pvEdit.fetching = true;
@@ -290,6 +324,21 @@ async function providerAction(kind, el) {
 function toggleCand(id) {
   if (!pvEdit) return;
   if (pvEdit.sel.has(id)) pvEdit.sel.delete(id); else pvEdit.sel.add(id);
+  renderProviders();
+}
+/* capability chips — `data-mf="mod|flag"` toggles write into pvEdit.cands:
+   mod flips a kind inside input_modalities, flag flips a boolean field */
+function toggleField(kind, key, id) {
+  if (!pvEdit) return;
+  const c = pvEdit.cands.find(m => m.id === id);
+  if (!c) return;
+  if (kind === 'mod') {
+    const mods = c.input_modalities || (c.input_modalities = []);
+    const i = mods.indexOf(key);
+    if (i >= 0) mods.splice(i, 1); else mods.push(key);
+  } else {
+    c[key] = !c[key];
+  }
   renderProviders();
 }
 const SHELL_OPTS = [

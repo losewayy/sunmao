@@ -35,7 +35,16 @@ pub(super) async fn view(s: &Arc<Shared>, sess: Option<String>) -> HostResponse 
             // own `default` row is honestly absent: nothing is running)
             let text =
                 std::fs::read_to_string(s.cwd.join(".sunmao/models.json")).unwrap_or_default();
-            serde_json::from_str::<sunmao_core::models::ModelsFile>(&text).unwrap_or_default()
+            let mut f: sunmao_core::models::ModelsFile =
+                serde_json::from_str(&text).unwrap_or_default();
+            let knowledge = sunmao_core::model_knowledge::Knowledge::load(&s.cwd);
+            for p in f.providers.values_mut() {
+                for e in &mut p.catalog {
+                    e.migrate_vision();
+                    knowledge.fill(e);
+                }
+            }
+            f
         }
     };
     HostResponse::json(serde_json::json!({
@@ -78,7 +87,7 @@ pub(super) async fn fetch(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) ->
         Err(e) => return HostResponse::err(400, format!("bad json: {e}")),
     };
     let def: sunmao_core::models::ProviderDef = if let Some(name) = v["provider"].as_str() {
-        let resolver = models_host(s, sess).and_then(|h| h.agent.models_resolver());
+        let resolver = models_host(s, sess.clone()).and_then(|h| h.agent.models_resolver());
         let file = resolver.as_ref().map(|m| m.file()).unwrap_or_else(|| {
             let text =
                 std::fs::read_to_string(s.cwd.join(".sunmao/models.json")).unwrap_or_default();
@@ -97,7 +106,19 @@ pub(super) async fn fetch(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) ->
         }
     };
     match sunmao_core::models::fetch_catalog(&def).await {
-        Ok(catalog) => HostResponse::json(serde_json::json!({ "catalog": catalog })),
+        Ok(mut catalog) => {
+            // the listing is best-effort — the knowledge table fills
+            // whatever it leaves unset (never overrides declared fields)
+            let cwd = models_host(s, sess)
+                .map(|h| h.agent.session_cwd())
+                .unwrap_or_else(|| s.cwd.clone());
+            let knowledge = sunmao_core::model_knowledge::Knowledge::load(&cwd);
+            for e in &mut catalog {
+                e.migrate_vision();
+                knowledge.fill(e);
+            }
+            HostResponse::json(serde_json::json!({ "catalog": catalog }))
+        }
         Err(e) => HostResponse::err(502, format!("{e:#}")),
     }
 }
@@ -131,4 +152,22 @@ pub(super) async fn put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> H
     }
     s.emit(serde_json::json!({"type": "models_changed"}));
     view(s, sess).await
+}
+
+/// `POST /models/knowledge` — the "刷新知识库" action: pull OpenRouter's
+/// catalog, keep the mainstream families, write `~/.sunmao/model-knowledge.json`
+/// (the user layer). Reloads every live resolver so fills refresh at once.
+/// Optional freshness — the compiled-in seed keeps working offline.
+pub(super) async fn knowledge(s: &Arc<Shared>) -> HostResponse {
+    match sunmao_core::model_knowledge::refresh_user_layer().await {
+        Ok(count) => {
+            for id in s.live_ids() {
+                if let Some(h) = s.host(&id) {
+                    h.agent.reload_models();
+                }
+            }
+            HostResponse::json(serde_json::json!({ "entries": count }))
+        }
+        Err(e) => HostResponse::err(502, format!("{e:#}")),
+    }
 }

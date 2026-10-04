@@ -108,11 +108,21 @@
 .pv-ck:hover{background:var(--c-fill-1)}
 .pv-ck .i,.pv-ck .tag{color:var(--c-text-3);flex:none}
 .pv-ck>span.mono{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pv-ckr{display:flex;gap:var(--s-6);align-items:stretch}
-.pv-ckr .pv-ck{flex:1;min-width:0}
+.pv-ckr{display:flex;flex-direction:column;gap:var(--s-2)}
+.pv-ckh{display:flex;gap:var(--s-6);align-items:stretch}
+.pv-ckh .pv-ck{flex:1;min-width:0}
 .pv-tk{width:var(--w-model-level);flex:none;padding:0 var(--s-8);border:0;outline:0;border-radius:var(--r-sm);background:var(--c-sunken);box-shadow:var(--ring-1);font:var(--fs-xs) var(--font-mono);color:var(--c-text)}
 .pv-tk:focus{box-shadow:var(--ring-accent)}
 .pv-tk::placeholder{color:var(--c-text-3)}
+.pv-cf{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-6);padding:0 var(--s-6) var(--s-2) calc(var(--s-16) + var(--icon-sm))}
+.pv-f{display:flex;align-items:center;gap:var(--s-4);font-size:var(--fs-xs);color:var(--c-text-3)}
+.pv-num{width:calc(var(--w-model-level) * 0.72);height:var(--h-md);padding:0 var(--s-6);border:0;outline:0;border-radius:var(--r-sm);background:var(--c-sunken);box-shadow:var(--ring-1);font:var(--fs-xs) var(--font-mono);color:var(--c-text)}
+.pv-num:focus{box-shadow:var(--ring-accent)}
+.pv-num::placeholder{color:var(--c-text-3)}
+.pv-chip{display:inline-flex;align-items:center;justify-content:center;min-width:var(--h-md);height:var(--h-md);padding:0 var(--s-4);border-radius:var(--r-sm);font-size:var(--fs-xs);color:var(--c-text-3);cursor:pointer;transition:color var(--dur-fast) var(--ease-spring),background var(--dur-fast) var(--ease-spring)}
+.pv-chip:hover{background:var(--c-fill-1)}
+.pv-chip.on{color:var(--c-accent);background:var(--c-accent-tint)}
+.pv-mr{display:flex;gap:var(--s-6)}
 .pv-add{display:flex;gap:var(--s-6)}
 .pv-add input{flex:1;height:var(--h-lg);padding:0 var(--s-10);border:0;outline:0;border-radius:var(--r-md);background:var(--c-sunken);box-shadow:var(--ring-1);font:var(--fs-sm) var(--font-mono);color:var(--c-text)}
 .pv-add input:focus{box-shadow:var(--ring-accent)}

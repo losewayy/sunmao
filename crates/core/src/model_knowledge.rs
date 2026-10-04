@@ -246,6 +246,40 @@ impl Knowledge {
     }
 }
 
+/// Heal refresh-era `thinking` values saved into `models.json` catalogs.
+/// The old pipeline stamped exactly two generated vocabularies —
+/// `low,medium,high,max` (its universal guess) and `low,medium,high` (the
+/// supported_parameters fallback). A declared set equal to either is
+/// generated data, not a user choice; re-derive it from the family table.
+/// Any other combination is hand-edited and stays untouched.
+pub fn heal_refresh_levels(e: &mut CatalogEntry) {
+    if e.thinking.is_empty() {
+        return;
+    }
+    let mut s: Vec<&str> = e.thinking.iter().map(String::as_str).collect();
+    s.sort_unstable();
+    // sorted: low,medium,high,max → high,low,max,medium ; low,medium,high → high,low,medium
+    let generated = s == ["high", "low", "max", "medium"] || s == ["high", "low", "medium"];
+    if !generated {
+        return;
+    }
+    match level_set(&normalize(&e.id)) {
+        Some(LevelSet::Levels(ls)) => {
+            e.thinking = ls;
+            e.reasoning = false;
+        }
+        Some(LevelSet::Toggle) => {
+            e.thinking.clear();
+            e.reasoning = true;
+        }
+        Some(LevelSet::None) => {
+            e.thinking.clear();
+            e.reasoning = false;
+        }
+        None => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,6 +333,36 @@ mod tests {
         assert_eq!(lv("kimi-k2-6"), "-");
         // unlisted families fall through to the caller's fallback
         assert_eq!(lv("llama-4-scout"), "?");
+    }
+
+    #[test]
+    fn heal_only_repairs_the_two_generated_signatures() {
+        let entry = |id: &str, t: &[&str]| CatalogEntry {
+            id: id.into(),
+            thinking: t.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        };
+        // the universal stamp gets re-derived from the table
+        let mut e = entry("cn:deepseek-v4-flash", &["low", "medium", "high", "max"]);
+        heal_refresh_levels(&mut e);
+        assert_eq!(e.thinking, ["high", "max"]);
+        // the sp-fallback stamp too — and toggle-only shapes land as
+        // reasoning, not levels
+        let mut e = entry("cn:kimi-k2.6", &["low", "medium", "high"]);
+        heal_refresh_levels(&mut e);
+        assert!(e.thinking.is_empty() && e.reasoning);
+        // `!` rows clear both
+        let mut e = entry("global:deepseek-chat", &["low", "medium", "high", "max"]);
+        heal_refresh_levels(&mut e);
+        assert!(e.thinking.is_empty() && !e.reasoning);
+        // a hand-picked set (or the same letters out of the known orders)
+        // is a user choice — untouched
+        let mut e = entry("cn:deepseek-v4-flash", &["high", "max"]);
+        heal_refresh_levels(&mut e);
+        assert_eq!(e.thinking, ["high", "max"]);
+        let mut e = entry("cn:glm-5.3", &["low", "max", "xhigh"]);
+        heal_refresh_levels(&mut e);
+        assert_eq!(e.thinking, ["low", "max", "xhigh"]);
     }
 
     #[test]

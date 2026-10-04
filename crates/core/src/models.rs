@@ -78,6 +78,7 @@ fn read_models_file(cwd: &Path) -> ModelsFile {
         for e in &mut p.catalog {
             e.migrate_vision();
             knowledge.fill(e);
+            crate::model_knowledge::heal_refresh_levels(e);
         }
     }
     file

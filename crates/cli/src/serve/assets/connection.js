@@ -3,6 +3,7 @@
 
 /* ================= websocket / IPC channel ================= */
 let ws = null, wsDelay = 800, wsTimer = 0;
+const projectName = p => String(p || '').split(/[\\/]/).filter(Boolean).pop() || '';
 /* Under the Tauri shell the ws degrades to an IPC pair (GUI.md §8):
    session_events carries a JS Channel for host→page frames (parsed JSON
    objects on onmessage) and host_call carries page→host frames. */
@@ -66,10 +67,12 @@ function route(v) {
       cwd = String(v.cwd || '').replace(/^\\\\\?\\/, '');
       slashList = v.slash || []; // [{name, desc}] — desc is the one-line zh blurb
       models = v.models || [];
-      $('#df-cwd').textContent = cwd;
-      $('#df-cwd').dataset.tip = cwd;
-      $('#df-sess').textContent = sessionId || '—';
-      $('#hero-sub').textContent = cwd;
+      {
+        const project = projectName(cwd);
+        $('#df-cwd').textContent = project || '—';
+        $('#df-cwd').dataset.tip = cwd;
+        $('#hero-sub').textContent = project ? `在 ${project} 中开始` : '';
+      }
       setApprovalMode(v.mode);
       setEffort(v.effort, v.effort_levels);
       sandboxPort = v.sandbox_port || 0;
@@ -84,8 +87,9 @@ function route(v) {
       if (v.goal) { curGoal = v.goal; renderGoalChip(); }
       (v.pending || []).forEach(c => approvalCard(c));
       setBusy(!!v.busy);
+      driver = v.driver || '';
       refreshSessions(); refreshModels(); refreshProjects();
-      refreshRoster(); refreshJobs(); refreshGrants();
+      refreshRoster(); refreshJobs(); refreshGrants(); HOOKS = MCPS = null;
       renderCrumb();
       break;
     case 'live':
@@ -101,6 +105,10 @@ function route(v) {
       }
       if (sess === sessionId) {
         liveEvent(v.event);
+        // the first streamed row retires the hero — send() checked before
+        // the echo landed (no optimistic bubble), so the empty check has
+        // to ride the live path too
+        updateHero();
         // output.log grows inside a running job with no further signal —
         // any live tool frame throttles a re-pull so the tail stays fresh
         if (v.event && (v.event.type === 'tool_start' || v.event.type === 'tool_done')) refreshJobsSoon();
@@ -111,9 +119,10 @@ function route(v) {
       break;
     case 'replay':
       if (v.session) { sessionId = v.session; }
-      if (v.cwd) { cwd = String(v.cwd).replace(/^\\\\\?\\/, ''); $('#df-cwd').textContent = cwd; $('#df-cwd').dataset.tip = cwd; }
-      $('#df-sess').textContent = sessionId || '—';
-      renderReplay(v.events || []);
+      if (v.cwd) { cwd = String(v.cwd).replace(/^\\\\\?\\/, ''); $('#df-cwd').textContent = projectName(cwd) || '—'; $('#df-cwd').dataset.tip = cwd; }
+      // switching sessions rebuilds the whole transcript — fadeSwap turns
+      // the hard cut into a fast out/in so the swap reads as a transition
+      fadeSwap($('#scroller'), () => renderReplay(v.events || []));
       setApprovalMode(v.mode);
       setEffort(v.effort, v.effort_levels);
       if (v.goal) { curGoal = v.goal; renderGoalChip(); }
@@ -121,7 +130,8 @@ function route(v) {
       (v.pending || []).forEach(c => approvalCard(c));
       steerQ = v.steer || []; inputQ = v.queue || []; renderQueueChips();
       syncWait();
-      refreshSessions(); refreshRoster(); refreshJobs(); refreshGrants(); renderCrumb();
+      driver = v.driver || '';
+      refreshSessions(); refreshRoster(); refreshJobs(); refreshGrants(); HOOKS = MCPS = null; renderCrumb();
       break;
     case 'approval':
       waitingSessions.add(sess);
@@ -137,7 +147,7 @@ function route(v) {
         const t = document.createElement('div'); t.className = 'toast glass jump';
         t.dataset.ap = sess;
         t.innerHTML = ic('shield-check') + `<span>待审批 · <b>${esc(v.tool || '?')}</b> · ${esc(sess)}</span>` + ic('arrow-l', 'i xs');
-        t.addEventListener('click', () => { resumeSession(sess); t.remove(); });
+        t.addEventListener('click', () => { resumeSession(sess); t.classList.add('out'); setTimeout(() => t.remove(), motion.dur('fast')); });
         $('#toasts').appendChild(t);
         setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), motion.dur('fast')); }, motion.hold('toast-long'));
       }
@@ -185,6 +195,12 @@ function route(v) {
       break;
     }
     case 'sessions_changed': refreshSessions(); break;
+    case 'schedules_changed': if (view === 'schedules') refreshSchedules(); break;
+    case 'sched_fired': {
+      toast(`定时任务已启动${v.name ? `：${v.name}` : ''}`, 'zap');
+      if (!shellFocused()) shellNotify('定时任务已启动', v.name || v.task || '');
+      break;
+    }
     case 'steer_queue':
       if (sess === sessionId) { steerQ = v.items || []; renderQueueChips(); }
       break;
@@ -265,7 +281,9 @@ async function newChat(project) {
   // in the same project)
   project = project === undefined ? cwd : project;
   try {
-    const r = await api('/session/new', jpost(project ? { cwd: project } : {}));
+    // loop = the session's frozen driver (ptc codemode vs standard) —
+    // empty means "let --loop/manifest decide", picked in the new-chat pop
+    const r = await api('/session/new', jpost({ ...(project ? { cwd: project } : {}), ...(S.loopDriver ? { loop: S.loopDriver } : {}) }));
     if (r && r.session) { sessionId = r.session; wsSend({ type: 'view', id: r.session }); }
     renderCrumb(); refreshSessions();
   } catch (e) { toast(`新会话失败：${e.message}`, 'alert', 'warn'); }
@@ -307,52 +325,6 @@ async function exportSession(id) {
     toast(`已导出 ${id}.md`, 'download');
   } catch (e) { toast(`导出失败：${e.message}`, 'alert', 'warn'); }
 }
-// project picker for 新对话 — known projects (launch dir + registry) plus
-// freeform input; a path that exists on disk becomes the session's root
-let PROJECTS = null;
-async function refreshProjects() {
-  try { PROJECTS = (await api('/projects')).projects || []; } catch { PROJECTS = null; }
-}
-function newChatPop(el) {
-  if (popAnchor === el) return closePop();
-  const list = (PROJECTS || [cwd]).filter(Boolean);
-  pop(el, `<div class="lbl">新对话的项目目录</div><div class="field"><input id="np-in" placeholder="输入路径，回车创建" spellcheck="false" autocomplete="off"></div><div class="mp-list scroll">` +
-    list.map(p => `<button class="mi" data-v="${esc(p)}">${ic('folder')}<span class="mt mono"><span>${esc(p.split(/[\\/]/).filter(Boolean).pop() || p)}</span><small>${esc(p)}</small></span>${p === cwd ? ic('check', 'i sm ck') : ''}</button>`).join('') +
-    `</div>`, { place: 'bottom', cls: 'models', onMount(p) {
-      const inp = $('#np-in', p);
-      inp.addEventListener('keydown', e => {
-        if (e.key !== 'Enter') return;
-        e.preventDefault();
-        const v = inp.value.trim();
-        closePop(); newChat(v || cwd);
-      });
-      p.addEventListener('click', e => { const b = e.target.closest('.mi'); if (!b) return; closePop(); newChat(b.dataset.v); });
-      setTimeout(() => inp.focus(), 20);
-    } });
-}
-let SESSION_PROJ = {}; // session id → display project path
-async function refreshSessions() {
-  try {
-    const v = await api('/sessions');
-    SESSION_PROJ = {};
-    SESSION_IDS = (Array.isArray(v.sessions) ? v.sessions : []).map(r => {
-      const o = typeof r === 'string' ? { id: r } : r;
-      SESSION_PROJ[o.id] = o.project || '';
-      return o.id;
-    });
-    SESSION_META = v.meta && typeof v.meta === 'object' ? v.meta : {};
-    renderRail(); renderCrumb();
-    railSearch(); // an open rail query re-runs against the fresh list
-  } catch {}
-}
-let railTimer = 0;
-$('#rail-q').addEventListener('input', () => { clearTimeout(railTimer); railTimer = setTimeout(railSearch, DEBOUNCE_SEARCH); });
-$('#rail-q').addEventListener('keydown', e => {
-  if (e.key !== 'Enter') return;
-  e.preventDefault();
-  const first = $('#sessions [data-sess]');
-  if (first) resumeSession(first.dataset.sess);
-});
 let dfTimer = 0;
 function refreshDataflowSoon() { clearTimeout(dfTimer); dfTimer = setTimeout(refreshDataflow, DEBOUNCE_DATAFLOW); }
 async function refreshDataflow() {
@@ -430,92 +402,28 @@ function renderDock(d) {
   const grp = (icon, label, items) => items && items.length
     ? `<div class="fl-g"><div class="fl-t">${ic(icon)}${label}<b>${items.length}</b></div>${items.slice(-8).map(x => `<div class="fl-i" data-tip="${esc(x)}">${esc(x)}</div>`).join('')}</div>` : '';
   const flowHtml = grp('file', '读取', flow.files_read) + grp('file-pen', '写入', flow.files_written) + grp('terminal', '命令', flow.shell_commands);
-  $('#df-flow').innerHTML = `<div class="df-h"><span>数据流向</span><span class="mono">${esc(sessionId)}.jsonl</span></div>` + (flowHtml || '<div class="empty-row">尚无文件/命令记录</div>');
+  $('#df-flow').innerHTML = `<div class="df-h"><span>数据流向</span></div>` + (flowHtml || '<div class="empty-row">尚无文件/命令记录</div>');
 }
 
-/* ================= rail / crumb / views ================= */
-// title = first typed prompt (GET /sessions meta); a session that has no
-// prompt yet reads as 新对话 rather than leaking its raw id
-const sessTitle = id => (SESSION_META[id] && SESSION_META[id].title) || '';
-const dayStart = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
-function sessWhen(ms) {
-  if (!ms) return '';
-  const d = new Date(ms), today = dayStart(Date.now());
-  if (ms >= today) return pad(d.getHours()) + ':' + pad(d.getMinutes());
-  if (ms >= today - 6 * 864e5) return '周' + '日一二三四五六'[d.getDay()];
-  return (d.getMonth() + 1) + '/' + d.getDate();
-}
-function sessBucket(ms) {
-  const today = dayStart(Date.now());
-  if (!ms || ms >= today) return '今天';
-  if (ms >= today - 864e5) return '昨天';
-  if (ms >= today - 6 * 864e5) return '近 7 天';
-  return '更早';
-}
-const sessRow = id => {
-  const on = id === sessionId, run = busySessions.has(id) || (on && busy), wait = waitingSessions.has(id);
-  const title = sessTitle(id), m = SESSION_META[id] || {};
-  const proj = SESSION_PROJ[id] || '';
-  // a session running in another project wears its project name — the
-  // same-project majority stays clean
-  const foreign = proj && cwd && proj !== cwd ? `<span class="tag">${esc(proj.split(/[\\/]/).filter(Boolean).pop() || proj)}</span>` : '';
-  const state = wait ? '<i class="sd wait" aria-label="等待批准"></i>' : run ? '<i class="sd run" aria-label="运行中"></i>' : `<span class="when">${sessWhen(m.mtime)}</span>`;
-  return `<button class="row sess${on ? ' on' : ''}" data-sess="${esc(id)}" data-tip="${esc((proj ? proj + ' · ' : '') + (title ? title + '|' + id : id))}" data-tip-side="right"><span class="t${title ? '' : ' untitled'}">${esc(title || '新对话')}</span>${foreign}${state}</button>`;
-};
-/* ---- rail search — ≥2 chars greps every session log's message content
-   server-side (GET /sessions?q=); shorter input filters the rail by
-   title/id client-side. railHits: null = list mode, else the last
-   endpoint payload. ---- */
-let railHits = null, railQ = 0;
-const DEBOUNCE_SEARCH = 250;
-function railSearch() {
-  const q = ($('#rail-q') && $('#rail-q').value || '').trim();
-  if (q.length < 2) { railHits = null; renderRail(); return; }
-  const seq = ++railQ;
-  railHits = null; // keep the filtered list while the query flies
-  fetch(`/sessions?q=${encodeURIComponent(q)}`)
-    .then(r => r.ok ? r.json() : Promise.reject())
-    .then(v => { if (seq !== railQ) return; railHits = (v.sessions || []); renderRail(); })
-    .catch(() => { if (seq === railQ) { railHits = null; renderRail(); } });
-}
-function railRowWithHits(h) {
-  const id = h.id;
-  SESSION_META[id] = SESSION_META[id] || {};
-  if (h.title) SESSION_META[id].title = h.title;
-  const snips = (h.hits || []).map(s => `<div class="snip" data-sess="${esc(id)}">${esc(s)}</div>`).join('');
-  return sessRow(id) + `<div class="snips">${snips}</div>`;
-}
-function renderRail() {
-  let html = '', last = '';
-  // a session nobody typed into is just an opened-and-left window: keep it
-  // out of the rail (the palette still lists every id) unless it's the
-  // current one or has something running / waiting
-  const q = ($('#rail-q') && $('#rail-q').value || '').trim().toLowerCase();
-  if (railHits) {
-    $('#sessions').innerHTML = railHits.map(railRowWithHits).join('') ||
-      `<div class="empty-hint">没有匹配 “${esc(q)}” 的会话</div>`;
-    $$('.nav-i[data-go]').forEach(b => b.classList.toggle('on', b.dataset.go === view));
-    return;
-  }
-  const shown = SESSION_IDS.filter(id => {
-    if (q && !(sessTitle(id) + ' ' + id).toLowerCase().includes(q)) return false;
-    return sessTitle(id) || id === sessionId || busySessions.has(id) || waitingSessions.has(id);
-  });
-  for (const id of shown) {
-    const b = sessBucket((SESSION_META[id] || {}).mtime);
-    if (b !== last) { html += `<div class="grp"><span>${b}</span></div>`; last = b; }
-    html += sessRow(id);
-  }
-  $('#sessions').innerHTML = html || '<div class="empty-hint">暂无会话记录</div>';
-  $$('.nav-i[data-go]').forEach(b => b.classList.toggle('on', b.dataset.go === view));
-}
-const SET_NAV = [['appearance', '外观', 'palette'], ['providers', '模型与提供商', 'cpu'], ['channels', 'IM 渠道', 'shield-check'], ['shell', '终端', 'terminal'], ['grants', '已授权命令', 'lock'], ['keys', '快捷键', 'keyboard'], ['about', '关于', 'info']];
+/* ================= crumb / views ================= */
+const SET_NAV = [['appearance', '外观', 'palette'], ['providers', '模型与提供商', 'cpu'], ['channels', 'IM 渠道', 'shield-check'], ['shell', '终端', 'terminal'], ['hooks', '钩子', 'zap'], ['mcp', 'MCP 服务器', 'blocks'], ['grants', '已授权命令', 'lock'], ['keys', '快捷键', 'keyboard'], ['about', '关于', 'info']];
 function renderCrumb() {
   const c = $('#crumb');
+  const interactive = view === 'session' && !!sessionId;
   let h;
   if (view === 'settings') h = `<span class="c1">设置</span><span class="cs">/</span><span class="c2">${SET_NAV.find(x => x[0] === setPage)[1]}</span>`;
-  else h = `<span class="c1">${esc(cwd.split(/[\\/]/).filter(Boolean).pop() || 'sunmao')}</span><span class="cs">/</span><span class="c2">${esc(sessTitle(sessionId) || (sessionId ? '新对话' : '…'))}</span>${ic('chev-d', 'i sm')}`;
-  c.dataset.tip = view === 'settings' ? '' : sessionId;
+  else if (view === 'schedules') h = `<span class="c1">定时任务</span>`;
+  else h = `<span class="c1">${esc(cwd.split(/[\\/]/).filter(Boolean).pop() || 'sunmao')}</span><span class="cs">/</span><span class="c2">${esc(sessTitle(sessionId) || (sessionId ? '新对话' : '…'))}</span>${ic('chev-d', 'i sm')}${driver === 'ptc' ? '<span class="drv" data-tip="PTC 代码模式 — 模型经 RunCode 脚本调用工具">PTC</span>' : ''}`;
+  if (interactive) {
+    c.dataset.act = 'crumb';
+    c.setAttribute('aria-haspopup', 'menu');
+  } else {
+    c.removeAttribute('data-act');
+    c.removeAttribute('aria-haspopup');
+  }
+  c.disabled = !interactive;
+  c.classList.toggle('static', !interactive);
+  c.dataset.tip = interactive ? sessionId : '';
   c.innerHTML = h;
 }
 function show(v) {
@@ -524,6 +432,8 @@ function show(v) {
   app.dataset.view = v;
   $('#v-session').hidden = v !== 'session';
   $('#v-settings').hidden = v !== 'settings';
+  $('#v-schedules').hidden = v !== 'schedules';
+  if (v === 'schedules') refreshSchedules();
   $('#composer').hidden = v !== 'session';
   app.dataset.dock = v === 'session' && dockOn ? 'on' : 'off';
   $('#dock-btn').classList.toggle('on', dockOn && v === 'session');

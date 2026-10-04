@@ -18,6 +18,7 @@
 <defs>
 <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
 <symbol id="i-pen" viewBox="0 0 24 24"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4Z"/></symbol>
+<symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></symbol>
 <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
 <symbol id="i-blocks" viewBox="0 0 24 24"><rect x="14" y="3" width="7" height="7" rx="1.5"/><path d="M10 21V8a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1H3"/></symbol>
 <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l-.15-.09a2 2 0 0 0-.73 2.73l-.22-.38a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
@@ -85,7 +86,7 @@
     <button class="crumb glass" id="crumb" data-act="crumb"></button>
     <div class="capsule glass" role="toolbar" aria-label="全局">
       <button class="ib" data-act="palette" data-tip="命令面板|Ctrl K" aria-label="命令面板"><svg class="i"><use href="#i-search"/></svg></button>
-      <button class="ib" data-act="events" data-tip="事件日志" aria-label="事件日志"><svg class="i"><use href="#i-history"/></svg></button>
+      <button class="ib" data-act="events" data-tip="执行记录" aria-label="执行记录"><svg class="i"><use href="#i-history"/></svg></button>
       <button class="ib on" data-act="dock" id="dock-btn" data-tip="数据面板|Ctrl \" aria-label="数据面板"><svg class="i"><use href="#i-panel-r"/></svg></button>
     </div>
     <div class="caption">
@@ -98,9 +99,13 @@
   <aside class="rail glass" id="rail">
     <div class="rail-pane" id="rail-main">
       <nav class="nav">
-        <button class="nav-i" data-act="new-chat-pop"><svg class="i"><use href="#i-pen"/></svg><span>新对话</span><kbd>Ctrl N</kbd></button>
+        <div class="nav-pair">
+          <button class="nav-i" data-act="new-chat"><svg class="i"><use href="#i-pen"/></svg><span>新对话</span><kbd>Ctrl N</kbd></button>
+          <button class="nav-sub" data-act="new-chat-pop" data-tip="在其他项目中新建" aria-label="选择项目目录"><svg class="i"><use href="#i-chev-d"/></svg></button>
+        </div>
+        <button class="nav-i" data-go="schedules"><svg class="i"><use href="#i-clock"/></svg><span>定时任务</span></button>
       </nav>
-      <div class="rail-search"><svg class="i"><use href="#i-search"/></svg><input id="rail-q" placeholder="搜索会话" spellcheck="false" autocomplete="off"></div>
+      <div class="rail-search"><svg class="i"><use href="#i-search"/></svg><input id="rail-q" placeholder="搜索会话" spellcheck="false" autocomplete="off"><button class="rail-mode" id="rail-mode" data-act="rail-mode" data-tip="按项目分组" aria-label="切换会话分组"><svg class="i"><use href="#i-blocks"/></svg></button></div>
       <div class="lists scroll">
         <div id="sessions"></div>
       </div>
@@ -120,14 +125,34 @@
   <main class="stage" id="stage">
     <section class="view" id="v-session">
       <div class="hero" id="hero" hidden>
-        <svg viewBox="0 0 48 48" fill="none" stroke-linejoin="round" stroke-width="1.5" aria-hidden="true">
+        <svg viewBox="0 0 48 48" fill="none" stroke-linejoin="round" aria-hidden="true">
           <path class="mk-a" d="M6 8H22V19L31 15V33L22 29V40H6Z" stroke="var(--c-text)" fill="color-mix(in srgb,var(--c-text) 8%,transparent)" opacity=".94"/>
           <path class="mk-b" d="M24.5 8H42V40H24.5V29L33.5 33V15L24.5 19Z" stroke="var(--c-accent)" fill="color-mix(in srgb,var(--c-accent) 16%,transparent)"/>
         </svg>
+        <h1 class="hero-title">开始一个任务</h1>
         <p class="hero-sub" id="hero-sub"></p>
+        <div class="hero-actions">
+          <button class="btn ghost sm" data-act="starter" data-prompt="请概述这个项目的主要结构和入口。"><svg class="i"><use href="#i-blocks"/></svg>梳理项目</button>
+          <button class="btn ghost sm" data-act="starter" data-prompt="请检查当前 Git 改动，重点指出可能的问题。"><svg class="i"><use href="#i-search"/></svg>检查改动</button>
+          <button class="btn ghost sm" data-act="starter" data-prompt="请运行与当前任务相关的测试，并总结结果。"><svg class="i"><use href="#i-terminal"/></svg>运行测试</button>
+        </div>
       </div>
       <div class="scroller scroll" id="scroller">
         <div class="tx" id="tx"></div>
+      </div>
+    </section>
+
+    <section class="view" id="v-schedules" hidden>
+      <div class="set scroll" id="sch-scroll">
+        <div class="set-col">
+          <h1>定时任务</h1>
+          <p class="lead">按计划自动在项目中发起一条新会话——产物是普通会话，出现在侧边栏里，可打开可续聊。</p>
+          <div class="card glass cfg" id="sch-form" hidden></div>
+          <div class="sec">
+            <div class="card glass cfg" id="sch-list"></div>
+          </div>
+          <div class="set-foot"><button class="btn ghost sm" data-act="sched-new"><svg class="i"><use href="#i-plus"/></svg>新建任务</button></div>
+        </div>
       </div>
     </section>
 
@@ -138,7 +163,7 @@
           <p class="lead">壁纸、玻璃质感与配色。修改立即生效。</p>
 
           <div class="sec">
-            <div class="sec-h"><h2>壁纸</h2><p>内置壁纸在本机渲染，也可以上传自己的图片</p></div>
+            <div class="sec-h"><h2>壁纸</h2></div>
             <div class="card glass">
               <div class="wgrid" id="wgrid"></div>
               <div class="sliders">
@@ -155,23 +180,19 @@
               <div class="themes">
                 <button class="tc" data-mode="system">
                   <span class="mini">
-                    <span class="half dk"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln" style="top:14px;width:50%"></span><span class="m-ln" style="top:25px;width:36%"></span><span class="m-ln" style="top:36px;width:44%"></span><span class="m-cp"></span></span>
-                    <span class="half b lt"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln" style="top:14px;width:50%"></span><span class="m-ln" style="top:25px;width:36%"></span><span class="m-ln" style="top:36px;width:44%"></span><span class="m-cp"></span></span>
+                    <span class="half dk"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln line-1"></span><span class="m-ln line-2"></span><span class="m-ln line-3"></span><span class="m-cp"></span></span>
+                    <span class="half b lt"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln line-1"></span><span class="m-ln line-2"></span><span class="m-ln line-3"></span><span class="m-cp"></span></span>
                   </span>
                   <span class="lab"><i class="radio"></i>系统<small id="sys-now"></small></span>
                 </button>
                 <button class="tc" data-mode="light">
-                  <span class="mini"><span class="half lt"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln" style="top:14px;width:50%"></span><span class="m-ln" style="top:25px;width:36%"></span><span class="m-ln" style="top:36px;width:44%"></span><span class="m-cp"></span></span></span>
+                  <span class="mini"><span class="half lt"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln line-1"></span><span class="m-ln line-2"></span><span class="m-ln line-3"></span><span class="m-cp"></span></span></span>
                   <span class="lab"><i class="radio"></i>浅色</span>
                 </button>
                 <button class="tc" data-mode="dark">
-                  <span class="mini"><span class="half dk"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln" style="top:14px;width:50%"></span><span class="m-ln" style="top:25px;width:36%"></span><span class="m-ln" style="top:36px;width:44%"></span><span class="m-cp"></span></span></span>
+                  <span class="mini"><span class="half dk"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln line-1"></span><span class="m-ln line-2"></span><span class="m-ln line-3"></span><span class="m-cp"></span></span></span>
                   <span class="lab"><i class="radio"></i>深色</span>
                 </button>
-              </div>
-              <div class="jp">
-                <div class="jp-c"><div class="jp-h"><b>默认</b><span>themePreview.ts</span></div><div class="jp-b" id="jp-a"></div></div>
-                <div class="jp-c"><div class="jp-h"><b>当前</b><span id="jp-count"></span></div><div class="jp-b" id="jp-b"></div></div>
               </div>
             </div>
           </div>
@@ -189,7 +210,7 @@
               <div class="cr"><div class="l"><b>动效</b><span>跟随系统时按系统的减少动效设置</span></div><button class="pill plain" data-act="motion" id="pv-motion"></button></div>
             </div>
           </div>
-          <div class="set-foot"><button class="btn ghost sm" data-act="reset-ui"><svg class="i"><use href="#i-reset"/></svg>恢复默认</button><span>仅外观偏好，保存在 .sunmao/ui.json</span></div>
+          <div class="set-foot"><button class="btn quiet sm" data-act="reset-ui"><svg class="i"><use href="#i-reset"/></svg>恢复默认</button></div>
         </div>
         <div class="set-col" id="set-generic" hidden></div>
       </div>
@@ -209,11 +230,16 @@
       <div class="cmp-atts" id="cmp-atts" hidden></div>
       <div class="cmp-row">
         <textarea id="input" rows="1" placeholder="描述任务，/ 调用命令" aria-label="消息"></textarea>
+      </div>
+      <div class="cmp-bar">
+        <button class="cb icon" data-act="cmp-attach" data-tip="添加图片附件" aria-label="添加附件"><svg class="i"><use href="#i-plus"/></svg></button>
         <button class="cb mode" data-act="pick-mode" id="mode-btn" data-tip="审批模式"><svg class="i"><use href="#i-shield-check" id="mode-ic"/></svg><span id="cmp-mode">auto</span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
-        <button class="cb model" data-act="pick-model" id="model-btn"><span id="cmp-model">…</span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
+        <span class="sp"></span>
         <button class="cb effort" data-act="pick-effort" id="effort-btn" data-tip="思考强度"><svg class="i"><use href="#i-sparkles"/></svg><span id="cmp-effort">默认</span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
+        <button class="cb model" data-act="pick-model" id="model-btn"><span id="cmp-model">…</span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
         <button class="cb send" data-act="send" id="send-btn" data-tip="发送|Enter" aria-label="发送"><svg class="i"><use href="#i-arrow-up"/></svg></button>
       </div>
+      <input type="file" id="att-file" accept="image/*" multiple hidden>
     </div>
     <div id="toasts"></div>
   </main>
@@ -224,6 +250,8 @@
       <button class="dock-tab" role="tab" data-act="dock-tab" data-tab="agents" aria-selected="false"><svg class="i"><use href="#i-blocks"/></svg><span>子代理</span><i class="dt-num" id="dt-count"></i></button>
       <button class="dock-tab" role="tab" data-act="dock-tab" data-tab="jobs" aria-selected="false"><svg class="i"><use href="#i-clock"/></svg><span>后台</span><i class="dt-num" id="dj-count"></i></button>
       <button class="dock-tab" role="tab" data-act="dock-tab" data-tab="flow" aria-selected="false"><svg class="i"><use href="#i-file-code"/></svg><span>流向</span></button>
+      <span id="dt-dyn"></span>
+      <button class="dock-add" data-act="dock-add" data-tip="新建标签页" aria-label="新建标签页"><svg class="i"><use href="#i-plus"/></svg></button>
     </nav>
 
     <div class="dock-pane" data-pane="overview">
@@ -243,8 +271,7 @@
       <section class="df" id="df-proj">
         <div class="df-h"><span>项目</span></div>
         <dl class="kv">
-          <div><dt>目录</dt><dd class="mono ellipsis" id="df-cwd" data-tip="">—</dd></div>
-          <div><dt>会话</dt><dd class="mono ellipsis" id="df-sess">—</dd></div>
+          <div><dt>项目文件夹</dt><dd class="ellipsis" id="df-cwd" data-tip="">—</dd></div>
         </dl>
       </section>
     </div>
@@ -292,11 +319,15 @@
 <script src="diff.js"></script>
 <script src="md.js"></script>
 <script src="transcript.js"></script>
+<script src="approvals.js"></script>
 <script src="islands.js"></script>
 <script src="connection.js"></script>
+<script src="rail.js"></script>
+<script src="schedules.js"></script>
 <script src="composer.js"></script>
 <script src="palette.js"></script>
 <script src="find.js"></script>
+<script src="dock.js"></script>
 <script src="menus.js"></script>
 <script src="roster.js"></script>
 <script src="jobs.js"></script>

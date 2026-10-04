@@ -21,7 +21,7 @@ function expandPastes(text) {
   });
   return out;
 }
-function autoGrow() { const ta = $('#input'); ta.style.height = '34px'; ta.style.height = Math.min(168, ta.scrollHeight) + 'px'; slashCheck(); atCheck(); }
+function autoGrow() { const ta = $('#input'); ta.style.height = motion.px('--h-input', 52) + 'px'; ta.style.height = Math.min(motion.px('--h-input-max', 168), ta.scrollHeight) + 'px'; slashCheck(); atCheck(); }
 function send() {
   const ta = $('#input'), text = ta.value.trim();
   if (!text && !pendingAtts.length) return ta.focus();
@@ -215,27 +215,31 @@ $('#input').addEventListener('keydown', e => {
   }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); }
 });
+// one image upload path — the paste handler and the `+` picker both land
+// here. The chip alone carries the draft (no [图片] text marker — the wire
+// payload is the {path,mime} list); blob url is the thumb, the retained
+// File re-mints it if a send-failure restore needs one.
+async function uploadImageFile(file) {
+  const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+  const bytes = await file.arrayBuffer();
+  const r = await api('/attachments?ext=' + ext + '&sess=' + encodeURIComponent(sessionId), { method: 'POST', body: bytes });
+  pendingAtts.push({ path: r.path, mime: r.mime, name: r.name, thumb: URL.createObjectURL(file), file });
+  renderAtts();
+  toast(`图片已附加 → ${r.name}`, 'note');
+}
+$('#att-file').addEventListener('change', e => {
+  for (const f of [...e.target.files]) {
+    if (!/^image\//.test(f.type)) { toast(`只收图片：${f.name}`, 'alert', 'warn'); continue; }
+    uploadImageFile(f).catch(err => toast(`图片上传失败：${err.message || err}`, 'alert', 'warn'));
+  }
+  e.target.value = ''; // same file twice in a row must re-fire change
+});
 $('#input').addEventListener('paste', e => {
-  // images first — a copied screenshot arrives as a File, not text. Upload
-  // it to the session's attachments dir; the chip alone carries the draft
-  // (no [图片] text marker — the wire payload is the {path,mime} list).
+  // images first — a copied screenshot arrives as a File, not text
   const file = e.clipboardData && [...(e.clipboardData.files || [])].find(f => /^image\//.test(f.type));
   if (file) {
     e.preventDefault();
-    const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
-    (async () => {
-      try {
-        const bytes = await file.arrayBuffer();
-        const r = await api('/attachments?ext=' + ext + '&sess=' + encodeURIComponent(sessionId), { method: 'POST', body: bytes });
-        // blob url as the chip thumb — we already hold the bytes locally,
-        // no reason to round-trip GET /attachments for a preview
-        // keep the File itself — a send-failure restore can re-mint the
-        // thumb URL; a revoked blob: URL can't be resurrected
-        pendingAtts.push({ path: r.path, mime: r.mime, name: r.name, thumb: URL.createObjectURL(file), file });
-        renderAtts();
-        toast(`图片已附加 → ${r.name}`, 'note');
-      } catch (err) { toast(`图片上传失败：${err.message || err}`, 'alert', 'warn'); }
-    })();
+    uploadImageFile(file).catch(err => toast(`图片上传失败：${err.message || err}`, 'alert', 'warn'));
     return;
   }
   const text = e.clipboardData && e.clipboardData.getData('text/plain') || '';
@@ -273,7 +277,12 @@ function atFragment() {
   if (/\s/.test(frag)) return null;
   return { start: at + 1, end: upto, frag };
 }
-function closeAt() { if (atEl) { atEl.remove(); atEl = null; } }
+// completion popups ride the same .show transition as pop() — create
+// without it, rAF-add (enter), and exit through the ease-in fade before
+// remove() so open/close mirror the rest of the popover family
+function hideCompletion(el) { if (!el) return null; el.classList.remove('show'); setTimeout(() => el.remove(), motion.dur('fast')); return null; }
+function popShow(el) { requestAnimationFrame(() => el.classList.add('show')); return el; }
+function closeAt() { atEl = hideCompletion(atEl); }
 async function atCheck(hide) {
   const seq = ++atSeq;
   if (hide || view !== 'session') return closeAt();
@@ -287,13 +296,14 @@ async function atCheck(hide) {
   atIdx = Math.min(atIdx, atItems.length - 1);
   if (!atEl) {
     atEl = document.createElement('div');
-    atEl.className = 'pop glass up show slash';
+    atEl.className = 'pop glass up slash';
     const r = $('#composer').getBoundingClientRect();
     atEl.style.left = Math.max(8, r.left + 6) + 'px';
-    atEl.style.width = Math.min(420, r.width - 12) + 'px';
+    atEl.style.width = Math.min(motion.px('--w-at-pop', 420), r.width - 12) + 'px';
     atEl.style.bottom = (innerHeight - r.top + 8) + 'px';
     document.body.appendChild(atEl);
     atEl.addEventListener('click', e => { const b = e.target.closest('.mi'); if (b) pickAt(b.dataset.p); });
+    popShow(atEl);
   }
   atEl.innerHTML = '<div class="lbl">@ 文件提及 — Enter 选中，目录可继续下钻</div>'
     + atItems.map((p, i) => `<button class="mi${i === atIdx ? ' hl' : ''}" data-p="${esc(p)}">${ic(p.endsWith('/') ? 'folder' : 'file', 'i sm')}<span class="mt mono"><span>${esc(p)}</span></span></button>`).join('');
@@ -322,20 +332,21 @@ let slashEl = null, slashIdx = 0, slashItems = [];
 function slashCheck(hide) {
   const ta = $('#input'), v = ta.value;
   const m = v.match(/^\/(\S*)$/);
-  if (hide || !m) { if (slashEl) { slashEl.remove(); slashEl = null; } return; }
+  if (hide || !m) { slashEl = hideCompletion(slashEl); return; }
   const q = m[1].toLowerCase();
   slashItems = slashList.filter(c => c.name.toLowerCase().includes(q));
-  if (!slashItems.length) { if (slashEl) { slashEl.remove(); slashEl = null; } return; }
+  if (!slashItems.length) { slashEl = hideCompletion(slashEl); return; }
   slashIdx = Math.min(slashIdx, slashItems.length - 1);
   if (!slashEl) {
     slashEl = document.createElement('div');
-    slashEl.className = 'pop glass up show slash';
+    slashEl.className = 'pop glass up slash';
     const r = $('#composer').getBoundingClientRect();
     slashEl.style.left = Math.max(8, r.left + 6) + 'px';
-    slashEl.style.width = Math.min(360, r.width - 12) + 'px';
+    slashEl.style.width = Math.min(motion.px('--w-slash-pop', 360), r.width - 12) + 'px';
     slashEl.style.bottom = (innerHeight - r.top + 8) + 'px';
     document.body.appendChild(slashEl);
     slashEl.addEventListener('click', e => { const b = e.target.closest('.mi'); if (b) pickSlash(b.dataset.c); });
+    popShow(slashEl);
   }
   renderSlash();
 }

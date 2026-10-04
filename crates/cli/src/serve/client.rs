@@ -106,6 +106,9 @@ impl Client {
                 .collect::<Vec<_>>(),
             "models": host.as_ref().map(|h| h.agent.model_choices()).unwrap_or_default(),
             "mode": host.as_ref().map(|h| h.agent.approval_mode().as_str()).unwrap_or("auto"),
+            // which loop driver the viewed session froze at creation —
+            // the crumb shows a PTC badge so the mode is never invisible
+            "driver": host.as_ref().map(|h| h.agent.context().loop_driver.as_str()).unwrap_or(""),
             // the effort override + the model's level vocabulary — seeds the
             // composer chip and its picker before any replay lands
             "effort": match &host { Some(h) => h.agent.reasoning_effort(), None => None },
@@ -151,6 +154,7 @@ impl Client {
             "cwd": display_path(&host.agent.session_cwd()),
             "busy": host.busy.load(Ordering::Relaxed) > 0,
             "mode": host.agent.approval_mode().as_str(),
+            "driver": host.agent.context().loop_driver.as_str(),
             "effort": host.agent.reasoning_effort(),
             "effort_levels": host.agent.effort_levels().await,
             // pending approval cards re-render — a tab arriving mid-ask
@@ -423,7 +427,10 @@ impl Client {
             }
             "new" => {
                 let cwd = v["cwd"].as_str().map(std::path::PathBuf::from);
-                match new_session(&self.s, cwd).await {
+                let loop_drv = v["loop"]
+                    .as_str()
+                    .and_then(|l| sunmao_core::agent::LoopDriver::parse(l).ok());
+                match new_session(&self.s, cwd, loop_drv).await {
                     Ok(r) => {
                         let new_id = r["session"].as_str().unwrap_or("").to_string();
                         if let Some(h) = self.s.host(&new_id) {
@@ -447,7 +454,7 @@ impl Client {
                     .viewing_host()
                     .map(|h| h.agent.session_cwd())
                     .unwrap_or_else(|| self.s.cwd.clone());
-                let r = crate::commands::annotate(&dir, name, note);
+                let r = crate::commands::annotate(&dir, name, note, None);
                 self.emit(serde_json::json!({"type":"note","sess":self.viewing,"text":r}));
             }
             "model" => {

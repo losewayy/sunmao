@@ -25,8 +25,8 @@ function openFind() {
 function closeFind() {
   if (!findBar) return;
   findClear();
-  findBar.remove();
-  findBar = null;
+  const bar = findBar; findBar = null;
+  bar.classList.add('out'); setTimeout(() => bar.remove(), motion.dur('fast'));
   $('#input').focus();
 }
 function findClear() {
@@ -71,7 +71,7 @@ function findJump(d) {
   if (!findMarks.length) return;
   findIdx = ((findIdx + d) % findMarks.length + findMarks.length) % findMarks.length;
   findMarks.forEach((m, i) => m.classList.toggle('cur', i === findIdx));
-  findMarks[findIdx].scrollIntoView({ block: 'center' });
+  findMarks[findIdx].scrollIntoView({ block: 'center', behavior: motion.reduced() ? 'auto' : 'smooth' });
   $('#find-cnt', findBar).textContent = `${findIdx + 1} / ${findMarks.length}`;
 }
 // live deltas rewrite bubble innerHTML — marks inside them die with the

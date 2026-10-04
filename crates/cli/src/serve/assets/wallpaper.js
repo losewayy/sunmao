@@ -99,7 +99,7 @@ function drawWall(ctx, w, h, id) {
   (WALLS.find(x => x.id === id) || WALLS[0]).paint(ctx, w, h);
   grain(ctx, w, h, .05);
 }
-const walls = [$('#wallA'), $('#wallB')]; let wIdx = 0, wKey = '', wTimer = 0;
+const walls = [$('#wallA'), $('#wallB')]; let wIdx = 0, wKey = '';
 function paintWall(force) {
   const dpr = Math.min(2, devicePixelRatio || 1), w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
   const id = S.wallpaper === 'custom' && !customImg ? 'dusk-ridge' : S.wallpaper;
@@ -107,13 +107,19 @@ function paintWall(force) {
   if (!force && key === wKey) return;
   wKey = key;
   const cur = walls[wIdx], next = walls[wIdx ^ 1];
-  // rapid re-switches land on a canvas still fading out (.on pending) —
-  // reset it off-screen first so the .on re-add actually transitions
-  next.classList.remove('on'); void next.offsetWidth;
+  /* WAAPI crossfade — the class-flip + forced-reflow + timer version could
+     lose its style-commit to batching and snap instantly (and never really
+     faded the outgoing layer anyway); compositor tweens can't be starved */
+  const curOp = +getComputedStyle(cur).opacity, nextOp = +getComputedStyle(next).opacity;
+  cur.getAnimations?.().forEach(a => a.cancel());
+  next.getAnimations?.().forEach(a => a.cancel());
   next.width = w; next.height = h;
   drawWall(next.getContext('2d'), w, h, id);
-  cur.classList.remove('top'); next.classList.add('top', 'on');
-  clearTimeout(wTimer); wTimer = setTimeout(() => cur.classList.remove('on'), motion.dur('scene') + motion.dur('instant'));
+  cur.classList.remove('top'); next.classList.add('top', 'on'); cur.classList.remove('on');
+  if (!motion.reduced()) {
+    next.animate([{ opacity: nextOp }, { opacity: 1 }], { duration: motion.dur('scene'), easing: motion.ease('in-out') });
+    cur.animate([{ opacity: curOp }, { opacity: 0 }], { duration: motion.dur('scene'), easing: motion.ease('in-out'), fill: 'forwards' });
+  }
   wIdx ^= 1;
 }
 function setCustom(url, select) {
@@ -122,13 +128,24 @@ function setCustom(url, select) {
   /* the server having no image while ui.json still says "custom" must not
      leave a blank canvas — paintWall's customImg-null guard draws the
      default instead */
-  im.onerror = () => { if (S.wallpaper === 'custom') paintWall(true); };
+  /* drop the stale bitmap too — a sibling DELETE must not keep painting
+     the image the server no longer has */
+  im.onerror = () => { customImg = null; if (S.wallpaper === 'custom') paintWall(true); };
   im.src = url;
 }
 const wallUrl = () => `/wallpaper?${sessionId ? 'sess=' + encodeURIComponent(sessionId) + '&' : ''}t=${Date.now()}`;
 /* pull the stored image — skips the fetch once an upload is already
    loaded; `wallpaper_changed` passes force so a sibling tab's upload shows */
 function loadCustom(force) { if (!customImg || force) setCustom(wallUrl(), false); }
+/* 自定义缩略图左上 × — drop the stored file, then fall back to the default
+   wall if it was the active pick */
+async function wallClear() {
+  try { await fetch(wallUrl(), { method: 'DELETE' }); } catch {}
+  customImg = null;
+  if (S.wallpaper === 'custom') S.wallpaper = 'dusk-ridge';
+  commit();
+  renderWallGrid();
+}
 $('#file-wall').addEventListener('change', e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
   const img = new Image();

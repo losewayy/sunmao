@@ -207,3 +207,16 @@ pub(super) fn wallpaper_view(s: &Arc<Shared>, sess: Option<String>) -> HostRespo
     }
     HostResponse::err(404, "no custom wallpaper".into())
 }
+
+/// `DELETE /wallpaper?sess=` — drop `custom.{ext}` whatever its format;
+/// idempotent (nothing stored is not an error), broadcast so the deleting
+/// tab's siblings drop their stale custom thumb too.
+pub(super) fn wallpaper_delete(s: &Arc<Shared>, sess: Option<String>) -> HostResponse {
+    let dir = wallpaper_dir(s, sess);
+    let mut hit = false;
+    for ext in ["jpg", "jpeg", "png", "webp"] {
+        hit |= std::fs::remove_file(dir.join(format!("custom.{ext}"))).is_ok();
+    }
+    s.emit(serde_json::json!({"type": "wallpaper_changed"}));
+    HostResponse::json(serde_json::json!({"ok": true, "removed": hit}))
+}

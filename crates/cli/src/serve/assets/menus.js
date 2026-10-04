@@ -5,21 +5,23 @@
 function sessionMenu(id) {
   const cur = id === sessionId;
   const items = [];
-  if (!cur) items.push({ v: 'resume', t: '切换到此会话', icon: 'history', d: '接回它的事件日志继续' });
-  items.push({ v: 'fork', t: cur ? '从此分叉' : '分叉此会话', icon: 'fork', d: '复制事件日志，另起一支' });
-  items.push({ v: 'rewind', t: '回退到某一轮', icon: 'reset', d: '恢复文件到该轮之前，并分叉会话' });
+  if (!cur) items.push({ v: 'resume', t: '打开此会话', icon: 'history' });
+  items.push({ v: 'fork', t: '基于此会话新建对话', icon: 'fork' });
+  items.push({ v: 'rewind', t: '回退到某一轮', icon: 'reset' });
+  if (cur) items.push({ v: 'compact', t: '压缩上下文', icon: 'shrink' });
   items.push('-');
-  items.push({ v: 'rename', t: '重命名', icon: 'pen', d: '会话的显示标题，写进事件日志' });
-  items.push({ v: 'export', t: '导出为 Markdown', icon: 'download', d: '从事件日志折叠成 .md 文件下载' });
-  items.push({ v: 'delete', t: '删除会话', icon: 'trash', d: '移除事件日志文件', warn: true });
+  items.push({ v: 'rename', t: '重命名', icon: 'pen' });
+  items.push({ v: 'export', t: '导出为 Markdown', icon: 'download' });
+  items.push({ v: 'delete', t: '删除会话', icon: 'trash', warn: true });
   items.push('-');
-  items.push({ v: 'copy', t: '复制会话 ID', icon: 'copy', d: id });
+  items.push({ v: 'copy', t: '复制会话 ID', icon: 'copy' });
   return items;
 }
 function sessionAction(v, id, at) {
   if (v === 'resume') resumeSession(id);
   else if (v === 'fork') forkSession(id);
   else if (v === 'rewind') rewindPick(id, at);
+  else if (v === 'compact') wsSend({ type: 'prompt', text: '/compact' });
   else if (v === 'rename') renamePop(id, at);
   else if (v === 'export') exportSession(id);
   else if (v === 'delete') deletePop(id, at);
@@ -38,7 +40,7 @@ function renamePop(id, at) {
 }
 function deletePop(id, at) {
   const title = sessTitle(id) || id;
-  pop(at, `<div class="lbl">删除会话</div><div class="mp-list"><div class="empty-hint">将永久删除 ${esc(title)} 的事件日志。</div><button class="mi warn" data-yes="1">${ic('trash')}<span class="mt"><span>确认删除</span></span></button></div>`, { onMount(p) {
+  pop(at, `<div class="lbl">删除会话</div><div class="mp-list"><div class="empty-hint">将永久删除“${esc(title)}”及其聊天记录。</div><button class="mi warn" data-yes="1">${ic('trash')}<span class="mt"><span>确认删除</span></span></button></div>`, { onMount(p) {
     p.addEventListener('click', ev => {
       if (!ev.target.closest('[data-yes]')) return;
       closePop(); deleteSession(id);
@@ -51,7 +53,7 @@ async function rewindPick(id, at) {
   catch (e) { toast(`回退列表失败：${e.message}`, 'alert', 'warn'); return; }
   if (!turns.length) return toast('没有可回退的轮次', 'reset');
   const items = turns.map(t => ({ v: String(t.n), t: `第 ${t.n} 轮`, d: t.preview }));
-  menuPop(at, [{ label: '回退到此轮之前（会话 + 文件）' }, ...items], v => rewindTo(id, +v));
+  menuPop(at, [{ label: '选择要回退到的位置' }, ...items], v => rewindTo(id, +v));
 }
 async function rewindTo(id, n) {
   try {
@@ -61,6 +63,16 @@ async function rewindTo(id, n) {
     toast(`已回退到第 ${n} 轮之前${files ? `，恢复 ${files} 个文件` : ''}`, 'reset');
   }
   catch (e) { toast(`回退失败：${e.message}`, 'alert', 'warn'); }
+}
+// per-message rewind: trim to just before this user turn (files restored
+// by the same checkpoint path), then hand its text back to the composer
+// so the prompt can be edited and re-sent — the classic edit-and-retry
+async function rewindMsg(el) {
+  const msg = el.closest('.msg.you'), n = +msg.dataset.turn;
+  const text = $('.bubble', msg)?.textContent || '';
+  await rewindTo(sessionId, n);
+  const ta = $('#input');
+  if (text) { ta.value = text; autoGrow(); ta.focus(); }
 }
 async function submitNote(name, btn) {
   const wrap = btn.closest('.notes'), inp = $('input', wrap), v = inp.value.trim();
@@ -80,11 +92,13 @@ function act(name, el) {
     case 'events': if (popAnchor === el) return closePop(); return pop(el, eventsHTML(), { align: 'end', cls: 'events' });
     case 'dock': return toggleDock();
     case 'dock-tab': return dockTab(el.dataset.tab);
-    case 'crumb': return menuPop(el, sessionMenu(sessionId), v => sessionAction(v, sessionId, el));
+    case 'crumb':
+      if (view !== 'session' || !sessionId) return;
+      return menuPop(el, sessionMenu(sessionId), v => sessionAction(v, sessionId, el));
     case 'help': return menuPop(el, [{ v: 'keys', t: '键盘快捷键', icon: 'keyboard' }, { v: 'about', t: '关于 sunmao', icon: 'info' }], v => { show('settings'); settingsPage(v); }, { place: 'top' });
-    case 'notes': return el.closest('.island').classList.toggle('show-notes');
+    case 'annotate': return annToggle(el.closest('.island,.dock-pane.br'));
+    case 'dock-add': return dockAdd(el);
     case 'note-add': return submitNote(el.dataset.name, el);
-    case 'sandbox': return toast('沙箱：脚本已禁用（纯文档渲染）· 禁网 · 无同源——交互式页面请「在浏览器中打开」', 'lock');
     case 'island-tall': { const isl = el.closest('.island'), on = isl.classList.toggle('tall'); el.innerHTML = ic(on ? 'shrink' : 'expand'); el.dataset.tip = on ? '收起' : '展开'; return; }
     case 'rev-prev': case 'rev-next': {
       const isl = el.closest('.island');
@@ -104,8 +118,9 @@ function act(name, el) {
       }
       return open('/artifacts/' + encodeURIComponent(isl.dataset.artifact) + q, '_blank');
     }
-    case 'think': return el.classList.toggle('open');
+    case 'think': return motion.fold(el, $('.think-o', el), !el.classList.contains('open'));
     case 'tg': { const g = el.closest('.tools'); g.dataset.user = '1'; return foldGroup(g, !g.classList.contains('fold')); }
+    case 'rewind-turn': return rewindMsg(el);
     case 'pick-mode': {
       // same four stances the kernel gates on — labels mirror the TUI's /mode
       const MODES = [
@@ -119,9 +134,26 @@ function act(name, el) {
     case 'pick-model': return modelPop(el);
     case 'pick-effort': return effortPop(el);
     case 'send': return send();
+    case 'cmp-attach': return $('#att-file').click();
     case 'stop': return wsSend({ type: 'cancel' });
     case 'new-chat': return newChat();
+    case 'grants-clear': return revokeGrant('*');
+    case 'compact': return wsSend({ type: 'prompt', text: '/compact' });
     case 'new-chat-pop': return newChatPop(el);
+    case 'rail-mode': S.railGroup = S.railGroup === 'project' ? 'time' : 'project'; save(); return renderRail();
+    case 'sched-new': return schedForm();
+    case 'sched-edit': return schedForm(el.dataset.id);
+    case 'sched-cancel': { const f = $('#sch-form'); if (f) { f.hidden = true; f.innerHTML = ''; } return; }
+    case 'sched-save': return schedSave(el.dataset.id);
+    case 'sched-toggle': return schedToggle(el.dataset.id);
+    case 'sched-del': return schedDel(el.dataset.id);
+    case 'sched-run': return schedRun(el.dataset.id);
+    case 'starter': {
+      $('#input').value = el.dataset.prompt || '';
+      autoGrow();
+      $('#input').focus();
+      return;
+    }
     case 'upload-wall': return $('#file-wall').click();
     case 'color': return colorPop(el, el.dataset.key);
     case 'font': return fontPop(el, el.dataset.key);
@@ -132,7 +164,6 @@ function act(name, el) {
     case 'win-min': { const w = shellWin(); if (w) w.win('min'); return; }
     case 'win-max': { const w = shellWin(); if (w) w.win('max'); return; }
     case 'win-close': { const w = shellWin(); if (w) w.win('close'); return; }
-    case 'grants-clear': return revokeGrant('*');
     case 'imv-close': return closeImv();
   }
 }
@@ -144,10 +175,11 @@ function act(name, el) {
 // img already points at, so the viewer needs no new fetch path
 function openImv(src, cap) {
   const imv = $('#imv'), img = $('#imv-img'), lab = $('#imv-cap');
+  imv.classList.remove('out');
   img.src = src; lab.textContent = cap || '';
   imv.hidden = false;
 }
-function closeImv() { $('#imv').hidden = true; $('#imv-img').src = ''; }
+function closeImv() { const v = $('#imv'); v.classList.add('out'); setTimeout(() => { if (v.classList.contains('out')) { v.hidden = true; v.classList.remove('out'); $('#imv-img').src = ''; } }, motion.dur('fast')); }
 
 /* ================= global input ================= */
 document.addEventListener('click', e => {
@@ -163,15 +195,22 @@ document.addEventListener('click', e => {
   const im = t.closest('img.att');
   if (im) { openImv(im.src, im.alt || im.title); return; }
   const apb = t.closest('[data-ap]'); if (apb) { const cd = apb.closest('.approve'); return decide(apb.dataset.ap, cd ? +cd.dataset.apid : null); }
-  const th = t.closest('.tool-h'); if (th) { if ($('.tool-o', th.parentElement)) th.parentElement.classList.toggle('open'); return; }
+  const th = t.closest('.tool-h'); if (th) { const tool = th.parentElement, body = $('.tool-o', tool); if (body) motion.fold(tool, body, !tool.classList.contains('open')); return; }
   const swb = t.closest('.sw'); if (swb && !swb.dataset.act) return swb.setAttribute('aria-checked', String(swb.getAttribute('aria-checked') !== 'true'));
   const g = t.closest('[data-go]'); if (g) return go(g.dataset.go);
-  const s = t.closest('[data-sess]'); if (s) return resumeSession(s.dataset.sess);
+  // project-group header — fold/unfold lives on S.railFold (ui.json)
+  const fg = t.closest('[data-fold]');
+  if (fg) { const m = S.railFold || (S.railFold = {}); m[fg.dataset.fold] = !m[fg.dataset.fold]; save(); return renderRail(); }
+  // a session link outside the session view (定时任务's 上次会话, …)
+  // must land back on the transcript, not just adopt the host
+  const s = t.closest('[data-sess]'); if (s) { if (view !== 'session') show('session'); return resumeSession(s.dataset.sess); }
   const pg = t.closest('[data-page]'); if (pg) return settingsPage(pg.dataset.page);
+  const gv = t.closest('[data-gv]'); if (gv) return revokeGrant(gv.dataset.gv);
+  const ht = t.closest('[data-ht]'); if (ht) { const [i, tr] = ht.dataset.ht.split(':'); return setHookTrust(+i, tr === '1'); }
+  const wx = t.closest('[data-wx]'); if (wx) return wallClear();
   const w = t.closest('[data-wall]'); if (w) { S.wallpaper = w.dataset.wall; return commit(); }
   const m = t.closest('.tc[data-mode]'); if (m) { S.mode = m.dataset.mode; return commit(); }
   const a = t.closest('[data-act]'); if (a) return act(a.dataset.act, a);
-  const gv = t.closest('[data-gv]'); if (gv) return revokeGrant(gv.dataset.gv);
   const pv = t.closest('[data-pv]'); if (pv) return providerAction(pv.dataset.pv, pv);
   const mc = t.closest('[data-mc]'); if (mc) return toggleCand(mc.dataset.mc);
 });
@@ -197,7 +236,7 @@ document.addEventListener('contextmenu', e => {
     closePop();
     return pop(at, menuHTML(sessionMenu(id)), { onMount(p) { p.addEventListener('click', ev => { const b = ev.target.closest('.mi'); if (!b) return; closePop(); sessionAction(b.dataset.v, id, at); }); } });
   }
-  if (!e.target.closest('input,textarea,.bubble,.cmd,pre,.jp-b,.think-o')) e.preventDefault();
+  if (!e.target.closest('input,textarea,.bubble,.cmd,pre,.think-o')) e.preventDefault();
 });
 let rz = 0;
 addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => paintWall(), DEBOUNCE_RESIZE); });

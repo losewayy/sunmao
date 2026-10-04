@@ -169,19 +169,7 @@ impl HostHandle {
             ("GET", ["sessions"]) => sessions_list(s, query_arg(query, "q")).await,
             ("GET", ["session"]) => session_info(s, query_arg(query, "id")).await,
             ("GET", ["projects"]) => projects_list(s).await,
-            ("POST", ["session", "new"]) => {
-                // `cwd` may arrive as a Windows path with unescaped
-                // backslashes (F:\x\y) — strict JSON rejects `\p`, so a
-                // failed parse falls back to a raw-string extraction.
-                let cwd = serde_json::from_slice::<serde_json::Value>(body)
-                    .ok()
-                    .and_then(|v| v["cwd"].as_str().map(std::path::PathBuf::from))
-                    .or_else(|| raw_string_field(body, "cwd").map(std::path::PathBuf::from));
-                match super::host::new_session(s, cwd).await {
-                    Ok(v) => HostResponse::json(v),
-                    Err(e) => HostResponse::err(500, format!("{e:#}")),
-                }
-            }
+            ("POST", ["session", "new"]) => session::session_new(s, body).await,
             ("POST", ["session", id, "resume"]) => {
                 match super::host::fork_or_resume(s, id, false).await {
                     Ok(v) => HostResponse::json(v),
@@ -194,13 +182,13 @@ impl HostHandle {
                     Err(e) => HostResponse::err(400, format!("{e:#}")),
                 }
             }
-            ("POST", ["session", id, "rename"]) => session_rename(s, id, body).await,
-            ("DELETE", ["session", id]) => session_delete(s, id).await,
-            ("GET", ["session", id, "events"]) => session_events(s, id),
+            ("POST", ["session", id, "rename"]) => session::session_rename(s, id, body).await,
+            ("DELETE", ["session", id]) => session::session_delete(s, id).await,
+            ("GET", ["session", id, "events"]) => session::session_events(s, id),
             // `GET /session/{id}/md` — the SAME renderer `export_md`/`export_zip`
             // ride, served over HTTP so the download matches REPL/TUI output
             // byte-for-byte. Frontend never re-implements the fold.
-            ("GET", ["session", id, "md"]) => session_markdown(s, id),
+            ("GET", ["session", id, "md"]) => session::session_markdown(s, id),
             ("GET", ["session", id, "turns"]) => {
                 // the /rewind picker's data — user-turn boundaries on the
                 // log, numbered and previewed exactly like the TUI list
@@ -263,12 +251,28 @@ impl HostHandle {
             ("GET", ["dataflow", id]) => dataflow_by_id(s, id).await,
             ("GET", ["tasks"]) => ops::tasks_list(s, query_arg(query, "sess")),
             ("GET", ["hooks"]) => ops::hooks_list(s, query_arg(query, "sess")),
+            ("PUT", ["hooks"]) => ops::hooks_put(s, query_arg(query, "sess"), body).await,
+            ("GET", ["mcp"]) => ops::mcp_list(s, query_arg(query, "sess")),
             ("DELETE", ["session", id, "grants"]) => ops::grants_delete(s, id, body).await,
             ("GET", ["jobs"]) => ops::jobs_list(s, query_arg(query, "sess")),
             ("GET", ["jobs", id, "output"]) => {
                 ops::job_output(s, id, query_arg(query, "sess"), query)
             }
             ("GET", ["paths"]) => paths_list(s, query_arg(query, "sess")).await,
+            // `GET /fs/pick?dir=…` — the OS-native folder dialog on the
+            // host (browser frontend gets the same picker the Tauri
+            // shell gets); `/fs/browse` stays the headless fallback
+            ("GET", ["fs", "pick"]) => fs::pick(s, query_arg(query, "dir")).await,
+            ("GET", ["fs", "browse"]) => fs::browse(s, query_arg(query, "dir")),
+            // `GET /browse?url=…` — dock browser tab's proxy mode: the
+            // HTML doc rebased onto our origin so annotation reaches DOM
+            ("GET", ["browse"]) => browse::page(s, query_arg(query, "url")).await,
+            // 定时任务 — table lives in host::sched (`.sunmao/schedules.json`)
+            ("GET", ["schedules"]) => sched::list(s),
+            ("POST", ["schedules"]) => sched::upsert(s, None, body).await,
+            ("PUT", ["schedules", id]) => sched::upsert(s, Some(id), body).await,
+            ("DELETE", ["schedules", id]) => sched::remove(s, id),
+            ("POST", ["schedules", id, "run"]) => sched::run_now(s, id).await,
             ("GET", ["models"]) => models::view(s, query_arg(query, "sess")).await,
             ("POST", ["models", "fetch"]) => models::fetch(s, query_arg(query, "sess"), body).await,
             ("PUT", ["models"]) => models::put(s, query_arg(query, "sess"), body).await,
@@ -283,6 +287,7 @@ impl HostHandle {
             // `ui.json`'s wallpaper:"custom" only names it, the bytes live here
             ("GET", ["wallpaper"]) => ui::wallpaper_view(s, query_arg(query, "sess")),
             ("PUT", ["wallpaper"]) => ui::wallpaper_put(s, query_arg(query, "sess"), body),
+            ("DELETE", ["wallpaper"]) => ui::wallpaper_delete(s, query_arg(query, "sess")),
             _ => HostResponse::err(404, "not found".into()),
         }
     }
@@ -315,8 +320,11 @@ fn js_asset(name: &str) -> Option<&'static str> {
         "diff.js" => super::DIFF_JS,
         "md.js" => super::MD_JS,
         "transcript.js" => super::TRANSCRIPT_JS,
+        "approvals.js" => super::APPROVALS_JS,
         "islands.js" => super::ISLANDS_JS,
         "connection.js" => super::CONNECTION_JS,
+        "rail.js" => super::RAIL_JS,
+        "schedules.js" => super::SCHEDULES_JS,
         "composer.js" => super::COMPOSER_JS,
         "palette.js" => super::PALETTE_JS,
         "find.js" => super::FIND_JS,
@@ -324,6 +332,7 @@ fn js_asset(name: &str) -> Option<&'static str> {
         "roster.js" => super::ROSTER_JS,
         "jobs.js" => super::JOBS_JS,
         "channels.js" => super::CHANNELS_JS,
+        "dock.js" => super::DOCK_JS,
         "boot.js" => super::BOOT_JS,
         _ => return None,
     })
@@ -386,7 +395,7 @@ async fn sessions_list(s: &Arc<Shared>, q: Option<String>) -> HostResponse {
         .iter()
         .filter_map(|r| {
             let id = r["id"].as_str()?;
-            log_path(s, id).map(|p| (id.to_string(), session_meta(&p)))
+            log_path(s, id).map(|p| (id.to_string(), session::session_meta(&p)))
         })
         .collect();
     HostResponse::json(serde_json::json!({
@@ -407,115 +416,6 @@ async fn projects_list(s: &Arc<Shared>) -> HostResponse {
         }
     }
     HostResponse::json(serde_json::json!({ "projects": out }))
-}
-
-/// Rail metadata for one log: `title` = the last `session_meta` rename,
-/// else the first prompt the user typed (hook/local-shell evidence skipped,
-/// first line, ≤ 80 chars; `null` for a log with neither) and `mtime` in
-/// epoch ms — `crate::sessions::log_title` owns the scan.
-fn session_meta(path: &std::path::Path) -> serde_json::Value {
-    let mtime = std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as u64);
-    let title = crate::sessions::log_title(path);
-    serde_json::json!({ "title": title, "mtime": mtime })
-}
-
-/// `POST /session/{id}/rename {"title"}` — append a `session_meta` fact to
-/// the log. Works on dormant logs (append-only is safe next to the open
-/// live handle) and live ones alike; the rail re-reads on the
-/// `sessions_changed` frame.
-async fn session_rename(s: &Arc<Shared>, id: &str, body: &[u8]) -> HostResponse {
-    let title = serde_json::from_slice::<serde_json::Value>(body)
-        .ok()
-        .and_then(|v| v["title"].as_str().map(str::to_string))
-        .or_else(|| raw_string_field(body, "title"))
-        .unwrap_or_default();
-    let title = title.trim().to_string();
-    if title.is_empty() {
-        return HostResponse::err(400, "title must be non-empty".into());
-    }
-    let Some(p) = log_path(s, id) else {
-        return HostResponse::err(404, "no such session".into());
-    };
-    // open_path also seals a crash-stranded partial tail before appending
-    let log = sunmao_core::SessionLog::open_path(&p).await;
-    match log {
-        Ok(mut log) => match log
-            .append(&sunmao_core::SessionEvent::SessionMeta { title })
-            .await
-        {
-            Ok(()) => {
-                s.emit(serde_json::json!({"type":"sessions_changed"}));
-                HostResponse::json(serde_json::json!({"ok": true}))
-            }
-            Err(e) => HostResponse::err(500, format!("{e:#}")),
-        },
-        Err(e) => HostResponse::err(500, format!("{e:#}")),
-    }
-}
-
-/// `DELETE /session/{id}` — remove the log file. A live session refuses
-/// outright (idle or busy): there's no graceful host teardown today, and a
-/// driver still appending to an unlinked log would keep mutating a session
-/// the UI already forgot — restartable confusion, not data safety.
-async fn session_delete(s: &Arc<Shared>, id: &str) -> HostResponse {
-    if s.host(id).is_some() {
-        return HostResponse::err(409, "session is live — close it before deleting".into());
-    }
-    let Some(p) = log_path(s, id) else {
-        return HostResponse::err(404, "no such session".into());
-    };
-    match std::fs::remove_file(&p) {
-        Ok(()) => {
-            s.emit(serde_json::json!({"type":"sessions_changed"}));
-            HostResponse::json(serde_json::json!({"ok": true}))
-        }
-        Err(e) => HostResponse::err(500, format!("delete {}: {e}", p.display())),
-    }
-}
-
-/// `GET /session/{id}/events` — the raw durable event list (`{events:[]}`),
-/// for dormant logs that never got a host. Frontend exports (markdown
-/// download) read this instead of re-deriving the fold.
-fn session_events(s: &Arc<Shared>, id: &str) -> HostResponse {
-    let Some(p) = log_path(s, id) else {
-        return HostResponse::err(404, "no such session".into());
-    };
-    let Ok(text) = std::fs::read_to_string(&p) else {
-        return HostResponse::err(500, "unreadable log".into());
-    };
-    let events: Vec<serde_json::Value> = text
-        .lines()
-        .filter_map(|l| serde_json::from_str(l).ok())
-        .collect();
-    HostResponse::json(serde_json::json!({"events": events}))
-}
-
-/// `GET /session/{id}/md` — the session transcript as markdown. The wire
-/// shape (raw `Content-Type: text/markdown` body) rides the download it
-/// was built for; the renderer is `commands::export::markdown` — the same
-/// fold `/export-md` (REPL), `/export-zip` (debug bundle), and TUI use —
-/// so the four exports are the same document.
-fn session_markdown(s: &Arc<Shared>, id: &str) -> HostResponse {
-    let Some(p) = log_path(s, id) else {
-        return HostResponse::err(404, "no such session".into());
-    };
-    let Ok(text) = std::fs::read_to_string(&p) else {
-        return HostResponse::err(500, "unreadable log".into());
-    };
-    let events: Vec<sunmao_core::session::SessionEvent> = text
-        .lines()
-        .filter_map(|l| serde_json::from_str(l).ok())
-        .collect();
-    let md = crate::commands::export::markdown(id, &s.cwd, &events);
-    HostResponse {
-        status: 200,
-        headers: vec![("content-type".into(), "text/markdown; charset=utf-8".into())],
-        body: md.into_bytes(),
-    }
 }
 
 /// `GET /session[?id=…]` — the viewed host's id + live set + the session's
@@ -580,12 +480,20 @@ async fn dataflow_by_id(s: &Arc<Shared>, id: &str) -> HostResponse {
 
 #[path = "request/attachments.rs"]
 mod attachments;
+#[path = "request/browse.rs"]
+mod browse;
 #[path = "request/channels.rs"]
 mod channels;
+#[path = "request/fs.rs"]
+mod fs;
 #[path = "request/models.rs"]
 mod models;
 #[path = "request/ops.rs"]
 mod ops;
+#[path = "request/sched.rs"]
+mod sched;
+#[path = "request/session.rs"]
+mod session;
 #[path = "request/ui.rs"]
 mod ui;
 

@@ -50,7 +50,7 @@ function menuHTML(items) {
   return items.map(it => {
     if (it === '-') return '<div class="sep"></div>';
     if (it.label) return `<div class="lbl">${it.label}</div>`;
-    return `<button class="mi${it.warn ? ' warn' : ''}" data-v="${esc(it.v)}">${it.icon ? ic(it.icon) : ''}<span class="mt${it.mono ? ' mono' : ''}"><span>${esc(it.t)}</span>${it.d ? `<small>${esc(it.d)}</small>` : ''}</span>${it.k ? `<kbd>${esc(it.k)}</kbd>` : ''}${it.on ? ic('check', 'i sm ck') : ''}</button>`;
+    return `<button class="mi${it.warn ? ' warn' : ''}" data-v="${esc(it.v)}"${it.style ? ` style="${it.style}"` : ''}>${it.icon ? ic(it.icon) : ''}<span class="mt${it.mono ? ' mono' : ''}"><span>${esc(it.t)}</span>${it.d ? `<small>${esc(it.d)}</small>` : ''}</span>${it.k ? `<kbd>${esc(it.k)}</kbd>` : ''}${it.on ? ic('check', 'i sm ck') : ''}</button>`;
   }).join('');
 }
 function menuPop(anchor, items, onPick, o = {}) {
@@ -94,18 +94,20 @@ function toast(msg, icon = 'check', cls = '') {
 
 /* ================= palette ================= */
 let palItems = [], palIdx = 0;
-function openPalette() { closePop(); $('#palette').hidden = false; const i = $('#pal-in'); i.value = ''; palIdx = 0; renderPal(); setTimeout(() => i.focus(), 10); }
-function closePalette() { $('#palette').hidden = true; }
+function openPalette() { closePop(); const p = $('#palette'); p.classList.remove('out'); p.hidden = false; const i = $('#pal-in'); i.value = ''; palIdx = 0; renderPal(); setTimeout(() => i.focus(), 10); }
+function closePalette() { const p = $('#palette'); if (p.hidden) return; p.classList.add('out'); setTimeout(() => { if (p.classList.contains('out')) { p.hidden = true; p.classList.remove('out'); } }, motion.dur('fast')); }
 function palSource() {
   return [
     { g: '操作', t: '新对话', i: 'pen', k: 'Ctrl N', run: newChat },
     ...(TAURI && TAURI.win ? [{ g: '操作', t: '新窗口', i: 'monitor', run: () => TAURI.win('new') }] : []),
     { g: '操作', t: '打开设置', i: 'settings', k: 'Ctrl ,', run: () => go('settings') },
+    { g: '操作', t: '定时任务', i: 'clock', run: () => go('schedules') },
     { g: '操作', t: dockOn ? '隐藏数据面板' : '显示数据面板', i: 'panel-r', k: 'Ctrl \\', run: toggleDock },
-    { g: '操作', t: '事件日志', i: 'history', run: () => pop($('[data-act="events"]'), eventsHTML(), { align: 'end', cls: 'events' }) },
+    { g: '操作', t: '执行记录', i: 'history', run: () => pop($('[data-act="events"]'), eventsHTML(), { align: 'end', cls: 'events' }) },
     { g: '操作', t: '在对话中查找', i: 'search', k: 'Ctrl F', run: openFind },
     { g: '操作', t: '导出当前会话', i: 'download', run: () => exportSession(sessionId) },
     { g: '操作', t: '刷新会话列表', i: 'reset', run: refreshSessions },
+    { g: '操作', t: S.railGroup === 'project' ? '会话列表：按时间排列' : '会话列表：按项目分组', i: 'blocks', run: () => { S.railGroup = S.railGroup === 'project' ? 'time' : 'project'; save(); renderRail(); } },
     { g: '外观', t: '主题：深色', i: 'moon', run: () => { S.mode = 'dark'; commit(); } },
     { g: '外观', t: '主题：浅色', i: 'sun', run: () => { S.mode = 'light'; commit(); } },
     { g: '外观', t: '主题：跟随系统', i: 'monitor', run: () => { S.mode = 'system'; commit(); } },

@@ -1,4 +1,4 @@
-use super::session_meta;
+use super::session::session_meta;
 use crate::serve::host::display_path;
 
 #[test]
@@ -75,6 +75,7 @@ fn shared_at(cwd: std::path::PathBuf) -> super::super::host::Shared {
         sandbox_port: 0,
         prompt_override: None,
         driver_override: None,
+        pending_drivers: std::sync::Mutex::new(Default::default()),
         approval_ids: Arc::new(AtomicU64::new(0)),
         adopt_lock: tokio::sync::Mutex::new(()),
         adopt_seq: AtomicU64::new(0),
@@ -495,5 +496,74 @@ async fn wallpaper_route_roundtrips_and_rotates() {
     };
     assert_eq!(h.request("PUT", "/wallpaper", &big).await.status, 413);
     assert_eq!(h.request("GET", "/wallpaper", b"").await.body, jpg);
+
+    // DELETE removes the stored file and rebroadcasts; a second DELETE is
+    // idempotent rather than an error
+    let del = h.request("DELETE", "/wallpaper", b"").await;
+    assert_eq!(del.status, 200);
+    assert!(!root.join(".sunmao/wallpapers/custom.jpg").exists());
+    assert_eq!(
+        rx.try_recv().unwrap()["type"].as_str().unwrap(),
+        "wallpaper_changed"
+    );
+    assert_eq!(h.request("GET", "/wallpaper", b"").await.status, 404);
+    assert_eq!(h.request("DELETE", "/wallpaper", b"").await.status, 200);
+    let _ = rx.try_recv();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `GET /fs/browse` — the new-chat picker's in-pop dir browser: dirs
+/// only, dot-dirs out, `dir` echoes in display form (never a `\\?\`
+/// verbatim path), `parent` feeds the ‹ button; missing dirs 404.
+#[tokio::test]
+async fn fs_browse_lists_dirs_only() {
+    let root = std::env::temp_dir().join(format!("sunmao-fs-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("alpha/sub")).unwrap();
+    std::fs::create_dir_all(root.join(".hidden")).unwrap();
+    std::fs::write(root.join("note.txt"), b"x").unwrap();
+    let s = std::sync::Arc::new(shared_at(root.clone()));
+    let h = super::HostHandle { s };
+
+    // no dir → the launch dir
+    let r = h.request("GET", "/fs/browse", b"").await;
+    assert_eq!(r.status, 200);
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    let names: Vec<&str> = v["dirs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["alpha"]);
+    assert!(v["parent"].is_string());
+    assert!(!v["dir"].as_str().unwrap().starts_with(r"\\?\"));
+
+    // a picked child descends; the bar's ‹ returns to its parent
+    let q = format!(
+        "/fs/browse?dir={}",
+        display_path(&root.join("alpha")).replace(' ', "%20")
+    );
+    let v: serde_json::Value =
+        serde_json::from_slice(&h.request("GET", &q, b"").await.body).unwrap();
+    let names: Vec<&str> = v["dirs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["sub"]);
+    assert_eq!(
+        v["parent"].as_str().unwrap(),
+        display_path(&root.canonicalize().unwrap())
+    );
+
+    // an empty `dir` falls back to the launch dir; a gone path 404s
+    assert_eq!(h.request("GET", "/fs/browse?dir=", b"").await.status, 200);
+    assert_eq!(
+        h.request("GET", "/fs/browse?dir=/nope/nope/nope", b"")
+            .await
+            .status,
+        404
+    );
     let _ = std::fs::remove_dir_all(&root);
 }

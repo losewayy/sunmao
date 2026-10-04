@@ -174,8 +174,15 @@ pub(super) async fn artifact_annotate(
         return HostResponse::err(400, "bad annotate body".into());
     };
     let note = v["note"].as_str().unwrap_or("");
+    // `sel` rides through verbatim — the GUI's element/region pick
+    // ({tag,id,cls,text,css,rect}) lands in state.json for the agent
     HostResponse::json(serde_json::json!({
-        "result": crate::commands::annotate(&sess_dir(s, sess.as_deref()), name, note)
+        "result": crate::commands::annotate(
+            &sess_dir(s, sess.as_deref()),
+            name,
+            note,
+            v.get("sel"),
+        )
     }))
 }
 

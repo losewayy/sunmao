@@ -32,6 +32,7 @@ window.__sunmaoShell = {
   notify(title, body) { return window.__TAURI_INTERNALS__.invoke('shell_notify', { title, body }); },
   zoom(op) { return window.__TAURI_INTERNALS__.invoke('shell_zoom', { op }); },
   setZoom(factor) { return window.__TAURI_INTERNALS__.invoke('shell_zoom', { op: factor }); },
+  pickDir(dir) { return window.__TAURI_INTERNALS__.invoke('shell_pick_dir', { dir }); },
   Channel: class {
     constructor() {
       this.onmessage = () => {};
@@ -172,6 +173,20 @@ fn shell_open(app: tauri::AppHandle, path: &str) -> Result<(), String> {
     app.opener()
         .open_path(path, None::<&str>)
         .map_err(|e| format!("open {path}: {e}"))
+}
+
+/// Native folder picker — the 新对话 project popover's 浏览 row calls
+/// this (WebView2 has no directory chooser the page can reach). `dir`
+/// seeds the dialog at the viewed session's project; the resolved value
+/// is the picked path or null on cancel.
+#[tauri::command]
+fn shell_pick_dir(win: tauri::WebviewWindow, dir: Option<String>) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt as _;
+    let mut d = win.dialog().file().set_title("选择项目目录");
+    if let Some(p) = dir.filter(|p| !p.is_empty()) {
+        d = d.set_directory(p);
+    }
+    d.blocking_pick_folder().map(|p| p.to_string())
 }
 
 /// Browser-style zoom ladder — ±20% steps, 20%..500% clamp.
@@ -417,6 +432,7 @@ fn main() {
             app.deep_link().handle_cli_arguments(argv.iter());
         }))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
@@ -459,6 +475,7 @@ fn main() {
             shell_open,
             shell_notify,
             shell_zoom,
+            shell_pick_dir,
             session_events,
             host_call
         ])

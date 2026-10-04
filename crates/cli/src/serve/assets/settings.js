@@ -36,31 +36,12 @@ function commit() { apply(); save(); }
 function renderWallGrid() {
   const g = $('#wgrid'); if (!g || view !== 'settings' || setPage !== 'appearance') return;
   const items = WALLS.map(x => ({ id: x.id, name: x.name })).concat(customImg ? [{ id: 'custom', name: '自定义' }] : []);
-  g.innerHTML = items.map(x => `<button class="wt${S.wallpaper === x.id ? ' on' : ''}" data-wall="${x.id}"><span class="th"><canvas></canvas><span class="chk">${ic('check')}</span></span><span class="nm2">${x.name}</span></button>`).join('')
+  g.innerHTML = items.map(x => `<button class="wt${S.wallpaper === x.id ? ' on' : ''}" data-wall="${x.id}"><span class="th"><canvas></canvas>${x.id === 'custom' ? `<i class="wt-x" data-wx data-tip="移除自定义壁纸">${ic('x')}</i>` : ''}<span class="chk">${ic('check')}</span></span><span class="nm2">${x.name}</span></button>`).join('')
     + `<button class="wt up" data-act="upload-wall"><span class="th">${ic('image-plus')}<em>上传图片</em></span><span class="nm2">JPG · PNG</span></button>`;
   const dpr = Math.min(2, devicePixelRatio || 1);
   $$('.wt[data-wall]', g).forEach(b => { const c = $('canvas', b), r = c.getBoundingClientRect(); c.width = Math.round((r.width || 112) * dpr); c.height = Math.round((r.height || 70) * dpr); const ctx = c.getContext('2d'); drawWall(ctx, c.width, c.height, b.dataset.wall); });
 }
 function setRange(sel, v, f) { const el = $(sel); el.value = v; el.style.setProperty('--_p', ((v - el.min) / (el.max - el.min) * 100) + '%'); const o = el.parentElement.querySelector('output'); if (o) o.textContent = f(v); }
-function themeLines(o) {
-  const s = v => [JSON.stringify(v), 'tk-s'], n = v => [String(v), 'tk-n'];
-  const P = (k, tok, ind = '  ') => [[ind, ''], [k, 'tk-p'], [': ', 'tk-x'], tok, [',', 'tk-x']];
-  return [
-    [['const ', 'tk-k'], ['themePreview', 'tk-v'], [': ', 'tk-x'], ['ThemeConfig', 'tk-t'], [' = {', 'tk-x']],
-    P('mode', s(o.mode)), P('accent', s(o.accent.toUpperCase())), P('background', s(o.background.toUpperCase())), P('foreground', s(o.foreground.toUpperCase())),
-    P('wallpaper', s(o.wallpaper)), P('dim', n(o.dim.toFixed(2))), P('panelOpacity', n(o.panelOpacity.toFixed(2))), P('blur', n(o.blur)),
-    P('translucentSidebar', n(o.translucentSidebar)), P('contrast', n(o.contrast)),
-    [['  ', ''], ['fonts', 'tk-p'], [': {', 'tk-x']], P('ui', s(o.fonts.ui), '    '), P('code', s(o.fonts.code), '    '),
-    [['  },', 'tk-x']], [['};', 'tk-x']],
-  ];
-}
-function renderPreview() {
-  const A = themeLines(DEFAULTS), B = themeLines(S), txt = l => l.map(t => t[0]).join('');
-  const col = (L, O, cls) => L.map((l, i) => `<div class="ln${txt(l) !== txt(O[i]) ? ' ' + cls : ''}"><span class="no">${i + 1}</span><span>${l.map(([t, c]) => c ? `<span class="${c}">${esc(t)}</span>` : esc(t)).join('')}</span></div>`).join('');
-  $('#jp-a').innerHTML = col(A, B, 'del'); $('#jp-b').innerHTML = col(B, A, 'add');
-  const d = A.filter((l, i) => txt(l) !== txt(B[i])).length;
-  $('#jp-count').textContent = d ? `${d} 处不同于默认` : '与默认一致';
-}
 function syncSettingsUI() {
   if (view !== 'settings' || setPage !== 'appearance') return;
   $$('.tc').forEach(b => b.classList.toggle('on', b.dataset.mode === S.mode));
@@ -75,7 +56,6 @@ function syncSettingsUI() {
   $('#sw-side').setAttribute('aria-checked', String(S.translucentSidebar));
   $('#pv-motion').innerHTML = esc({ system: '跟随系统', full: '完整', reduce: '减少' }[S.motion] || S.motion) + ic('chev-d');
   $$('.wt[data-wall]').forEach(b => b.classList.toggle('on', b.dataset.wall === S.wallpaper));
-  renderPreview();
 }
 $('#rg-op').addEventListener('input', e => { S.panelOpacity = +e.target.value / 100; commit(); });
 $('#rg-blur').addEventListener('input', e => { S.blur = +e.target.value; commit(); });
@@ -103,7 +83,7 @@ function hasFont(f) {
 }
 const FONTS = { ui: ['HarmonyOS Sans SC', 'Segoe UI', 'Microsoft YaHei UI', 'system-ui'], code: ['Maple Mono CN', 'Maple Mono', 'JetBrains Mono', 'Cascadia Mono', 'Consolas', 'SF Mono'] };
 function fontPop(anchor, key) {
-  menuPop(anchor, [{ label: key === 'ui' ? 'UI 字体' : '代码字体' }, ...FONTS[key].map(f => ({ v: f, t: f, on: f === S.fonts[key], d: hasFont(f) ? '' : '未安装，将回退到下一个字体', style: key === 'code' ? `font-family:"${f}",monospace` : `font-family:"${f}",sans-serif` }))], v => { S.fonts[key] = v; commit(); }, { align: 'end' });
+  menuPop(anchor, [{ label: key === 'ui' ? 'UI 字体' : '代码字体' }, ...FONTS[key].map(f => ({ v: f, t: f, on: f === S.fonts[key], d: hasFont(f) ? '' : '未安装，将回退到下一个字体', style: key === 'code' ? `font-family:'${f}',monospace` : `font-family:'${f}',sans-serif` }))], v => { S.fonts[key] = v; commit(); }, { align: 'end' });
 }
 function motionPop(anchor) {
   const OPTS = [{ v: 'system', t: '跟随系统' }, { v: 'full', t: '完整' }, { v: 'reduce', t: '减少' }];
@@ -313,32 +293,37 @@ function toggleCand(id) {
   renderProviders();
 }
 const SHELL_OPTS = [
-  { v: 'auto', t: '自动检测', d: 'Windows 上 PATH 有 pwsh 就用它，否则内置 POSIX' },
-  { v: 'pwsh', t: 'PowerShell 7', d: '经 pwsh -EncodedCommand 执行命令' },
-  { v: 'posix', t: '内置 POSIX', d: 'deno_task_shell 解释器，全平台语法一致' },
+  { v: 'auto', t: '自动选择', d: 'Windows 有 PowerShell 7 时使用它；否则使用内置 POSIX' },
+  { v: 'pwsh', t: 'PowerShell 7', d: '以 PowerShell 语法运行命令' },
+  { v: 'posix', t: '内置 POSIX', d: '使用跨平台一致的 Bash 语法' },
 ];
 function shellCur() { return SHELL && SHELL.source === 'auto-detect' ? 'auto' : SHELL.backend; }
 function renderShell() {
   if (view !== 'settings' || setPage !== 'shell') return;
   const host = $('#set-generic');
-  if (!SHELL) { host.innerHTML = head('终端', '') + '<div class="empty-hint">正在读取 shell 配置…</div>'; refreshShell(); return; }
+  if (!SHELL) { host.innerHTML = head('终端', '') + '<div class="empty-hint">正在读取设置…</div>'; refreshShell(); return; }
   const name = { pwsh: 'PowerShell 7', posix: '内置 POSIX' }[SHELL.backend] || SHELL.backend;
-  const src = SHELL.source === 'auto-detect' ? '自动检测' : SHELL.source;
-  const warn = SHELL.pwsh_requested_but_missing ? '配置了 pwsh 但 PATH 上没有 pwsh，已回退到内置 POSIX。'
-    : SHELL.unrecognized ? `无法识别的配置值 ${esc(SHELL.unrecognized)}，已忽略（可选 pwsh / posix / auto）。`
-    : !SHELL.pwsh_on_path ? '本机 PATH 未找到 pwsh，选择 PowerShell 7 会回退到内置 POSIX。' : '';
-  host.innerHTML = head('终端', 'Bash 工具命令的执行后端。')
+  const source = ({
+    'auto-detect': '自动选择',
+    SUNMAO_SHELL: '环境变量',
+    '.sunmao/shell.txt': '当前项目',
+    '~/.sunmao/shell.txt': '用户设置',
+  })[SHELL.source] || '系统设置';
+  const warn = SHELL.pwsh_requested_but_missing ? '未找到 PowerShell 7，当前使用内置 POSIX。'
+    : SHELL.unrecognized ? '检测到无法识别的终端设置，已忽略。'
+    : !SHELL.pwsh_on_path ? '未找到 PowerShell 7，选择该项后将使用内置 POSIX。' : '';
+  host.innerHTML = head('终端', '')
     + sec('', '', card([
-      row('Shell 后端', '写入 .sunmao/shell.txt — 只影响之后新建的会话', `<button class="pill plain" data-act="shell-pick" id="pv-shell"></button>`),
-      row('当前生效', '', mono(`${name} · ${src}`)),
+      row('命令执行方式', '仅对新建的会话生效', `<button class="pill plain" data-act="shell-pick" id="pv-shell"></button>`),
+      row('新会话使用', `${name} · ${source}`, ''),
     ])) + (warn ? `<div class="empty-hint">${warn}</div>` : '');
   const b = $('#pv-shell');
   b.innerHTML = esc(SHELL_OPTS.find(o => o.v === shellCur()).t) + ic('chev-d');
 }
 function shellPick(el) {
   const cur = shellCur();
-  menuPop(el, [{ label: 'Shell 后端' }, ...SHELL_OPTS.map(o => Object.assign({}, o, { on: o.v === cur }))], async v => {
-    try { SHELL = await api('/shell', jput({ backend: v })); toast('已写入 .sunmao/shell.txt，新会话生效', 'check'); }
+  menuPop(el, [{ label: '命令执行方式' }, ...SHELL_OPTS.map(o => Object.assign({}, o, { on: o.v === cur }))], async v => {
+    try { SHELL = await api('/shell', jput({ backend: v })); toast('设置已保存；新会话生效', 'check'); }
     catch (e) { toast(`设置失败：${e.message}`, 'alert', 'warn'); }
     renderShell();
   }, { align: 'end' });
@@ -366,19 +351,76 @@ function renderGrants() {
   const host = $('#set-generic');
   if (!GRANTS) { host.innerHTML = head('已授权命令', '') + '<div class="empty-hint">正在读取授权…</div>'; refreshGrants(); return; }
   host.innerHTML = head('已授权命令', '审批卡上点了「本会话都别问了」留下的许可 —— 只放行完全相同的一条调用，撤销后下一次仍会询问。')
-    + sec('', '', card([
-      ...GRANTS.map(g => `<div class="cr"><code class="mono" style="flex:1;min-width:0;overflow-wrap:anywhere;text-align:left">${esc(g)}</code><button class="btn ghost sm" data-gv="${esc(g)}" data-tip="撤销这条授权">${ic('trash')}撤销</button></div>`),
-      ...(GRANTS.length > 1 ? [`<div class="cr"><div class="l"><b>全部撤销</b><span>清掉本页列出的所有授权</span></div><button class="btn ghost sm warn" data-act="grants-clear">${ic('trash')}全部撤销</button></div>`] : []),
-    ])) + (GRANTS.length ? '' : '<div class="empty-hint">本会话还没有授权 — 审批时点 A 会把那条调用记到这里</div>');
+    + (GRANTS.length
+      ? sec('', '', card([
+        ...GRANTS.map(g => `<div class="cr"><code class="mono" style="flex:1;min-width:0;overflow-wrap:anywhere;text-align:left">${esc(g)}</code><button class="btn ghost sm" data-gv="${esc(g)}" data-tip="撤销这条授权">${ic('trash')}撤销</button></div>`),
+        ...(GRANTS.length > 1 ? [`<div class="cr"><div class="l"><b>全部撤销</b><span>清掉本页列出的所有授权</span></div><button class="btn ghost sm warn" data-act="grants-clear">${ic('trash')}全部撤销</button></div>`] : []),
+      ]))
+      : '<div class="empty-hint">本会话还没有授权 — 审批时点 A 会把那条调用记到这里</div>');
+}
+
+/* hooks page — trust roster for the viewed session (`GET /hooks`, the
+   same rows `/hooks` prints in text). `user` rows are user-layer config —
+   implicitly trusted, nothing to toggle; `pinned`/`untrusted` ride the
+   trusted-hooks.json ledger, flips go through `PUT /hooks` exactly like
+   `/hooks trust|untrust <n>`. */
+let HOOKS = null;
+const HK_STATUS = { user: '用户层', pinned: '已信任', untrusted: '未信任' };
+async function refreshHooks() {
+  try { HOOKS = (await api('/hooks?sess=' + encodeURIComponent(sessionId))).hooks || []; } catch { HOOKS = null; }
+  if (view === 'settings' && setPage === 'hooks') renderHooks();
+}
+async function setHookTrust(index, trusted) {
+  try {
+    await api('/hooks?sess=' + encodeURIComponent(sessionId), jput({ index, trusted }));
+    toast(trusted ? '已信任此钩子' : '已撤销信任', 'shield');
+  } catch (e) { toast(`操作失败：${e.message}`, 'alert', 'warn'); }
+  refreshHooks();
+}
+function renderHooks() {
+  if (view !== 'settings' || setPage !== 'hooks') return;
+  const host = $('#set-generic');
+  if (!HOOKS) { host.innerHTML = head('钩子', '') + '<div class="empty-hint">正在读取钩子…</div>'; refreshHooks(); return; }
+  const KIND = { hook: '钩子', mcp: 'MCP', ext: '扩展', perm: '权限' };
+  host.innerHTML = head('钩子', '会话加载的命令钩子与子进程规约 —— 未信任的不会执行，信任记录在 .sunmao/trusted-hooks.json。')
+    + (HOOKS.length
+      ? sec('', '', card(HOOKS.map((h, i) => {
+          const act = h.status === 'untrusted' ? `<button class="btn ghost sm" data-ht="${i + 1}:1">信任</button>`
+            : h.status === 'pinned' ? `<button class="btn ghost sm warn" data-ht="${i + 1}:0">撤销</button>`
+            : `<span class="tag">${esc(HK_STATUS[h.status] || h.status)}</span>`;
+          return `<div class="cr"><div class="l" style="flex:1;min-width:0"><b>${esc(KIND[h.kind] || h.kind)} · ${esc(h.event)}${h.matcher ? ' · ' + esc(h.matcher) : ''}</b><span class="mono" style="overflow-wrap:anywhere">${esc(h.command)}</span></div>${act}</div>`;
+        })))
+      : '<div class="empty-hint">当前会话没有加载任何钩子 — 项目 .sunmao/hooks.json 或插件清单会出现在这里</div>');
+}
+
+/* mcp page — the session's MCP server roster (`GET /mcp`; `/mcp` text is
+   the terminal rendering of the same structs). Read-only: servers are
+   configured in .sunmao/mcp.json / plugin manifests. */
+let MCPS = null;
+async function refreshMcp() {
+  try { MCPS = (await api('/mcp?sess=' + encodeURIComponent(sessionId))).servers || []; } catch { MCPS = null; }
+  if (view === 'settings' && setPage === 'mcp') renderMcp();
+}
+function renderMcp() {
+  if (view !== 'settings' || setPage !== 'mcp') return;
+  const host = $('#set-generic');
+  if (!MCPS) { host.innerHTML = head('MCP 服务器', '') + '<div class="empty-hint">正在读取 MCP 服务器…</div>'; refreshMcp(); return; }
+  host.innerHTML = head('MCP 服务器', '本会话挂载的 MCP 服务器 — 在 .sunmao/mcp.json 或插件清单中配置。')
+    + (MCPS.length
+      ? sec('', '', card(MCPS.map(m =>
+          `<div class="cr"><div class="l" style="flex:1;min-width:0"><b>${esc(m.name)}<span class="tag" style="margin-left:var(--s-6)">${esc(m.transport)}</span></b><span>${m.tools} 工具 · ${m.prompts} 提示词 · ${m.resources} 资源</span></div><span class="sd ${m.connected ? 'run' : 'off'}"></span></div>`)))
+      : '<div class="empty-hint">当前会话没有连接 MCP 服务器</div>');
 }
 
 const PAGES = {
   providers: () => head('模型与提供商', '') + '<div class="empty-hint">正在读取模型配置…</div>',
   channels: () => head('IM 渠道', '') + '<div class="empty-hint">正在读取渠道状态…</div>',
   grants: () => head('已授权命令', '') + '<div class="empty-hint">正在读取授权…</div>',
-  shell: () => head('终端', '') + '<div class="empty-hint">正在读取 shell 配置…</div>',
-  keys: () => head('快捷键', '焦点不在输入框时，审批快捷键直接裁决最早的待审批卡。') + sec('', '', card([['新对话', 'Ctrl N'], ['命令面板', 'Ctrl K'], ['打开设置', 'Ctrl ,'], ['显示或隐藏数据面板', 'Ctrl \\'], ['Allow / Deny / Always', 'Y N A'], ['发送（运行中则排队）', 'Enter'], ['插队引导（不打断本轮）', 'Ctrl Enter'], ['换行', 'Shift Enter'], ['关闭弹层或返回', 'Esc']].map(([a, k]) => row(a, '', `<span class="keys">${k.split(' ').map(x => `<kbd>${esc(x)}</kbd>`).join('')}</span>`)))),
-  about: () => head('关于', '') + `<div class="card glass cfg"><div class="ab-top">${$('#hero svg').outerHTML}<div><b>sunmao</b><span>Rust 编写的 agent 运行时内核</span></div></div>${row('会话', '', mono(sessionId || '—'))}${row('工作目录', '', mono(cwd || '—'))}${row('本地服务', TAURI ? '内嵌内核 · 自定义协议（无 TCP 监听）' : 'sunmao serve 只绑定本机', mono(location.host))}${row('内核', '', mono('sunmao-core'))}${row('许可', '', mono('MIT OR Apache-2.0'))}</div>`,
+  hooks: () => head('钩子', '') + '<div class="empty-hint">正在读取钩子…</div>',
+  mcp: () => head('MCP 服务器', '') + '<div class="empty-hint">正在读取 MCP 服务器…</div>',
+  shell: () => head('终端', '') + '<div class="empty-hint">正在读取设置…</div>',
+  keys: () => head('快捷键', '') + sec('', '', card([['新对话', 'Ctrl N'], ['命令面板', 'Ctrl K'], ['打开设置', 'Ctrl ,'], ['显示或隐藏数据面板', 'Ctrl \\'], ['允许一次 / 拒绝 / 本会话允许', 'Y N A'], ['发送', 'Enter'], ['追加指示', 'Ctrl Enter'], ['换行', 'Shift Enter'], ['关闭弹层或返回', 'Esc']].map(([a, k]) => row(a, '', `<span class="keys">${k.split(' ').map(x => `<kbd>${esc(x)}</kbd>`).join('')}</span>`)))),
+  about: () => head('关于', '') + `<div class="card glass cfg"><div class="ab-top">${$('#hero svg').outerHTML}<div><b>sunmao</b><span>本地 AI 开发助手</span></div></div>${row('许可证', '', mono('MIT OR Apache-2.0'))}</div>`,
 };
 function settingsPage(p) {
   setPage = p;
@@ -392,6 +434,8 @@ function settingsPage(p) {
   else if (p === 'providers') { renderProviders(); }
   else if (p === 'channels') { refreshChannels(); }
   else if (p === 'grants') { renderGrants(); }
+  else if (p === 'hooks') { renderHooks(); }
+  else if (p === 'mcp') { renderMcp(); }
   else if (p === 'shell') { renderShell(); }
 }
 

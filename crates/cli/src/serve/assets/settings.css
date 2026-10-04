@@ -129,6 +129,7 @@
 .pv-chip{display:inline-flex;align-items:center;justify-content:center;min-width:var(--h-md);height:var(--h-md);padding:0 var(--s-6);border-radius:var(--r-sm);background:var(--c-sunken);box-shadow:var(--ring-1);font-size:var(--fs-xs);color:var(--c-text-3);cursor:pointer;transition:color var(--dur-fast) var(--ease-spring),background var(--dur-fast) var(--ease-spring)}
 .pv-chip:hover{color:var(--c-text-2)}
 .pv-chip.on{color:var(--c-accent);background:var(--c-accent-tint)}
+.pv-chip[aria-disabled]{cursor:default}
 .pv-mr{display:flex;gap:var(--s-6)}
 .pv-add{display:flex;gap:var(--s-6)}
 .pv-add input{flex:1;height:var(--h-lg);padding:0 var(--s-10);border:0;outline:0;border-radius:var(--r-md);background:var(--c-sunken);box-shadow:var(--ring-1);font:var(--fs-sm) var(--font-mono);color:var(--c-text)}

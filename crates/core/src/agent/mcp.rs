@@ -101,20 +101,21 @@ impl AgentLoop {
             }
         }
         Some(
-            handle
-                .client
-                .peer()
-                .get_prompt(params)
-                .await
-                .map_err(|e| anyhow::anyhow!("{e:#}"))
-                .map(|res| {
-                    res.messages
-                        .iter()
-                        .filter_map(|m| m.content.as_text())
-                        .map(|t| t.text.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                }),
+            tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                handle.client.peer().get_prompt(params),
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("prompt fetch timed out"))
+            .and_then(|r| r.map_err(|e| anyhow::anyhow!("{e:#}")))
+            .map(|res| {
+                res.messages
+                    .iter()
+                    .filter_map(|m| m.content.as_text())
+                    .map(|t| t.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }),
         )
     }
 

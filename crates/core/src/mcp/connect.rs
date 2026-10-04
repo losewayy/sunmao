@@ -24,9 +24,29 @@ use super::{
     prompt_info, resource_info, tool_info,
 };
 
+/// Sanitize one wire-name component (server or tool) — provider
+/// tool-name grammars accept `[a-zA-Z0-9_-]`, and a name carrying spaces,
+/// dots or `::` would 400 the whole request. `_` runs collapse so the
+/// `__` separators stay unambiguous for the island's split.
+pub(crate) fn wire_component(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        if c == '_' {
+            if !out.ends_with('_') {
+                out.push('_');
+            }
+        } else if c.is_ascii_alphanumeric() || c == '-' {
+            out.push(c);
+        }
+    }
+    if out.is_empty() { "x".into() } else { out }
+}
+
 /// Interned `mcp__server__tool` wire names — `ToolImpl::name` must return
 /// `&'static`, and the pool keeps one leaked str per distinct name instead
-/// of leaking a fresh copy on every call.
+/// of leaking a fresh copy on every call. Components are sanitized: the
+/// wire name is what the model and the island bridge parse, the roster's
+/// display name stays the config's verbatim spelling.
 fn mcp_wire_name(server: &str, tool: &str) -> &'static str {
     static NAMES: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<(String, String), &'static str>>,
@@ -34,8 +54,11 @@ fn mcp_wire_name(server: &str, tool: &str) -> &'static str {
     let pool = NAMES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     let key = (server.to_string(), tool.to_string());
     let mut map = pool.lock_or_recover();
-    map.entry(key)
-        .or_insert_with(|| Box::leak(format!("mcp__{server}__{tool}").into_boxed_str()))
+    map.entry(key).or_insert_with(|| {
+        Box::leak(
+            format!("mcp__{}__{}", wire_component(server), wire_component(tool)).into_boxed_str(),
+        )
+    })
 }
 
 /// One MCP server tool wrapped as a native [`ToolImpl`].
@@ -64,11 +87,7 @@ impl ToolImpl for McpTool {
     }
 
     fn decl(&self) -> Tool {
-        Tool::function(
-            &format!("mcp__{}__{}", self.server, self.tool_name),
-            &self.description,
-            self.schema.clone(),
-        )
+        Tool::function(self.name(), &self.description, self.schema.clone())
     }
 
     async fn call(
@@ -290,12 +309,16 @@ pub(crate) async fn connect_all_with_timeout(
     let mut handles: Vec<McpServerHandle> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
     for (name, (spec, source)) in resolve_servers(cwd, extra_roots) {
-        if let Some(command) = &spec.command {
-            let text = crate::hooks::trust::spec_text(command, &spec.args, &spec.env);
+        // every spec with a transport is a trust surface — `command:` runs
+        // a child, `url:` hands tool outputs and call arguments to a
+        // remote. The pin covers BOTH halves (spec_text_mcp), so editing
+        // a pinned stdio spec into a remote one can't drift through.
+        if spec.command.is_some() || spec.url.is_some() {
+            let text = super::spec::spec_text_mcp(&spec);
             if !crate::hooks::trust::spawn_trusted(cwd, &source, &text) {
                 let detail = format!(
                     "mcp {name}: {} (from {})",
-                    crate::hooks::trust::spec_display(command, &spec.args, &spec.env),
+                    super::spec::spec_display_mcp(&spec),
                     source.display().to_string().replace("\\\\?\\", "")
                 );
                 tracing::warn!("untrusted mcp server skipped: {detail}");
@@ -394,12 +417,15 @@ pub(crate) async fn connect_one(
             anyhow::bail!("server {name}: needs `command` (stdio) or `url` (http)");
         };
         let mut cmd = tokio::process::Command::new(command);
-        cmd.args(&spec.args)
-            .envs(&spec.env)
-            // MCP servers read stdin, write stdout; silence stderr to keep
-            // servers that log startup noise from polluting the protocol
-            .stderr(std::process::Stdio::null());
-        let transport = TokioChildProcess::new(cmd)?;
+        cmd.args(&spec.args).envs(&spec.env);
+        // MCP servers read stdin, write stdout; silence stderr to keep
+        // servers that log startup noise from polluting the protocol.
+        // It MUST go through the builder — TokioChildProcess::new's
+        // default reconfigures the Command's stderr to inherit() and
+        // would silently overwrite a Stdio::null() set here.
+        let (transport, _stderr) = TokioChildProcess::builder(cmd)
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
         child.0 = transport.id();
         Arc::new(
             tokio::time::timeout(t, handler.serve(transport))

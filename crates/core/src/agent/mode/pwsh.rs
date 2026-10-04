@@ -20,30 +20,56 @@ pub fn pwsh_mutates(command: &str, verbs: &std::collections::HashSet<String>) ->
     false
 }
 
-/// Split a pwsh line into command pieces on `;`, `|`, `&&`, `||` — quote
-/// and backtick aware. `$(`/`(`/`{` depth keeps pipes inside subexpressions
-/// and scriptblocks from splitting.
+/// Split a pwsh line into command pieces on `;`, `|`, `&&`, `||`, and
+/// top-level newlines — pwsh executes `\n`-separated statements, so a
+/// "line" is really a script. Quote/backtick aware; `@"…"@`/`@'…'@`
+/// verbatim strings keep their inner newlines. `$(`/`(`/`{` depth keeps
+/// pipes and newlines inside subexpressions and scriptblocks from
+/// splitting.
 pub fn pwsh_segments(command: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut chars = command.chars().peekable();
     let mut quote: Option<char> = None;
+    // `@"…"@` verbatim mode: literal contents, no escapes, closes on `"@`
+    let mut verbatim = false;
     let mut depth = 0i32;
     while let Some(c) = chars.next() {
         match (quote, c) {
-            (Some(q), '\\') | (Some(q), '`') => {
+            (Some(_), '\\') | (Some(_), '`') if !verbatim => {
                 cur.push(c);
                 let _ = chars.next().map(|n| cur.push(n));
-                let _ = q;
             }
             (Some(q), ch) if ch == q => {
-                quote = None;
                 cur.push(c);
+                if verbatim {
+                    if chars.peek() == Some(&'@') {
+                        cur.push(chars.next().unwrap());
+                        quote = None;
+                        verbatim = false;
+                    }
+                } else {
+                    quote = None;
+                }
             }
             (Some(_), ch) => cur.push(ch),
+            (None, '@') if matches!(chars.peek(), Some('"') | Some('\'')) => {
+                cur.push(c);
+                let q = chars.next().unwrap();
+                cur.push(q);
+                quote = Some(q);
+                verbatim = true;
+            }
             (None, '"') | (None, '\'') => {
                 quote = Some(c);
                 cur.push(c);
+            }
+            (None, '\n') if depth == 0 => {
+                let s = cur.trim().to_string();
+                if !s.is_empty() {
+                    out.push(s);
+                }
+                cur.clear();
             }
             (None, '(') | (None, '{') | (None, '[') => {
                 depth += 1;

@@ -32,7 +32,9 @@ use handler::{SessionHandler, Shared};
 #[cfg(test)]
 pub(crate) use connect::connect_one;
 pub(crate) use connect::resolve_servers;
+pub(crate) use connect::wire_component;
 pub use connect::{audit_skips, connect_all};
+pub(crate) use spec::{spec_display_mcp, spec_text_mcp};
 
 /// `${CLAUDE_PLUGIN_ROOT}` substitution — shared by MCP server specs and
 /// extension specs; `root` arrives pre-stripped of the `\\?\` prefix.

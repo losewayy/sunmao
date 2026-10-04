@@ -4,8 +4,8 @@
 //!   native       — in-process Rust (Read/Write/Edit/Grep/Glob/WebFetch…)
 //!   managed      — spawned binaries without a shell (Grep's rg, JobOutput's
 //!                  log-dir reader)
-//!   shell        — `Bash`: model writes a command string; routed through
-//!                  deno_task_shell so bash syntax is identical on Windows.
+//!   shell        — `Bash`: model writes a command string; the resolved
+//!                  backend supplies either PowerShell or POSIX syntax.
 
 use crate::context::{MutexRecover, RwLockRecover};
 use std::collections::BTreeMap;

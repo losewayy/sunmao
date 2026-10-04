@@ -45,6 +45,66 @@ pub(crate) struct ServerSpec {
     pub(crate) timeout_secs: Option<u64>,
 }
 
+/// The pin text a full MCP spec digests — `trust::spec_text`'s shape for
+/// the stdio half, with the remote half appended only when present. A
+/// command-only spec serializes byte-identically to the old digest so
+/// existing pins keep working; adding `url:` to a pinned spec changes
+/// the claim (and `connect_one` prefers url, so it MUST).
+fn spec_json(spec: &ServerSpec, mask: bool) -> serde_json::Value {
+    let env: std::collections::BTreeMap<_, _> = spec.env.iter().collect();
+    let mut v = serde_json::json!({"command": spec.command, "args": spec.args, "env": env});
+    let m = v.as_object_mut().expect("object");
+    if let Some(u) = &spec.url {
+        m.insert("url".into(), u.clone().into());
+    }
+    if !spec.headers.is_empty() {
+        let headers: std::collections::BTreeMap<_, _> = spec
+            .headers
+            .iter()
+            .map(|(k, val)| {
+                (
+                    k.clone(),
+                    if mask {
+                        serde_json::json!("···")
+                    } else {
+                        serde_json::json!(val)
+                    },
+                )
+            })
+            .collect();
+        m.insert("headers".into(), serde_json::json!(headers));
+    }
+    if let Some(a) = &spec.auth_env {
+        m.insert("auth_env".into(), a.clone().into());
+    }
+    if let Some(t) = &spec.token_file {
+        m.insert("token_file".into(), t.clone().into());
+    }
+    if let Some(t) = spec.timeout_secs {
+        m.insert("timeout_secs".into(), t.into());
+    }
+    if mask {
+        // same masking rule as spec_display — env values can hold keys
+        let env: std::collections::BTreeMap<_, _> = spec
+            .env
+            .keys()
+            .map(|k| (k, serde_json::json!("···")))
+            .collect();
+        m.insert("env".into(), serde_json::json!(env));
+    }
+    v
+}
+
+/// Digest material for an MCP spec — covers stdio AND remote fields.
+pub(crate) fn spec_text_mcp(spec: &ServerSpec) -> String {
+    spec_json(spec, false).to_string()
+}
+
+/// Display twin — env and header values masked, structure real.
+pub(crate) fn spec_display_mcp(spec: &ServerSpec) -> String {
+    spec_json(spec, true).to_string()
+}
+
 /// `${VAR}`/`$VAR` expansion in header values — the mcp.json convention
 /// for env-sourced request headers. Unset vars expand to empty.
 // crate-visible for the sibling tests module — the function itself stays

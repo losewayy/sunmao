@@ -141,6 +141,11 @@ impl LoopDriver {
         for root in extra_roots {
             manifests.push(root.join("plugin.json"));
         }
+        // project-layer manifests must pin their `loop:` claim — a checked
+        // out repo could otherwise write `loop: bare` and disarm the whole
+        // permission gate (the same trust ledger hook commands and `allow`
+        // rules pass). Preset roots outside the cwd are user-invoked.
+        let ccwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
         let mut chosen = Self::default();
         for manifest in manifests {
             let Ok(text) = std::fs::read_to_string(&manifest) else {
@@ -152,6 +157,25 @@ impl LoopDriver {
             let Some(name) = file.get("loop").and_then(|l| l.as_str()) else {
                 continue;
             };
+            let claim = format!("loop:{name}");
+            let project_layer = manifest
+                .canonicalize()
+                .unwrap_or_else(|_| manifest.clone())
+                .starts_with(&ccwd);
+            if project_layer
+                && !crate::hooks::trust::is_trusted(
+                    cwd,
+                    crate::hooks::trust::Layer::Project,
+                    &manifest,
+                    &claim,
+                )
+            {
+                tracing::warn!(
+                    "{}: unpinned `loop:` declaration skipped — /hooks trust to enable",
+                    manifest.display()
+                );
+                continue;
+            }
             match Self::parse(name) {
                 Ok(d) => chosen = d,
                 Err(e) => tracing::warn!("{}: {e:#}", manifest.display()),
@@ -463,6 +487,19 @@ impl AgentLoop {
         self.ctx.reseed_ptc_store(&events);
         self.ctx.reseed_effort(&events);
         self.ctx.reseed_turn_mode(&events);
+        // SESSION facts that have no event to reseed from must still not
+        // leak across the swap: the abandoned session's approvals, its
+        // read-before-write ledger, its model pick, and any un-drained
+        // steer backlog belong to the log they were made in.
+        self.ctx.session_grants.lock_or_recover().clear();
+        self.ctx.read_paths.lock_or_recover().clear();
+        self.ctx.steer.lock_or_recover().clear();
+        self.ctx
+            .input_pending
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        // the new log's own model wins too — Started carries the
+        // creation-time selector, `model.change` rows override it
+        self.ctx.reseed_model(&events);
         let mode = events
             .iter()
             .rev()
@@ -472,19 +509,7 @@ impl AgentLoop {
             })
             .unwrap_or_default();
         *self.ctx.approval_mode.write_or_recover() = mode;
-        let _ = self
-            .ctx
-            .hooks
-            .fire(
-                HookEvent::SessionStart,
-                &self.ctx.cwd,
-                &crate::hooks::HookInput {
-                    source: Some("resume"),
-                    mcp_servers: Some(self.mcp_server_names()),
-                    ..Default::default()
-                },
-            )
-            .await;
+        self.ctx.fire_session_start("resume").await;
         events
     }
 
@@ -515,70 +540,5 @@ impl AgentLoop {
     pub fn with_compact_threshold(mut self, n: usize) -> Self {
         self.compact_threshold = n;
         self
-    }
-
-    /// Rough token estimate for the current transcript.
-    /// Estimated tokens for the *next* request. Trust the provider's own
-    /// counter first — the last `Usage` fact's `prompt_tokens` is exact.
-    /// The byte heuristic is the fallback for a session that hasn't
-    /// reported usage yet (or a dialect that never does), not the
-    /// primary source: `serde_json` bytes over-count structure and
-    /// under-count CJK by ~2×.
-    async fn est_tokens(&self) -> usize {
-        let events = self
-            .ctx
-            .sessions
-            .lock()
-            .await
-            .events()
-            .await
-            .unwrap_or_default();
-        // a Usage fact older than the last Compacted boundary describes the
-        // pre-compact transcript — trusting it re-trips the loop-head check
-        // and compacts the fresh summary a second time
-        for ev in events.iter().rev() {
-            match ev {
-                SessionEvent::Usage { usage } => return usage.prompt_tokens as usize,
-                SessionEvent::Compacted { .. } => break,
-                _ => {}
-            }
-        }
-        // no usage yet — estimate from the folded messages
-        let msgs = self
-            .ctx
-            .sessions
-            .lock()
-            .await
-            .messages()
-            .await
-            .unwrap_or_default();
-        msgs.iter()
-            .map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0))
-            .sum::<usize>()
-            / 4
-    }
-
-    /// The auto-compact tripwire, sized to the model the session is *on*.
-    /// `context_length_for` reads the provider catalog; a selector that
-    /// resolves nowhere or a provider that doesn't advertise a window falls
-    /// back to `compact_threshold`. 85% headroom leaves room for the turn
-    /// that tips it over.
-    fn effective_threshold(&self) -> usize {
-        let window = self
-            .ctx
-            .active_selector
-            .read()
-            .unwrap()
-            .as_deref()
-            .and_then(|sel| {
-                self.ctx
-                    .models
-                    .as_ref()
-                    .and_then(|m| m.context_length_for(sel))
-            });
-        match window {
-            Some(w) => ((w * 85 / 100) as usize).max(1),
-            None => self.compact_threshold,
-        }
     }
 }

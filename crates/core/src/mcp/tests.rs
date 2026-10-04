@@ -57,8 +57,19 @@ async fn untrusted_stdio_server_never_spawns() {
     let mut log = crate::session::SessionLog::ephemeral();
 
     let conn = connect_all(&dir, &[]).await;
-    assert_eq!(conn.skipped.len(), 1, "the stdio spec must be gated");
-    assert!(conn.skipped[0].contains("ghost"), "{}", conn.skipped[0]);
+    // both transports are trust-gated — a url spec hands tool outputs and
+    // call arguments to a remote, the same surface a spawned child is
+    assert_eq!(conn.skipped.len(), 2, "unpinned specs must be gated");
+    assert!(
+        conn.skipped.iter().any(|s| s.contains("ghost")),
+        "{}",
+        conn.skipped[0]
+    );
+    assert!(
+        conn.skipped.iter().any(|s| s.contains("remote")),
+        "{}",
+        conn.skipped[0]
+    );
     assert!(
         conn.servers.is_empty(),
         "untrusted spec contributes nothing"
@@ -74,13 +85,17 @@ async fn untrusted_stdio_server_never_spawns() {
         "the skip must be durable"
     );
 
-    // roster: the gated row lists under kind=mcp — `url` servers don't
-    // spawn and produce no row at all
-    let rows = crate::hooks::trust::spawn_rows(&dir, &[]);
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].kind, crate::hooks::trust::RowKind::Mcp);
-    assert_eq!(rows[0].status, "untrusted");
-    assert_eq!(rows[0].matcher, "ghost");
+    // roster: both gated rows list under kind=mcp — url specs are rows
+    // too now that remote identity is pinnable
+    let rows = crate::hooks::trust_rows::spawn_rows(&dir, &[]);
+    assert_eq!(rows.len(), 2);
+    assert!(
+        rows.iter()
+            .all(|r| r.kind == crate::hooks::trust::RowKind::Mcp)
+    );
+    assert!(rows.iter().all(|r| r.status == "untrusted"));
+    assert!(rows.iter().any(|r| r.matcher == "ghost"));
+    assert!(rows.iter().any(|r| r.matcher == "remote"));
 
     // pin → the gate opens (the binary still doesn't exist — spawn
     // failure is a separate, already-degraded path)
@@ -92,9 +107,14 @@ async fn untrusted_stdio_server_never_spawns() {
     )
     .unwrap();
     let conn = connect_all(&dir, &[]).await;
-    assert!(conn.skipped.is_empty(), "pinned spec is not gated");
-    let rows = crate::hooks::trust::spawn_rows(&dir, &[]);
-    assert_eq!(rows[0].status, "pinned");
+    // the still-unpinned remote stays gated — pinning is per-spec
+    assert_eq!(conn.skipped.len(), 1, "{}", conn.skipped.join(","));
+    assert!(conn.skipped[0].contains("remote"));
+    let rows = crate::hooks::trust_rows::spawn_rows(&dir, &[]);
+    assert_eq!(
+        rows.iter().find(|r| r.matcher == "ghost").unwrap().status,
+        "pinned"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 

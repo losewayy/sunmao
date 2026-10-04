@@ -2,6 +2,22 @@
 //! initialization script) plus the shell command surface it calls:
 //! caption verbs, drag, notify, external-open, dir picker, zoom, and the
 //! native guest webviews that back dock browser tabs.
+//!
+//! Two Windows traps shape the signatures below, both from a window that
+//! hosts a dock guest (a `Window::add_child` webview):
+//!
+//! - `tauri::WebviewWindow` as a command argument resolves through
+//!   `Window::is_webview_window()`, which is false as soon as ANY child
+//!   webview exists — every command taking it then fails with "current
+//!   webview is not a WebviewWindow". So the verbs take `tauri::Window`
+//!   (or `tauri::Webview` where the call needs webview-only API); those
+//!   args resolve to `CommandItem::webview().window()` and never fail.
+//! - `Window::add_child` deadlocks in a *synchronous* command: the sync
+//!   body runs on the UI thread inside the WebView2 IPC callback, so
+//!   `add_child`'s on-main-thread fast path builds the guest re-entrantly
+//!   and its controller creation never completes. `shell_webview` is
+//!   `async` so the body runs on the runtime and `add_child` hands the
+//!   build to the event loop instead.
 
 use tauri::Manager as _;
 
@@ -73,7 +89,7 @@ window.addEventListener('keydown', (e) => {
 "#;
 
 #[tauri::command]
-pub(crate) fn shell_win(app: tauri::AppHandle, win: tauri::WebviewWindow, op: &str) {
+pub(crate) fn shell_win(app: tauri::AppHandle, win: tauri::Window, op: &str) {
     match op {
         "min" => {
             let _ = win.minimize();
@@ -90,8 +106,10 @@ pub(crate) fn shell_win(app: tauri::AppHandle, win: tauri::WebviewWindow, op: &s
         }
         "new" => {
             // a second window on the same host — its session_events attach
-            // claims a client keyed by this window's label (per-window tab)
-            let n = app.webview_windows().len() + 1;
+            // claims a client keyed by this window's label (per-window tab).
+            // `windows()`, not `webview_windows()`: a dock guest would hide
+            // this window from the latter and reuse the same "win-N" label
+            let n = app.windows().len() + 1;
             let label = format!("win-{n}");
             let _ = tauri::WebviewWindowBuilder::new(
                 &app,
@@ -111,7 +129,7 @@ pub(crate) fn shell_win(app: tauri::AppHandle, win: tauri::WebviewWindow, op: &s
 /// The titlebar is the drag region — a left-button press anywhere on it
 /// (except interactive controls) starts a native window drag.
 #[tauri::command]
-pub(crate) fn shell_drag(win: tauri::WebviewWindow) {
+pub(crate) fn shell_drag(win: tauri::Window) {
     let _ = win.start_dragging();
 }
 
@@ -144,7 +162,7 @@ pub(crate) fn shell_open(app: tauri::AppHandle, path: &str) -> Result<(), String
 /// seeds the dialog at the viewed session's project; the resolved value
 /// is the picked path or null on cancel.
 #[tauri::command]
-pub(crate) fn shell_pick_dir(win: tauri::WebviewWindow, dir: Option<String>) -> Option<String> {
+pub(crate) fn shell_pick_dir(win: tauri::Window, dir: Option<String>) -> Option<String> {
     use tauri_plugin_dialog::DialogExt as _;
     let mut d = win.dialog().file().set_title("选择项目目录");
     if let Some(p) = dir.filter(|p| !p.is_empty()) {
@@ -163,12 +181,12 @@ fn zoom_step(cur: f64, dir: f64) -> f64 {
 /// (WebView2 on Windows) composited over a pane rect, not iframes, so
 /// X-Frame-Options can't refuse them (github.com etc. embed fine). The
 /// page keeps them aligned by sending the pane's rect on every move;
-/// `visible:false` parks them offscreen rather than tearing down.
+/// `rect` parks them offscreen rather than tearing them down.
+///
+/// `async` is load-bearing, not stylistic: see the module note above —
+/// the sync form deadlocks on Windows the moment it builds a guest.
 #[tauri::command]
-pub(crate) fn shell_webview(
-    win: tauri::WebviewWindow,
-    op: serde_json::Value,
-) -> Result<(), String> {
+pub(crate) async fn shell_webview(win: tauri::Window, op: serde_json::Value) -> Result<(), String> {
     let label = format!("br-{}", op["id"].as_i64().unwrap_or(0));
     let rect = |v: &serde_json::Value| -> (tauri::LogicalPosition<f64>, tauri::LogicalSize<f64>) {
         (
@@ -183,6 +201,10 @@ pub(crate) fn shell_webview(
         )
     };
     let find = || win.app_handle().get_webview(&label);
+    let place = |w: &tauri::Webview, pos, size| {
+        let _ = w.set_position(pos);
+        let _ = w.set_size(size);
+    };
     match op["op"].as_str().unwrap_or("") {
         "create" => {
             // an empty/un-normalized url ("", "github.com") failed Url::parse
@@ -195,32 +217,37 @@ pub(crate) fn shell_webview(
                 .parse::<tauri::Url>()
                 .map_err(|e| e.to_string())?;
             let (pos, size) = rect(&op["rect"]);
-            // create is a sync op — an existing entry means the webview is
-            // parked offscreen or stale, so re-place + re-navigate it rather
-            // than early-returning into an invisible dead state
+            // create is idempotent: invokes are handled concurrently, so a
+            // duplicate can arrive before the first build registers — an
+            // existing entry is re-placed here, a losing add_child re-finds
+            // the winner and re-places it instead of failing
             if let Some(w) = find() {
-                let _ = w.set_position(pos);
-                let _ = w.set_size(size);
+                place(&w, pos, size);
                 let _ = w.navigate(url);
                 return Ok(());
             }
-            let window = win
-                .app_handle()
-                .get_window(win.label())
-                .ok_or("main window gone")?;
-            window
-                .add_child(
-                    tauri::webview::WebviewBuilder::new(label, tauri::WebviewUrl::External(url)),
-                    pos,
-                    size,
-                )
-                .map_err(|e| e.to_string())?;
+            let built = win.add_child(
+                tauri::webview::WebviewBuilder::new(
+                    label.clone(),
+                    tauri::WebviewUrl::External(url),
+                ),
+                pos,
+                size,
+            );
+            if let Err(e) = built {
+                match find() {
+                    Some(w) => place(&w, pos, size),
+                    None => {
+                        tracing::error!("dock guest {label} could not be created: {e}");
+                        return Err(e.to_string());
+                    }
+                }
+            }
         }
         "rect" => {
             let (pos, size) = rect(&op["rect"]);
             if let Some(w) = find() {
-                let _ = w.set_position(pos);
-                let _ = w.set_size(size);
+                place(&w, pos, size);
             }
         }
         "nav" => {
@@ -247,13 +274,13 @@ pub(crate) fn shell_webview(
 /// source of truth for the factor. `op` is a ladder step ("in"/"out"/
 /// "reset") or an absolute factor (the page's `setZoom` + the ui.json
 /// restore send numbers — JS numbers serialize into `op` verbatim).
+/// Takes the calling `Webview` (not the window): `set_zoom` is webview
+/// API, and a `WebviewWindow` arg stops resolving once a dock guest
+/// exists. The zoom map stays keyed by window label so a guest webview
+/// shares its host window's factor.
 #[tauri::command]
-pub(crate) fn shell_zoom(
-    win: tauri::WebviewWindow,
-    state: tauri::State<'_, Gui>,
-    op: serde_json::Value,
-) {
-    let label = win.label().to_string();
+pub(crate) fn shell_zoom(win: tauri::Webview, state: tauri::State<'_, Gui>, op: serde_json::Value) {
+    let label = win.window().label().to_string();
     let next = match op.as_str() {
         Some(step) => {
             let zooms = state.zooms.lock().expect("zoom map");

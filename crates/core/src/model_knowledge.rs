@@ -188,26 +188,28 @@ pub async fn refresh_user_layer() -> anyhow::Result<usize> {
         .user_agent("sunmao/0.1")
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
-    let (v, ltm_raw) = tokio::try_join!(
-        async {
-            client
-                .get("https://openrouter.ai/api/v1/models")
-                .send()
-                .await?
-                .error_for_status()?
-                .json::<serde_json::Value>()
-                .await
-        },
-        async {
-            client
-                .get("https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json")
-                .send()
-                .await?
-                .error_for_status()?
-                .json::<serde_json::Value>()
-                .await
-        },
-    )?;
+    // OpenRouter is required (it carries the structure); litellm is the
+    // correction layer — a failed pull degrades to OR-only rather than
+    // failing the whole refresh
+    let v: serde_json::Value = client
+        .get("https://openrouter.ai/api/v1/models")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let ltm_raw: serde_json::Value = match client
+        .get("https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json")
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+    {
+        Ok(r) => r.json().await.unwrap_or_default(),
+        Err(e) => {
+            tracing::warn!("litellm registry pull failed, refreshing OR-only: {e:#}");
+            serde_json::Value::Null
+        }
+    };
     let rows = v
         .get("data")
         .and_then(|d| d.as_array())

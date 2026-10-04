@@ -26,6 +26,15 @@ function apply() {
   root.dataset.motion = S.motion;
   root.dataset.motionEff = S.motion === 'system' ? (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduce' : 'full') : S.motion;
   $('#rail').classList.toggle('solid', !S.translucentSidebar);
+  /* panel geometry belongs here too — a cached/bogus S.dockW written at
+     script-init would otherwise poison --w-dock: width:var() falls back to
+     auto (dock shrinks wide) and calc() dies (stage right:0 → composer
+     slides under the dock). sanitize heals it on every apply */
+  const app = $('#app');
+  const dw = Math.max(240, Math.min(innerWidth * 0.5, +S.dockW || 0));
+  const rw = Math.max(180, Math.min(innerWidth * 0.4, +S.railW || 0));
+  if (dw) app.style.setProperty('--w-dock', Math.round(dw) + 'px');
+  if (rw) app.style.setProperty('--w-rail', Math.round(rw) + 'px');
   paintWall();
   syncSettingsUI();
 }

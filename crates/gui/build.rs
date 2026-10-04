@@ -9,6 +9,8 @@ fn main() {
             "shell_open",
             "shell_notify",
             "shell_zoom",
+            "shell_pick_dir",
+            "shell_webview",
             "session_events",
             "host_call",
         ]),

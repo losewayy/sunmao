@@ -10,6 +10,8 @@
     "allow-shell-open",
     "allow-shell-notify",
     "allow-shell-zoom",
+    "allow-shell-pick-dir",
+    "allow-shell-webview",
     "allow-session-events",
     "allow-host-call"
   ]

@@ -1,7 +1,7 @@
 /* composer — the prompt bar: status strip, queue chips (steer + queued
    prompts), attachment chips, input row and its mode/model/send buttons. */
 /* ---------- composer ---------- */
-.composer{position:absolute;left:50%;bottom:var(--s-16);transform:translateX(-50%);width:min(var(--w-read),calc(100% - var(--s-48)));border-radius:var(--r-2xl);--ga:var(--glass-raised);border-color:var(--c-stroke-2);box-shadow:var(--sh-inset-hi),var(--sh-2);z-index:var(--z-composer)}
+.composer{position:absolute;left:50%;bottom:var(--s-16);transform:translateX(-50%);width:min(var(--w-read),calc(100% - var(--s-48)));border-radius:var(--r-2xl);--ga:var(--glass-raised);border-color:var(--c-stroke-2);box-shadow:var(--sh-inset-hi),var(--sh-2);z-index:var(--z-composer);overflow:hidden}
 .cmp-top{display:flex;align-items:center;gap:var(--s-2);height:var(--h-xl);padding:0 var(--s-6);border-radius:calc(var(--r-2xl) - var(--bw-hairline)) calc(var(--r-2xl) - var(--bw-hairline)) 0 0;background:var(--c-fill-1)}/* token-exempt: §6 nested-corner rule */
 .cmp-top[hidden]{display:none}
 .cmp-top,.cmp-atts,.cmp-queue{animation:k-rise var(--dur-fast) var(--ease-out)}
@@ -30,7 +30,8 @@
    hugging them edge-to-edge; model keeps its asymmetric variant because
    the chevron already carries visual weight on the right */
 .cb.mode{padding:0 var(--s-10)}
-.cb.model{padding:0 var(--s-8) 0 var(--s-10);font:var(--fs-sm) var(--font-mono);box-shadow:var(--ring-2)}
+.cb.model{padding:0 var(--s-8) 0 var(--s-10);font:var(--fs-sm) var(--font-mono);box-shadow:var(--ring-2);flex:0 1 auto;min-width:0;overflow:hidden}
+.cb.model>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .cb.effort{padding:0 var(--s-8);font:var(--fs-xs) var(--font-mono)}
 .cb.effort.lit{color:var(--c-accent)}
 .cb.send{width:var(--h-xl);justify-content:center;background:var(--c-accent);color:var(--c-on-accent)}

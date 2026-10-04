@@ -86,7 +86,6 @@
   <div class="titlebar" data-tauri-drag-region>
     <button class="crumb glass" id="crumb" data-act="crumb"></button>
     <div class="capsule glass" role="toolbar" aria-label="全局">
-      <button class="ib on" data-act="rail" id="rail-btn" data-tip="会话侧栏|Ctrl B" aria-label="会话侧栏"><svg class="i"><use href="#i-panel-l"/></svg></button>
       <button class="ib" data-act="palette" data-tip="命令面板|Ctrl K" aria-label="命令面板"><svg class="i"><use href="#i-search"/></svg></button>
       <button class="ib" data-act="events" data-tip="执行记录" aria-label="执行记录"><svg class="i"><use href="#i-history"/></svg></button>
       <button class="ib on" data-act="dock" id="dock-btn" data-tip="数据面板|Ctrl \" aria-label="数据面板"><svg class="i"><use href="#i-panel-r"/></svg></button>
@@ -98,8 +97,12 @@
     </div>
   </div>
 
+  <button class="rail-peek glass" data-act="rail" data-tip="展开侧栏|Ctrl B" aria-label="展开侧栏"><svg class="i"><use href="#i-chev-r"/></svg></button>
   <aside class="rail glass" id="rail">
     <div class="rail-edge" id="rail-edge" data-tip="拖动调整宽度"></div>
+    <div class="rail-head">
+      <button class="ib sm rail-fold" data-act="rail" data-tip="收起侧栏|Ctrl B" aria-label="收起侧栏"><svg class="i"><use href="#i-chev-l"/></svg></button>
+    </div>
     <div class="rail-pane" id="rail-main">
       <nav class="nav">
         <div class="nav-pair">

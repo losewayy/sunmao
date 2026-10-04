@@ -54,8 +54,14 @@ code{font-family:var(--font-mono)}
 .rail-edge{position:absolute;right:0;top:0;bottom:0;width:var(--s-8);cursor:ew-resize;z-index:var(--z-l2)}
 .rail-edge::after{content:'';position:absolute;right:0;top:var(--s-16);bottom:var(--s-16);width:var(--bw-hairline);background:var(--c-stroke);opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
 .rail-edge:hover::after,.rail-edge:active::after{opacity:1}
+/* collapse lives on the rail's own head — the panel that owns the chrome
+   owns the fold; a peek dot stays at the edge while it's away */
+.rail-head{display:flex;justify-content:flex-end;padding:var(--s-6) var(--s-8) 0}
+.rail-peek{position:absolute;left:var(--s-gutter);top:calc(var(--s-gutter) + var(--s-8));width:var(--h-lg);height:var(--h-lg);display:none;align-items:center;justify-content:center;border-radius:var(--r-full);color:var(--c-text-3);z-index:var(--z-rail);cursor:pointer;transition:color var(--dur-instant) var(--ease-out)}
+#app[data-rail="off"] .rail-peek{display:flex;animation:k-rise var(--dur-slow) var(--ease-out)}
+.rail-peek:hover{color:var(--c-text)}
 .rail.solid{--ga:var(--glass-float)}
-.stage{position:absolute;top:0;bottom:0;left:calc(var(--w-rail) + var(--s-gutter) * 2);right:0;transition:right var(--dur-slow) var(--ease-in-out)}
+.stage{position:absolute;top:0;bottom:0;left:calc(var(--w-rail) + var(--s-gutter) * 2);right:0;transition:left var(--dur-slow) var(--ease-in-out),right var(--dur-slow) var(--ease-in-out)}
 #app[data-dock="on"] .stage{right:calc(var(--w-dock) + var(--s-gutter) * 2)}
 .view{position:absolute;inset:0;animation:k-rise var(--dur-fast) var(--ease-out)}
 .view[hidden]{display:none}

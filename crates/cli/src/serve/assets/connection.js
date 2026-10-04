@@ -451,7 +451,6 @@ function go(v) {
 function toggleRail() {
   railOn = !railOn;
   app.dataset.rail = railOn ? 'on' : 'off';
-  $('#rail-btn').classList.toggle('on', railOn);
 }
 function toggleDock() {
   dockOn = !dockOn;

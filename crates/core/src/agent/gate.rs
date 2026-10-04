@@ -35,37 +35,74 @@ impl AgentLoop {
         args: serde_json::Value,
         observer: &dyn Observer,
     ) -> Result<serde_json::Value, String> {
+        // the island parses the sanitized wire name back into components —
+        // compare sanitized↔sanitized, the roster keeps verbatim spellings
         let wire = format!("mcp__{server}__{tool}");
         let handle = self
             .ctx
             .mcp_servers
             .iter()
-            .find(|s| s.name == server)
+            .find(|s| crate::mcp::wire_component(&s.name) == server)
             .ok_or_else(|| format!("no such mcp server: {server}"))?;
         let catalog = handle.tools();
         let info = catalog
             .iter()
-            .find(|t| t.server_tool == tool)
+            .find(|t| crate::mcp::wire_component(&t.server_tool) == tool)
             .ok_or_else(|| format!("no such tool on {server}: {tool}"))?;
         if !info.app_visible {
             return Err(format!("{wire}: not callable from apps (visibility)"));
         }
-        // the UI is not a gate bypass — declarative rules, grants, modes and
-        // the classifier all apply exactly as they do to model calls. The
-        // specifier carries the wire name so `Tool(spec)` permission rules
-        // can match bridge calls ("" matched nothing, silently bypassing
-        // user deny/allow tables).
-        gate_call(&self.ctx, &wire, &args, &wire, None, observer).await?;
-        let mut params = rmcp::model::CallToolRequestParams::new(tool.to_string());
+        // the UI is not a gate bypass — PreToolUse hooks, declarative
+        // rules, grants, modes and the classifier all apply exactly as
+        // they do to model calls. The specifier is the same
+        // `specifier_for` shape the model path uses so `Tool(spec)` rules
+        // match identical calls either way they arrive.
+        let pre = self
+            .ctx
+            .hooks
+            .fire(
+                crate::hooks::HookEvent::PreToolUse,
+                &self.ctx.cwd,
+                &crate::hooks::HookInput {
+                    tool_name: Some(&wire),
+                    tool_input: Some(&args),
+                    ..Default::default()
+                },
+            )
+            .await;
+        if let Some(reason) = pre.block_reason {
+            return Err(format!("hook blocked: {reason}"));
+        }
+        let mut args = args;
+        if let Some(updated) = pre.updated_input {
+            args = updated;
+        }
+        for ctx_text in pre.extra_context {
+            audit_fact(&self.ctx, "mcp.app_hook_ctx", &ctx_text, observer).await;
+        }
+        let specifier = crate::agent::summary::specifier_for(&wire, &args);
+        gate_call(
+            &self.ctx,
+            &wire,
+            &args,
+            &specifier,
+            pre.permission_decision,
+            observer,
+        )
+        .await?;
+        // the remote speaks verbatim names — `tool` is the sanitized
+        // wire component, `server_tool` is what the server declared
+        let mut params = rmcp::model::CallToolRequestParams::new(info.server_tool.clone());
         if let Some(obj) = args.as_object() {
             params = params.with_arguments(obj.clone());
         }
-        let res = handle
-            .client
-            .peer()
-            .call_tool(params)
-            .await
-            .map_err(|e| format!("mcp call failed: {e:#}"))?;
+        let res = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            handle.client.peer().call_tool(params),
+        )
+        .await
+        .map_err(|_| format!("{wire}: call timed out"))?
+        .map_err(|e| format!("mcp call failed: {e:#}"))?;
         audit_fact(
             &self.ctx,
             "mcp.app_call",
@@ -93,12 +130,16 @@ impl AgentLoop {
         if !uri.starts_with("ui://") && !uri.contains("://") {
             return Err("bad resource uri".into());
         }
-        let rr = handle
-            .client
-            .peer()
-            .read_resource_once(rmcp::model::ReadResourceRequestParams::new(uri.to_string()))
-            .await
-            .map_err(|e| format!("mcp resource read failed: {e:#}"))?;
+        let rr = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            handle
+                .client
+                .peer()
+                .read_resource_once(rmcp::model::ReadResourceRequestParams::new(uri.to_string())),
+        )
+        .await
+        .map_err(|_| format!("mcp {server}: resource read timed out"))?
+        .map_err(|e| format!("mcp resource read failed: {e:#}"))?;
         audit_fact(
             &self.ctx,
             "mcp.app_read",
@@ -158,29 +199,30 @@ pub(crate) async fn gate_call(
     {
         // the guard drops inside its own statement — `std::MutexGuard` is
         // !Send and must never live past this line's boundary
-        let wl = {
+        let (sidekick, wl) = {
             let f = ctx.fusion.lock_or_recover();
-            if f.is_sidekick {
-                f.whitelist.clone()
-            } else {
-                Vec::new()
-            }
+            (f.is_sidekick, f.whitelist.clone())
         };
-        if !wl.is_empty()
-            && ["Write", "Edit"].contains(&tool)
-            && let Some(p) = args["path"].as_str()
-            && !whitelist_covers(&wl, &ctx.cwd, p)
-        {
-            audit_fact(
-                ctx,
-                "fusion.whitelist.denied",
-                &format!("{tool}: {p}"),
-                observer,
-            )
-            .await;
-            return Err(format!(
-                "blocked by fusion whitelist: {p} is outside the delegated file set"
-            ));
+        // the contract keys on `is_sidekick`, never list emptiness — an
+        // empty `files:` delegates NO writes, not "no restriction". Any
+        // mutating tool carrying a `path`/`file` arg is checked (Write,
+        // Edit, mcp/ext write tools alike); a mutating Bash has no path
+        // to check, so the segment classifier is the arbiter — if it
+        // mutates, it's outside the delegated file set by definition.
+        // Tools that mutate without a path arg (RunCode — its inner calls
+        // each re-enter this gate — TodoWrite, SendMessage) pass through.
+        if sidekick && call_mutates(tool, args, &ctx.readonly_verbs, ctx.shell) {
+            let detail = if let Some(p) = args["path"].as_str().or_else(|| args["file"].as_str()) {
+                (!whitelist_covers(&wl, &ctx.cwd, p)).then(|| format!("{tool}: {p}"))
+            } else {
+                (tool == "Bash").then(|| format!("{tool}: {specifier}"))
+            };
+            if let Some(detail) = detail {
+                audit_fact(ctx, "fusion.whitelist.denied", &detail, observer).await;
+                return Err(format!(
+                    "blocked by fusion whitelist: {detail} is outside the delegated file set"
+                ));
+            }
         }
     }
     // read_only refuses mutations outright — the refusal is an audit
@@ -450,7 +492,19 @@ pub(crate) async fn gate_ask(
             ..Default::default()
         },
     );
-    match ctx.approval.approve(tool, specifier, why).await {
+    // the parked card must answer to cancel too — a `cancel_sub` on a
+    // child suspended here sets that Context's own notify; without the
+    // select the kill lands only at the next poll boundary
+    let approval = {
+        let w = ctx.cancel_notify.notified();
+        tokio::pin!(w);
+        w.as_mut().enable();
+        tokio::select! {
+            a = ctx.approval.approve(tool, specifier, why) => a,
+            _ = w => crate::approval::Approval::Cancelled,
+        }
+    };
+    match approval {
         crate::approval::Approval::Session => {
             ctx.grant_session(tool, specifier);
             let detail = format!("{tool}: {specifier}");

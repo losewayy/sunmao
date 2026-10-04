@@ -19,7 +19,7 @@ use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellBackend {
-    /// deno_task_shell in-process interpreter — the product default.
+    /// Embedded POSIX backend — auto-selected off Windows and used as pwsh fallback.
     Posix,
     /// `pwsh -NoProfile -Command <text>` — real PowerShell 7 on this box.
     Pwsh,

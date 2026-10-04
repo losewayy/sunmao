@@ -83,23 +83,31 @@ impl SessionHandler {
     /// `write_gate`: a bootstrap listing still in flight inside
     /// connect_one must finish first (or lose), never interleave.
     async fn refresh(&self, peer: &rmcp::service::Peer<RoleClient>) {
-        let tools = match peer.list_all_tools().await {
-            Ok(listed) => Some(listed.iter().map(|t| tool_info(&self.server, t)).collect()),
-            Err(e) => {
+        // a wedged server must not park this notification task forever —
+        // the same 30s bound the connect listings get
+        const REFRESH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+        let tools = match tokio::time::timeout(REFRESH_TIMEOUT, peer.list_all_tools()).await {
+            Ok(Ok(listed)) => Some(listed.iter().map(|t| tool_info(&self.server, t)).collect()),
+            Ok(Err(e)) => {
                 self.shared
                     .note(format!("{}: tools/list refresh failed: {e:#}", self.server));
                 None
             }
+            Err(_) => {
+                self.shared
+                    .note(format!("{}: tools/list refresh timed out", self.server));
+                None
+            }
         };
-        let prompts = peer
-            .list_all_prompts()
+        let prompts = tokio::time::timeout(REFRESH_TIMEOUT, peer.list_all_prompts())
             .await
             .ok()
+            .and_then(|r| r.ok())
             .map(|listed| listed.iter().map(super::prompt_info).collect());
-        let resources = peer
-            .list_all_resources()
+        let resources = tokio::time::timeout(REFRESH_TIMEOUT, peer.list_all_resources())
             .await
             .ok()
+            .and_then(|r| r.ok())
             .map(|listed| listed.iter().map(super::resource_info).collect());
         // refresh always wins the gate — it rides a real push, so its
         // listing is by definition the newer state. The version bumps

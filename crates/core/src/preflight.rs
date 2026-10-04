@@ -1,13 +1,14 @@
 //! `shell/preflight` — predict a Bash command's fate before it runs.
 //!
-//! The Bash tool's executor is `deno_task_shell`: a `which`-style
-//! PATH+PATHEXT resolve (CWD is never searched) feeding `CreateProcess` —
-//! that is exactly what `spawnfate::Producer::WinSpawn` models. Preflight
-//! walks the parsed command list, analyzes every literal simple command, and
-//! returns advisories for anything predicted to die or mangle. Advisories
-//! ride back inside the tool result so the model can self-correct instead of
-//! burning a turn on a dead spawn. They never block: a prediction is a
-//! differential, not a verdict — running stays authoritative.
+//! The POSIX backend uses `deno_task_shell`: a `which`-style PATH+PATHEXT
+//! resolve (CWD is never searched) feeding `CreateProcess` — that is exactly
+//! what `spawnfate::Producer::WinSpawn` models. Preflight walks the parsed
+//! command list, analyzes every literal simple command, and returns advisories
+//! for anything predicted to die or mangle. It runs only for the POSIX backend;
+//! PowerShell uses its separate `pwsh` executor. Advisories ride back inside
+//! the tool result so the model can self-correct instead of burning a turn on a
+//! dead spawn. They never block: a prediction is a differential, not a verdict
+//! — running stays authoritative.
 //!
 //! Words that contain variable/tilde/command-substitution parts can't be
 //! predicted honestly — those commands are skipped, and commands prefixed

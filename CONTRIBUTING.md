@@ -12,9 +12,10 @@ list is the real contributor guide; this file is the human frame around it.
 - No speculative generality. If a compat layer exists, it's because a real
   file format/ecosystem demanded it (Claude settings, `mcpServers`,
   `agents/*.md` — all observable contracts).
-- Windows is a first-class citizen: tools can't assume a POSIX shell,
-  `Bash` runs embedded POSIX via `deno_task_shell`, `Grep` spawns `rg`
-  directly.
+- Windows is a first-class citizen: tools can't assume a POSIX shell.
+  Without a shell pin, `Bash` auto-selects PowerShell 7 on Windows when
+  `pwsh` is available; otherwise it uses embedded POSIX. `deno_task_shell`
+  remains an explicit portable option. `Grep` spawns `rg` directly.
 
 ## Workflow
 

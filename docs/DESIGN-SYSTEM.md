@@ -62,6 +62,7 @@ crates/cli/src/serve/assets/
 | `--c-` | 颜色 | `--c-text-2` `--c-accent-soft` |
 | `--font-` `--fs-` `--fw-` `--lh-` `--ls-` | 字体 | `--fs-sm` |
 | `--s-` | 间距（名字即 px 值） | `--s-12` |
+| `--bw-` | 边线粗细 | `--bw-hairline` |
 | `--h-` | 控件高度 | `--h-lg` |
 | `--w-` | 布局宽度 | `--w-rail` |
 | `--r-` | 圆角 | `--r-lg` |
@@ -193,11 +194,17 @@ crates/cli/src/serve/assets/
 | `--h-xl` | 36px | 输入框、发送键、工作卡头、toast、设置返回（34/38→36） |
 | `--h-2xl` | 40px | 工作区行、岛屿头、事件日志头（42→40） |
 | `--h-3xl` | 48px | 标题栏、命令面板输入（50→48） |
+| `--h-theme-preview` | 86px | 外观页主题缩略预览 |
+| `--h-provider-model-list` | 220px | 提供商模型列表的最大高度 |
+| `--h-attachment-preview` | 160px | 对话图片预览最大高度 |
+| `--h-range-input` | 18px | 范围滑块的点击区域高度 |
 
 ### 5.3 布局宽度 `--w-*`
 
 `--w-rail:252px` `--w-dock:264px` `--w-read:720px`（transcript 与输入框）
 `--w-bubble-you:600px` `--w-settings:760px` `--w-palette:580px`
+`--w-wallpaper-tile:100px` `--w-setting-control:220px` `--w-model-level:160px`
+`--w-chip-text:220px` `--w-attachment-preview:220px`
 `--w-starters:620px` `--w-pop:220px` `--w-pop-max:380px`。
 
 ### 5.4 图标

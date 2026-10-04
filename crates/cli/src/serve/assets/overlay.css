@@ -62,7 +62,10 @@
 #imv .stage{position:absolute;inset:0;margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--s-10);padding:var(--s-24);pointer-events:none}
 #imv .stage img{max-width:92vw;max-height:86vh;border-radius:var(--r-lg);object-fit:contain;pointer-events:auto;cursor:zoom-out;box-shadow:var(--sh-3);animation:k-rise var(--dur-base) var(--ease-out)}
 #imv .stage figcaption{font-size:var(--fs-xs);color:var(--c-text-2);pointer-events:auto}
-#toasts{position:absolute;left:50%;bottom:var(--off-toasts);transform:translateX(-50%);z-index:var(--z-toast);display:flex;flex-direction:column;align-items:center;gap:var(--s-8);pointer-events:none}
+/* floats just above the composer zone — --off-hero-bottom already marks
+   where the composer card ends; sit one gap beyond it instead of a fixed
+   offset that can land inside the card */
+#toasts{position:absolute;left:50%;bottom:calc(var(--off-hero-bottom) + var(--s-8));transform:translateX(-50%);z-index:var(--z-toast);display:flex;flex-direction:column;align-items:center;gap:var(--s-8);pointer-events:none}
 .toast{display:flex;align-items:center;gap:var(--s-8);height:var(--h-xl);padding:0 var(--s-16) 0 var(--s-12);border-radius:var(--r-full);font-size:var(--fs-sm);white-space:nowrap;--ga:var(--glass-float);box-shadow:var(--sh-inset-hi),var(--sh-3);animation:k-rise var(--dur-base) var(--ease-out)}
 .toast .i{color:var(--c-ok)}
 .toast.warn .i{color:var(--c-warn)}

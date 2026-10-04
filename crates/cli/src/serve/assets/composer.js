@@ -364,3 +364,11 @@ function pickSlash(cmd) {
 }
 document.addEventListener('mousedown', e => { if (slashEl && !slashEl.contains(e.target) && e.target !== $('#input')) slashCheck(true); if (atEl && !atEl.contains(e.target) && e.target !== $('#input')) closeAt(); }, true);
 
+/* the composer zone isn't fixed — queue/attachment/top rows grow the card
+   upward. Track its real top edge so hero and toasts stay above it at any
+   height instead of clearing a static guess. */
+new ResizeObserver(() => {
+  const h = $('#composer').getBoundingClientRect().height;
+  $('.stage').style.setProperty('--off-hero-bottom', (h + 16) + 'px');
+}).observe($('#composer'));
+

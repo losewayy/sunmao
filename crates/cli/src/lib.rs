@@ -359,16 +359,7 @@ pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
         "default",
     )));
     let ctx = Arc::new(ctx_raw);
-    ctx.hooks
-        .fire(
-            sunmao_core::hooks::HookEvent::SessionStart,
-            &ctx.cwd,
-            &sunmao_core::hooks::HookInput {
-                source: Some(if resumed { "resume" } else { "startup" }),
-                mcp_servers: Some(ctx.mcp_servers.iter().map(|s| s.name.clone()).collect()),
-                ..Default::default()
-            },
-        )
+    ctx.fire_session_start(if resumed { "resume" } else { "startup" })
         .await;
 
     // The system prompt is assembled, not constant: built-in section files →
@@ -384,6 +375,7 @@ pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
         log.append(&sunmao_core::SessionEvent::Started {
             model: cli.model.clone(),
             cwd: ctx.cwd.display().to_string(),
+            driver: Some(ctx.loop_driver.as_str().into()),
         })
         .await?;
         log.append(&sunmao_core::SessionEvent::Message {
@@ -401,13 +393,17 @@ pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
         // SessionEnd hooks run in every frontend — a one-shot exit is
         // still a session ending (context-mode-style state capture hooks
         // depend on this event, not on which surface drove it).
-        ctx.hooks
-            .fire(
+        // bounded advisory: a wedged capture hook gets 5s, not the
+        // default hook timeout — the process is exiting either way
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            ctx.hooks.fire(
                 sunmao_core::hooks::HookEvent::SessionEnd,
                 &ctx.cwd,
                 &sunmao_core::hooks::HookInput::default(),
-            )
-            .await;
+            ),
+        )
+        .await;
         // process::exit skips destructors — extension children need the
         // graceful shutdown (ext/shutdown → EOF → kill) run explicitly.
         ctx.ext.shutdown().await;
@@ -428,13 +424,15 @@ pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
             preset_roots,
         )
         .await;
-        ctx.hooks
-            .fire(
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            ctx.hooks.fire(
                 sunmao_core::hooks::HookEvent::SessionEnd,
                 &ctx.cwd,
                 &sunmao_core::hooks::HookInput::default(),
-            )
-            .await;
+            ),
+        )
+        .await;
         ctx.ext.shutdown().await;
         return res;
     }
@@ -449,13 +447,15 @@ pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
         resumed,
     )
     .await?;
-    ctx.hooks
-        .fire(
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        ctx.hooks.fire(
             sunmao_core::hooks::HookEvent::SessionEnd,
             &ctx.cwd,
             &sunmao_core::hooks::HookInput::default(),
-        )
-        .await;
+        ),
+    )
+    .await;
     ctx.ext.shutdown().await;
     Ok(())
 }

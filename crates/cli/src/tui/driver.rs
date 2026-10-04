@@ -300,7 +300,7 @@ pub(super) fn spawn(
                     continue;
                 }
                 Submit::Annotate(name, note) => {
-                    let _ = tx_msg.send(Msg::Note(commands::annotate(&cwd, &name, &note)));
+                    let _ = tx_msg.send(Msg::Note(commands::annotate(&cwd, &name, &note, None)));
                     continue;
                 }
                 Submit::Resume(arg) => {

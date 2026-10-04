@@ -406,6 +406,7 @@ async fn run_inner(
                 // serve-only live mirror of the durable user message — the
                 // TUI prints its own prompt on submit, so it never lands
                 LiveEvent::UserMessage { .. } => {}
+                LiveEvent::TurnBoundary { .. } => {} // rewind ordinals are a serve concern
                 LiveEvent::TaskDone { id, ok, .. } => {
                     app.push_note(&format!(
                         "[sub-agent {id} {}]",

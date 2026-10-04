@@ -117,6 +117,7 @@ pub async fn run(
                             .append(&SessionEvent::Started {
                                 model: agent.model.clone(),
                                 cwd: cwd.display().to_string(),
+                                driver: Some(ctx.loop_driver.as_str().into()),
                             })
                             .await;
                         // same assembled prompt as every other frontend —
@@ -135,19 +136,7 @@ pub async fn run(
                     // SessionStart is a session fact, not a frontend
                     // courtesy — fire after extensions are up so they can
                     // answer it, same ordering every frontend keeps.
-                    ctx.hooks
-                        .fire(
-                            sunmao_core::hooks::HookEvent::SessionStart,
-                            &ctx.cwd,
-                            &sunmao_core::hooks::HookInput {
-                                source: Some("startup"),
-                                mcp_servers: Some(
-                                    ctx.mcp_servers.iter().map(|s| s.name.clone()).collect(),
-                                ),
-                                ..Default::default()
-                            },
-                        )
-                        .await;
+                    ctx.fire_session_start("startup").await;
                     let agent_loop = AgentLoop::new(ctx.clone());
                     let options = config_options(&ctx, &agent_loop).await;
                     agent.sessions.lock_or_recover().insert(
@@ -288,19 +277,7 @@ pub async fn run(
                     }));
                     // SessionStart(source=resume) — same fact a --resume
                     // startup would record; extensions must be up first.
-                    ctx.hooks
-                        .fire(
-                            sunmao_core::hooks::HookEvent::SessionStart,
-                            &ctx.cwd,
-                            &sunmao_core::hooks::HookInput {
-                                source: Some("resume"),
-                                mcp_servers: Some(
-                                    ctx.mcp_servers.iter().map(|s| s.name.clone()).collect(),
-                                ),
-                                ..Default::default()
-                            },
-                        )
-                        .await;
+                    ctx.fire_session_start("resume").await;
                     // the reopened log reseeds mode + effort — the response
                     // advertises what it restored, not defaults
                     let agent_loop = AgentLoop::new(ctx.clone());

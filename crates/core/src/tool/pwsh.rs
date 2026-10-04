@@ -97,12 +97,14 @@ pub async fn run_foreground(
         })
     };
 
-    let cancel_fut = async {
-        match &cancel {
-            Some(n) => n.notified().await,
-            None => std::future::pending::<()>().await,
-        }
-    };
+    // arm before the select — `notified()` registers on first poll, so a
+    // notify fired in the gap between creation and the select's first
+    // poll would slip past and leave the run unabortable
+    let cancel_fut = cancel.as_ref().map(|n| n.notified());
+    tokio::pin!(cancel_fut);
+    if let Some(f) = cancel_fut.as_mut().as_pin_mut() {
+        f.enable();
+    }
 
     enum End {
         Natural(i32),
@@ -115,7 +117,12 @@ pub async fn run_foreground(
             Err(e) => return Err(format!("pwsh wait failed: {e}")),
         },
         () = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs)) => End::Timeout,
-        () = cancel_fut => End::Cancelled,
+        _ = async {
+            match cancel_fut.as_mut().as_pin_mut() {
+                Some(f) => f.await,
+                None => std::future::pending::<()>().await,
+            }
+        } => End::Cancelled,
     };
 
     let (code, ended) = match end {

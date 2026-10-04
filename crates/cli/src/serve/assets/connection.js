@@ -119,7 +119,7 @@ function route(v) {
       }
       break;
     case 'replay':
-      if (v.session) { sessionId = v.session; }
+      if (v.session && v.session !== sessionId) { sessionId = v.session; if (typeof dockSessionSwap === 'function') dockSessionSwap(); }
       if (v.cwd) { cwd = String(v.cwd).replace(/^\\\\\?\\/, ''); $('#df-cwd').textContent = projectName(cwd) || '—'; $('#df-cwd').dataset.tip = cwd; }
       // switching sessions rebuilds the whole transcript — fadeSwap turns
       // the hard cut into a fast out/in so the swap reads as a transition
@@ -451,6 +451,7 @@ function go(v) {
 function toggleRail() {
   railOn = !railOn;
   app.dataset.rail = railOn ? 'on' : 'off';
+  $('#rail-btn').classList.toggle('on', railOn);
 }
 function toggleDock() {
   dockOn = !dockOn;

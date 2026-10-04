@@ -108,10 +108,13 @@ function brSyncNative(b) {
     TAURI.webview({ op: 'rect', id: b.id, rect: { x: -40000, y: 0, w: 10, h: 10 } });
     return;
   }
-  const r = view.getBoundingClientRect(), z = S.zoom || 1;
+  const r = bv.getBoundingClientRect(), z = S.zoom || 1;
   const rect = { x: r.left * z, y: r.top * z, w: r.width * z, h: r.height * z };
-  TAURI.webview({ op: 'create', id: b.id, url: b.url, rect });
-  TAURI.webview({ op: 'rect', id: b.id, rect });
+  TAURI.webview({ op: 'create', id: b.id, url: b.url, rect }).catch(e => {
+    const em = $('.br-empty small', brPane(b));
+    if (em) em.textContent = `原生窗口创建失败：${e}`;
+  });
+  TAURI.webview({ op: 'rect', id: b.id, rect }).catch(() => {});
 }
 function brSyncAll() {
   for (const t of sessionTabs()) if (t.kind === 'browser') brSyncNative(t);
@@ -187,9 +190,11 @@ function brGo(b, raw, push = true) {
   b.url = url; save();
   if (nativeBr()) {
     // a real guest webview — create it parked offscreen on about:blank,
-    // then one navigate; no sandbox gymnastics needed
+    // then one navigate; brSyncAll then moves it onto the pane rect —
+    // without this the page loads at x:-40000 where nobody can see it
     TAURI.webview({ op: 'create', id: b.id, url: 'about:blank', rect: { x: -40000, y: 0, w: 10, h: 10 } });
     TAURI.webview({ op: 'nav', id: b.id, url });
+    brSyncAll();
   } else {
     const fr = $('iframe', pane);
     // direct: opaque origin + scripts — a real page, DOM unreachable so
@@ -225,27 +230,31 @@ function dockSessionSwap() {
   sessionTabs().filter(t => t.kind === 'browser').forEach(mountBrowser);
   renderDockTabs();
   const cur = $('#dock').dataset.tab, tabs = sessionTabs();
-  if (cur && !tabs.some(t => (t.kind === 'browser' ? 'br:' + t.id : t.pane) === cur)) {
-    const first = tabs[0];
-    dockTab(first ? (first.kind === 'browser' ? 'br:' + first.id : first.pane) : '');
-  }
+  /* panes mounted fresh above start `hidden` — the remembered tab may be
+     valid for this set yet point at a pane that didn't exist when it was
+     last activated; re-activate either way so something actually shows */
+  const want = cur && tabs.some(t => (t.kind === 'browser' ? 'br:' + t.id : t.pane) === cur)
+    ? cur : (tabs[0] ? (tabs[0].kind === 'browser' ? 'br:' + tabs[0].id : tabs[0].pane) : '');
+  dockTab(want);
   brSyncAll();
 }
 
 /* ---- resize edge ---- */
 (function dockResize() {
   const edge = $('#dock-edge'), dock = $('#dock');
-  if (S.dockW) document.getElementById('app').style.setProperty('--w-dock', S.dockW + 'px');
   edge.addEventListener('pointerdown', e => {
     e.preventDefault();
     edge.setPointerCapture(e.pointerId);
+    const app = document.getElementById('app');
+    app.dataset.dragging = '1';
     const right = dock.getBoundingClientRect().right;
     const move = ev => {
-      const w = Math.max(240, Math.min(innerWidth * 0.72, right - ev.clientX));
-      document.getElementById('app').style.setProperty('--w-dock', w + 'px');
+      const w = Math.max(240, Math.min(innerWidth * 0.5, right - ev.clientX));
+      app.style.setProperty('--w-dock', w + 'px');
       S.dockW = Math.round(w);
     };
     const up = () => {
+      delete app.dataset.dragging;
       edge.removeEventListener('pointermove', move);
       edge.removeEventListener('pointerup', up);
       save();

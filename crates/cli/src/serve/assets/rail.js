@@ -190,16 +190,17 @@ function syncRailMode() {
    follows live; S.railW persists per project (same seam as the dock's) */
 (function railResize() {
   const edge = $('#rail-edge'), rail = $('#rail'), app = $('#app');
-  if (S.railW) app.style.setProperty('--w-rail', S.railW + 'px');
   edge.addEventListener('pointerdown', e => {
     e.preventDefault();
     edge.setPointerCapture(e.pointerId);
+    app.dataset.dragging = '1';
     const move = ev => {
-      const w = Math.max(180, Math.min(innerWidth * 0.5, ev.clientX - rail.getBoundingClientRect().left));
+      const w = Math.max(180, Math.min(innerWidth * 0.4, ev.clientX - rail.getBoundingClientRect().left));
       app.style.setProperty('--w-rail', w + 'px');
       S.railW = Math.round(w);
     };
     const up = () => {
+      delete app.dataset.dragging;
       edge.removeEventListener('pointermove', move);
       edge.removeEventListener('pointerup', up);
       save();

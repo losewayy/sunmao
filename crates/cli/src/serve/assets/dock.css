@@ -94,5 +94,7 @@ button.rt:hover{background:var(--c-fill-2);color:var(--c-text)}
 .pop.jobview-pop{max-width:min(var(--w-jobview),calc(100vw - var(--s-32)))}
 .pop .jobview{max-height:var(--h-pop-list);margin:var(--s-2) var(--s-6) var(--s-4);padding:var(--s-6) var(--s-8);border-radius:var(--r-md);background:var(--c-sunken);font:var(--fs-2xs)/var(--lh-body) var(--font-mono);white-space:pre-wrap;word-break:break-all;color:var(--c-text-2);overflow-y:auto}
 
-/* dock overlays the stage below this width */
-@media (max-width:1180px){#app[data-dock="on"] .stage{right:0}#app[data-dock="on"] .hero{right:calc(var(--w-dock) + var(--s-gutter) * 2)}}
+/* narrow windows used to overlay the dock on the stage — the composer sat
+   on stage-width and bled under the panel. the dock is a sibling now, the
+   stage just shrinks */
+@media (max-width:1180px){#app[data-dock="on"] .hero{right:calc(var(--w-dock) + var(--s-gutter) * 2)}}

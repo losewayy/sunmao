@@ -158,6 +158,18 @@ impl CatalogEntry {
     }
 }
 
+/// A `max_output` at ≥90% of the context window is not a cap — it's the
+/// provider shrugging ("everything but a sliver"). OpenRouter relays such
+/// values verbatim (DeepSeek's upstream advertises ~944K completions on a
+/// 1M window). Drop them so the UI shows an honest blank instead of an
+/// absurd number; a real ceiling never sits that close to the window.
+pub fn sane_max_output(context: Option<u64>, max_out: Option<u64>) -> Option<u64> {
+    match (context, max_out) {
+        (Some(c), Some(m)) if m * 10 >= c * 9 => None,
+        _ => max_out,
+    }
+}
+
 fn is_false(b: &bool) -> bool {
     !*b
 }

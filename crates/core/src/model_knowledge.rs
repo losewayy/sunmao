@@ -158,7 +158,7 @@ impl Knowledge {
             e.context_length = k.context;
         }
         if e.max_output.is_none() {
-            e.max_output = k.max_output;
+            e.max_output = crate::models::sane_max_output(e.context_length, k.max_output);
         }
         if e.input_modalities.is_empty() && !k.input.is_empty() {
             e.input_modalities = k.input.clone();
@@ -220,10 +220,11 @@ pub async fn refresh_user_layer() -> anyhow::Result<usize> {
             .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
             .unwrap_or_default();
         let mut e = serde_json::json!({"match": key, "context": ctx});
-        if let Some(mo) = row
-            .pointer("/top_provider/max_completion_tokens")
-            .and_then(|m| m.as_u64())
-        {
+        if let Some(mo) = crate::models::sane_max_output(
+            Some(ctx),
+            row.pointer("/top_provider/max_completion_tokens")
+                .and_then(|m| m.as_u64()),
+        ) {
             e["max_output"] = mo.into();
         }
         if let Some(serde_json::Value::Array(inp)) = row.pointer("/architecture/input_modalities") {

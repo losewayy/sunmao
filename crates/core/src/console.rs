@@ -100,6 +100,11 @@ mod tests {
             let cp = oem_codepage();
             if cp == 936 || cp == 54936 {
                 assert_eq!(s, "中文", "OEM cp{cp} should decode GBK");
+            } else if let Some(expected) = decode_with_codepage(cp, &gbk) {
+                // a single-byte OEM cp (437 on en-US runners, 850…) maps
+                // every byte — the honest decode is that cp's glyphs,
+                // not replacement chars
+                assert_eq!(s, expected, "cp{cp} should drive the decode");
             } else {
                 assert!(s.contains('\u{FFFD}'), "cp{cp}: {s:?}");
             }

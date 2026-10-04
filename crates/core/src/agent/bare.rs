@@ -34,16 +34,24 @@ impl AgentLoop {
         attachments: &[sunmao_llm::Content],
         observer: &dyn Observer,
     ) -> anyhow::Result<TurnOutcome> {
+        let mut ordinal = None;
         {
             let mut log = self.ctx.sessions.lock().await;
-            log.append(&SessionEvent::Message {
+            let ev = SessionEvent::Message {
                 message: Message::user_blocks(input, attachments.to_vec()),
-            })
-            .await?;
+            };
+            if crate::checkpoints::is_turn_boundary(&ev) {
+                // same ordinal accounting as the full loop — bare skips
+                // hooks and the gate, not the checkpoint ledger
+                let mut cps = self.ctx.checkpoints.lock_or_recover();
+                cps.turn += 1;
+                ordinal = Some(cps.turn);
+            }
+            log.append(&ev).await?;
         }
-        // same ordinal accounting as the full loop — bare skips hooks and
-        // the gate, not the checkpoint ledger
-        self.ctx.checkpoints.lock_or_recover().turn += 1;
+        if let Some(n) = ordinal {
+            observer.on_event(&crate::agent::LiveEvent::TurnBoundary { ordinal: n });
+        }
         let mut outcome = TurnOutcome::Completed;
         for _ in 0..self.max_iterations {
             if self

@@ -4,8 +4,20 @@ use sunmao_llm::types::Message;
 #[tokio::test]
 async fn fold_replays_messages_and_tool_results() {
     let mut log = SessionLog::ephemeral();
+    // a tool_result only folds when its call exists — a stray result with
+    // no matching tool_use is provider-illegal and gets dropped by repair
     log.append(&SessionEvent::Message {
-        message: Message::user("hi"),
+        message: Message::assistant(
+            None,
+            vec![sunmao_llm::types::ToolCall {
+                id: "c1".into(),
+                kind: "function".into(),
+                function: sunmao_llm::types::FunctionCall {
+                    name: "Read".into(),
+                    arguments: "{}".into(),
+                },
+            }],
+        ),
     })
     .await
     .unwrap();

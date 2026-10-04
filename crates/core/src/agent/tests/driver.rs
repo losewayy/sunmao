@@ -9,6 +9,9 @@ async fn bare_driver_runs_tools_without_gate_or_hooks() {
     let dir = crate::fresh_test_dir("bare");
     std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
     std::fs::write(dir.join(".sunmao/plugin.json"), r#"{"loop":"bare"}"#).unwrap();
+    // project-layer `loop:` picks are pinned — bare disarms the whole gate
+    crate::hooks::trust::set_pin(&dir, &dir.join(".sunmao/plugin.json"), "loop:bare", true)
+        .unwrap();
     // a deny that would hard-refuse this exact call under `full`
     std::fs::write(
         dir.join(".sunmao/permissions.json"),
@@ -286,6 +289,7 @@ async fn ptc_driver_advertises_runcode_only() {
     let dir = crate::fresh_test_dir("ptc");
     std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
     std::fs::write(dir.join(".sunmao/plugin.json"), r#"{"loop":"ptc"}"#).unwrap();
+    crate::hooks::trust::set_pin(&dir, &dir.join(".sunmao/plugin.json"), "loop:ptc", true).unwrap();
     // a deny that must still catch the *nested* call
     std::fs::write(
         dir.join(".sunmao/permissions.json"),

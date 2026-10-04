@@ -74,18 +74,15 @@ impl AgentLoop {
                 summary: summary.clone(),
             })
             .await?;
-        let _ = self
-            .ctx
-            .hooks
-            .fire(
-                HookEvent::PostCompact,
-                &self.ctx.cwd,
-                &crate::hooks::HookInput {
-                    source: Some(trigger),
-                    ..Default::default()
-                },
-            )
-            .await;
+        crate::hooks::HookEngine::fire_detached(
+            &self.ctx.hooks,
+            HookEvent::PostCompact,
+            &self.ctx.cwd,
+            &crate::hooks::HookInput {
+                source: Some(trigger),
+                ..Default::default()
+            },
+        );
         observer.on_event(&LiveEvent::ToolDone {
             name: "compact".into(),
             ok: true,
@@ -101,5 +98,72 @@ impl AgentLoop {
             summary: summary.clone(),
         });
         Ok(summary)
+    }
+}
+
+impl AgentLoop {
+    /// Rough token estimate for the current transcript.
+    /// Estimated tokens for the *next* request. Trust the provider's own
+    /// counter first — the last `Usage` fact's `prompt_tokens` is exact.
+    /// The byte heuristic is the fallback for a session that hasn't
+    /// reported usage yet (or a dialect that never does), not the
+    /// primary source: `serde_json` bytes over-count structure and
+    /// under-count CJK by ~2×.
+    pub(super) async fn est_tokens(&self) -> usize {
+        let events = self
+            .ctx
+            .sessions
+            .lock()
+            .await
+            .events()
+            .await
+            .unwrap_or_default();
+        // a Usage fact older than the last Compacted boundary describes the
+        // pre-compact transcript — trusting it re-trips the loop-head check
+        // and compacts the fresh summary a second time
+        for ev in events.iter().rev() {
+            match ev {
+                SessionEvent::Usage { usage } => return usage.prompt_tokens as usize,
+                SessionEvent::Compacted { .. } => break,
+                _ => {}
+            }
+        }
+        // no usage yet — estimate from the folded messages
+        let msgs = self
+            .ctx
+            .sessions
+            .lock()
+            .await
+            .messages()
+            .await
+            .unwrap_or_default();
+        msgs.iter()
+            .map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0))
+            .sum::<usize>()
+            / 4
+    }
+
+    /// The auto-compact tripwire, sized to the model the session is *on*.
+    /// `context_length_for` reads the provider catalog; a selector that
+    /// resolves nowhere or a provider that doesn't advertise a window falls
+    /// back to `compact_threshold`. 85% headroom leaves room for the turn
+    /// that tips it over.
+    pub(super) fn effective_threshold(&self) -> usize {
+        let window = self
+            .ctx
+            .active_selector
+            .read()
+            .unwrap()
+            .as_deref()
+            .and_then(|sel| {
+                self.ctx
+                    .models
+                    .as_ref()
+                    .and_then(|m| m.context_length_for(sel))
+            });
+        match window {
+            Some(w) => ((w * 85 / 100) as usize).max(1),
+            None => self.compact_threshold,
+        }
     }
 }

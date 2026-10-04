@@ -211,12 +211,6 @@ function renderProviders() {
   // serializes them verbatim into catalog entries
   host.oninput = e => {
     if (!pvEdit) return;
-    const tk = e.target.closest('.pv-tk');
-    if (tk) {
-      const c = pvEdit.cands.find(m => m.id === tk.dataset.tk);
-      if (c) c.thinking = tk.value.split(',').map(s => s.trim()).filter(Boolean);
-      return;
-    }
     const num = e.target.closest('.pv-num');
     if (!num) return;
     const c = pvEdit.cands.find(m => m.id === (num.dataset.cx || num.dataset.mo));
@@ -241,9 +235,20 @@ function provForm(n, p) {
     return `<button class="pv-chip${mods.includes(kind) ? ' on' : ''}" data-mf="mod" data-mk="${kind}" data-mid="${esc(m.id)}" data-tip="输入模态 · ${kind}">${label}</button>`;
   };
   const mflag = (m, key, label, tip) => `<button class="pv-chip${m[key] ? ' on' : ''}" data-mf="flag" data-mk="${key}" data-mid="${esc(m.id)}" data-tip="${tip}">${label}</button>`;
-  // two clean lines: identity row (check + id), then a uniform field strip —
-  // numbers, thinking levels, modality/capability toggles all same height
-  const mrow = m => `<div class="pv-ckr"><button class="pv-ck" data-mc="${esc(m.id)}">${ic(v.sel && v.sel.has(m.id) ? 'square-check' : 'square', 'i sm')}<span class="mono">${esc(m.id)}</span></button><div class="pv-cf"><label class="pv-f">上下文<input class="pv-num" data-cx="${esc(m.id)}" value="${m.context_length || ''}" placeholder="—" spellcheck="false" data-tip="上下文窗口（tokens）"></label><label class="pv-f">输出<input class="pv-num" data-mo="${esc(m.id)}" value="${m.max_output || ''}" placeholder="—" spellcheck="false" data-tip="单次输出上限（tokens）"></label><label class="pv-f grow">思考<input class="pv-tk2" data-tk="${esc(m.id)}" value="${esc((m.thinking || []).join(','))}" placeholder="low,medium,high" spellcheck="false" data-tip="逗号分隔的思考强度档位；空 = 不声明"></label><span class="pv-f">输入${mchip(m, 'image', '图')}${mchip(m, 'audio', '音')}${mchip(m, 'video', '视')}${mchip(m, 'file', '文')}</span><span class="pv-f">${mflag(m, 'supports_tools', '具', '支持工具调用')}${mflag(m, 'structured_outputs', '构', '支持结构化输出')}</span></div></div>`;
+  // each model = one card: identity row, then labeled sections that wrap —
+  // numbers in fixed fields, the effort vocabulary as toggle chips (the
+  // catalog's `thinking` IS the declared level set — low|medium|high|…),
+  // `仅开关` for toggle-only reasoning models, modality + wire flags last
+  const mrow = m => {
+    const lv = new Set(m.thinking || []);
+    const tgl = !!m.reasoning && !lv.size;
+    const chips = THINK_LADDER.map(l => `<button class="pv-chip${lv.has(l) ? ' on' : ''}" data-mf="lvl" data-mk="${l}" data-mid="${esc(m.id)}" data-tip="思考档位 · ${l}">${l}</button>`).join('');
+    return `<div class="pv-ckr"><button class="pv-ck" data-mc="${esc(m.id)}">${ic(v.sel && v.sel.has(m.id) ? 'square-check' : 'square', 'i sm')}<span class="mono">${esc(m.id)}</span></button>`
+      + `<div class="pv-cf"><label class="pv-f">上下文<input class="pv-num" data-cx="${esc(m.id)}" value="${m.context_length || ''}" placeholder="—" spellcheck="false" data-tip="上下文窗口（tokens）"></label><label class="pv-f">输出<input class="pv-num" data-mo="${esc(m.id)}" value="${m.max_output || ''}" placeholder="—" spellcheck="false" data-tip="单次输出上限（tokens）"></label></div>`
+      + `<div class="pv-cf"><span class="pv-fl">思考</span><span class="pv-chips">${chips}<button class="pv-chip${tgl ? ' on' : ''}" data-mf="tgl" data-mid="${esc(m.id)}" data-tip="模型只提供思考开关，没有档位">仅开关</button></span></div>`
+      + `<div class="pv-cf"><span class="pv-fl">输入</span><span class="pv-chips">${mchip(m, 'image', '图')}${mchip(m, 'audio', '音')}${mchip(m, 'video', '视')}${mchip(m, 'file', '文')}<i class="pv-sep"></i>${mflag(m, 'supports_tools', '具', '支持工具调用')}${mflag(m, 'structured_outputs', '构', '支持结构化输出')}</span></div>`
+      + `</div>`;
+  };
   const list = cands.length
     ? `<div class="pv-ckl scroll">${cands.map(mrow).join('')}</div>`
     : `<div class="pv-empty">${v.fetching ? '拉取中…' : '未拉取 — 也可在下方直接填 model id'}</div>`;
@@ -252,7 +257,7 @@ function provForm(n, p) {
     <label>Base URL<input data-f="base_url" value="${val('base_url')}" placeholder="https://api.example.com/v1"></label>
     <label>协议<button class="pv-sel" type="button" data-pv="dialect" data-v="${val('dialect', 'openai')}"><span>${esc(DIALECTS.find(d => d.v === val('dialect', 'openai'))?.t || 'OpenAI 兼容')}</span>${ic('chev-d')}</button></label>
     <label>API Key<input data-f="api_key" type="password" value="${val('api_key')}" placeholder="${p && p.api_key_set ? '已配置 — 留空保持不变' : 'sk-… 或留空（本地服务）'}"></label>
-    <div class="pv-mh"><span class="pv-ml">模型（勾选要用的）</span><span class="pv-mr"><button class="btn ghost sm" data-pv="knowledge" ${v.krefresh ? 'disabled' : ''} data-tip="从 OpenRouter 刷新模型能力表 — 网关不报的能力按模型名推断填入">${v.krefresh ? '刷新中…' : ic('download') + '刷新知识'}</button><button class="btn ghost sm" data-pv="fetch" ${v.fetching ? 'disabled' : ''}>${ic('download')}${v.fetched ? '重新拉取' : '拉取模型'}</button></span></div>
+    <div class="pv-mh"><span class="pv-ml">模型（勾选要用的）</span><span class="pv-mr"><button class="btn ghost sm" data-pv="fetch" ${v.fetching ? 'disabled' : ''}>${ic('download')}${v.fetched ? '重新拉取' : '拉取模型'}</button></span></div>
     ${list}
     <div class="pv-add"><input data-f="addmodel" placeholder="手写 model id" spellcheck="false"><button class="btn ghost sm" data-pv="addmodel">${ic('plus')}添加</button></div>
     <div class="pv-acts"><button class="btn allow sm" data-pv="save">${ic('check')}保存</button><button class="btn ghost sm" data-pv="cancel">取消</button></div>
@@ -297,18 +302,6 @@ async function providerAction(kind, el) {
     return renderProviders();
   }
   if (kind === 'del') { return saveProviders({ name: n, del: true }, '已删除 ' + n); }
-  if (kind === 'knowledge') {
-    if (!pvEdit) return;
-    pvEdit.krefresh = true;
-    renderProviders();
-    try {
-      const r = await api('/models/knowledge', jpost({}));
-      toast(`知识库已刷新 · ${r.entries} 条`, 'check');
-      refreshModels();
-    } catch (e) { toast(`刷新失败：${e.message}`, 'alert', 'warn'); }
-    if (pvEdit) pvEdit.krefresh = false;
-    return renderProviders();
-  }
   if (kind === 'fetch') {
     if (!pvEdit) return;
     pvEdit.fetching = true;
@@ -337,8 +330,13 @@ function toggleCand(id) {
   if (pvEdit.sel.has(id)) pvEdit.sel.delete(id); else pvEdit.sel.add(id);
   renderProviders();
 }
-/* capability chips — `data-mf="mod|flag"` toggles write into pvEdit.cands:
-   mod flips a kind inside input_modalities, flag flips a boolean field */
+/* the canonical effort vocabulary — chips toggle membership in
+   `thinking`; `仅开关` declares toggle-only reasoning instead */
+const THINK_LADDER = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+/* capability chips — `data-mf="mod|flag|lvl|tgl"` toggles write into
+   pvEdit.cands: mod flips a kind inside input_modalities, flag flips a
+   boolean field, lvl edits the declared effort set, tgl marks the
+   toggle-only shape */
 function toggleField(kind, key, id) {
   if (!pvEdit) return;
   const c = pvEdit.cands.find(m => m.id === id);
@@ -347,6 +345,14 @@ function toggleField(kind, key, id) {
     const mods = c.input_modalities || (c.input_modalities = []);
     const i = mods.indexOf(key);
     if (i >= 0) mods.splice(i, 1); else mods.push(key);
+  } else if (kind === 'lvl') {
+    const t = new Set(c.thinking || []);
+    if (t.has(key)) t.delete(key); else t.add(key);
+    c.thinking = THINK_LADDER.filter(l => t.has(l));
+    if (c.thinking.length) c.reasoning = false;
+  } else if (kind === 'tgl') {
+    c.reasoning = !c.reasoning;
+    if (c.reasoning) c.thinking = [];
   } else {
     c[key] = !c[key];
   }

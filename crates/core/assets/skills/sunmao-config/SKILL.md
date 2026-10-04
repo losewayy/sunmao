@@ -68,7 +68,7 @@ JSON，agent 直接编辑就等价于用户在设置页里操作。能改的层�
           "context_length": 1048576,
           "max_output": 384000,
           "input_modalities": ["image"],
-          "thinking": ["low", "medium", "high", "max"],
+          "thinking": ["high", "max"],
           "supports_tools": true,
           "structured_outputs": true
         }
@@ -85,6 +85,66 @@ JSON，agent 直接编辑就等价于用户在设置页里操作。能改的层�
 - 池前缀（`cn:`/`global:`）和 vendor 路径在匹配时会被剥掉
 - 选模型用 selector：`provider/id`、裸 `id`（走 default provider）、
   或 `@route`（routes 里的具名链，按序 fallback）
+
+## `model-knowledge.json` — 模型能力知识表（重点）
+
+这是"网关不说、但 UI 需要知道"的补充表：**思考档位、上下文、输出上限、
+输入模态、工具/结构化支持**。三层合并（种子 → `~/.sunmao/` → `.sunmao/`），
+按 `match` 键匹配归一化后的模型名（vendor/池前缀剥掉、点号折成 `-`）。
+
+```json
+{"models": [
+  {"match": "deepseek-v4-pro", "context": 1000000, "max_output": 384000,
+   "input": ["image"], "thinking": ["high", "max"], "tools": true}
+]}
+```
+
+### `thinking` 字段是"线协议真值"，不是形容词
+
+- `thinking: [...]` = 该模型 `reasoning_effort` 实际接受的档位枚举
+  （各家 wire 字段名不同但值集就是这份表）
+- `reasoning: true` = 只有思考开关（`thinking.type` 之类），没有档位
+- 两者都缺 = 无思考能力
+- **严禁给所有模型写 `low,medium,high,max`**——这是历史错误，各家真实
+  集合完全不同：
+
+| 家族 | 官方文档核实的档位 | 线字段 |
+|---|---|---|
+| DeepSeek V4/V3.2 | `high`, `max`（low/medium→high，xhigh→max） | `reasoning_effort` |
+| GLM-5.3 | `low`, `high`, `max` | `reasoning_effort` |
+| GLM-5.2 | `none`~`max` 全档 | `reasoning_effort` |
+| GLM ≤5.1/4.x | 仅 `thinking.type` 开关 → `reasoning:true` | — |
+| Kimi K3 | `low`, `high`, `max`（默认 max，思考强制开） | `reasoning_effort` |
+| Kimi K2.x | 仅开关 → `reasoning:true` | `thinking.type` |
+| Claude Opus 5/Sonnet 5/Fable 5/Mythos 5/Opus 4.7-4.8 | `low`~`xhigh`,`max` | `output_config.effort` |
+| Claude Opus 4.6/Sonnet 4.6 | `low`,`medium`,`high`,`max`（无 xhigh） | 同上 |
+| Claude ≤4.5 | adaptive thinking → `reasoning:true` | `thinking` |
+| GPT-5.1 | `none`,`low`,`medium`,`high` | `reasoning_effort`/`reasoning.effort` |
+| GPT-5.5+ / 5.6 | 同上 +`xhigh`（5.6 +`max`） | 同上 |
+| GPT-5 及更早、o 系列 | `low`,`medium`,`high` | 同上 |
+| Qwen3.8 | `low`,`medium`,`xhigh`（默认 xhigh） | `reasoning_effort` |
+| Qwen3 混合系 | `enable_thinking`+`thinking_budget` → `reasoning:true` | — |
+| Gemini 3.x | `minimal`,`low`,`medium`,`high`（3.1-pro 无 minimal） | `thinkingLevel` |
+| Gemini ≤2.5 | `thinkingBudget` → `reasoning:true` | — |
+| Grok-4.6 | `low`,`medium`,`high`,`xhigh` | `reasoning_effort` |
+| Grok-4.5/4.3 | `low`,`medium`,`high`（4.3 另有 `none`） | 同上 |
+| Seed-2.x/Doubao | `minimal`,`low`,`medium`,`high` | `reasoning_effort` |
+| MiniMax M3/M2.x | 开关/强制思考 → `reasoning:true`（OAI effort 只是兼容，不调深度） | — |
+| 混元 hy3/hy4、MiMo、command-a | 仅开关 → `reasoning:true` | `thinking.type` |
+| Mistral small/medium-3.5 | `none`,`high`（只有这两档有语义差异） | `reasoning_effort` |
+
+### 维护规程（用户让你更新这张表时）
+
+1. **只信官方文档**——去 provider 的 API reference 查该模型真实接受的
+   `reasoning_effort`/`thinking`/`effort` 字段和取值；网关
+   `supported_parameters` 只说"字段存在"，不说"收什么值"
+2. 写条目到 `~/.sunmao/model-knowledge.json`（用户级）或
+   `.sunmao/model-knowledge.json`（项目级）——**不要改仓库种子**，那是
+   发版内容
+3. `match` 用归一化 id：小写、去 vendor/池前缀、点号→`-`
+   （`global:glm-5.3-flash` → `glm-5-3-flash`）
+4. 改完即生效——`fill` 每次按知识表填充未声明的字段，且 load 时会
+   用档位表纠正陈旧行
 
 ## `.sunmao/hooks.json` — 钩子
 

@@ -113,13 +113,16 @@
 .pv-ck>span.mono{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pv-ckr{display:flex;flex-direction:column;gap:var(--s-4);padding:var(--s-4) var(--s-6);border-radius:var(--r-sm);background:var(--c-fill-1)}
 .pv-ckr .pv-ck{flex:1;min-width:0}
+/* each model is one card: identity row then labeled sections — the rows
+   wrap freely so a narrow pane can't push fields past the card edge */
 .pv-cf{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-6) var(--s-10);padding-left:calc(var(--s-16) + var(--icon-sm))}
 .pv-f{display:flex;align-items:center;gap:var(--s-6);font-size:var(--fs-xs);color:var(--c-text-3);flex:none}
-.pv-f.grow{flex:1;min-width:140px}
+.pv-fl{font-size:var(--fs-xs);color:var(--c-text-3);flex:none;width:var(--s-24)}
+.pv-chips{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-4)}
+.pv-sep{width:var(--s-10);height:1px;background:var(--c-stroke);margin:0 var(--s-2)}
 .pv-num{width:88px;height:var(--h-md);padding:0 var(--s-6);border:0;outline:0;border-radius:var(--r-sm);background:var(--c-sunken);box-shadow:var(--ring-1);font:var(--fs-xs) var(--font-mono);color:var(--c-text)}
-.pv-tk2{flex:1;min-width:0;height:var(--h-md);padding:0 var(--s-6);border:0;outline:0;border-radius:var(--r-sm);background:var(--c-sunken);box-shadow:var(--ring-1);font:var(--fs-xs) var(--font-mono);color:var(--c-text)}
-.pv-num:focus,.pv-tk2:focus{box-shadow:var(--ring-accent)}
-.pv-num::placeholder,.pv-tk2::placeholder{color:var(--c-text-3)}
+.pv-num:focus{box-shadow:var(--ring-accent)}
+.pv-num::placeholder{color:var(--c-text-3)}
 .pv-chip{display:inline-flex;align-items:center;justify-content:center;min-width:var(--h-md);height:var(--h-md);padding:0 var(--s-6);border-radius:var(--r-sm);background:var(--c-sunken);box-shadow:var(--ring-1);font-size:var(--fs-xs);color:var(--c-text-3);cursor:pointer;transition:color var(--dur-fast) var(--ease-spring),background var(--dur-fast) var(--ease-spring)}
 .pv-chip:hover{color:var(--c-text-2)}
 .pv-chip.on{color:var(--c-accent);background:var(--c-accent-tint)}

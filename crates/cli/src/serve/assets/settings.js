@@ -176,6 +176,7 @@ const head = (t, d) => `<h1>${t}</h1>${d ? `<p class="lead">${d}</p>` : ''}`;
    + hand-added candidate pool, pvEdit.sel the checked subset — only the
    checked ids ever land in catalog. Fetching never writes until 保存. */
 let pvEdit = null; // { name|null for add, sel:Set, cands:[ModelEntry], fetched:bool }
+let pvListH = ''; // dragged list height — outlives the per-form pvEdit
 /* dialect pick list — native <select> pops a system-drawn menu that ignores
    the page's dark theme; this rides the same pop() chrome as every other
    picker so the options stay on-brand */
@@ -206,7 +207,21 @@ function renderProviders() {
     html += `<div class="card glass cfg pv">${body}</div>`;
   }
   html += `<div class="card glass cfg pv">${pvEdit && pvEdit.name === null ? provForm('', null) : `<button class="btn ghost sm" data-pv="add">${ic('plus')}添加 provider</button>`}</div>`;
+  // the rebuild below replaces every node — capture the list's scroll
+  // position and any drag-set height first, restore them right after,
+  // or each chip toggle snaps the view back to the top
+  const oldCkl = host.querySelector('.pv-ckl');
+  if (oldCkl && pvEdit) {
+    pvEdit.cklTop = oldCkl.scrollTop;
+    const h = oldCkl.style.getPropertyValue('--pv-ckl-h');
+    if (h) pvListH = h;
+  }
   host.innerHTML = html;
+  const newCkl = host.querySelector('.pv-ckl');
+  if (newCkl) {
+    if (pvListH) newCkl.style.setProperty('--pv-ckl-h', pvListH);
+    if (pvEdit && pvEdit.cklTop) newCkl.scrollTop = pvEdit.cklTop;
+  }
   // capability inputs write straight into pvEdit.cands — the save path
   // serializes them verbatim into catalog entries
   host.oninput = e => {
@@ -229,7 +244,11 @@ function renderProviders() {
     cklDrag.setPointerCapture(e.pointerId);
     const y0 = e.clientY, h0 = ckl.getBoundingClientRect().height;
     const mv = ev => ckl.style.setProperty('--pv-ckl-h', Math.max(120, Math.min(innerHeight * 0.7, h0 + ev.clientY - y0)) + 'px');
-    const up = () => { cklDrag.removeEventListener('pointermove', mv); cklDrag.removeEventListener('pointerup', up); };
+    const up = () => {
+      pvListH = ckl.style.getPropertyValue('--pv-ckl-h');
+      cklDrag.removeEventListener('pointermove', mv);
+      cklDrag.removeEventListener('pointerup', up);
+    };
     cklDrag.addEventListener('pointermove', mv);
     cklDrag.addEventListener('pointerup', up);
   });

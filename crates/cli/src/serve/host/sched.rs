@@ -199,7 +199,26 @@ async fn tick(s: &Arc<Shared>) {
     let now = now();
     let due: Vec<SchedTask> = {
         let _g = SCHED.lock_or_recover();
-        load(s)
+        let mut tasks = load(s);
+        // self-heal: a task written straight into the file (the agent
+        // path — skills tell it schedules.json is the store) arrives with
+        // `next: 0`; arm it instead of letting it sit unscheduled forever
+        let mut dirty = false;
+        for t in &mut tasks {
+            if t.enabled && t.next == 0 {
+                let n = next_after(t, now).unwrap_or(0);
+                // only persist when something actually armed — an overdue
+                // `once` stays next=0 without rewriting the file each tick
+                if n > 0 {
+                    t.next = n;
+                    dirty = true;
+                }
+            }
+        }
+        if dirty {
+            let _ = save(s, &tasks);
+        }
+        tasks
             .into_iter()
             .filter(|t| t.enabled && t.next > 0 && t.next <= now.timestamp_millis())
             .collect()

@@ -75,11 +75,14 @@
 .sch-f>label{font-size:var(--fs-xs);color:var(--c-text-2)}
 .sch-f>label .opt{margin-left:var(--s-8);color:var(--c-text-3)}
 .fin{display:flex;align-items:center;width:100%;min-height:var(--h-lg);padding:0 var(--s-10);border-radius:var(--r-md);background:var(--c-sunken);box-shadow:var(--ring-1)}
-.fin input,.fin select{flex:1;min-width:0;border:0;outline:0;background:none;font:var(--fs-sm) var(--font-ui);color:var(--c-text)}
+.fin input{flex:1;min-width:0;border:0;outline:0;background:none;font:var(--fs-sm) var(--font-ui);color:var(--c-text)}
+.fin .pv-sel{flex:1;display:flex;align-items:center;gap:var(--s-6);border:0;outline:0;background:none;font:var(--fs-sm) var(--font-ui);color:var(--c-text);text-align:left;cursor:pointer;padding:0}
+.fin .pv-sel>span{flex:1}.fin .pv-sel .i{color:var(--c-text-3);flex:none}
+.sch-pick .ib{flex:none;margin-left:var(--s-6)}
 .fin.tall{align-items:flex-start;padding:var(--s-6) var(--s-10)}
 .fin textarea{flex:1;min-width:0;border:0;outline:0;background:none;font:var(--fs-sm)/var(--lh-ui) var(--font-ui);color:var(--c-text);resize:vertical}
 .sch-ops{display:flex;gap:var(--s-2);flex:none}
-.sch-acts{display:flex;justify-content:flex-end;gap:var(--s-8);margin-top:var(--s-4)}
+.sch-acts{display:flex;justify-content:flex-end;gap:var(--s-8);margin-top:var(--s-16);margin-bottom:var(--s-6)}
 .cr .l a{color:var(--c-accent);cursor:pointer;text-decoration:none}
 .cr .l a:hover{text-decoration:underline}
 .cr .l em.err{font-style:normal;color:var(--c-err)}

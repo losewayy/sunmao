@@ -70,6 +70,16 @@ fn read_models_file(cwd: &Path) -> ModelsFile {
             }
         }
     }
+    // capability defaults: legacy `vision` folds into `input_modalities`,
+    // then the knowledge table fills whatever the file leaves unset —
+    // declared values always win, so a hand edit can never be overwritten
+    let knowledge = crate::model_knowledge::Knowledge::load(cwd);
+    for p in file.providers.values_mut() {
+        for e in &mut p.catalog {
+            e.migrate_vision();
+            knowledge.fill(e);
+        }
+    }
     file
 }
 
@@ -100,16 +110,25 @@ pub struct ModelTarget {
 /// A model the provider advertises — the GUI catalog row. `id` is the wire
 /// name; the rest are best-effort capabilities (a `/models` listing that
 /// omits them just shows less).
-#[derive(Debug, Clone, serde::Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, serde::Serialize, Deserialize)]
 pub struct CatalogEntry {
     pub id: String,
-    /// true when the model takes image input — from `input_modalities`/
-    /// `capabilities` in a /models listing, or hand-edited.
+    /// legacy image flag — kept for reads of older files; `migrate_vision`
+    /// folds it into `input_modalities` and writers stop emitting it.
     #[serde(default, skip_serializing_if = "is_false")]
     pub vision: bool,
+    /// non-text input kinds: "image" | "audio" | "video" | "file" — from
+    /// `architecture.input_modalities` (OpenRouter spelling), a listing's
+    /// `input_modalities`, or the knowledge table.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_modalities: Vec<String>,
     /// advertised context window, when the listing reports one
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_length: Option<u64>,
+    /// advertised completion ceiling — distinct from `context_length`
+    /// (a 1M window does not mean 1M out)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output: Option<u64>,
     /// declared thinking levels — free-form ("low"/"high", …) since
     /// providers don't agree on a vocabulary
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -120,6 +139,23 @@ pub struct CatalogEntry {
     /// canonical low/medium/high trio on this hint.
     #[serde(default, skip_serializing_if = "is_false")]
     pub reasoning: bool,
+    /// tool calling is in `supported_parameters` — absent = unknown, not
+    /// "unsupported" (a bare listing proves nothing either way)
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub supports_tools: bool,
+    /// `structured_outputs`/`response_format` advertised — same caveat
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub structured_outputs: bool,
+}
+
+impl CatalogEntry {
+    /// Legacy `vision:true` → `input_modalities += "image"`. Idempotent;
+    /// run after load and after every knowledge/fetch fill.
+    pub fn migrate_vision(&mut self) {
+        if self.vision && !self.input_modalities.iter().any(|m| m == "image") {
+            self.input_modalities.push("image".into());
+        }
+    }
 }
 
 fn is_false(b: &bool) -> bool {
@@ -389,122 +425,10 @@ impl ModelResolver {
     }
 }
 
-/// Fetch a provider's model catalog — `GET {base_url}/models` with the
-/// provider's key. Auth header follows the dialect (Anthropic uses
-/// `x-api-key` + version, everyone else gets a Bearer token). Returns
-/// best-effort entries: `data[].id` plus whatever capabilities the listing
-/// advertises (context length, image input, reasoning levels). A listing
-/// that omits them just yields bare ids — no field is mandatory.
-pub async fn fetch_catalog(provider: &ProviderDef) -> anyhow::Result<Vec<CatalogEntry>> {
-    use anyhow::Context as _;
-    let url = format!("{}/models", provider.base_url.trim_end_matches('/'));
-    let key = provider
-        .api_key_env
-        .as_deref()
-        .and_then(|env| std::env::var(env).ok())
-        .or_else(|| provider.api_key.clone())
-        .unwrap_or_default();
-    let client = reqwest::Client::builder()
-        .user_agent("sunmao/0.1")
-        .timeout(std::time::Duration::from_secs(20))
-        .build()?;
-    let mut req = client.get(&url);
-    if provider.dialect == "anthropic" {
-        req = req
-            .header("x-api-key", &key)
-            .header("anthropic-version", "2023-06-01");
-    } else if !key.is_empty() {
-        req = req.bearer_auth(&key);
-    }
-    let resp = req.send().await?;
-    if !resp.status().is_success() {
-        anyhow::bail!("http {}", resp.status());
-    }
-    let v: serde_json::Value = resp.json().await.context("models listing is not json")?;
-    // OpenAI shape: {"data":[{id,…}]}; Anthropic: {"data":[{id,…}]} too.
-    // Also accept a bare array — some gateways return it.
-    let rows: &[serde_json::Value] = match (v.pointer("/data"), &v) {
-        (Some(serde_json::Value::Array(a)), _) => a,
-        (_, serde_json::Value::Array(a)) => a,
-        _ => anyhow::bail!("models listing has no data[]"),
-    };
-    let mut out = Vec::new();
-    for row in rows {
-        let id = row
-            .pointer("/id")
-            .and_then(|i| i.as_str())
-            .filter(|i| !i.is_empty());
-        let Some(id) = id else { continue };
-        out.push(catalog_entry(row, id));
-    }
-    out.sort_by(|a, b| a.id.cmp(&b.id));
-    Ok(out)
-}
-
-/// One `data[]` row → CatalogEntry, pulling the capability fields gateways
-/// actually emit: `context_length`/`context_window`, `input_modalities`
-/// (OpenRouter shape) or `capabilities`, `reasoning`/`thinking` support.
-fn catalog_entry(row: &serde_json::Value, id: &str) -> CatalogEntry {
-    let get = |paths: &[&str]| -> Option<&serde_json::Value> {
-        paths.iter().find_map(|p| row.pointer(p))
-    };
-    let context_length = get(&[
-        "/context_length",
-        "/context_window",
-        "/max_input_tokens",
-        "/max_context_length",
-    ])
-    .and_then(|v| v.as_u64());
-    let vision = get(&["/input_modalities", "/modalities/input", "/capabilities"])
-        .map(|v| match v {
-            serde_json::Value::Array(a) => a
-                .iter()
-                .any(|m| matches!(m.as_str(), Some("image") | Some("video"))),
-            serde_json::Value::Object(o) => o
-                .get("image")
-                .and_then(|b| b.as_bool())
-                .or_else(|| o.get("vision").and_then(|b| b.as_bool()))
-                .unwrap_or(false),
-            _ => false,
-        })
-        .unwrap_or(false);
-    let mut thinking = Vec::new();
-    for path in ["/supported_reasoning", "/reasoning_levels", "/thinking"] {
-        if let Some(serde_json::Value::Array(levels)) = row.pointer(path) {
-            for l in levels {
-                if let Some(s) = l.as_str()
-                    && !thinking.iter().any(|t| t == s)
-                {
-                    thinking.push(s.to_string());
-                }
-            }
-        }
-    }
-    // reasoning support without a level vocabulary: OpenRouter's
-    // `supported_parameters` names it, Anthropic-style listings carry a
-    // `reasoning` field — either flag lets callers offer the canonical
-    // low/medium/high trio rather than a silently-absent picker.
-    let reasoning = get(&[
-        "/supported_parameters",
-        "/reasoning",
-        "/capabilities/reasoning",
-    ])
-    .map(|v| match v {
-        serde_json::Value::Array(a) => a.iter().any(
-            |m| matches!(m.as_str(), Some(s) if s.contains("reasoning") || s.contains("thinking")),
-        ),
-        serde_json::Value::Bool(b) => *b,
-        _ => true, // a non-boolean `reasoning` value exists = supported
-    })
-    .unwrap_or(false);
-    CatalogEntry {
-        id: id.to_string(),
-        vision,
-        context_length,
-        thinking,
-        reasoning,
-    }
-}
+/// `/models` listing fetch + row→CatalogEntry parse — the network half
+/// of this module, split for the file budget.
+mod catalog;
+pub use catalog::fetch_catalog;
 
 /// Expand `@route` aliases into their selector chains (one level of
 /// indirection is enough — deeper nesting is a config smell).

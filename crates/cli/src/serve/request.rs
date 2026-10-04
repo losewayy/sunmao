@@ -275,6 +275,7 @@ impl HostHandle {
             ("POST", ["schedules", id, "run"]) => sched::run_now(s, id).await,
             ("GET", ["models"]) => models::view(s, query_arg(query, "sess")).await,
             ("POST", ["models", "fetch"]) => models::fetch(s, query_arg(query, "sess"), body).await,
+            ("POST", ["models", "knowledge"]) => models::knowledge(s).await,
             ("PUT", ["models"]) => models::put(s, query_arg(query, "sess"), body).await,
             ("GET", ["ui"]) => ui::view(s, query_arg(query, "sess")).await,
             ("PUT", ["ui"]) => ui::put(s, query_arg(query, "sess"), body).await,

@@ -161,6 +161,7 @@ impl Observer for AcpObserver {
             // serve-only live mirror of the durable user message — ACP
             // never runs through client.rs's Input lane, so it never lands
             LiveEvent::UserMessage { .. } => {}
+            LiveEvent::TurnBoundary { .. } => {} // rewind ordinals are a serve concern
             LiveEvent::TaskDone { id, ok, .. } => {
                 self.send(v2::SessionUpdate::AgentMessageChunk(v2::ContentChunk::new(
                     format!("[sub-agent {id} {}]\n", if *ok { "done" } else { "failed" }).into(),

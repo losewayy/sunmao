@@ -112,6 +112,7 @@ impl Observer for StdoutObserver {
             // serve-only live mirror of the durable user message — the REPL
             // echoes its own prompt before run_turn, so it never lands here
             LiveEvent::UserMessage { .. } => {}
+            LiveEvent::TurnBoundary { .. } => {} // rewind ordinals are a serve concern
             LiveEvent::TaskDone { id, ok, .. } => {
                 let mark = if *ok { "✓" } else { "✗" };
                 println!("\n\x1b[36m[sub-agent {id} {mark}]\x1b[0m");
@@ -381,7 +382,7 @@ pub async fn run(
                     continue;
                 }
                 crate::commands::Command::Annotate(name, note) => {
-                    println!("{}", crate::commands::annotate(cwd, &name, &note));
+                    println!("{}", crate::commands::annotate(cwd, &name, &note, None));
                     continue;
                 }
                 crate::commands::Command::Search(q) => {

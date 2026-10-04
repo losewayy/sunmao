@@ -65,6 +65,7 @@ fn fixture() -> Vec<E> {
         E::Started {
             model: "test-model".into(),
             cwd: "proj".into(),
+            driver: None,
         },
         E::Message {
             message: Message::system("identity block"),

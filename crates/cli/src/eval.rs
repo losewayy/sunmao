@@ -186,16 +186,7 @@ async fn run_case_inner(
         "default",
     )));
     let ctx = Arc::new(ctx_raw);
-    ctx.hooks
-        .fire(
-            sunmao_core::hooks::HookEvent::SessionStart,
-            &ctx.cwd,
-            &sunmao_core::hooks::HookInput {
-                source: Some("startup"),
-                ..Default::default()
-            },
-        )
-        .await;
+    ctx.fire_session_start("startup").await;
 
     let system = sunmao_core::prompt::PromptAssembler::new(&case_cwd)
         .with_extra_roots(preset_roots)
@@ -206,6 +197,7 @@ async fn run_case_inner(
         log.append(&SessionEvent::Started {
             model: cli.model.clone(),
             cwd: case_cwd.display().to_string(),
+            driver: Some(ctx.loop_driver.as_str().into()),
         })
         .await?;
         log.append(&SessionEvent::Message {

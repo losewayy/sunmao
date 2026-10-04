@@ -21,7 +21,7 @@ const sessionTabs = () => {
   }
   return S.dockTabs[sessionId] = S.dockTabs[sessionId] || [];
 };
-const BR = {}; // id → {hist, hi} — live-only, not persisted
+const BR = {}; // id → {hist, hi, live, chain} — live-only, not persisted
 let brSeq = Date.now() % 100000; // ids must not collide across sessions' webview labels
 
 const PANE_META = {
@@ -74,7 +74,7 @@ function dockAdd(el) {
 
 function brNew() {
   const b = { id: brSeq++, kind: 'browser', url: '', title: '', proxy: false };
-  sessionTabs().push(b); BR[b.id] = { hist: [], hi: -1 };
+  sessionTabs().push(b); BR[b.id] = { hist: [], hi: -1, live: false };
   save(); mountBrowser(b); renderDockTabs(); dockTab('br:' + b.id);
   if (!dockOn) toggleDock();
   setTimeout(() => $('.br-url', brPane(b))?.focus(), 30);
@@ -84,11 +84,12 @@ function dockClose(id) {
   const tabs = sessionTabs(), i = tabs.findIndex(t => t.id === +id);
   if (i < 0) return;
   const t = tabs[i];
-  tabs.splice(i, 1); delete BR[t.id];
+  tabs.splice(i, 1);
   if (t.kind === 'browser') {
     brPane(t)?.remove();
-    if (nativeBr()) TAURI.webview({ op: 'close', id: t.id });
+    if (nativeBr()) brSendId(t.id, { op: 'close', id: t.id });
   }
+  delete BR[t.id];
   save(); renderDockTabs();
   if ($('#dock').dataset.tab === (t.kind === 'browser' ? 'br:' + t.id : t.pane)) {
     const next = sessionTabs()[0];
@@ -97,24 +98,51 @@ function dockClose(id) {
 }
 
 /* ---- native child webview (Tauri shell) ---- */
-/* the guest is window-level chrome: it must follow its pane's rect on
+/* The guest is window-level chrome: it must follow its pane's rect on
    every layout change and park offscreen whenever the pane isn't visible —
-   a CSS-hidden iframe hides itself, a native webview does not */
-function brSyncNative(b) {
-  if (!nativeBr()) return;
-  const bv = brPane(b) && $('.br-view', brPane(b));
-  const vis = !!(b.url && bv && !brPane(b).hidden && $('#app').dataset.dock === 'on');
-  if (!vis) {
-    TAURI.webview({ op: 'rect', id: b.id, rect: { x: -40000, y: 0, w: 10, h: 10 } });
-    return;
-  }
+   a CSS-hidden iframe hides itself, a native webview does not.
+
+   Two shell-side facts shape this code:
+   - Rust runs these ops on a worker pool, not a queue, so two invokes in
+     flight can land out of order (a create overtaking its own nav, or a
+     duplicate create racing the first into "already exists"). Every send
+     goes through its tab's own chain, so each tab's stream stays ordered.
+   - `create` is only for a guest that does not exist yet; an existing one
+     is moved with `rect`, so a resize never re-navigates the page. */
+const BR_PARK = { x: -40000, y: 0, w: 10, h: 10 };
+const brSt = id => (BR[id] = BR[id] || { hist: [], hi: -1, live: false });
+function brSendId(id, op) {
+  const st = brSt(id);
+  const next = (st.chain || Promise.resolve()).then(() => TAURI.webview(op));
+  st.chain = next.catch(() => {});
+  return next;
+}
+const brSend = (b, op) => brSendId(b.id, op);
+const brViewRect = b => {
+  const pane = brPane(b), bv = pane && $('.br-view', pane);
+  if (!bv) return null;
   const r = bv.getBoundingClientRect(), z = S.zoom || 1;
-  const rect = { x: r.left * z, y: r.top * z, w: r.width * z, h: r.height * z };
-  TAURI.webview({ op: 'create', id: b.id, url: b.url, rect }).catch(e => {
-    const em = $('.br-empty small', brPane(b));
-    if (em) em.textContent = `原生窗口创建失败：${e}`;
-  });
-  TAURI.webview({ op: 'rect', id: b.id, rect }).catch(() => {});
+  return { x: r.left * z, y: r.top * z, w: r.width * z, h: r.height * z };
+};
+/* sync the guest to its pane; true when this call is the one creating it */
+function brSyncNative(b) {
+  if (!nativeBr()) return false;
+  const st = brSt(b.id), pane = brPane(b);
+  const rect = b.url && pane && !pane.hidden && $('#app').dataset.dock === 'on' ? brViewRect(b) : null;
+  if (!rect) { brSend(b, { op: 'rect', id: b.id, rect: BR_PARK }); return false; }
+  if (st.live || st.creating) { brSend(b, { op: 'rect', id: b.id, rect }); return false; }
+  st.creating = true;
+  brSend(b, { op: 'create', id: b.id, url: b.url, rect })
+    .then(() => { st.live = true; }, e => {
+      const em = pane && $('.br-empty small', pane);
+      if (em) em.textContent = `原生窗口创建失败：${e}`;
+    })
+    .finally(() => { st.creating = false; });
+  return true;
+}
+/* create the guest if it is missing, then navigate — one ordered stream */
+function brGoNative(b, url) {
+  if (!brSyncNative(b)) brSend(b, { op: 'nav', id: b.id, url });
 }
 function brSyncAll() {
   for (const t of sessionTabs()) if (t.kind === 'browser') brSyncNative(t);
@@ -127,8 +155,13 @@ new ResizeObserver(brSyncAll).observe($('#dock'));
 /* ---- browser pane ---- */
 function mountBrowser(b) {
   if (brPane(b)) return;
-  BR[b.id] = BR[b.id] || { hist: [], hi: -1 };
-  const pane = append($('#dock'), `<div class="dock-pane br" data-pane="br:${b.id}" hidden>
+  const bid = b.id;
+  BR[bid] = BR[bid] || { hist: [], hi: -1, live: false };
+  /* a ui_changed frame reloads S wholesale (state.js loadUi), so the array
+     object bound here goes stale — every handler re-resolves the live one
+     by id instead of writing into the orphan */
+  const tb = () => sessionTabs().find(t => t.id === bid) || b;
+  const pane = append($('#dock'), `<div class="dock-pane br" data-pane="br:${bid}" hidden>
     <div class="br-bar">
       <button class="ib sm" data-bnav="back" data-tip="后退" aria-label="后退"><svg class="i"><use href="#i-chev-l"/></svg></button>
       <button class="ib sm" data-bnav="fwd" data-tip="前进" aria-label="前进"><svg class="i"><use href="#i-chev-r"/></svg></button>
@@ -150,33 +183,35 @@ function mountBrowser(b) {
   fr.addEventListener('load', () => {
     let t = null;
     try { t = fr.contentDocument && fr.contentDocument.title; } catch {}
-    if (t && t !== b.title) { b.title = t; save(); renderDockTabs(); }
+    const live = tb();
+    if (t && t !== live.title) { live.title = t; save(); renderDockTabs(); }
   });
   url.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); brGo(b, url.value); }
+    if (e.key === 'Enter') { e.preventDefault(); brGo(tb(), url.value); }
     e.stopPropagation();
   });
   pane.addEventListener('click', e => {
     const nb = e.target.closest('[data-bnav]');
     if (!nb) return;
-    const st = BR[b.id];
+    const live = tb(), st = BR[bid];
     switch (nb.dataset.bnav) {
-      case 'back': if (st.hi > 0) { st.hi--; brGo(b, st.hist[st.hi], false); } break;
-      case 'fwd': if (st.hi < st.hist.length - 1) { st.hi++; brGo(b, st.hist[st.hi], false); } break;
+      case 'back': if (st.hi > 0) { st.hi--; brGo(live, st.hist[st.hi], false); } break;
+      case 'fwd': if (st.hi < st.hist.length - 1) { st.hi++; brGo(live, st.hist[st.hi], false); } break;
       case 'reload': {
-        if (nativeBr()) TAURI.webview({ op: 'nav', id: b.id, url: b.url });
+        if (nativeBr()) brGoNative(live, live.url);
         else { const fr2 = $('iframe', pane); if (!fr2.hidden) fr2.src = fr2.src; }
         break;
       }
-      case 'proxy': b.proxy = !b.proxy; nb.classList.toggle('on', b.proxy); save(); if (b.url) brGo(b, b.url, false); break;
+      case 'proxy': live.proxy = !live.proxy; nb.classList.toggle('on', live.proxy); save(); if (live.url) brGo(live, live.url, false); break;
       case 'external': {
-        if (!b.url) break;
-        if (TAURI && TAURI.openExternal) return Promise.resolve(TAURI.openExternal(b.url)).catch(er => toast(`打开失败：${er}`, 'alert', 'warn'));
-        return open(b.url, '_blank');
+        if (!live.url) break;
+        if (TAURI && TAURI.openExternal) return Promise.resolve(TAURI.openExternal(live.url)).catch(er => toast(`打开失败：${er}`, 'alert', 'warn'));
+        return open(live.url, '_blank');
       }
     }
   });
-  if (b.url && !EMBED) brGo(b, b.url, false); // persisted tab restores loaded
+  const live = tb();
+  if (live.url && !EMBED) brGo(live, live.url, false); // persisted tab restores loaded
 }
 
 function brGo(b, raw, push = true) {
@@ -184,17 +219,15 @@ function brGo(b, raw, push = true) {
   if (!url) return;
   if (url.startsWith('/')) url = location.origin + url;
   if (!/^[a-z]+:\/\//i.test(url)) url = (/^[\w.-]+(:\d+)?([/:]|$)/.test(url) ? 'http://' : 'https://') + url;
-  const st = BR[b.id], pane = brPane(b);
+  const st = brSt(b.id), pane = brPane(b);
   if (!pane) return;
   if (push) { st.hist = st.hist.slice(0, st.hi + 1); st.hist.push(url); st.hi = st.hist.length - 1; }
   b.url = url; save();
   if (nativeBr()) {
-    // a real guest webview — create it parked offscreen on about:blank,
-    // then one navigate; brSyncAll then moves it onto the pane rect —
-    // without this the page loads at x:-40000 where nobody can see it
-    TAURI.webview({ op: 'create', id: b.id, url: 'about:blank', rect: { x: -40000, y: 0, w: 10, h: 10 } });
-    TAURI.webview({ op: 'nav', id: b.id, url });
-    brSyncAll();
+    // first navigation creates the guest at its pane rect (create carries
+    // the url); a guest that already exists just takes the nav. Both ride
+    // the tab's chain, so the url can never land before the guest does.
+    brGoNative(b, url);
   } else {
     const fr = $('iframe', pane);
     // direct: opaque origin + scripts — a real page, DOM unreachable so
@@ -221,11 +254,18 @@ function brGo(b, raw, push = true) {
 }
 
 /* ---- session lifecycle ---- */
-/* the tab set is per-session: on a switch the old session's panes/webviews
-   leave with it, the new session's mount in */
+/* the tab set is per-session: on a switch the old session's panes/guests
+   leave with it, the new session's mount in. This also runs whenever a
+   `ui_changed` frame reloads S (every save round-trips through it), so it
+   reconciles — only a tab that left the set loses its guest — instead of
+   tearing every native webview down on each save. */
 function dockSessionSwap() {
-  if (nativeBr()) for (const id of Object.keys(BR)) TAURI.webview({ op: 'close', id: +id });
   const keep = new Set(sessionTabs().filter(t => t.kind === 'browser').map(t => 'br:' + t.id));
+  for (const id of Object.keys(BR)) {
+    if (keep.has('br:' + id)) continue;
+    if (nativeBr()) brSendId(+id, { op: 'close', id: +id });
+    if (BR[id]) BR[id].live = false;
+  }
   $$('#dock .dock-pane[data-pane^="br:"]').forEach(p => { if (!keep.has(p.dataset.pane)) p.remove(); });
   sessionTabs().filter(t => t.kind === 'browser').forEach(mountBrowser);
   renderDockTabs();

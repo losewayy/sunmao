@@ -48,18 +48,22 @@ code{font-family:var(--font-mono)}
 
 /* ---------- layout ---------- */
 #app{position:fixed;inset:0;z-index:var(--z-app)}
-.rail{position:absolute;left:var(--s-gutter);top:var(--s-gutter);bottom:var(--s-gutter);width:var(--w-rail);border-radius:var(--r-xl);display:flex;flex-direction:column;overflow:hidden;z-index:var(--z-rail);transition:transform var(--dur-slow) var(--ease-in-out),visibility var(--dur-slow)}
+.rail{position:absolute;left:var(--s-gutter);top:var(--h-3xl);bottom:var(--s-gutter);width:var(--w-rail);border-radius:var(--r-xl);display:flex;flex-direction:column;overflow:hidden;z-index:var(--z-rail);transition:transform var(--dur-slow) var(--ease-in-out),visibility var(--dur-slow)}
 #app[data-rail="off"] .rail{transform:translateX(calc(-100% - var(--s-16)));visibility:hidden}
 #app[data-rail="off"] .stage{left:var(--s-gutter)}
+/* live edge drags write --w-rail/--w-dock every pointermove — the stage's
+   left/right transitions are for fold animations only; during a drag the
+   transition becomes a laggy tail that lets panels overlap the composer */
+#app[data-dragging] .stage{transition:none}
 .rail-edge{position:absolute;right:0;top:0;bottom:0;width:var(--s-8);cursor:ew-resize;z-index:var(--z-l2)}
 .rail-edge::after{content:'';position:absolute;right:0;top:var(--s-16);bottom:var(--s-16);width:var(--bw-hairline);background:var(--c-stroke);opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
 .rail-edge:hover::after,.rail-edge:active::after{opacity:1}
-/* collapse lives on the rail's own head — the panel that owns the chrome
-   owns the fold; a peek dot stays at the edge while it's away */
-.rail-head{display:flex;justify-content:flex-end;padding:var(--s-6) var(--s-8) 0}
-.rail-peek{position:absolute;left:var(--s-gutter);top:calc(var(--s-gutter) + var(--s-8));width:var(--h-lg);height:var(--h-lg);display:none;align-items:center;justify-content:center;border-radius:var(--r-full);color:var(--c-text-3);z-index:var(--z-rail);cursor:pointer;transition:color var(--dur-instant) var(--ease-out)}
-#app[data-rail="off"] .rail-peek{display:flex;animation:k-rise var(--dur-slow) var(--ease-out)}
-.rail-peek:hover{color:var(--c-text)}
+/* the fold is a capsule floating in the rail's top-bar zone — mirror of
+   the right capsule, so both side tops read as the same chrome line */
+.capsule.capsule-l{left:var(--s-12);right:auto;z-index:var(--z-chrome)}
+/* the rail's top band is free space — let it drag the window like the
+   titlebar does; sits under the fold capsule so the button stays live */
+.drag-l{position:absolute;left:0;top:0;width:calc(var(--w-rail) + var(--s-gutter) * 2);height:var(--h-3xl);z-index:calc(var(--z-chrome) - 1)}
 .rail.solid{--ga:var(--glass-float)}
 .stage{position:absolute;top:0;bottom:0;left:calc(var(--w-rail) + var(--s-gutter) * 2);right:0;transition:left var(--dur-slow) var(--ease-in-out),right var(--dur-slow) var(--ease-in-out)}
 #app[data-dock="on"] .stage{right:calc(var(--w-dock) + var(--s-gutter) * 2)}
@@ -93,6 +97,7 @@ code{font-family:var(--font-mono)}
 .cap.close:hover{background:var(--c-danger-solid);color:var(--c-on-accent)}
 body.shell .caption{display:flex}
 body.shell .capsule{right:var(--w-caption-cluster)}
+body.shell .capsule.capsule-l{right:auto}
 /* the titlebar is pointer-transparent in the browser (content scrolls
    under it); under the shell it IS the drag surface, so it must catch
    the press itself — otherwise mousedown falls through to the stage */
@@ -140,7 +145,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:var(--ring-focu
 /* ---------- rail ---------- */
 .rail-pane{display:flex;flex-direction:column;flex:1;min-height:0;padding:var(--s-8);animation:k-rise var(--dur-fast) var(--ease-out)}
 .rail-pane[hidden]{display:none}
-.nav{display:flex;flex-direction:column;gap:var(--s-2);margin-top:var(--s-6)}
+.nav{display:flex;flex-direction:column;gap:var(--s-2);margin-top:var(--s-10)}
 .nav-i{display:flex;align-items:center;gap:var(--s-10);width:100%;height:var(--h-lg);padding:0 var(--s-10);border-radius:var(--r-md);font-size:var(--fs-sm);color:var(--c-text)}
 .nav-i .i{color:var(--c-text-2)}
 .nav-i:hover{background:var(--c-fill-1)}
@@ -170,8 +175,11 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:var(--ring-focu
 .row .when{flex:none;font:var(--fs-2xs) var(--font-mono);font-variant-numeric:tabular-nums;color:var(--c-text-3);opacity:.85}
 .row:hover .when,.row.on .when{opacity:1}
 .row .cnt{font:var(--fs-2xs) var(--font-mono);color:var(--c-text-3)}
-.rail-foot{display:flex;align-items:center;gap:var(--s-2);height:var(--h-xl);margin-top:var(--s-4)}
-.rail-foot .ver{margin-left:auto;margin-right:var(--s-8);font:var(--fs-2xs) var(--font-mono);color:var(--c-text-3)}
+/* footer is one long pill — gear + conn dot + label, whole row is the
+   settings click target. moderate radius, not a stadium */
+.rail-foot{display:flex;align-items:center;gap:var(--s-8);width:100%;height:var(--h-xl);margin-top:var(--s-4);padding:0 var(--s-10);border:0;border-radius:var(--r-lg);background:var(--c-fill-1);color:var(--c-text-2);cursor:pointer;transition:background var(--dur-instant) var(--ease-out),color var(--dur-instant) var(--ease-out)}
+.rail-foot:hover{background:var(--c-fill-2);color:var(--c-text)}
+.rail-foot .ver{margin-left:auto;font:var(--fs-2xs) var(--font-mono);color:var(--c-text-3)}
 .back{display:flex;align-items:center;gap:var(--s-8);width:100%;height:var(--h-xl);padding:0 var(--s-10);border-radius:var(--r-md);font-size:var(--fs-sm);color:var(--c-text-2)}
 .back:hover{background:var(--c-fill-1);color:var(--c-text)}
 .snav{display:flex;flex-direction:column;gap:var(--s-2);margin-top:var(--s-10)}

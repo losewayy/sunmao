@@ -196,6 +196,7 @@ async fn effort_levels_read_the_catalog() {
             .append(&SessionEvent::Started {
                 model: "m-hint".into(),
                 cwd: dir.display().to_string(),
+                driver: None,
             })
             .await;
     }

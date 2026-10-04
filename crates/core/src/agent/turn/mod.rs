@@ -22,28 +22,22 @@ impl AgentLoop {
                 // inside run_turn_inner on Completed only; the union event
                 // marks that the stop wasn't a normal completion
                 if !matches!(o, TurnOutcome::Completed) {
-                    let _ = self
-                        .ctx
-                        .hooks
-                        .fire(
-                            HookEvent::StopFailure,
-                            &self.ctx.cwd,
-                            &crate::hooks::HookInput::default(),
-                        )
-                        .await;
+                    crate::hooks::HookEngine::fire_detached(
+                        &self.ctx.hooks,
+                        HookEvent::StopFailure,
+                        &self.ctx.cwd,
+                        &crate::hooks::HookInput::default(),
+                    );
                 }
                 Ok(o)
             }
             Err(e) => {
-                let _ = self
-                    .ctx
-                    .hooks
-                    .fire(
-                        HookEvent::StopFailure,
-                        &self.ctx.cwd,
-                        &crate::hooks::HookInput::default(),
-                    )
-                    .await;
+                crate::hooks::HookEngine::fire_detached(
+                    &self.ctx.hooks,
+                    HookEvent::StopFailure,
+                    &self.ctx.cwd,
+                    &crate::hooks::HookInput::default(),
+                );
                 Err(e)
             }
         }
@@ -103,12 +97,13 @@ impl AgentLoop {
                 });
             }
         }
+        let mut ordinal = None;
         {
             let mut log = self.ctx.sessions.lock().await;
-            log.append(&SessionEvent::Message {
-                message: Message::user_blocks(input, attachments.to_vec()),
-            })
-            .await?;
+            let msg = Message::user_blocks(input, attachments.to_vec());
+            let ev = SessionEvent::Message { message: msg };
+            let boundary = crate::checkpoints::is_turn_boundary(&ev);
+            log.append(&ev).await?;
             for extra in prompt_outcome.extra_context {
                 observer.on_event(&LiveEvent::Hook {
                     event: "hook injected context".into(),
@@ -119,11 +114,27 @@ impl AgentLoop {
                 })
                 .await?;
             }
+            drop(log);
+            for notice in &prompt_outcome.notices {
+                observer.on_event(&LiveEvent::Hook {
+                    event: "hook warning".into(),
+                    detail: notice.clone(),
+                });
+            }
+            if boundary {
+                // the turn's ordinal is set once the user prompt is durable —
+                // snapshot writes stamp manifest entries with it, so
+                // /rewind's turn numbering == the boundary ordinals users
+                // count. Steer/uplink folds below are boundaries too — the
+                // counter counts BOUNDARIES, not run_turn invocations.
+                let mut cps = self.ctx.checkpoints.lock_or_recover();
+                cps.turn += 1;
+                ordinal = Some(cps.turn);
+            }
         }
-        // the turn's ordinal is set once the user prompt is durable —
-        // snapshot writes below stamp manifest entries with it, so
-        // /rewind's turn numbering == the prompt ordinals users count.
-        self.ctx.checkpoints.lock_or_recover().turn += 1;
+        if let Some(n) = ordinal {
+            observer.on_event(&LiveEvent::TurnBoundary { ordinal: n });
+        }
 
         let mut outcome = TurnOutcome::Completed;
         // doom-loop guard: a model repeating the identical (name, args)
@@ -171,10 +182,11 @@ impl AgentLoop {
                     detail: steered.clone(),
                 });
                 let mut log = self.ctx.sessions.lock().await;
-                log.append(&SessionEvent::Message {
+                let ev = SessionEvent::Message {
                     message: Message::user(steered.clone()),
-                })
-                .await?;
+                };
+                let boundary = crate::checkpoints::is_turn_boundary(&ev);
+                log.append(&ev).await?;
                 // attribution: the folded message looks identical to a typed
                 // user message — without this audit row, `--dataflow` and
                 // resume readers can't tell steer-injection from typed input
@@ -183,6 +195,14 @@ impl AgentLoop {
                     detail: steered,
                 })
                 .await;
+                if boundary {
+                    let mut cps = self.ctx.checkpoints.lock_or_recover();
+                    cps.turn += 1;
+                    let n = cps.turn;
+                    drop(cps);
+                    drop(log);
+                    observer.on_event(&LiveEvent::TurnBoundary { ordinal: n });
+                }
             }
             if self.est_tokens().await > self.effective_threshold() {
                 observer.on_event(&LiveEvent::ToolStart {
@@ -499,6 +519,21 @@ impl AgentLoop {
                 }
                 self.dispatch_tool_call(&call, observer).await?;
             }
+            // hook output buffered during dispatch lands now — every
+            // sibling result is settled, so the injected context can
+            // never straddle a call/result pair
+            {
+                let tail = std::mem::take(&mut *self.ctx.hook_tail.lock_or_recover());
+                if !tail.is_empty() {
+                    let mut log = self.ctx.sessions.lock().await;
+                    for extra in tail {
+                        log.append(&SessionEvent::Message {
+                            message: Message::user(format!("[hook context] {extra}")),
+                        })
+                        .await?;
+                    }
+                }
+            }
             // the ceiling consumed its last iteration while tool calls were
             // still pending — a `Completed` outcome + Stop hook would read
             // as a normal finish; surface the truncation instead. A cancel
@@ -526,15 +561,12 @@ impl AgentLoop {
         // clean turns end with Stop; anything else gets StopFailure (fired
         // by run_turn_full after inner returns) — never both
         if outcome == TurnOutcome::Completed {
-            let _ = self
-                .ctx
-                .hooks
-                .fire(
-                    HookEvent::Stop,
-                    &self.ctx.cwd,
-                    &crate::hooks::HookInput::default(),
-                )
-                .await;
+            crate::hooks::HookEngine::fire_detached(
+                &self.ctx.hooks,
+                HookEvent::Stop,
+                &self.ctx.cwd,
+                &crate::hooks::HookInput::default(),
+            );
         }
         Ok(outcome)
     }

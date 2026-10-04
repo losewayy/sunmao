@@ -6,7 +6,6 @@
 use crate::agent::*;
 use crate::hooks::HookEvent;
 use crate::session::SessionEvent;
-use sunmao_llm::types::Message;
 
 impl AgentLoop {
     /// One well-formed tool call's full dispatch: PreToolUse hook →
@@ -40,6 +39,12 @@ impl AgentLoop {
             )
             .await;
 
+        for notice in &pre.notices {
+            observer.on_event(&LiveEvent::Hook {
+                event: "hook warning".into(),
+                detail: notice.clone(),
+            });
+        }
         // Apply the rewrite before logging ToolCall: the log records
         // what actually ran; the rewrite itself is a durable Hook fact
         // — and a live one: audit must be visible, not just durable.
@@ -239,6 +244,26 @@ impl AgentLoop {
             );
         }
 
+        for notice in &post.notices {
+            observer.on_event(&LiveEvent::Hook {
+                event: "hook warning".into(),
+                detail: notice.clone(),
+            });
+        }
+        // PostToolUse output never lands as a user message here — a
+        // sibling call may still be mid-flight, and a Message between a
+        // tool_call and its tool_result folds to a duplicate result.
+        // Buffer it; the turn loop flushes after the last sibling.
+        {
+            let mut tail = self.ctx.hook_tail.lock_or_recover();
+            tail.extend(post.extra_context);
+            if let Some(reason) = post.block_reason {
+                tail.push(format!(
+                    "PostToolUse hook on {} says: {reason}",
+                    call.function.name
+                ));
+            }
+        }
         let mut log = self.ctx.sessions.lock().await;
         log.append(&SessionEvent::ToolResult {
             call_id: call.id.clone(),
@@ -249,12 +274,6 @@ impl AgentLoop {
             lane: self.ctx.lane,
         })
         .await?;
-        for extra in post.extra_context {
-            log.append(&SessionEvent::Message {
-                message: Message::user(format!("[hook context] {extra}")),
-            })
-            .await?;
-        }
         Ok(())
     }
 }

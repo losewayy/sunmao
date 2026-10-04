@@ -15,8 +15,15 @@ use sunmao_llm::types::{Message, ToolCall};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionEvent {
-    /// Session opened.
-    Started { model: String, cwd: String },
+    /// Session opened. `driver` records the loop driver the session's
+    /// baked system prompt was assembled for — resume resolves against it
+    /// so a manifest flip between runs can't mismatch prompt and surface.
+    Started {
+        model: String,
+        cwd: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        driver: Option<String>,
+    },
     /// A full message committed to the transcript.
     Message { message: Message },
     /// A tool call dispatched by the assistant. `depth` tags sub-agent work
@@ -186,16 +193,41 @@ impl SessionLog {
         let dir = dir.as_ref();
         tokio::fs::create_dir_all(dir).await?;
         let path = dir.join(format!("{session_id}.jsonl"));
-        let file = tokio::fs::OpenOptions::new()
+        let mut file = tokio::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
             .await?;
+        // `open` can also RE-open an existing log (im-main, eval ids) —
+        // same crash-tail heal as open_path, or the next append glues
+        // onto the stranded fragment
+        Self::heal_tail(&mut file, &path).await?;
         Ok(Self {
             path,
             file: Some(file),
             mem: std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new())),
         })
+    }
+
+    /// A crash mid-append can strand a partial last line — the next
+    /// append would glue its JSON onto that fragment, corrupting both
+    /// events. A non-empty file that doesn't end in '\n' gets one so
+    /// the stranded fragment stays a single skippable bad line.
+    async fn heal_tail(file: &mut tokio::fs::File, path: &std::path::Path) -> anyhow::Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+        let len = file.metadata().await?.len();
+        if len > 0 {
+            let mut tail = tokio::fs::File::open(path).await?;
+            tail.seek(std::io::SeekFrom::End(-1)).await?;
+            let mut b = [0u8; 1];
+            tail.read_exact(&mut b).await?;
+            if b[0] != b'\n' {
+                use tokio::io::AsyncWriteExt;
+                file.write_all(b"\n").await?;
+                file.flush().await?;
+            }
+        }
+        Ok(())
     }
 
     /// Open an existing session log directly (for --resume). Strict
@@ -216,25 +248,7 @@ impl SessionLog {
             .open(path)
             .await
             .with_context(|| format!("no such session log: {}", path.display()))?;
-        // A crash mid-append can strand a partial last line — the next
-        // append would glue its JSON onto that fragment, corrupting both
-        // events. A non-empty file that doesn't end in '\n' gets one so
-        // the stranded fragment stays a single skippable bad line.
-        {
-            use tokio::io::{AsyncReadExt, AsyncSeekExt};
-            let len = file.metadata().await?.len();
-            if len > 0 {
-                let mut tail = tokio::fs::File::open(path).await?;
-                tail.seek(std::io::SeekFrom::End(-1)).await?;
-                let mut b = [0u8; 1];
-                tail.read_exact(&mut b).await?;
-                if b[0] != b'\n' {
-                    use tokio::io::AsyncWriteExt;
-                    file.write_all(b"\n").await?;
-                    file.flush().await?;
-                }
-            }
-        }
+        Self::heal_tail(&mut file, path).await?;
         Ok(Self {
             path: path.to_path_buf(),
             file: Some(file),
@@ -397,9 +411,17 @@ fn repair_dangling_calls(msgs: Vec<Message>) -> Vec<Message> {
             }
             sunmao_llm::types::Role::Tool => {
                 if let Some(id) = &m.tool_call_id {
-                    pending.retain(|p| p != id);
+                    // a result for a call the fold never saw (or one a
+                    // non-tool message already repaired) is a provider-
+                    // illegal orphan — drop it, same class of protection
+                    // as the synthetic results above, other direction
+                    if pending.iter().any(|p| p == id) {
+                        pending.retain(|p| p != id);
+                        out.push(m);
+                    }
+                } else {
+                    out.push(m);
                 }
-                out.push(m);
             }
             _ => {
                 for id in pending.drain(..) {
@@ -428,6 +450,36 @@ fn local_shell_message(command: &str, exit_code: i32, output: &str) -> Message {
     Message::user(format!(
         "<local-shell>\n$ {command}\n{output}\n[exit {exit_code}]\n</local-shell>"
     ))
+}
+
+/// The loop driver a log was created under — `Started.driver` when the
+/// event carries one (logs written before the field existed parse as
+/// `None`). Resume consults this so the advertised tool surface matches
+/// the system prompt the log already baked; a manifest flip mid-life
+/// can't drift them apart.
+pub fn started_driver(log_path: &Path) -> Option<crate::agent::LoopDriver> {
+    let file = std::fs::File::open(log_path).ok()?;
+    for line in std::io::BufRead::lines(std::io::BufReader::new(file)) {
+        let Ok(line) = line else { break };
+        let Ok(ev) = serde_json::from_str::<SessionEvent>(&line) else {
+            continue;
+        };
+        match ev {
+            SessionEvent::Started { driver, .. } => {
+                return driver
+                    .as_deref()
+                    .and_then(|s| crate::agent::LoopDriver::parse(s).ok());
+            }
+            // Started is always written before the first Message (spawn
+            // logs, audits, all writers) — hitting a Message first means
+            // this log has no Started at all (sub-agent logs), so stop:
+            // an unbounded scan would walk a whole session file for
+            // nothing.
+            SessionEvent::Message { .. } => return None,
+            _ => continue,
+        }
+    }
+    None
 }
 
 /// Background sub-agent results fold in as a tagged user message — the

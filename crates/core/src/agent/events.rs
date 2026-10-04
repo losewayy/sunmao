@@ -71,6 +71,14 @@ pub enum LiveEvent {
     UserMessage {
         content: Vec<sunmao_llm::Content>,
     },
+    /// A user-message boundary was committed to the log — ordinal N (the
+    /// same numbering `turn_boundaries` produces and rewind targets).
+    /// Emitted at the append site, never by the driver's echo: slash
+    /// commands, vetoed prompts and previews get bubbles but no boundary,
+    /// so a live frontend stamps rewind numbers from THIS event only.
+    TurnBoundary {
+        ordinal: u64,
+    },
     /// An HTML artifact landed on disk — emitted by `HtmlArtifact` through
     /// `ctx.live_sink`. Frontends that can render (or link) surfaces it;
     /// degraded frontends show the path. `rev` = version number (0 for

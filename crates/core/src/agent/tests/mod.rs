@@ -15,6 +15,7 @@ mod effort;
 mod fusion;
 mod goal;
 mod hooks;
+mod lazy;
 mod models;
 mod subagents;
 mod turns;
@@ -136,6 +137,7 @@ impl Observer for RecObserver {
             LiveEvent::Goal { .. } => "Goal".into(),
             LiveEvent::TaskDone { .. } => "TaskDone".into(),
             LiveEvent::UserMessage { .. } => "UserMessage".into(),
+            LiveEvent::TurnBoundary { .. } => "TurnBoundary".into(),
         };
         self.0.lock_or_recover().push(tag);
     }

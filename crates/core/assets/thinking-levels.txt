@@ -14,7 +14,9 @@
 # — OpenAI (reasoning_effort / reasoning.effort) —
 # gpt-6-astra rejects `none` (400); 6.1-sol rejects none+minimal; other
 # gpt-6 (sol/luna/terra) accept none; gpt-5.6 adds minimal+max on the
-# full ladder; gpt-5.1's codex-max is the first xhigh carrier.
+# full ladder; gpt-5.1's codex-max is the first xhigh carrier. Image
+# and audio models, gpt-4.5, and the safeguard guardrail take no effort.
+gpt-*-image*,gpt-audio*,gpt-4-5-preview,gpt-oss-safeguard* | !
 gpt-6-astra* | low,medium,high,xhigh,max
 gpt-6-1* | low,medium,high
 gpt-6* | none,low,medium,high,xhigh
@@ -24,7 +26,7 @@ gpt-5-1-codex-max* | none,low,medium,high,xhigh
 gpt-5-1* | none,low,medium,high
 gpt-5-pro* | high
 gpt-5-2*,gpt-5-3*,gpt-5-4* | none,low,medium,high,xhigh
-gpt-5*,gpt-4-5-preview | low,medium,high
+gpt-5* | low,medium,high
 gpt-oss-* | low,medium,high
 o1*,o3*,o4-* | low,medium,high
 
@@ -60,13 +62,18 @@ minimax-m3* | none,high
 minimax-* | -
 
 # — Alibaba Qwen (3.8 takes low|medium|xhigh; 3.x hybrids take
-#   enable_thinking + thinking_budget — a budget, not levels) —
+#   enable_thinking + thinking_budget — a budget, not levels). The
+#   instruct variants (2507 wave) and Qwen3-Coder are non-thinking —
+#   aliyun's enable_thinking doc names only Qwen3/3.5-3.8/Qwen3-VL.
 qwen3-8-* | low,medium,xhigh
+qwen3-coder*,qwen3-*-instruct* | !
 qwen3*,qwq-*,qvq-* | -
 
-# — Google (thinkingLevel on gemini-3; flash-lite loses medium, 3.1-pro
-#   loses minimal; 2.x is thinkingBudget only) —
-gemini-*flash-lite* | minimal,low,high
+# — Google (thinkingLevel on gemini-3; flash-lite loses medium — and the
+#   flash-lite-IMAGE variant loses low too; 3.1-pro loses minimal;
+#   2.x is thinkingBudget only, so keep 2.5-flash-lite off the list) —
+gemini-*flash-lite-image* | minimal,high
+gemini-3-*flash-lite* | minimal,low,high
 gemini-3-*pro* | low,medium,high
 gemini-3* | minimal,low,medium,high
 gemini-* | -
@@ -93,8 +100,8 @@ mimo-* | -
 #   thinking chunk) vs none (suppressed), and only on the adjustable
 #   families (small-2603+/small-4, medium-3.x); older smalls, large,
 #   ministral/codestral have no reasoning; magistral always-on —
-mistral-small-2603*,mistral-small-latest*,mistral-small-4*,mistral-medium* | none,high
-mistral-small*,mistral-large*,ministral*,codestral*,devstral*,mistral-nemo*,mistral-saba*,mixtral*,voxtral* | !
+mistral-small-2603*,mistral-small-latest*,mistral-small-4*,mistral-medium-3-1*,mistral-medium-3-5*,mistral-medium-3-7* | none,high
+mistral-small*,mistral-medium*,mistral-large*,ministral*,codestral*,devstral*,mistral-nemo*,mistral-saba*,mixtral*,voxtral* | !
 magistral* | -
 
 # — Cohere — command-a reasoning is a toggle; command-r predates it —

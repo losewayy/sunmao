@@ -45,7 +45,7 @@ use serde_json::{Value, json};
 use sunmao_llm::types::Tool;
 
 use crate::agent::{LiveEvent, Observer};
-use crate::context::Context;
+use crate::context::{Context, MutexRecover};
 use crate::tool::{ToolImpl, ToolResult};
 
 /// JS heap cap per script — big enough for real fan-outs, small enough that
@@ -79,8 +79,9 @@ impl ToolImpl for RunCodeTool {
              value)`/`await load(key)` persist JSON values across calls. Use Promise.all \
              for parallel calls and keep intermediate data in the script — only `return`ed \
              values enter the transcript. The sandbox has no fs/network/import: tools are \
-             the only capabilities. The script itself is the return value of evaluating \
-             `code` — end with an expression or `(async () => { ... })()`.",
+             the only capabilities. The script's completion value is the result — end with \
+             an expression; top-level `await`/`return` also work (a script that can't parse \
+             plainly retries inside an async wrapper).",
             json!({
                 "type": "object",
                 "properties": {
@@ -137,6 +138,78 @@ impl Observer for PtcObserver {
             s.on_event(ev);
         }
     }
+}
+
+/// Compile+run `code`. `eval` uses the Script goal — top-level `await`
+/// and `return`, codemode's most natural spellings, are syntax errors
+/// there, so a parse failure falls back inside an async wrapper: the
+/// expression form first (`await expr` keeps its completion value), then
+/// the statement form (`return` decides the result). A reported error
+/// always describes the ORIGINAL source, never the wrapped retry's
+/// shifted positions.
+fn eval_code<'js>(
+    jctx: &rquickjs::Ctx<'js>,
+    code: &str,
+) -> Result<rquickjs::promise::MaybePromise<'js>, String> {
+    let first = match jctx.eval(code) {
+        Ok(p) => return Ok(p),
+        Err(_) => {
+            // catch() CLEARS the pending exception — read it once and keep
+            // the value; a second call sees nothing.
+            let caught = jctx.catch();
+            let desc = caught_desc(&caught, jctx);
+            // Retry gate: a SyntaxError thrown before ANY tools.* call —
+            // parse errors execute nothing. `__calls` counts invocations
+            // in JS (the send inside __ptc polls later, so a Rust-side
+            // counter can't see a queued call in time).
+            let syntax = matches!(
+                caught
+                    .as_exception()
+                    .and_then(|ex| ex
+                        .as_object()
+                        .get::<_, Option<String>>("name")
+                        .ok()
+                        .flatten())
+                    .as_deref(),
+                Some("SyntaxError")
+            );
+            let invoked = jctx.eval::<i32, _>("__calls").unwrap_or(1);
+            if !syntax || invoked > 0 {
+                return Err(format!("eval error: {desc}"));
+            }
+            desc
+        }
+    };
+    if let Ok(p) = jctx.eval::<rquickjs::promise::MaybePromise, _>(format!(
+        "(async () => {{ return (\n{code}\n); }})()"
+    )) {
+        return Ok(p);
+    }
+    jctx.eval::<rquickjs::promise::MaybePromise, _>(format!("(async () => {{\n{code}\n}})()"))
+        .map_err(|_| format!("eval error: {first}"))
+}
+
+/// The caught JS error the way a model can act on: the engine's own
+/// message plus its first stack line (`eval_script:L:C`), without the
+/// `{:?}` Debug dump (`Exception { message: Some(…) }`) it used to carry.
+fn caught_desc<'js>(v: &rquickjs::Value<'js>, jctx: &rquickjs::Ctx<'js>) -> String {
+    if let Some(e) = v.as_exception() {
+        let msg = e.message().unwrap_or_else(|| "unknown exception".into());
+        return match e
+            .stack()
+            .and_then(|s| s.lines().next().map(str::trim).map(str::to_string))
+        {
+            Some(loc) if !loc.is_empty() => format!("{msg} ({})", loc.trim_start_matches("at ")),
+            _ => msg,
+        };
+    }
+    // a thrown non-Error (`throw "boom"`) carries no stack — its JSON is
+    // still the best description the model can get
+    jctx.json_stringify(v)
+        .ok()
+        .flatten()
+        .and_then(|s| s.to_string().ok())
+        .unwrap_or_else(|| "unknown error".into())
 }
 
 /// Drive one script to completion. `ctx` is the *session's* Context — nested
@@ -201,13 +274,11 @@ fn run_script(ctx: Arc<Context>, code: &str, timeout: Duration) -> Result<String
             tokio::select! {
                 r = jctx.async_with(async |jctx| -> Result<String, String> {
                     install_surface(&jctx, &ctx, tx).map_err(|e| format!("install: {e}"))?;
-                    let p = jctx
-                        .eval::<rquickjs::promise::MaybePromise, _>(code)
-                        .map_err(|e| format!("eval error: {e} / {:?}", jctx.catch()))?;
+                    let p = eval_code(&jctx, &code)?;
                     let v = p
                         .into_future::<rquickjs::Value>()
                         .await
-                        .map_err(|e| format!("script rejected: {e} / {:?}", jctx.catch()))?;
+                        .map_err(|_| format!("script rejected: {}", caught_desc(&jctx.catch(), &jctx)))?;
                     jctx.json_stringify(&v)
                         .map_err(|e| e.to_string())?
                         .map(|s| s.to_string().unwrap_or_default())
@@ -287,17 +358,20 @@ impl ToolImpl for SearchToolsTool {
     fn decl(&self) -> Tool {
         Tool::function(
             "SearchTools",
-            "Search the session's tool catalog — returns the full declarations \
-             (name, description, parameters schema) of every tool whose name \
-             or description matches the query terms, including MCP (`mcp__*`) \
-             and extension (`ext__*`) tools. Use it to look up the exact \
-             argument shape a RunCode script should pass to `tools.<Name>`; \
-             an empty or omitted query lists the whole catalog. Discovery \
-             only — a match is callable information, not a permission grant.",
+            "Search the session's tool catalog — returns the declarations of \
+             every tool whose name or description matches the query terms, \
+             including MCP (`mcp__*`) and extension (`ext__*`) tools, and any \
+             tool not currently in your advertised set (deferred tools are \
+             callable — call them by name once found). `detail` picks the \
+             payload: `names` (a bare name list), `desc` (name + \
+             description), `schema` (full declarations — the default). An \
+             empty or omitted query lists the whole catalog. Discovery only \
+             — a match is callable information, not a permission grant.",
             json!({
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Case-insensitive terms; a tool matches when every term appears in its name or description. Empty lists all."}
+                    "query": {"type": "string", "description": "Case-insensitive terms; a tool matches when every term appears in its name or description. Empty lists all."},
+                    "detail": {"type": "string", "enum": ["names", "desc", "schema"], "description": "Payload detail — `names` for a compact list, `desc` for name+description, `schema` (default) for full declarations"}
                 }
             }),
         )
@@ -307,11 +381,39 @@ impl ToolImpl for SearchToolsTool {
         #[derive(Deserialize)]
         struct Args {
             query: Option<String>,
+            detail: Option<String>,
         }
-        let a: Args = serde_json::from_value(args).unwrap_or(Args { query: None });
+        let a: Args = serde_json::from_value(args).unwrap_or(Args {
+            query: None,
+            detail: None,
+        });
         let hits = matching_tools(callable_catalog(ctx), a.query.as_deref().unwrap_or(""));
+        // a surfaced tool joins the advertised set on later requests — the
+        // lazy surface (catalog > LAZY_ADVERTISE_AT) promotes what the model
+        // actually went looking for instead of keeping the whole catalog hot
+        ctx.promoted_tools
+            .lock_or_recover()
+            .extend(hits.iter().map(|t| t.function.name.clone()));
+        let out = match a.detail.as_deref().unwrap_or("schema") {
+            "names" => {
+                serde_json::to_string(&hits.iter().map(|t| &t.function.name).collect::<Vec<_>>())
+            }
+            "desc" => serde_json::to_string(
+                &hits
+                    .iter()
+                    .map(|t| {
+                        serde_json::json!({
+                            "name": t.function.name,
+                            "description": t.function.description,
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            _ => serde_json::to_string(&hits),
+        }
+        .unwrap_or_else(|_| "[]".into());
         Ok(ToolResult {
-            output: serde_json::to_string(&hits).unwrap_or_else(|_| "[]".into()),
+            output: out,
             ok: true,
         })
     }

@@ -74,7 +74,7 @@ impl ToolImpl for TaskTool {
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string", "description": "Complete instructions for the subtask (flat form); the continuation instruction when combined with `resume`"},
-                    "subagent_type": {"type": "string", "description": "Named agent def from .sunmao/agents/*.md or .claude/agents/*.md"},
+                    "subagent_type": {"type": "string", "description": "Named agent def — the 'Available sub-agents' index in the system prompt lists what this project defines (.sunmao/agents/*.md, .claude/agents/*.md). Omit for the generic sub-agent."},
                     "model": {"type": "string", "description": "Model selector — @route or provider/<model-id> from .sunmao/models.json; child runs on that adapter instead of inheriting the parent's"},
                     "steer": {"type": "string", "description": "Inject a mid-run user message into the named running sub-agent (sub-<id>). The child folds it at its next request boundary. Requires `message`."},
                     "message": {"type": "string", "description": "The steer's text — required with `steer`"},

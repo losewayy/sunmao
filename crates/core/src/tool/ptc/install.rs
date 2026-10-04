@@ -54,6 +54,12 @@ pub(super) fn install<'js>(
     let list = serde_json::to_string(&names).unwrap_or_else(|_| "[]".into());
     jctx.eval::<(), _>(format!(
         r#"
+        // invocation ledger — `__ptc` is async (its send polls later), so
+        // counting calls at invocation time is the only "did the script
+        // reach a tool" signal the eval fallback can trust
+        globalThis.__calls = 0;
+        const __ptc_host = __ptc;
+        globalThis.__ptc = (op, args) => {{ __calls++; return __ptc_host(op, args); }};
         globalThis.tools = {{}};
         for (const n of {list}) {{
             tools[n] = (args) => __ptc("tool", JSON.stringify({{name: n, args: args ?? {{}}}}))

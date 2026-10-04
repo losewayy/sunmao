@@ -158,14 +158,17 @@ impl CatalogEntry {
     }
 }
 
-/// A `max_output` at ≥90% of the context window is not a cap — it's the
-/// provider shrugging ("everything but a sliver"). OpenRouter relays such
-/// values verbatim (DeepSeek's upstream advertises ~944K completions on a
-/// 1M window). Drop them so the UI shows an honest blank instead of an
-/// absurd number; a real ceiling never sits that close to the window.
+/// Is this a believable completion ceiling? Provider listings are full of
+/// formula values — `context × 0.9`, `context × 0.8` — that mean "the API
+/// accepts a max_tokens up to the window", not a documented model limit
+/// (OpenRouter relays ~944K on a 1M window; real documented caps top out
+/// around DeepSeek V4's 384K). Two-band rule: an absolute ceiling, then a
+/// ratio catch for formula noise in smaller windows. Anything failing
+/// both is shown as an honest blank — never an invented number.
 pub fn sane_max_output(context: Option<u64>, max_out: Option<u64>) -> Option<u64> {
     match (context, max_out) {
-        (Some(c), Some(m)) if m * 10 >= c * 9 => None,
+        (_, Some(m)) if m > 400_000 => None,
+        (Some(c), Some(m)) if m * 4 >= c * 3 => None,
         _ => max_out,
     }
 }

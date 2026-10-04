@@ -176,25 +176,55 @@ impl Knowledge {
     }
 }
 
-/// Pull OpenRouter's catalog, keep the mainstream families, write the
-/// user layer (`~/.sunmao/model-knowledge.json`). Returns the entry count
-/// written — an optional freshness action, never a runtime dependency.
+/// Pull OpenRouter's catalog + litellm's community registry, keep the
+/// mainstream families, write the user layer
+/// (`~/.sunmao/model-knowledge.json`). OpenRouter is the structural source
+/// (modalities, supported_parameters); litellm is the curated source for
+/// `max_output` — provider self-reports there are documented limits, not
+/// the "context × 0.9" formulas gateways hand back. An optional
+/// freshness action, never a runtime dependency.
 pub async fn refresh_user_layer() -> anyhow::Result<usize> {
     let client = reqwest::Client::builder()
         .user_agent("sunmao/0.1")
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
-    let v: serde_json::Value = client
-        .get("https://openrouter.ai/api/v1/models")
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let (v, ltm_raw) = tokio::try_join!(
+        async {
+            client
+                .get("https://openrouter.ai/api/v1/models")
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<serde_json::Value>()
+                .await
+        },
+        async {
+            client
+                .get("https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json")
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<serde_json::Value>()
+                .await
+        },
+    )?;
     let rows = v
         .get("data")
         .and_then(|d| d.as_array())
         .ok_or_else(|| anyhow::anyhow!("listing has no data[]"))?;
+    // litellm keys carry provider prefixes (`azure_ai/x`, `sail/z-ai/Y`)
+    // and duplicates disagree — bucket by normalized basename, and per
+    // model take the largest sane value: provider-limited deployments
+    // report LOW ceilings (a 32k-window host caps output at 32k), while
+    // the documented model cap is the biggest believable one
+    let mut ltm: HashMap<String, Vec<u64>> = HashMap::new();
+    if let Some(map) = ltm_raw.as_object() {
+        for (k, e) in map {
+            if let Some(m) = e.get("max_output_tokens").and_then(|x| x.as_u64()) {
+                ltm.entry(normalize(k)).or_default().push(m);
+            }
+        }
+    }
     let mut out: Vec<serde_json::Value> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for row in rows {
@@ -220,11 +250,21 @@ pub async fn refresh_user_layer() -> anyhow::Result<usize> {
             .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
             .unwrap_or_default();
         let mut e = serde_json::json!({"match": key, "context": ctx});
-        if let Some(mo) = crate::models::sane_max_output(
+        // max_output: prefer the curated registry's largest sane value;
+        // the gateway's own report is only a fallback (it shrugs in
+        // "context × 0.9" formulas that fail the sanity bands)
+        let ltm_best = ltm
+            .get(&key)
+            .into_iter()
+            .flatten()
+            .filter_map(|&m| crate::models::sane_max_output(Some(ctx), Some(m)))
+            .max();
+        let or_best = crate::models::sane_max_output(
             Some(ctx),
             row.pointer("/top_provider/max_completion_tokens")
                 .and_then(|m| m.as_u64()),
-        ) {
+        );
+        if let Some(mo) = ltm_best.or(or_best) {
             e["max_output"] = mo.into();
         }
         if let Some(serde_json::Value::Array(inp)) = row.pointer("/architecture/input_modalities") {

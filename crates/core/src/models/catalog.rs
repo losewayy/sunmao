@@ -108,12 +108,15 @@ fn catalog_entry(row: &serde_json::Value, id: &str) -> CatalogEntry {
     }
     // completion ceiling — OpenRouter nests it under `top_provider`; a
     // few listings flatten it
-    let max_output = get(&[
-        "/top_provider/max_completion_tokens",
-        "/max_completion_tokens",
-        "/max_output_tokens",
-    ])
-    .and_then(|v| v.as_u64());
+    let max_output = super::sane_max_output(
+        context_length,
+        get(&[
+            "/top_provider/max_completion_tokens",
+            "/max_completion_tokens",
+            "/max_output_tokens",
+        ])
+        .and_then(|v| v.as_u64()),
+    );
     // `supported_parameters` enumerates wire features — `tools`/`tool_choice`
     // = function calling, `structured_outputs`/`response_format` = JSON mode
     let has_param = |names: &[&str]| {

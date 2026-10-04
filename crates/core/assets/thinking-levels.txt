@@ -52,7 +52,7 @@ glm-* | -
 # — Moonshot Kimi (effort on k3 only; k2.5+/k2-thinking is a
 #   thinking.type toggle; the plain k2 instructs have no thinking at all) —
 kimi-k3* | low,high,max
-kimi-k2-thinking*,kimi-k2-5*,kimi-k2-6*,kimi-k2-7* | -
+kimi-k2-thinking*,kimi-k2-5*,kimi-k2-6*,kimi-k2-7*,kimi-k2-8* | -
 kimi-k2*,kimi-latest | !
 kimi-* | -
 

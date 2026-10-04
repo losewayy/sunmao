@@ -57,35 +57,41 @@ function schedForm(id) {
   form.innerHTML = `
     <div class="sch-f"><label>名称<span class="opt">可选，缺省取任务首行</span></label><span class="fin"><input id="sf-name" value="${esc(t ? t.name : '')}" placeholder="晨间项目体检" autocomplete="off" spellcheck="false"></span></div>
     <div class="sch-f"><label>任务内容<span class="opt">到点作为新会话的首条输入</span></label><span class="fin tall"><textarea id="sf-prompt" rows="3" placeholder="例如：跑一遍 cargo test，汇总失败项并修复可以自动修的部分" spellcheck="false">${esc(t ? t.prompt : '')}</textarea></span></div>
-    <div class="sch-f"><label>频率</label><span class="fin"><select id="sf-kind">${['daily', 'weekly', 'interval', 'once'].map(k => `<option value="${k}"${k === kind ? ' selected' : ''}>${SCHED_KIND[k]}</option>`).join('')}</select></span></div>
+    <div class="sch-f"><label>频率</label><span class="fin"><button type="button" class="pv-sel" id="sf-kind" data-v="${kind}"><span>${esc(SCHED_KIND[kind])}</span>${ic('chev-d')}</button></span></div>
     <div class="sch-f" id="sf-at" hidden><label>时间</label><span class="fin"><input id="sf-time" type="time" value="${esc(t && t.at ? t.at : '09:00')}"></span></div>
-    <div class="sch-f" id="sf-wd" hidden><label>星期</label><span class="fin"><select id="sf-weekday">${[1, 2, 3, 4, 5, 6, 0].map(d => `<option value="${d}"${t && t.weekday === d ? ' selected' : ''}>周${WD[d]}</option>`).join('')}</select></span></div>
+    <div class="sch-f" id="sf-wd" hidden><label>星期</label><span class="fin"><button type="button" class="pv-sel" id="sf-weekday" data-v="${t ? t.weekday : 1}"><span>周${esc(WD[t ? t.weekday : 1])}</span>${ic('chev-d')}</button></span></div>
     <div class="sch-f" id="sf-every" hidden><label>间隔（分钟）</label><span class="fin"><input id="sf-min" type="number" min="1" step="1" value="${t && t.every_min || 60}"></span></div>
     <div class="sch-f" id="sf-once" hidden><label>执行时间</label><span class="fin"><input id="sf-when" type="datetime-local" value="${dtLocal(t && t.run_at ? t.run_at : Date.now() + 3600e3)}"></span></div>
-    <div class="sch-f"><label>项目目录</label><span class="fin"><input id="sf-cwd" list="sf-dl" value="${esc(t ? t.cwd : cwd)}" spellcheck="false" autocomplete="off"><datalist id="sf-dl">${(PROJECTS || []).map(p => `<option value="${esc(p)}">`).join('')}</datalist></span></div>
+    <div class="sch-f"><label>项目目录</label><span class="fin sch-pick"><input id="sf-cwd" value="${esc(t ? t.cwd : cwd)}" spellcheck="false" autocomplete="off"><button type="button" class="ib sm" id="sf-cwd-pick" data-tip="最近项目">${ic('chev-d')}</button></span></div>
     <div class="sch-acts"><button class="btn ghost sm" data-act="sched-cancel">取消</button><button class="btn allow sm" data-act="sched-save"${t ? ` data-id="${esc(t.id)}"` : ''}>保存</button></div>`;
-  const sel = $('#sf-kind', form);
+  // pickers ride the same menuPop chrome as every other selector — a
+  // native <select> pops a system-drawn menu that ignores the theme
+  const pick = (btn, items, apply) => btn && btn.addEventListener('click', () => menuPop(btn, items.map(o => ({ v: o.v, t: o.t, on: String(o.v) === btn.dataset.v })), v => { btn.dataset.v = v; btn.querySelector('span').textContent = items.find(i => String(i.v) === v).t; if (apply) apply(v); }, { align: 'start' }));
+  const kindBtn = $('#sf-kind', form);
   const sync = () => {
-    const k = sel.value;
+    const k = kindBtn.dataset.v;
     $('#sf-at', form).hidden = !(k === 'daily' || k === 'weekly');
     $('#sf-wd', form).hidden = k !== 'weekly';
     $('#sf-every', form).hidden = k !== 'interval';
     $('#sf-once', form).hidden = k !== 'once';
   };
-  sel.addEventListener('change', sync);
+  pick(kindBtn, Object.entries(SCHED_KIND).map(([v, t]) => ({ v, t })), sync);
+  pick($('#sf-weekday', form), [1, 2, 3, 4, 5, 6, 0].map(d => ({ v: d, t: '周' + WD[d] })));
+  const cwdPick = $('#sf-cwd-pick', form), cwdIn = $('#sf-cwd', form);
+  if (cwdPick && (PROJECTS || []).length) cwdPick.addEventListener('click', () => menuPop(cwdPick, PROJECTS.map(p => ({ v: p, t: projectName(p) || p, d: projectName(p) ? p : '', on: p === cwdIn.value })), v => { cwdIn.value = v; }, { align: 'end' }));
   sync();
   form.scrollIntoView({ block: 'nearest', behavior: motion.reduced() ? 'auto' : 'smooth' });
   $('#sf-prompt', form).focus();
 }
 async function schedSave(id) {
-  const form = $('#sch-form'), k = $('#sf-kind', form).value;
+  const form = $('#sch-form'), k = $('#sf-kind', form).dataset.v;
   const body = {
     name: $('#sf-name', form).value.trim(),
     prompt: $('#sf-prompt', form).value.trim(),
     cwd: $('#sf-cwd', form).value.trim(),
     kind: k,
     at: $('#sf-time', form).value || '09:00',
-    weekday: +$('#sf-weekday', form).value || 0,
+    weekday: +$('#sf-weekday', form).dataset.v || 0,
     every_min: +$('#sf-min', form).value || 60,
     run_at: k === 'once' ? new Date($('#sf-when', form).value).getTime() || 0 : 0,
     enabled: true,

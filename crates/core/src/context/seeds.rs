@@ -29,6 +29,33 @@ pub(super) fn seed_todos(path: &std::path::Path) -> Vec<crate::tool::TodoItem> {
     Vec::new()
 }
 
+/// Builtin skills materialize into `~/.sunmao/skills/` so the prompt's
+/// skills index can list them (name + description) and the agent Reads
+/// the body on demand — progressive disclosure, not baked context.
+/// Refresh rule: missing → write; ours (marker intact) and drifted →
+/// rewrite; marker removed or hand-edited → their file, leave it.
+pub(crate) fn materialize_builtin_skills() {
+    const MARK: &str = "<!-- sunmao:builtin";
+    const SKILLS: &[(&str, &str)] = &[(
+        "sunmao-config",
+        include_str!("../../assets/skills/sunmao-config/SKILL.md"),
+    )];
+    let base = crate::model_knowledge::sunmao_home().join("skills");
+    for (name, body) in SKILLS {
+        let path = base.join(name).join("SKILL.md");
+        let write = match std::fs::read_to_string(&path) {
+            Err(_) => true,
+            Ok(cur) => cur.starts_with(MARK) && cur != *body,
+        };
+        if write {
+            if let Some(d) = path.parent() {
+                let _ = std::fs::create_dir_all(d);
+            }
+            let _ = std::fs::write(&path, body);
+        }
+    }
+}
+
 /// Per-tool watchdog seconds — `assets/tool-timeouts.txt` merged with
 /// `.sunmao/tool-timeouts.txt` and plugin dirs, project rows overriding
 /// builtins by name (risky-patterns stacks additively; timeouts are a

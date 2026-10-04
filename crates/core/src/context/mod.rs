@@ -357,6 +357,9 @@ impl Context {
         let turn_mode = seed_turn_mode(sessions.path());
         let effort = seed_effort(sessions.path());
         let ptc_store = seed_ptc_store(sessions.path());
+        // builtin skills land on disk so the prompt's skills index can
+        // list them (name+desc) — body stays a file the agent Reads
+        seeds::materialize_builtin_skills();
         // checkpoints: rebuild `taken`/`seq` from any existing manifest so a
         // resumed session doesn't re-snapshot already-preserved files, and
         // seed the turn counter from the log's user-turn boundaries so the

@@ -415,9 +415,11 @@ fn project_context(cwd: &Path, extra_roots: &[PathBuf]) -> String {
             skills_dirs.push(p.path().join("skills"));
         }
     }
-    // ecosystem scan — skills authored for other harnesses load unmodified
+    // ecosystem scan — sunmao's own user layer first (builtin skills
+    // materialize here), then skills authored for other harnesses
     if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
         let h = std::path::Path::new(&home);
+        skills_dirs.push(h.join(".sunmao").join("skills"));
         skills_dirs.push(h.join(".claude").join("skills"));
         skills_dirs.push(h.join(".agents").join("skills"));
     }

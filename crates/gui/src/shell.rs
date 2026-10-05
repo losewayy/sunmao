@@ -89,7 +89,14 @@ window.addEventListener('keydown', (e) => {
 "#;
 
 #[tauri::command]
-pub(crate) fn shell_win(app: tauri::AppHandle, win: tauri::Window, op: &str) {
+/// `op` is a verb ("min"/"max"/"close"/"new") or the `state` query behind the
+/// caption's maximize/restore glyph — one command because the page's shell
+/// seam exposes one verb (`__sunmaoShell.win`).
+pub(crate) fn shell_win(
+    app: tauri::AppHandle,
+    win: tauri::Window,
+    op: &str,
+) -> Result<serde_json::Value, String> {
     match op {
         "min" => {
             let _ = win.minimize();
@@ -100,6 +107,14 @@ pub(crate) fn shell_win(app: tauri::AppHandle, win: tauri::Window, op: &str) {
             } else {
                 let _ = win.maximize();
             }
+        }
+        // maximize, restore, Aero snap and un-snapping by drag all leave this
+        // answer correct — the page asks after each resize instead of tracking
+        // its own guess from the last click
+        "state" => {
+            return Ok(serde_json::json!({
+                "maximized": win.is_maximized().unwrap_or(false)
+            }));
         }
         "close" => {
             let _ = win.close();
@@ -124,6 +139,7 @@ pub(crate) fn shell_win(app: tauri::AppHandle, win: tauri::Window, op: &str) {
         }
         _ => {}
     }
+    Ok(serde_json::Value::Null)
 }
 
 /// The titlebar is the drag region — a left-button press anywhere on it

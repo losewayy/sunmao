@@ -185,8 +185,13 @@ fn zoom_step(cur: f64, dir: f64) -> f64 {
 ///
 /// `async` is load-bearing, not stylistic: see the module note above —
 /// the sync form deadlocks on Windows the moment it builds a guest.
+/// Ops that read back (`ann-poll`) return their payload as JSON; the
+/// fire-and-forget ops answer null.
 #[tauri::command]
-pub(crate) async fn shell_webview(win: tauri::Window, op: serde_json::Value) -> Result<(), String> {
+pub(crate) async fn shell_webview(
+    win: tauri::Window,
+    op: serde_json::Value,
+) -> Result<serde_json::Value, String> {
     let label = format!("br-{}", op["id"].as_i64().unwrap_or(0));
     let rect = |v: &serde_json::Value| -> (tauri::LogicalPosition<f64>, tauri::LogicalSize<f64>) {
         (
@@ -224,7 +229,7 @@ pub(crate) async fn shell_webview(win: tauri::Window, op: serde_json::Value) -> 
             if let Some(w) = find() {
                 place(&w, pos, size);
                 let _ = w.navigate(url);
-                return Ok(());
+                return Ok(serde_json::Value::Null);
             }
             let built = win.add_child(
                 tauri::webview::WebviewBuilder::new(
@@ -265,9 +270,40 @@ pub(crate) async fn shell_webview(win: tauri::Window, op: serde_json::Value) -> 
                 let _ = w.close();
             }
         }
+        // Element picker for this pane's guest. The page can't reach that
+        // document (separate webview, foreign origin), so the picker ships
+        // into the guest and reports through `window.__smAnn`; `ann-poll`
+        // reads it back one-shot (`eval_with_callback` is the return path —
+        // an eval that never returns would need a channel we don't want to
+        // expose to a foreign page).
+        "annotate" => {
+            if let Some(w) = find() {
+                let _ = w.eval(sunmao::ANNOTATE_JS);
+                // the gesture is the guest's from here on — Esc must reach it
+                // without a click in the page first
+                let _ = w.set_focus();
+            }
+        }
+        "ann-poll" => {
+            let Some(w) = find() else {
+                return Ok(serde_json::Value::Null);
+            };
+            let (tx, rx) = std::sync::mpsc::channel();
+            w.eval_with_callback(
+                "(function(){const v=window.__smAnn||null;window.__smAnn=null;return v})()",
+                move |s| {
+                    let _ = tx.send(s);
+                },
+            )
+            .map_err(|e| e.to_string())?;
+            let payload = rx
+                .recv_timeout(std::time::Duration::from_millis(500))
+                .unwrap_or_default();
+            return Ok(serde_json::Value::String(payload));
+        }
         _ => {}
     }
-    Ok(())
+    Ok(serde_json::Value::Null)
 }
 
 /// Native webview hotkeys stay disabled so this map stays the single

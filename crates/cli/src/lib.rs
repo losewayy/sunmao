@@ -29,7 +29,7 @@ mod serve;
 mod sessions;
 mod tui;
 
-pub use serve::{Client, HostHandle, HostResponse, SANDBOX_PAGE};
+pub use serve::{ANNOTATE_JS, Client, HostHandle, HostResponse, SANDBOX_PAGE};
 
 #[derive(Parser, Clone)]
 #[command(name = "sunmao", version, about = "agent harness kernel — 榫卯")]

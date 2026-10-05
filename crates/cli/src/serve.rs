@@ -98,6 +98,12 @@ const BOOT_JS: &str = include_str!("serve/assets/boot.js");
 /// same bytes, no HTTP listener under the shell.
 pub const SANDBOX_PAGE: &str = include_str!("serve/assets/sandbox.html");
 
+/// Element picker for a dock browser tab's native guest webview. It is not
+/// served to the page like the bundle above — the Tauri shell injects it into
+/// the guest through `Webview::eval`, because the guest is a separate
+/// document the page cannot reach (`pub` for `crates/gui`).
+pub const ANNOTATE_JS: &str = include_str!("serve/assets/annotate.js");
+
 /// A factory `main.rs` installs at startup: `build` reproduces the exact
 /// Context assembly a session needs (provider, registry, MCP tools,
 /// extensions, approver, model routes, `--loop`) so every session the host

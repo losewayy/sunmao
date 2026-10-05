@@ -355,10 +355,9 @@ pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
         &cwd,
         sunmao_core::models::ProviderDef {
             base_url: cli.base_url.clone(),
-            api_key_env: None,
             api_key: Some(cli.api_key.clone()),
             dialect: cli.provider.clone(),
-            catalog: Vec::new(),
+            ..Default::default()
         },
         "default",
     )));
@@ -504,10 +503,9 @@ async fn host_spec(cli: &Cli) -> anyhow::Result<serve::HostSpec> {
         .assemble(cli.system.as_deref());
     let default_provider = sunmao_core::models::ProviderDef {
         base_url: cli.base_url.clone(),
-        api_key_env: None,
         api_key: Some(cli.api_key.clone()),
         dialect: cli.provider.clone(),
-        catalog: Vec::new(),
+        ..Default::default()
     };
     let model_label = cli.model.clone();
     // `--model`/`SUNMAO_MODEL` only outranks a project's `default_model` when

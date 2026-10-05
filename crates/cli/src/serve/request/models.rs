@@ -2,6 +2,7 @@
 //! and the composer picker lists selectors, both through GET/PUT `/models`
 //! (+ `POST /models/fetch`). Split out of `request.rs` to keep the route
 //! table under the god-file budget.
+// arch: allow-god-file models route plus its GET/PUT credential-loss regression suite are one seam
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -127,6 +128,26 @@ pub(super) async fn fetch(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) ->
     }
 }
 
+/// The save's request-level metadata, under the reserved `$request` key.
+///
+/// A save has to say two things the document shape cannot: "this entry is a
+/// create, not an edit" and "this entry was renamed from X". Bare top-level
+/// names would collide with hand-written file keys (`models.json` may
+/// legitimately carry `adding`), so they ride in one reserved namespace that
+/// the server strips before the file parse. Everything outside `$request` is
+/// document content, unknown keys included.
+#[derive(serde::Deserialize, Default)]
+struct SaveRequest {
+    /// `{new: old}` — where a renamed entry's credential has to move, and
+    /// what lets a rename onto a taken name fail instead of overwriting it.
+    #[serde(default)]
+    rename_from: HashMap<String, String>,
+    /// the name this save CREATES — the body always carries the whole provider
+    /// map, so only the page knows which entry is a new one.
+    #[serde(default)]
+    adding: Option<String>,
+}
+
 /// `PUT /models?sess=` — fold the page's desired table onto
 /// `<session's project>/.sunmao/models.json`, then reload every live host's
 /// resolver so the picker/settings see it at once.
@@ -135,39 +156,26 @@ pub(super) async fn fetch(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) ->
 /// table from the redacted GET view (no literal keys) and carries only the
 /// top-level keys it knows. Replacing the file wholesale therefore deleted a
 /// hand-written `api_key` and any key this build doesn't know; the merge in
-/// `ModelsFile::merge_save` keeps them.
-///
-/// `rename_from` (`{new: old}`) is a request-only field the editor adds when
-/// a save renames an entry: it names where a key has to move, and it lets a
-/// rename onto a name another provider already owns fail instead of silently
-/// overwriting it. `adding` (`"<name>"`) is the same kind of field for the
-/// create path: an add and an edit look identical in the body (it always
-/// carries the whole provider map), so the page declares which save creates a
-/// new entry and the server can refuse a name that is already taken. Both are
-/// stripped before the file parse, so neither lands in `extra`.
+/// `ModelsFile::merge_save` keeps them, provider-level keys included.
 pub(super) async fn put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> HostResponse {
     let mut v: serde_json::Value = match serde_json::from_slice(body) {
         Ok(v) => v,
         Err(e) => return HostResponse::err(400, format!("bad models.json: {e}")),
     };
-    let rename_from: HashMap<String, String> = match v.get("rename_from") {
-        None | Some(serde_json::Value::Null) => HashMap::new(),
+    let req: SaveRequest = match v.get("$request") {
+        None | Some(serde_json::Value::Null) => SaveRequest::default(),
         Some(x) => match serde_json::from_value(x.clone()) {
-            Ok(m) => m,
-            Err(e) => return HostResponse::err(400, format!("bad rename_from: {e}")),
-        },
-    };
-    let adding: Option<String> = match v.get("adding") {
-        None | Some(serde_json::Value::Null) => None,
-        Some(x) => match serde_json::from_value(x.clone()) {
-            Ok(n) => Some(n),
-            Err(e) => return HostResponse::err(400, format!("bad adding: {e}")),
+            Ok(r) => r,
+            Err(e) => return HostResponse::err(400, format!("bad $request: {e}")),
         },
     };
     if let Some(o) = v.as_object_mut() {
-        o.remove("rename_from");
-        o.remove("adding");
+        o.remove("$request");
     }
+    let SaveRequest {
+        rename_from,
+        adding,
+    } = req;
     let incoming: sunmao_core::models::ModelsFile = match serde_json::from_value(v) {
         Ok(f) => f,
         Err(e) => return HostResponse::err(400, format!("bad models.json: {e}")),
@@ -184,12 +192,12 @@ pub(super) async fn put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> H
         .unwrap_or_else(|| "default".to_string());
     let dir = cwd.join(".sunmao");
     let path = dir.join("models.json");
-    // the file this PUT replaces — the merge needs what the redacted view
-    // couldn't carry. Missing or unparseable is simply nothing to preserve.
-    let existing: sunmao_core::models::ModelsFile = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default();
+    // the merged `.sunmao` → `.claude` table this save merges against, not
+    // `.sunmao` alone: a provider that lives only in the compat layer would
+    // otherwise be materialized here as a keyless copy, because the redacted
+    // GET view cannot carry its credential. A missing/corrupt file is simply
+    // nothing to preserve.
+    let existing = sunmao_core::models::read_models(&cwd);
     // a save that CREATES `adding` cannot land on a name the file already
     // owns: the provider map has no room for both, and the old save silently
     // overwrote the existing entry.
@@ -390,7 +398,7 @@ mod tests {
         let body = serde_json::json!({
             "providers": {"local": {"base_url": "http://plain/v1", "dialect": "openai", "catalog": [{"id": "pm1"}]}},
             "routes": {},
-            "rename_from": {"local": "plain"},
+            "$request": {"rename_from": {"local": "plain"}},
         });
         let put = h
             .request("PUT", "/models", body.to_string().as_bytes())
@@ -402,7 +410,7 @@ mod tests {
         assert_eq!(d["providers"]["plain"]["base_url"], "http://plain/v1");
         assert!(
             d["rename_from"].is_null(),
-            "the rename hint is a request field, never file content"
+            "the request namespace is never file content"
         );
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -417,7 +425,7 @@ mod tests {
         let body = serde_json::json!({
             "providers": {"renamed": {"base_url": "http://plain/v1", "dialect": "openai", "catalog": [{"id": "m1"}]}},
             "routes": {},
-            "rename_from": {"renamed": "plain"},
+            "$request": {"rename_from": {"renamed": "plain"}},
         });
         let put = h
             .request("PUT", "/models", body.to_string().as_bytes())
@@ -488,7 +496,7 @@ mod tests {
         let body = serde_json::json!({
             "providers": {"local": {"base_url": "http://brand-new/v1", "dialect": "openai", "catalog": []}},
             "routes": {},
-            "adding": "local",
+            "$request": {"adding": "local"},
         });
         let put = h
             .request("PUT", "/models", body.to_string().as_bytes())
@@ -499,7 +507,7 @@ mod tests {
         assert_eq!(d["providers"]["local"]["api_key"], "sk-keep");
         assert!(
             d["adding"].is_null(),
-            "the add marker is a request field, never file content"
+            "the request namespace is never file content"
         );
 
         // a genuinely new name still lands
@@ -509,7 +517,7 @@ mod tests {
                 "fresh": {"base_url": "http://fresh/v1", "dialect": "openai", "catalog": []},
             },
             "routes": {},
-            "adding": "fresh",
+            "$request": {"adding": "fresh"},
         });
         assert_eq!(
             h.request("PUT", "/models", body.to_string().as_bytes())
@@ -523,6 +531,130 @@ mod tests {
             d["providers"]["local"]["api_key"], "sk-keep",
             "the carried key still survives"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A hand-written provider-level key the view never carries must survive a
+    /// save the same way a top-level one does.
+    #[tokio::test]
+    async fn models_save_keeps_hand_written_provider_keys() {
+        let root = models_dir(
+            "provkey",
+            r#"{"providers":{"local":{"base_url":"http://local/v1","dialect":"openai","headers":{"X-Trace":"on"},"rpm":10}}}"#,
+        );
+        let h = handle(&root);
+        let view: serde_json::Value =
+            serde_json::from_slice(&h.request("GET", "/models", b"").await.body).unwrap();
+        assert!(
+            view["providers"]["local"]["headers"].is_null(),
+            "the view does not carry provider-level unknowns"
+        );
+        let body = gui_body(&view);
+        assert_eq!(
+            h.request("PUT", "/models", body.to_string().as_bytes())
+                .await
+                .status,
+            200
+        );
+        let d = disk(&root);
+        assert_eq!(d["providers"]["local"]["headers"]["X-Trace"], "on");
+        assert_eq!(d["providers"]["local"]["rpm"], 10);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A provider that lives only in the `.claude` compat layer must not be
+    /// materialized into `.sunmao` as a keyless copy: the save merges against
+    /// the layered table, so the copy keeps the credential.
+    #[tokio::test]
+    async fn models_save_does_not_copy_a_compat_layer_provider_keyless() {
+        let root = models_dir(
+            "claudelayer",
+            r#"{"providers":{"local":{"base_url":"http://local/v1"}}}"#,
+        );
+        std::fs::create_dir_all(root.join(".claude")).unwrap();
+        std::fs::write(
+            root.join(".claude/models.json"),
+            r#"{"providers":{"compat":{"base_url":"http://compat/v1","dialect":"openai","api_key":"sk-compat-literal"}}}"#,
+        )
+        .unwrap();
+        let h = handle(&root);
+        // what a live-host GET view shows and the page posts back
+        let body = serde_json::json!({
+            "providers": {
+                "local": {"base_url": "http://local/v1", "dialect": "openai", "catalog": []},
+                "compat": {"base_url": "http://compat/v1", "dialect": "openai", "catalog": []},
+            },
+            "routes": {},
+        });
+        assert_eq!(
+            h.request("PUT", "/models", body.to_string().as_bytes())
+                .await
+                .status,
+            200
+        );
+        assert_eq!(
+            disk(&root)["providers"]["compat"]["api_key"],
+            "sk-compat-literal",
+            "a compat-layer provider must not be copied in keyless"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `adding` / `rename_from` are ordinary file keys: a save must store them
+    /// as content instead of spending them as markers, whether they arrive in
+    /// the body or already sit in the file. Only the reserved request
+    /// namespace may be consumed by a save.
+    #[tokio::test]
+    async fn models_save_leaves_hand_written_adding_and_rename_from_alone() {
+        let root = models_dir(
+            "reserved",
+            r#"{"providers":{"local":{"base_url":"http://local/v1"},"plain":{"base_url":"http://plain/v1"}},
+                "routes":{},"adding":"local","rename_from":{"local":"plain"}}"#,
+        );
+        let h = handle(&root);
+        let view: serde_json::Value =
+            serde_json::from_slice(&h.request("GET", "/models", b"").await.body).unwrap();
+        // a plain GUI save of the file above
+        let put = h
+            .request("PUT", "/models", gui_body(&view).to_string().as_bytes())
+            .await;
+        assert_eq!(put.status, 200, "{}", String::from_utf8_lossy(&put.body));
+        let d = disk(&root);
+        assert_eq!(
+            d["adding"], "local",
+            "a hand-written `adding` is file content"
+        );
+        assert_eq!(d["rename_from"]["local"], "plain");
+        assert_eq!(
+            d["providers"]["local"]["base_url"], "http://local/v1",
+            "no rename may happen"
+        );
+        assert_eq!(d["providers"]["plain"]["base_url"], "http://plain/v1");
+
+        // the same names sent in the BODY are still content, not markers: a
+        // body carrying them must not trip a collision or lose them
+        let body = serde_json::json!({
+            "providers": {
+                "local": {"base_url": "http://local/v1", "dialect": "openai", "catalog": []},
+                "plain": {"base_url": "http://plain/v1", "dialect": "openai", "catalog": []},
+            },
+            "routes": {},
+            "adding": "local",
+            "rename_from": {"local": "plain"},
+        });
+        let put = h
+            .request("PUT", "/models", body.to_string().as_bytes())
+            .await;
+        assert_eq!(
+            put.status,
+            200,
+            "those keys must not read as a create/rename: {}",
+            String::from_utf8_lossy(&put.body)
+        );
+        let d = disk(&root);
+        assert_eq!(d["adding"], "local");
+        assert_eq!(d["rename_from"]["local"], "plain");
+        assert_eq!(d["providers"]["plain"]["base_url"], "http://plain/v1");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -226,3 +226,88 @@ fn passive_cursor_bumps_then_expires() {
     );
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// One long answer is several replies to the same `msg_id`, and QQ
+/// de-duplicates on `(msg_id, msg_seq)`: a sequence shared across the chunks
+/// has the platform drop every chunk after the first.
+#[test]
+fn every_chunk_of_one_reply_gets_its_own_seq() {
+    let (store, dir) = store();
+    let a = adapter(store);
+    a.remember_passive("ou_1", "msg_1");
+    let bodies = a.reply_bodies("ou_1", &"a".repeat(MSG_LIMIT * 2 + 5));
+    assert_eq!(bodies.len(), 3);
+    let seqs: Vec<i64> = bodies
+        .iter()
+        .map(|b| b["msg_seq"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        seqs,
+        vec![1, 2, 3],
+        "duplicate (msg_id, msg_seq) pairs are dropped by the platform"
+    );
+    assert!(bodies.iter().all(|b| b["msg_id"] == "msg_1"), "{bodies:?}");
+    assert!(
+        bodies.iter().all(|b| b["markdown"]["content"]
+            .as_str()
+            .is_some_and(|c| !c.is_empty())),
+        "{bodies:?}"
+    );
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// No open passive window: every chunk still goes out, just unattached.
+#[test]
+fn every_chunk_of_a_closed_window_sends_unattached() {
+    let (store, dir) = store();
+    let a = adapter(store);
+    let bodies = a.reply_bodies("ou_1", &"b".repeat(MSG_LIMIT + 1));
+    assert_eq!(bodies.len(), 2);
+    assert!(
+        bodies.iter().all(|b| b.get("msg_id").is_none()),
+        "{bodies:?}"
+    );
+    assert!(
+        bodies.iter().all(|b| b.get("msg_seq").is_none()),
+        "{bodies:?}"
+    );
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// `Instant + Duration` panics on an absurd TTL, and a sub-minute one spins
+/// the token endpoint, so both ends are clamped.
+#[test]
+fn the_token_ttl_is_clamped_to_a_sane_window() {
+    assert_eq!(
+        token_ttl(&serde_json::json!({"expires_in": u64::MAX})),
+        MAX_TTL_SECS
+    );
+    assert_eq!(
+        token_ttl(&serde_json::json!({"expires_in": 1})),
+        MIN_TTL_SECS
+    );
+    assert_eq!(
+        token_ttl(&serde_json::json!({"expires_in": 0})),
+        MIN_TTL_SECS
+    );
+    assert_eq!(token_ttl(&serde_json::json!({"expires_in": 7200})), 7200);
+    // the platform sometimes spells it as a string
+    assert_eq!(token_ttl(&serde_json::json!({"expires_in": "3600"})), 3600);
+    assert_eq!(token_ttl(&serde_json::json!({})), DEFAULT_TTL_SECS);
+}
+
+/// The unknown-chat probe must never guess "group": this version carries no
+/// group events, so a guessed group endpoint is a message posted into a room.
+#[test]
+fn an_unknown_chat_is_only_ever_probed_as_a_dm() {
+    assert_eq!(send_candidates(None), [ChatTarget::User].as_slice());
+    assert_eq!(
+        send_candidates(Some(ChatTarget::User)),
+        [ChatTarget::User].as_slice()
+    );
+    // a target written by an earlier version still routes where it pointed
+    assert_eq!(
+        send_candidates(Some(ChatTarget::Group)),
+        [ChatTarget::Group].as_slice()
+    );
+}

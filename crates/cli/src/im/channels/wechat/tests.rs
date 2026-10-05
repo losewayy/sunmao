@@ -210,22 +210,50 @@ fn the_cursor_round_trips_through_the_store() {
     assert_eq!(a.load_cursor(), "", "a first run has no cursor");
     a.remember_cursor("buf_1");
     assert_eq!(a.load_cursor(), "buf_1");
-    assert_eq!(store.kv_get("wx:cursor").as_deref(), Some("buf_1"));
+    assert_eq!(
+        store.kv_get(&cursor_key("shh")).as_deref(),
+        Some("buf_1"),
+        "the cursor slot carries the bot token's tag"
+    );
+    assert_eq!(
+        store.kv_get("wx:cursor"),
+        None,
+        "one shared cursor slot hands another bot the wrong position"
+    );
     // the cursor survives a rebuilt adapter — that is the whole point
     let b = adapter(store.clone());
     assert_eq!(b.load_cursor(), "buf_1");
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// A cursor is a position in one bot's update stream: two tokens must never
+/// share the slot, and the same token must keep landing in the same one.
+#[test]
+fn cursors_are_scoped_to_the_bot_token() {
+    assert_ne!(cursor_key("bot-a"), cursor_key("bot-b"));
+    assert_ne!(
+        context_key("bot-a", "u_1"),
+        context_key("bot-b", "u_1"),
+        "one peer's reply window belongs to the token that opened it"
+    );
+    assert_eq!(cursor_key("bot-a"), cursor_key("bot-a"));
+    assert!(cursor_key("bot-a").starts_with("wx:cursor:"));
+    assert!(context_key("bot-a", "u_1").starts_with("wx:ctx:"));
+    assert!(context_key("bot-a", "u_1").ends_with(":u_1"));
+    // the token itself is never part of a key
+    assert!(!cursor_key("secret-token").contains("secret-token"));
+}
+
 #[test]
 fn a_reply_window_is_cached_and_expires() {
     let (store, dir) = store();
     let a = adapter(store.clone());
+    let key = context_key("shh", "u_1");
     assert!(a.context_of("u_1").is_none(), "no inbound message yet");
 
     a.remember_context("u_1", "ctx_1");
     assert_eq!(a.context_of("u_1").as_deref(), Some("ctx_1"));
-    let stored = store.kv_get("wx:ctx:u_1").unwrap();
+    let stored = store.kv_get(&key).unwrap();
     assert!(stored.starts_with("ctx_1\t"), "{stored}");
     assert_eq!(
         decode_context(&stored, crate::im::store::now()).unwrap().0,
@@ -234,17 +262,17 @@ fn a_reply_window_is_cached_and_expires() {
 
     // 25 hours later the platform window is closed
     let stale = encode_context("ctx_1", crate::im::store::now() - 25 * 60 * 60);
-    store.kv_set("wx:ctx:u_1", &stale).unwrap();
+    store.kv_set(&key, &stale).unwrap();
     assert!(a.context_of("u_1").is_none());
     assert_eq!(
-        store.kv_get("wx:ctx:u_1").as_deref(),
+        store.kv_get(&key).as_deref(),
         Some(""),
         "an expired window is cleared, not re-expired on every send"
     );
 
     // just inside the window it is still live
     let fresh = encode_context("ctx_2", crate::im::store::now() - 60);
-    store.kv_set("wx:ctx:u_1", &fresh).unwrap();
+    store.kv_set(&key, &fresh).unwrap();
     assert_eq!(a.context_of("u_1").as_deref(), Some("ctx_2"));
     assert_eq!(decode_context("no-tab", 0), None);
     assert_eq!(decode_context("\t5", 5), None, "an empty token is no token");
@@ -285,7 +313,7 @@ async fn sending_without_a_reply_window_is_an_error() {
 
     a.remember_context("u_1", "ctx_1");
     let stale = encode_context("ctx_1", crate::im::store::now() - 25 * 60 * 60);
-    store.kv_set("wx:ctx:u_1", &stale).unwrap();
+    store.kv_set(&context_key("shh", "u_1"), &stale).unwrap();
     assert!(
         a.send_message("u_1", "hello").await.is_err(),
         "an expired window is not a window"
@@ -329,4 +357,26 @@ fn only_a_non_zero_ret_is_a_business_error() {
     assert_eq!(err.ret, -14);
     assert_eq!(err.errcode, Some(-14));
     assert!(err.is_session_expired());
+}
+
+/// iLink spells `ret` as a number or a string; reading only the numeric form
+/// turns a dead session into a success and the expired-session stop never
+/// fires.
+#[test]
+fn a_string_ret_reads_the_same_as_a_number() {
+    let expired =
+        business_error("ep", &serde_json::json!({"ret": "-14", "errmsg": "gone"})).unwrap();
+    assert_eq!(expired.ret, -14);
+    assert!(expired.is_session_expired());
+    assert!(expired.to_string().contains("ret=-14"), "{expired}");
+
+    // a string zero is still a success, and a non-numeric one is no ret
+    assert!(business_error("ep", &serde_json::json!({"ret": "0"})).is_none());
+    assert!(business_error("ep", &serde_json::json!({"ret": "nope"})).is_none());
+
+    // errcode may be spelled as a string too
+    let by_errcode =
+        business_error("ep", &serde_json::json!({"ret": 1, "errcode": "-14"})).unwrap();
+    assert_eq!(by_errcode.errcode, Some(-14));
+    assert!(by_errcode.is_session_expired());
 }

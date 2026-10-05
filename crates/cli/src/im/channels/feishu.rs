@@ -30,11 +30,31 @@ const MSG_LIMIT: usize = 4000;
 const ERR_BACKOFF_SECS: u64 = 3;
 /// Refresh the tenant token this long before it expires.
 const TOKEN_MARGIN_SECS: u64 = 300;
+/// The token TTL assumed when the platform omits `expire`.
+const DEFAULT_TTL_SECS: u64 = 7200;
+/// The TTL window a token answer is trusted in. Below a minute the token
+/// endpoint is hammered; an absurd value makes `Instant + Duration` panic.
+const MIN_TTL_SECS: u64 = 60;
+const MAX_TTL_SECS: u64 = 86_400;
 /// A half-assembled chunked event is abandoned after this long (the SDK's
 /// own cache uses the same window).
 const CHUNK_TTL: Duration = Duration::from_secs(10);
+/// The largest `sum` a chunked event may claim. The header sizes an
+/// allocation before any payload arrives, so a hostile or corrupt value would
+/// have the allocator abort the process; no real event comes close.
+const MAX_CHUNK_SUM: usize = 1024;
 /// The one event this adapter subscribes to.
 const EVENT_MESSAGE: &str = "im.message.receive_v1";
+
+/// The `expire` of a token response — a number or a string — clamped to
+/// `MIN_TTL_SECS..=MAX_TTL_SECS`.
+fn token_ttl(v: &serde_json::Value) -> u64 {
+    v["expire"]
+        .as_u64()
+        .or_else(|| v["expire"].as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(DEFAULT_TTL_SECS)
+        .clamp(MIN_TTL_SECS, MAX_TTL_SECS)
+}
 
 /// In-flight chunked events: per `message_id`, when the first frame
 /// landed and the slots seen so far (`None` = still missing).
@@ -116,7 +136,7 @@ impl FeishuAdapter {
                 )
             })?
             .to_string();
-        let ttl = v["expire"].as_u64().unwrap_or(7200).max(60);
+        let ttl = token_ttl(&v);
         *self.token.lock().unwrap() =
             Some((token.clone(), Instant::now() + Duration::from_secs(ttl)));
         Ok(token)
@@ -285,7 +305,8 @@ fn service_id(url: &str) -> i32 {
 
 /// Fold one data frame into its event's chunk buffer. Unchunked frames
 /// (`sum <= 1`) pass straight through; a chunked event yields its joined
-/// payload only once every slot has arrived.
+/// payload only once every slot has arrived. A `sum` past `MAX_CHUNK_SUM` is
+/// refused before it can size an allocation.
 fn merge_chunk(
     bufs: &mut ChunkBufs,
     message_id: &str,
@@ -296,7 +317,7 @@ fn merge_chunk(
     if sum <= 1 {
         return Some(payload.to_vec());
     }
-    if message_id.is_empty() || seq >= sum {
+    if message_id.is_empty() || seq >= sum || sum > MAX_CHUNK_SUM {
         return None;
     }
     bufs.retain(|_, (seen, _)| seen.elapsed() < CHUNK_TTL);

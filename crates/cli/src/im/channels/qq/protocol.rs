@@ -29,8 +29,8 @@ pub mod op {
 
 /// Which endpoint a chat's replies go to. Only `C2C_MESSAGE_CREATE` is
 /// carried, so `User` is the only target a live event produces; `Group` stays
-/// because a store written by an earlier version still holds group entries
-/// and the unknown-chat probe still tries both.
+/// because a store written by an earlier version still holds group entries.
+/// The unknown-chat probe never guesses `Group` — see `send_candidates`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatTarget {
     User,

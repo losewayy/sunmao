@@ -18,6 +18,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::{ChannelAdapter, InboundMsg};
 use crate::im::config::DingtalkSpec;
+use crate::im::redact;
 
 mod api;
 mod protocol;
@@ -159,8 +160,13 @@ impl DingtalkAdapter {
     async fn ws_session(&self, tx: &mpsc::Sender<InboundMsg>) -> Result<()> {
         let (endpoint, ticket) = self.open_stream().await?;
         let url = api::append_ticket(&endpoint, &ticket)?;
+        // The ticket is one-shot material and it rides the URL, so both go
+        // into the mask list: a failed handshake is logged with `{e:#}`, and
+        // whatever it echoes back must not be the credential.
+        let secrets = [self.client_secret.as_str(), ticket.as_str(), url.as_str()];
         let (ws, _) = tokio_tungstenite::connect_async(url.as_str())
             .await
+            .map_err(|e| redact::masked_error(e.into(), &secrets))
             .context("dingtalk ws connect")?;
         let (mut sink, mut stream) = ws.split();
         while let Some(raw) = stream.next().await {

@@ -24,10 +24,12 @@ pub const MSG_LIMIT: usize = 4000;
 pub const LONG_POLL_SECS: u64 = 40;
 /// A `context_token` is the reply window for one peer: 24 hours.
 pub const CONTEXT_TTL_SECS: i64 = 24 * 60 * 60;
-/// The `get_updates_buf` cursor — persisted, because losing it replays or
-/// drops the peer's messages after a restart.
-pub const CURSOR_KEY: &str = "wx:cursor";
-/// One reply window per peer, keyed under this prefix.
+/// The `get_updates_buf` cursor prefix — persisted, because losing it
+/// replays or drops the peer's messages after a restart. Namespaced per bot
+/// token by `cursor_key`: a cursor is a position in one bot's update stream.
+pub const CURSOR_PREFIX: &str = "wx:cursor";
+/// One reply window per peer, keyed under this prefix (and per bot token by
+/// `context_key`).
 pub const CONTEXT_PREFIX: &str = "wx:ctx:";
 /// The bot's own messages come back addressed from this domain — an inbound
 /// message from it is our echo, not the peer's.
@@ -212,9 +214,21 @@ fn rand_u64() -> u64 {
     hasher.finish()
 }
 
-/// The store key for one peer's reply window.
-pub fn context_key(chat_id: &str) -> String {
-    format!("{CONTEXT_PREFIX}{chat_id}")
+/// The store key for the `get_updates_buf` cursor of one bot token. The
+/// cursor is a position in that bot's update stream: replaying it under a
+/// different token drops the messages issued in between, and the platform
+/// may reject a foreign cursor outright.
+pub fn cursor_key(bot_token: &str) -> String {
+    crate::im::scope::scoped(CURSOR_PREFIX, bot_token)
+}
+
+/// The store key for one peer's reply window, under the bot token that
+/// opened it — a `context_token` is only valid for the bot it was issued to.
+pub fn context_key(bot_token: &str, chat_id: &str) -> String {
+    format!(
+        "{CONTEXT_PREFIX}{}:{chat_id}",
+        crate::im::scope::credential_tag(bot_token)
+    )
 }
 
 /// One reply window as stored: `token<TAB>ts`. Tab-separated like the QQ
@@ -275,16 +289,26 @@ impl fmt::Display for IlinkError {
 impl std::error::Error for IlinkError {}
 
 /// The business error of a response body, if it carries one. An absent `ret`
-/// is not an error (only the endpoints that define it use it).
+/// is not an error (only the endpoints that define it use it). iLink spells
+/// `ret`/`errcode` as a number *or* a string, so reading only the numeric
+/// form silently turns a dead session (`"ret": "-14"`) into a success and the
+/// expired-session path never fires.
 pub fn business_error(endpoint: &str, v: &serde_json::Value) -> Option<IlinkError> {
-    let ret = v["ret"].as_i64()?;
+    let ret = ret_of(&v["ret"])?;
     if ret == 0 {
         return None;
     }
     Some(IlinkError {
         endpoint: endpoint.to_string(),
         ret,
-        errcode: v["errcode"].as_i64(),
+        errcode: ret_of(&v["errcode"]),
         errmsg: v["errmsg"].as_str().unwrap_or("").to_string(),
     })
+}
+
+/// A `ret`/`errcode` as an integer, from either spelling. A value that is
+/// neither a number nor a numeric string is no value at all.
+fn ret_of(v: &serde_json::Value) -> Option<i64> {
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
 }

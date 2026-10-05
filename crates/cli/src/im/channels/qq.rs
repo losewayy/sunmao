@@ -31,6 +31,13 @@ mod protocol;
 const API_BASE: &str = "https://api.sgroup.qq.com";
 /// Refresh the access token this long before it expires.
 const TOKEN_MARGIN_SECS: u64 = 300;
+/// The token TTL assumed when the platform omits `expires_in`.
+const DEFAULT_TTL_SECS: u64 = 7200;
+/// The TTL window a token answer is trusted in. Below a minute the token
+/// endpoint is hammered; above a day the answer is broken — and an absurd
+/// value makes `Instant + Duration` panic, taking the poll loop with it.
+const MIN_TTL_SECS: u64 = 60;
+const MAX_TTL_SECS: u64 = 86_400;
 /// A passive reply is tied to the user's `msg_id` and only lands inside
 /// this window; past it there is no way to answer (QQ documents five
 /// minutes — the reference keeps the same order of magnitude).
@@ -39,6 +46,29 @@ const PASSIVE_TTL_SECS: i64 = 300;
 const RECONNECT_SECS: [u64; 6] = [1, 2, 5, 10, 30, 60];
 /// A connection that stayed up this long resets the ladder.
 const STABLE_CONN_SECS: u64 = 300;
+
+/// The `expires_in` of a token response — a number or a string — clamped to
+/// `MIN_TTL_SECS..=MAX_TTL_SECS`.
+fn token_ttl(v: &serde_json::Value) -> u64 {
+    v["expires_in"]
+        .as_u64()
+        .or_else(|| v["expires_in"].as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(DEFAULT_TTL_SECS)
+        .clamp(MIN_TTL_SECS, MAX_TTL_SECS)
+}
+
+/// The endpoints one send may try, in order. An unknown chat is probed as a
+/// DM only: this version carries no group events, so a chat the bot has
+/// never heard from is a user, and a probe that guessed "group" would post
+/// into a room full of people. The `Group` arm only serves a target written
+/// by an earlier version.
+fn send_candidates(known: Option<ChatTarget>) -> &'static [ChatTarget] {
+    match known {
+        Some(ChatTarget::User) => &[ChatTarget::User],
+        Some(ChatTarget::Group) => &[ChatTarget::Group],
+        None => &[ChatTarget::User],
+    }
+}
 
 /// Resume material for one WS lifetime — carried across reconnects so a
 /// dropped socket resumes instead of replaying IDENTIFY.
@@ -112,11 +142,7 @@ impl QqAdapter {
                 )
             })?
             .to_string();
-        let ttl = v["expires_in"]
-            .as_u64()
-            .or_else(|| v["expires_in"].as_str().and_then(|s| s.parse().ok()))
-            .unwrap_or(7200)
-            .max(60);
+        let ttl = token_ttl(&v);
         *self.token.lock().unwrap() =
             Some((token.clone(), Instant::now() + Duration::from_secs(ttl)));
         Ok(token)
@@ -340,18 +366,29 @@ impl QqAdapter {
         }
     }
 
-    /// One message per chunk. The chat's target type is whatever its
-    /// inbound event wrote; an unknown chat probes C2C first, then group
-    /// (the reference's order) and remembers what answered.
+    /// One body per chunk. Every chunk is its own reply to the same
+    /// `msg_id`, and QQ de-duplicates on `(msg_id, msg_seq)`, so the cursor
+    /// has to advance per chunk: sharing one sequence across a long answer
+    /// has the platform drop everything after the first chunk.
+    fn reply_bodies(&self, chat_id: &str, text: &str) -> Vec<serde_json::Value> {
+        chunk(text)
+            .into_iter()
+            .map(|piece| {
+                let passive = self.next_passive(chat_id);
+                send_body(
+                    &piece,
+                    passive.as_ref().map(|(id, seq)| (id.as_str(), *seq)),
+                )
+            })
+            .collect()
+    }
+
+    /// One message per chunk. The chat's target type is whatever its inbound
+    /// event wrote; an unknown chat is probed as a DM only.
     async fn send_message(&self, chat_id: &str, text: &str) -> Result<Option<String>> {
         let token = self.access_token().await?;
-        let passive = self.next_passive(chat_id);
         let mut first_id = None;
-        for piece in chunk(text) {
-            let body = send_body(
-                &piece,
-                passive.as_ref().map(|(id, seq)| (id.as_str(), *seq)),
-            );
+        for body in self.reply_bodies(chat_id, text) {
             let res = self.post_message(&token, chat_id, &body).await?;
             if first_id.is_none() {
                 first_id = res["id"].as_str().map(str::to_string);
@@ -367,11 +404,7 @@ impl QqAdapter {
         body: &serde_json::Value,
     ) -> Result<serde_json::Value> {
         let known = self.target_of(chat_id);
-        let candidates: &[ChatTarget] = match known {
-            Some(ChatTarget::User) => &[ChatTarget::User],
-            Some(ChatTarget::Group) => &[ChatTarget::Group],
-            None => &[ChatTarget::User, ChatTarget::Group],
-        };
+        let candidates = send_candidates(known);
         let mut last = None;
         for target in candidates {
             let path = target.path(chat_id);

@@ -72,8 +72,10 @@ const OVERLAY_CSS: &str = include_str!("serve/assets/overlay.css");
 /// replay-parity harness evals them in one shared scope). Order in
 /// index.html is load order.
 pub const I18N_EN_JS: &str = include_str!("serve/assets/i18n.en.js");
+pub const I18N_EN_PANELS_JS: &str = include_str!("serve/assets/i18n.en.panels.js");
 pub const I18N_JS: &str = include_str!("serve/assets/i18n.js");
 const QUOTE_JS: &str = include_str!("serve/assets/quote.js");
+pub const QUEUE_JS: &str = include_str!("serve/assets/queue.js");
 const STATE_JS: &str = include_str!("serve/assets/state.js");
 const WALLPAPER_JS: &str = include_str!("serve/assets/wallpaper.js");
 const SETTINGS_JS: &str = include_str!("serve/assets/settings.js");
@@ -155,7 +157,11 @@ pub(crate) struct HostSpec {
     /// (the factory's Context already carries it; prompt assembly needs it
     /// before the Context exists).
     pub driver_override: Option<sunmao_core::agent::LoopDriver>,
+    /// the launch model — what a fresh session falls back to
     pub model_label: String,
+    /// `--model`/`SUNMAO_MODEL` when one was actually given — outranks a
+    /// project's `default_model`; `None` means nothing was asked for
+    pub model_override: Option<String>,
     pub first_log: Option<(SessionLog, &'static str)>,
 }
 
@@ -177,6 +183,7 @@ pub(crate) async fn spawn_host(spec: HostSpec, sandbox_port: u16) -> Result<Host
         driver_override: spec.driver_override,
         pending_drivers: Mutex::new(HashMap::new()),
         model_label: spec.model_label,
+        model_override: spec.model_override,
         sandbox_port,
         approval_ids: Arc::new(AtomicU64::new(0)),
         mgmt: mgmt_tx,

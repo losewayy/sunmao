@@ -130,7 +130,7 @@ pub(crate) fn register_task(
     prompt: &str,
     def: Option<&str>,
     steer: &crate::context::SteerQueue,
-    cancel: &crate::context::SubCancel,
+    cancel: &crate::context::CancelSignal,
 ) {
     let mut digest: String = prompt.chars().take(60).collect();
     if prompt.chars().count() > 60 {
@@ -227,7 +227,7 @@ async fn drive_foreground(
 ) -> ToolResult {
     let lane = sub_ctx.lane;
     let steer = sub_ctx.steer.clone();
-    let cancel = crate::context::SubCancel::new(&sub_ctx);
+    let cancel = sub_ctx.cancel_signal();
     register_task(ctx, &sub_id, lane, &prompt, agent, &steer, &cancel);
     // a cancelled select arm drops this future mid-run_spawn — without the
     // guard the roster row stays "running" forever (and resume refuses it)
@@ -283,7 +283,7 @@ pub(super) async fn spawn_detached(
 ) -> String {
     let (sub_id, sub_ctx) = spawn_parts(ctx, def, llm_override, None).await;
     // roster entry — `/tasks` reads this; the completion path flips `done`
-    let cancel = crate::context::SubCancel::new(&sub_ctx);
+    let cancel = sub_ctx.cancel_signal();
     register_task(
         ctx,
         &sub_id,

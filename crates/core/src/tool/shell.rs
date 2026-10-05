@@ -58,7 +58,7 @@ impl ToolImpl for BashTool {
                 &a.command,
                 ctx.cwd.clone(),
                 super::timeout::effective_timeout(a.timeout_secs),
-                Some(ctx.cancel_notify.clone()),
+                Some(ctx.cancel_signal()),
             )
             .await;
             return Ok(match run {
@@ -108,7 +108,7 @@ impl ToolImpl for BashTool {
             list,
             ctx.cwd.clone(),
             super::timeout::effective_timeout(a.timeout_secs),
-            Some(ctx.cancel_notify.clone()),
+            Some(ctx.cancel_signal()),
         )
         .await
         {
@@ -148,13 +148,13 @@ pub struct ShellRun {
 /// Parse + preflight + execute `command` in `cwd`. `Err(String)` is a
 /// legible failure (parse error, timeout, spawn panic), not an anyhow —
 /// callers render it as output, same contract as `ToolResult{ok:false}`.
-/// `cancel` wakes the run's kill path (the turn loop's `cancel_notify`).
+/// `cancel` wakes the run's kill path (the turn loop's cancel signal).
 pub async fn run_foreground(
     command: &str,
     cwd: std::path::PathBuf,
     timeout_secs: u64,
     shell: crate::tool::ShellBackend,
-    cancel: Option<std::sync::Arc<tokio::sync::Notify>>,
+    cancel: Option<crate::context::CancelSignal>,
 ) -> Result<ShellRun, String> {
     if shell == crate::tool::ShellBackend::Pwsh {
         return pwsh::run_foreground(command, cwd, timeout_secs, cancel).await;
@@ -177,7 +177,7 @@ async fn run_parsed(
     list: deno_task_shell::parser::SequentialList,
     cwd: std::path::PathBuf,
     timeout_secs: u64,
-    cancel: Option<std::sync::Arc<tokio::sync::Notify>>,
+    cancel: Option<crate::context::CancelSignal>,
 ) -> Result<ShellRun, String> {
     let env_vars: std::collections::HashMap<std::ffi::OsString, std::ffi::OsString> =
         std::env::vars_os().collect();
@@ -210,15 +210,18 @@ async fn run_parsed(
             // the children but the future must resolve (aborted code) to
             // keep the pipe readers and JoinHandles drained.
             let mut exec = std::pin::pin!(exec);
-            // arm the waiter BEFORE the select — `notified()` registers
-            // on first poll, so a `notify_waiters` fired in the setup gap
-            // (spawn_blocking scheduling is real latency) would slip past
-            // and leave the run unabortable
-            let cancel_fut = cancel.as_ref().map(|n| n.notified());
+            // the kill waiter is a `CancelSignal`, not a bare `Notified`:
+            // spawn_blocking scheduling is real latency, so a cancel fired
+            // in the setup gap above used to slip past a `notify_waiters`
+            // that stored no permit, leaving the command to run to its own
+            // timeout. `wait` reads the flag before it registers.
+            let cancel_fut = async move {
+                match cancel {
+                    Some(c) => c.wait().await,
+                    None => std::future::pending::<()>().await,
+                }
+            };
             tokio::pin!(cancel_fut);
-            if let Some(f) = cancel_fut.as_mut().as_pin_mut() {
-                f.enable();
-            }
             let (code, stdout, stderr, ended) = rt.block_on(async {
                 // Readers drain *while* the pipeline runs — waiting for exec
                 // to finish first deadlocks any child that fills the pipe
@@ -245,12 +248,7 @@ async fn run_parsed(
                 let end = tokio::select! {
                     c = &mut exec => End::Natural(c),
                     () = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs)) => End::Timeout,
-                    _ = async {
-                        match cancel_fut.as_mut().as_pin_mut() {
-                            Some(f) => f.await,
-                            None => std::future::pending::<()>().await,
-                        }
-                    } => End::Cancelled,
+                    () = &mut cancel_fut => End::Cancelled,
                 };
                 let (code, ended) = match end {
                     End::Natural(c) => (c, None),

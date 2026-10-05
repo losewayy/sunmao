@@ -62,15 +62,50 @@ impl AgentLoop {
                 // driver runs, so a catalog bump can never swap the registry
                 // between a turn's ToolCall and its ToolResult.
                 self.drain_mcp(observer).await;
-                let res = match self.ctx.loop_driver {
-                    // PTC is the full loop with a RunCode+SearchTools
-                    // advertised surface — `advertised_tools` does the trim;
-                    // hooks, the gate and compaction all still run.
-                    crate::agent::LoopDriver::Full | crate::agent::LoopDriver::Ptc => {
-                        self.run_turn_full(&prompt, &atts, observer).await
-                    }
-                    crate::agent::LoopDriver::Bare => {
-                        self.run_turn_bare(&prompt, &atts, observer).await
+                // The driver answers a cancel at every await that armed a
+                // `CancelSignal`. What it cannot answer is an await with no
+                // arm at all (a hook process, the log's lock, a tool that
+                // ignores the signal) — this arm is the backstop. Past the
+                // grace the round is dropped where it stands, which is the
+                // only way out of a stuck await, and the drop is what kills
+                // the in-flight tool futures.
+                let cancel = self.ctx.cancel_signal();
+                let mut forced = false;
+                let res = tokio::select! {
+                    r = async {
+                        match self.ctx.loop_driver {
+                            // PTC is the full loop with a RunCode+SearchTools
+                            // advertised surface — `advertised_tools` does the
+                            // trim; hooks, the gate and compaction all still run.
+                            crate::agent::LoopDriver::Full | crate::agent::LoopDriver::Ptc => {
+                                self.run_turn_full(&prompt, &atts, observer).await
+                            }
+                            crate::agent::LoopDriver::Bare => {
+                                self.run_turn_bare(&prompt, &atts, observer).await
+                            }
+                        }
+                    } => r,
+                    () = async {
+                        cancel.wait().await;
+                        tokio::time::sleep(crate::agent::cancel::HARD_STOP_GRACE).await;
+                    } => {
+                        // A kill path that armed its waiter *after* the click
+                        // missed the first wake (notify_waiters stores no
+                        // permit) — this second one reaches it, so the shell
+                        // still SIGKILLs its process tree before the round is
+                        // abandoned. The flag is already set; re-waking is
+                        // all a cooperative waiter needs.
+                        self.ctx.cancel_notify.notify_waiters();
+                        forced = true;
+                        tracing::warn!(
+                            "cancel grace ({}s) lapsed — force-ending the turn",
+                            crate::agent::cancel::HARD_STOP_GRACE.as_secs()
+                        );
+                        observer.on_event(&LiveEvent::Hook {
+                            event: "force_stop".into(),
+                            detail: "cancel grace lapsed".into(),
+                        });
+                        Ok(TurnOutcome::Cancelled)
                     }
                 };
                 // cancelled resets at turn END on *every* exit path — an Err
@@ -100,8 +135,11 @@ impl AgentLoop {
                 // A cancelled turn ends in partial messages only —
                 // indistinguishable from a crash mid-stream on replay. Stamp
                 // the terminal fact so the log can answer "this was stopped,
-                // not broken."
-                if matches!(res, Ok(TurnOutcome::Cancelled)) {
+                // not broken." Skipped on the forced path: the abandoned
+                // future may have been parked on the very lock this append
+                // needs, and a hard stop must not hang on its own audit
+                // write (the live `force_stop` event is its record).
+                if matches!(res, Ok(TurnOutcome::Cancelled)) && !forced {
                     let mut log = self.ctx.sessions.lock().await;
                     log.append_audit(&SessionEvent::Hook {
                         event: "cancelled".into(),

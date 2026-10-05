@@ -63,7 +63,10 @@ pub struct Context {
     pub lane_counter: std::sync::Arc<std::sync::atomic::AtomicU16>,
     /// Cooperative cancellation — `session/cancel` sets it; the loop checks
     /// between iterations and before each tool call. `Arc` so a child's
-    /// `TaskEntry` can hold a cheap cancel handle into it.
+    /// `TaskEntry` can hold a cheap cancel handle into it. Read through
+    /// `cancel_signal()` / `CancelSignal` rather than the bare field: the
+    /// flag is the memory, `cancel_notify` only the wake, and a waiter that
+    /// takes the wake alone loses every cancel that landed before it armed.
     pub cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Mid-flight cancel wake — `cancel()` sets `cancelled` then notifies;
     /// the turn loop and the shell executor `select!` on this so a cancel
@@ -550,6 +553,8 @@ mod surface;
 pub(crate) use seeds::tool_timeout_table;
 use seeds::{seed_effort, seed_goal, seed_mode, seed_ptc_store, seed_todos, seed_turn_mode};
 
+mod cancel;
+pub use cancel::CancelSignal;
+
 mod sub_agent;
-pub(crate) use sub_agent::SubCancel;
 pub use sub_agent::SubSteerError;

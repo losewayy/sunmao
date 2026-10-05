@@ -48,6 +48,36 @@ pub struct ModelsFile {
     /// route name → selector or ordered selector chain
     #[serde(default)]
     pub routes: HashMap<String, RouteValue>,
+    /// the model a NEW session starts on — any selector a `model:` pin takes
+    /// (`provider/model`, bare id, `@route`). Absent = nothing pinned and the
+    /// caller's own fallback applies; a session already under way keeps the
+    /// model its log names, never this key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+    /// top-level keys this build doesn't know. `PUT /models` replaces the
+    /// whole file, so a key a newer build (or a hand edit) wrote must survive
+    /// the read → write trip instead of being dropped on the floor.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl ModelsFile {
+    /// The pinned new-session model — `None` when nothing is pinned. Blank
+    /// counts as unpinned: an empty selector would resolve to an empty model
+    /// id rather than to "no preference".
+    pub fn default_selector(&self) -> Option<&str> {
+        self.default_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+}
+
+/// The pinned new-session model for `cwd` — `.sunmao/models.json` then
+/// `.claude/models.json`, later layer wins. Reads the routing table without
+/// the capability fill: the caller wants one key, not the whole catalog.
+pub fn default_selector(cwd: &Path) -> Option<String> {
+    read_models_raw(cwd).default_selector().map(str::to_string)
 }
 
 /// Which files feed a resolver — `.sunmao/models.json` then `.claude/` for
@@ -55,7 +85,7 @@ pub struct ModelsFile {
 /// The layers MERGE per key (a `.claude` provider/route overrides its
 /// same-named `.sunmao` twin) — wholesale replacement used to let an empty
 /// `.claude/models.json` wipe the project's whole routing table.
-fn read_models_file(cwd: &Path) -> ModelsFile {
+fn read_models_raw(cwd: &Path) -> ModelsFile {
     let mut file = ModelsFile::default();
     for dir in [cwd.join(".sunmao"), cwd.join(".claude")] {
         if let Ok(text) = std::fs::read_to_string(dir.join("models.json")) {
@@ -63,6 +93,12 @@ fn read_models_file(cwd: &Path) -> ModelsFile {
                 Ok(f) => {
                     file.providers.extend(f.providers);
                     file.routes.extend(f.routes);
+                    // `default_model`/unknown keys merge like the rest: the
+                    // later layer's value wins when it sets one
+                    if f.default_model.is_some() {
+                        file.default_model = f.default_model;
+                    }
+                    file.extra.extend(f.extra);
                 }
                 Err(e) => {
                     tracing::warn!("{}: ignoring invalid models.json — {e}", dir.display())
@@ -70,6 +106,11 @@ fn read_models_file(cwd: &Path) -> ModelsFile {
             }
         }
     }
+    file
+}
+
+fn read_models_file(cwd: &Path) -> ModelsFile {
+    let mut file = read_models_raw(cwd);
     // capability defaults: legacy `vision` folds into `input_modalities`,
     // then the knowledge table fills whatever the file leaves unset —
     // declared values always win, so a hand edit can never be overwritten

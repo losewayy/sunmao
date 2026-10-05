@@ -84,49 +84,30 @@ impl AgentLoop {
             // same cancel-during-establishment arm as the turn loop — a
             // hung stream() must not wait out its provider timeout. Bind
             // the adapter Arc first: the temporary would drop before
-            // `select!` could borrow it. `notify_waiters` only wakes
-            // registered waiters — enable() pins ours, the cancelled flag
-            // catches a cancel that beat registration.
+            // `select!` could borrow it. `CancelSignal::wait` carries the
+            // flag, so a cancel that beat this arm still returns.
             let llm = self.ctx.active_llm();
-            let cancel_wait = self.ctx.cancel_notify.notified();
-            tokio::pin!(cancel_wait);
-            cancel_wait.as_mut().enable();
-            if self
-                .ctx
-                .cancelled
-                .load(std::sync::atomic::Ordering::Relaxed)
-            {
-                return Ok(TurnOutcome::Cancelled);
-            }
+            let cancel = self.ctx.cancel_signal();
             let mut stream = tokio::select! {
                 s = llm.stream(req) => s?,
-                () = &mut cancel_wait => {
+                () = cancel.wait() => {
                     return Ok(TurnOutcome::Cancelled);
                 }
             };
             let mut content = String::new();
             let mut assembler = ToolCallAssembler::new();
             let mut finish_reason: Option<String> = None;
-            let mut cancelled_mid_stream = false;
-            // hoisted enabled waiter — a wake between delta polls must land
-            // on it instead of dying between unregistered notified()s
-            let cancel_wait = self.ctx.cancel_notify.notified();
-            tokio::pin!(cancel_wait);
-            cancel_wait.as_mut().enable();
-            if self
-                .ctx
-                .cancelled
-                .load(std::sync::atomic::Ordering::Relaxed)
-            {
-                cancelled_mid_stream = true;
-            }
+            let mut cancelled_mid_stream = cancel.is_cancelled();
             loop {
                 if cancelled_mid_stream {
                     break;
                 }
                 let delta = tokio::select! {
                     d = stream.next() => d,
-                    () = &mut cancel_wait => {
+                    // fresh arm per delta — `wait` re-reads the flag, so a
+                    // cancel that landed while the last delta was handled
+                    // still ends the stream here
+                    () = cancel.wait() => {
                         cancelled_mid_stream = true;
                         None
                     }
@@ -235,27 +216,21 @@ impl AgentLoop {
                     );
                     let secs = tool_timeout_for(&self.ctx, &call.function.name);
                     tokio::pin!(call_fut);
-                    // same registration race as the turn loop's dispatch —
-                    // enable() pins the waiter, the flag catches a cancel
-                    // that completed before registration.
-                    let cancel = self.ctx.cancel_notify.notified();
-                    tokio::pin!(cancel);
-                    cancel.as_mut().enable();
+                    // same cancel discipline as the turn loop's dispatch —
+                    // `wait` reads the flag before and after registration,
+                    // so an already-requested cancel aborts the call here
+                    let cancel = self.ctx.cancel_signal();
                     let aborted = || crate::tool::ToolResult {
                         output: "cancelled by user".into(),
                         ok: false,
                     };
-                    if self
-                        .ctx
-                        .cancelled
-                        .load(std::sync::atomic::Ordering::Relaxed)
-                    {
+                    if cancel.is_cancelled() {
                         aborted()
                     } else {
                         match secs {
                             Some(s) => tokio::select! {
                                 r = &mut call_fut => r,
-                                () = &mut cancel => aborted(),
+                                () = cancel.wait() => aborted(),
                                 () = tokio::time::sleep(std::time::Duration::from_secs(s)) => crate::tool::ToolResult {
                                     output: format!("tool {} exceeded its {s}s timeout — see tool-timeouts.txt", call.function.name),
                                     ok: false,
@@ -263,7 +238,7 @@ impl AgentLoop {
                             },
                             None => tokio::select! {
                                 r = &mut call_fut => r,
-                                () = &mut cancel => aborted(),
+                                () = cancel.wait() => aborted(),
                             },
                         }
                     }

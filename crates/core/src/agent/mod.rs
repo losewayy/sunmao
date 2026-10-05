@@ -334,7 +334,7 @@ impl AgentLoop {
             .unwrap_or_default()
     }
 
-    /// The shared Context — frontends need `shell`/`cancel_notify` to run
+    /// The shared Context — frontends need `shell`/`cancel_signal` to run
     /// `!cmd` through the same backend the turn loop uses.
     pub fn context(&self) -> &Arc<Context> {
         &self.ctx

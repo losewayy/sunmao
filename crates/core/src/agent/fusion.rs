@@ -230,7 +230,7 @@ async fn delegate(ctx: &Arc<Context>, a: &Args) -> anyhow::Result<ToolResult> {
     }
 
     let steer = sub_ctx.steer.clone();
-    let cancel = crate::context::SubCancel::new(&sub_ctx);
+    let cancel = sub_ctx.cancel_signal();
     crate::task::spawn::register_task(
         ctx,
         &sub_id,
@@ -458,7 +458,7 @@ async fn run_verifies(ctx: &Arc<Context>) -> Vec<(String, i32, String)> {
             sub_ctx.cwd.clone(),
             VERIFY_TIMEOUT_SECS,
             sub_ctx.shell,
-            Some(ctx.cancel_notify.clone()),
+            Some(ctx.cancel_signal()),
         )
         .await
         {

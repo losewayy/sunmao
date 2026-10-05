@@ -85,6 +85,42 @@ async function submitNote(name, btn) {
   } catch (e) { toast(t('批注失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
 
+/* ---- stop acknowledgement ----
+   `busy:false` only arrives once the kernel's round has really ended, so a
+   stop click used to change nothing on screen until the turn was already
+   over — indistinguishable from a dead button. The click flips this state
+   in the same frame; the turn end (`setBusy(false)`), a fresh busy frame,
+   or the unlock timer (set above the kernel's hard-stop grace) releases
+   it. */
+let stopping = false, stopUnlockT = 0;
+const STOP_UNLOCK_MS = 14000;
+function markStopping() {
+  if (!busy || stopping) return;
+  stopping = true;
+  stopLabel(t('停止生成') + '…');
+  const btn = $('#send-btn');
+  btn.dataset.act = 'stopping'; // no dispatcher case — a repeat click is inert
+  btn.disabled = true;
+  btn.classList.add('off');
+  clearTimeout(stopUnlockT);
+  stopUnlockT = setTimeout(clearStopping, STOP_UNLOCK_MS);
+}
+function clearStopping() {
+  if (!stopping) return;
+  stopping = false;
+  clearTimeout(stopUnlockT);
+  stopLabel(t('执行中'));
+  $('#send-btn').classList.remove('off');
+  setBusy(busy);
+}
+// the indicator's text node follows its spinner svg — same tail-replace
+// i18n uses, so the icon survives
+function stopLabel(text) {
+  const ind = $('#cmp-busy');
+  const last = ind && [...ind.childNodes].reverse().find(n => n.nodeType === 3 && n.nodeValue.trim());
+  if (last) last.nodeValue = text;
+}
+
 function act(name, el) {
   switch (name) {
     case 'palette': return openPalette();
@@ -150,7 +186,7 @@ function act(name, el) {
     case 'pick-effort': return effortPop(el);
     case 'send': return send();
     case 'cmp-attach': return $('#att-file').click();
-    case 'stop': return wsSend({ type: 'cancel' });
+    case 'stop': markStopping(); return wsSend({ type: 'cancel' });
     case 'new-chat': return newChat();
     case 'grants-clear': return revokeGrant('*');
     case 'compact': return wsSend({ type: 'prompt', text: '/compact' });

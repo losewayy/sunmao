@@ -4,35 +4,7 @@
 //! spawn, done on finish) is a different responsibility from the field
 //! soup `mod.rs` assembles.
 
-use super::{Context, MutexRecover};
-
-/// A child's cancellation endpoints, held by the parent's roster row —
-/// the two `Arc`s off its Context. `cancel()` is idempotent; a finished
-/// child's notify just lands nowhere.
-#[derive(Clone)]
-pub(crate) struct SubCancel {
-    flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    notify: std::sync::Arc<tokio::sync::Notify>,
-}
-
-impl SubCancel {
-    pub(crate) fn new(ctx: &Context) -> Self {
-        Self {
-            flag: ctx.cancelled.clone(),
-            notify: ctx.cancel_notify.clone(),
-        }
-    }
-    pub(crate) fn cancel(&self) {
-        self.flag.store(true, std::sync::atomic::Ordering::Relaxed);
-        self.notify.notify_waiters();
-    }
-}
-
-impl std::fmt::Debug for SubCancel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("SubCancel(..)")
-    }
-}
+use super::{CancelSignal, Context, MutexRecover};
 
 /// Why a `steer_sub`/`cancel_sub`/`Task{steer}` push was refused.
 #[derive(Debug)]
@@ -97,7 +69,7 @@ pub struct TaskEntry {
     /// cascades through it so killing a turn also kills its running
     /// sub-agents (otherwise a foreground Task keeps churning after the
     /// user hit stop). None on legacy rows.
-    pub(crate) cancel: Option<SubCancel>,
+    pub(crate) cancel: Option<CancelSignal>,
 }
 
 impl Context {

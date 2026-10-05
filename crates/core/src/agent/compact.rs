@@ -56,11 +56,31 @@ impl AgentLoop {
             // a summarization call
             reasoning_effort: None,
         };
-        let mut stream = self.ctx.active_llm().stream(req).await?;
+        // Compaction is a full provider round trip with no tool call behind
+        // it — the longest await in a turn that nothing else interrupts, so
+        // a stop pressed during a summary used to wait out the model. It
+        // answers the same cancel the rest of the loop does, and it never
+        // commits a half summary: a `Compacted` boundary folds the whole
+        // transcript into it, so a truncated one would erase the session.
+        let llm = self.ctx.active_llm();
+        let cancel = self.ctx.cancel_signal();
+        let mut stream = tokio::select! {
+            s = llm.stream(req) => s?,
+            () = cancel.wait() => anyhow::bail!("cancelled by user"),
+        };
         let mut summary = String::new();
-        while let Some(d) = stream.next().await {
-            if let StreamDelta::Content(c) = d? {
-                summary.push_str(&c);
+        loop {
+            let delta = tokio::select! {
+                d = stream.next() => d,
+                () = cancel.wait() => anyhow::bail!("cancelled by user"),
+            };
+            match delta {
+                Some(d) => {
+                    if let StreamDelta::Content(c) = d? {
+                        summary.push_str(&c);
+                    }
+                }
+                None => break,
             }
         }
         if summary.trim().is_empty() {

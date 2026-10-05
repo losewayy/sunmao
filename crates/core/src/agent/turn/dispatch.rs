@@ -155,24 +155,17 @@ impl AgentLoop {
                         .call(&call.function.name, &args_json, &self.ctx);
                     let secs = tool_timeout_for(&self.ctx, &call.function.name);
                     tokio::pin!(call_fut);
-                    // `notify_waiters` only wakes *registered* waiters — a
-                    // cancel landing between `tools.call` and the first
-                    // `select!` poll would be missed. `enable()` registers
-                    // the waiter now, closing that window; the flag recheck
-                    // catches a cancel that finished before registration
-                    // (the hook/gate awaits above are exactly that window).
-                    let cancel = self.ctx.cancel_notify.notified();
-                    tokio::pin!(cancel);
-                    cancel.as_mut().enable();
+                    // `CancelSignal::wait` reads the flag before it registers
+                    // its waiter and again after, so the cancel that landed
+                    // during the hook/gate awaits above (or in the window
+                    // between `tools.call` and the first poll) is not lost —
+                    // a bare `notified()` would swallow it.
+                    let cancel = self.ctx.cancel_signal();
                     let aborted = || crate::tool::ToolResult {
                         output: "cancelled by user".into(),
                         ok: false,
                     };
-                    if self
-                        .ctx
-                        .cancelled
-                        .load(std::sync::atomic::Ordering::Relaxed)
-                    {
+                    if cancel.is_cancelled() {
                         // cancelled before the call could even start —
                         // settle it failed without polling the tool future
                         aborted()
@@ -180,7 +173,7 @@ impl AgentLoop {
                         match secs {
                             Some(s) => tokio::select! {
                                 r = &mut call_fut => r,
-                                () = &mut cancel => aborted(),
+                                () = cancel.wait() => aborted(),
                                 () = tokio::time::sleep(std::time::Duration::from_secs(s)) => crate::tool::ToolResult {
                                     output: format!("tool {} exceeded its {s}s timeout — raise or remove its row in .sunmao/tool-timeouts.txt, or (for Bash) pass a larger timeout_secs / background:true", call.function.name),
                                     ok: false,
@@ -188,7 +181,7 @@ impl AgentLoop {
                             },
                             None => tokio::select! {
                                 r = &mut call_fut => r,
-                                () = &mut cancel => aborted(),
+                                () = cancel.wait() => aborted(),
                             },
                         }
                     }

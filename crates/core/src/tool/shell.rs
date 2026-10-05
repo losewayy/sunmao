@@ -25,7 +25,7 @@ impl ToolImpl for BashTool {
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "Shell command line"},
-                    "timeout_secs": {"type": "integer", "description": "Kill after N seconds (default 120)"},
+                    "timeout_secs": {"type": "integer", "description": "Kill after N seconds (default 120, max 600)"},
                     "background": {"type": "boolean", "description": "Run detached; returns a job id readable via JobOutput"}
                 },
                 "required": ["command"]
@@ -57,7 +57,7 @@ impl ToolImpl for BashTool {
             let run = pwsh::run_foreground(
                 &a.command,
                 ctx.cwd.clone(),
-                a.timeout_secs.unwrap_or(120),
+                effective_timeout(a.timeout_secs),
                 Some(ctx.cancel_notify.clone()),
             )
             .await;
@@ -107,7 +107,7 @@ impl ToolImpl for BashTool {
         let mut run = match run_parsed(
             list,
             ctx.cwd.clone(),
-            a.timeout_secs.unwrap_or(120),
+            effective_timeout(a.timeout_secs),
             Some(ctx.cancel_notify.clone()),
         )
         .await
@@ -146,6 +146,18 @@ pub struct ShellRun {
 }
 
 /// Parse + preflight + execute `command` in `cwd`. `Err(String)` is a
+/// A caller may raise the default, but never past the ceiling: a model that
+/// asks for an hour (or a year) must not park a shell forever — a hung
+/// process holds the turn, the cursor and the user's only slot. Work that
+/// genuinely runs longer belongs in the background path.
+fn effective_timeout(requested: Option<u64>) -> u64 {
+    const DEFAULT_TIMEOUT_SECS: u64 = 120;
+    const MAX_TIMEOUT_SECS: u64 = 600;
+    requested
+        .unwrap_or(DEFAULT_TIMEOUT_SECS)
+        .clamp(1, MAX_TIMEOUT_SECS)
+}
+
 /// legible failure (parse error, timeout, spawn panic), not an anyhow —
 /// callers render it as output, same contract as `ToolResult{ok:false}`.
 /// `cancel` wakes the run's kill path (the turn loop's `cancel_notify`).
@@ -590,5 +602,27 @@ mod tests {
         );
         let ended = run.ended.clone().unwrap_or_default();
         assert!(ended.contains("truncated"), "ended: {:?}", run.ended);
+    }
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::effective_timeout;
+
+    #[test]
+    fn a_requested_timeout_is_clamped_to_the_ceiling() {
+        assert_eq!(effective_timeout(None), 120);
+        assert_eq!(effective_timeout(Some(30)), 30);
+        assert_eq!(effective_timeout(Some(600)), 600);
+        assert_eq!(
+            effective_timeout(Some(86_400)),
+            600,
+            "a day must not park the shell"
+        );
+        assert_eq!(
+            effective_timeout(Some(0)),
+            1,
+            "zero would kill before the spawn"
+        );
     }
 }

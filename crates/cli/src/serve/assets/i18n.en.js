@@ -474,7 +474,6 @@ const I18N_EN = {
   "已写入": "Saved",
   "已信任": "Trusted",
   "已信任此钩子": "Hook trusted",
-  "已引用到输入框": "Quoted into the composer",
   "已由其他窗口答复": "Answered in another window",
   "已允许": "Approved",
   "已允许账号": "Allowed accounts",

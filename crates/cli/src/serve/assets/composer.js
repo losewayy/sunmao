@@ -24,8 +24,8 @@ function expandPastes(text) {
 function autoGrow() { const ta = $('#input'); ta.style.height = motion.px('--h-input', 52) + 'px'; ta.style.height = Math.min(motion.px('--h-input-max', 168), ta.scrollHeight) + 'px'; slashCheck(); atCheck(); }
 function send() {
   const ta = $('#input'), text = ta.value.trim();
-  if (!text && !pendingAtts.length) return ta.focus();
-  if (!text) {
+  if (!text && !pendingAtts.length && !pendingQuotes.length) return ta.focus();
+  if (!text && !pendingQuotes.length) {
     // attachments-only prompt — nothing to expand; the kernel counts a
     // bare image as a turn (client.rs gate), so we can ship it directly
     const atts = pendingAtts.slice();
@@ -66,7 +66,11 @@ function send() {
     ta.value = ''; autoGrow(); slashCheck(true);
     return;
   }
-  const payload = expandPastes(text);
+  // quote cards ride the front of the prompt as `> …` blocks; the words in
+  // the box follow — a quotes-only send is a valid prompt, the block itself
+  // being the message (the agent still reads the passage as quoted, while
+  // the user never sees raw text pasted into the draft)
+  const payload = quoteBlocks() + expandPastes(text);
   // chips are the carrier — no in-text marker; every pending attachment
   // rides this prompt (the × on a chip is how one gets retracted)
   const atts = pendingAtts.slice();
@@ -79,10 +83,14 @@ function send() {
   // Snapshot what the clear destroys so the Tauri lane's async failure can
   // rebuild it (thumbs re-create from the retained File, not the revoked
   // object URL).
-  const draftAt = { text, atts: pendingAtts.slice(), stash: pasteStash.slice() };
+  const draftAt = { text, atts: pendingAtts.slice(), stash: pasteStash.slice(), quotes: pendingQuotes.slice() };
+  // the session name this prompt will carry — the typed text, or the first
+  // quoted passage for a quotes-only send (read before the clear below)
+  const head = text || (pendingQuotes[0] && pendingQuotes[0].head) || t('引用');
   const restoreDraft = () => {
     pendingAtts = draftAt.atts.map(a => a.file ? { ...a, thumb: URL.createObjectURL(a.file) } : a);
     pasteStash = draftAt.stash;
+    pendingQuotes = draftAt.quotes; renderQuotes();
     renderAtts();
     ta.value = draftAt.text; autoGrow(); slashCheck(true);
     toast(t('发送失败，草稿已恢复'), 'alert', 'warn');
@@ -94,14 +102,16 @@ function send() {
   for (const a of pendingAtts) if (a.thumb) URL.revokeObjectURL(a.thumb);
   pendingAtts = []; // sent or retracted — either way the draft is clean
   renderAtts();
+  clearQuotes();    // shipped with the prompt — the cards go with it
   ta.value = ''; autoGrow(); slashCheck(true);
   // no optimistic bubble — the kernel echoes the accepted prompt back as a
   // `user_message` live event, so the bubble AND its attachment thumbs are
   // drawn from the kernel's busy/idle truth, not this tab's possibly-stale
   // flag (audit-gui #4); a local append here is what double-rendered them.
-  // first prompt names the session right away — same rule the host applies
+  // first prompt names the session right away — same rule the host applies;
+  // a quotes-only prompt is named after the first quoted passage
   const m = SESSION_META[sessionId] || (SESSION_META[sessionId] = { mtime: Date.now() });
-  if (!m.title) { m.title = text.split('\n').map(s => s.trim()).find(Boolean).slice(0, 80); renderRail(); renderCrumb(); }
+  if (!m.title) { m.title = head.split('\n').map(s => s.trim()).find(Boolean).slice(0, 80); renderRail(); renderCrumb(); }
   updateHero();
   logEv('message', 'user · ' + text.slice(0, 60));
 }
@@ -161,15 +171,17 @@ $('#cmp-queue').addEventListener('click', e => {
 // carrying attachments can't steer; falls back to the queue with a note.
 function steerSend() {
   const ta = $('#input'), text = ta.value.trim();
-  if (!text) return ta.focus();
+  if (!text && !pendingQuotes.length) return ta.focus();
   if (pendingAtts.length) {
     toast(t('引导只带文本 — 附件消息走 Enter 排队'), 'alert', 'warn');
     return send();
   }
-  const payload = expandPastes(text);
+  // quotes are text, so they steer with the draft instead of being dropped
+  const payload = quoteBlocks() + expandPastes(text);
   const restore = () => { ta.value = text; autoGrow(); slashCheck(true); toast(t('发送失败，草稿已恢复'), 'alert', 'warn'); };
   if (!wsSend({ type: 'steer', text: payload }, restore)) return toast(t('未连接到内核，无法发送'), 'alert', 'warn');
   pasteStash = [];
+  clearQuotes();
   ta.value = ''; autoGrow(); slashCheck(true);
   logEv('message', 'steer · ' + payload.slice(0, 60));
 }

@@ -4,7 +4,7 @@
 .composer{position:absolute;left:50%;bottom:var(--s-16);transform:translateX(-50%);width:min(var(--w-read),calc(100% - var(--s-48)));border-radius:var(--r-2xl);--ga:var(--glass-raised);border-color:var(--c-stroke-2);box-shadow:var(--sh-inset-hi),var(--sh-2);z-index:var(--z-composer);overflow:hidden}
 .cmp-top{display:flex;align-items:center;gap:var(--s-2);height:var(--h-xl);padding:0 var(--s-6);border-radius:calc(var(--r-2xl) - var(--bw-hairline)) calc(var(--r-2xl) - var(--bw-hairline)) 0 0;background:var(--c-fill-1)}/* token-exempt: §6 nested-corner rule */
 .cmp-top[hidden]{display:none}
-.cmp-top,.cmp-atts,.cmp-queue{animation:k-rise var(--dur-fast) var(--ease-out)}
+.cmp-top,.cmp-atts,.cmp-queue,.cmp-quotes{animation:k-rise var(--dur-fast) var(--ease-out)}
 .cmp-top .sp{flex:1}
 .cmp-wait{display:inline-flex;align-items:center;gap:var(--s-6);margin-right:var(--s-6);font-size:var(--fs-xs);color:var(--c-warn)}
 .cmp-wait[hidden]{display:none}
@@ -60,3 +60,17 @@
 .att-chip{display:inline-flex;align-items:center;gap:var(--s-6);padding:var(--s-2) var(--s-4) var(--s-2) var(--s-2);border-radius:var(--r-md);background:var(--c-fill-2);box-shadow:var(--ring-1);cursor:zoom-in}
 .att-chip img{width:var(--s-24);height:var(--s-24);border-radius:var(--r-sm);object-fit:cover;display:block}
 .att-chip .att-n{max-width:var(--w-att-name);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-2xs);color:var(--c-text-2)}
+/* quote cards — the passage rides a card above the input instead of the
+   text; same row convention as the attachment chips, so a long draft wraps
+   the row upward instead of blowing the bar out sideways */
+.cmp-quotes{display:flex;flex-wrap:wrap;gap:var(--s-6);padding:var(--s-6) var(--s-8) 0}
+.cmp-quotes[hidden]{display:none}
+.quote-chip{display:inline-flex;align-items:center;gap:var(--s-6);min-width:0;padding:var(--s-2) var(--s-4) var(--s-2) var(--s-8);border-radius:var(--r-md);background:var(--c-fill-2);box-shadow:var(--ring-1);color:var(--c-text-2);font-size:var(--fs-2xs)}
+.quote-chip:hover{color:var(--c-text)}
+.quote-chip .i{color:var(--c-accent);flex:none}
+.quote-chip .quote-n{max-width:var(--w-chip-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* the whole passage on hover — a multi-line layer of its own, not the
+   one-line #tip bubble; pointer-events:none keeps it from stealing the
+   hover that opened it */
+.quote-full{position:fixed;left:0;top:0;z-index:var(--z-tip);max-width:min(var(--w-read),calc(100vw - var(--s-32)));padding:var(--s-8) var(--s-10);border-radius:var(--r-md);font-size:var(--fs-xs);line-height:var(--lh-body);color:var(--c-text);text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
+.quote-full.show{opacity:1}

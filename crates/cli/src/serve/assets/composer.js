@@ -23,6 +23,24 @@ function expandPastes(text) {
   return out;
 }
 function autoGrow() { const ta = $('#input'); ta.style.height = motion.px('--h-input', 52) + 'px'; ta.style.height = Math.min(motion.px('--h-input-max', 168), ta.scrollHeight) + 'px'; slashCheck(); atCheck(); }
+/* What the post-send clear destroys, and how a failed send rebuilds it. The
+   Tauri lane reports its failure asynchronously — wsSend has already returned
+   true — so the restore has to put back all four, not just the words: the
+   `[paste #N]` markers in the text only expand against the stash, and the
+   quote cards are gone with the draft. Thumbs re-mint from the retained File
+   (the clear revoked the object URL that was live at snapshot time). */
+function draftSnapshot() {
+  return { text: $('#input').value.trim(), atts: pendingAtts.slice(), stash: pasteStash.slice(), quotes: pendingQuotes.slice() };
+}
+function restoreDraft(at) {
+  const ta = $('#input');
+  pendingAtts = at.atts.map(a => a.file ? { ...a, thumb: URL.createObjectURL(a.file) } : a);
+  pasteStash = at.stash;
+  pendingQuotes = at.quotes; renderQuotes();
+  renderAtts();
+  ta.value = at.text; autoGrow(); slashCheck(true);
+  toast(t('发送失败，草稿已恢复'), 'alert', 'warn');
+}
 function send() {
   const ta = $('#input'), text = ta.value.trim();
   if (!text && !pendingAtts.length && !pendingQuotes.length) return ta.focus();
@@ -84,19 +102,11 @@ function send() {
   // Snapshot what the clear destroys so the Tauri lane's async failure can
   // rebuild it (thumbs re-create from the retained File, not the revoked
   // object URL).
-  const draftAt = { text, atts: pendingAtts.slice(), stash: pasteStash.slice(), quotes: pendingQuotes.slice() };
+  const draftAt = draftSnapshot();
   // the session name this prompt will carry — the typed text, or the first
   // quoted passage for a quotes-only send (read before the clear below)
   const head = text || (pendingQuotes[0] && pendingQuotes[0].head) || t('引用');
-  const restoreDraft = () => {
-    pendingAtts = draftAt.atts.map(a => a.file ? { ...a, thumb: URL.createObjectURL(a.file) } : a);
-    pasteStash = draftAt.stash;
-    pendingQuotes = draftAt.quotes; renderQuotes();
-    renderAtts();
-    ta.value = draftAt.text; autoGrow(); slashCheck(true);
-    toast(t('发送失败，草稿已恢复'), 'alert', 'warn');
-  };
-  if (!wsSend(frame, restoreDraft)) return toast(t('未连接到内核，无法发送'), 'alert', 'warn');
+  if (!wsSend(frame, () => restoreDraft(draftAt))) return toast(t('未连接到内核，无法发送'), 'alert', 'warn');
   // consume the stash wholesale — the draft shipped; a `[paste #N]` typed
   // into a NEW draft must never resurrect the old clipboard content
   pasteStash = [];
@@ -130,8 +140,11 @@ function steerSend() {
   }
   // quotes are text, so they steer with the draft instead of being dropped
   const payload = quoteBlocks() + expandPastes(text);
-  const restore = () => { ta.value = text; autoGrow(); slashCheck(true); toast(t('发送失败，草稿已恢复'), 'alert', 'warn'); };
-  if (!wsSend({ type: 'steer', text: payload }, restore)) return toast(t('未连接到内核，无法发送'), 'alert', 'warn');
+  // the same four-way snapshot send() takes: the Tauri lane's failure lands
+  // after wsSend returned true, i.e. after the clear below already consumed
+  // the stash and the cards
+  const draftAt = draftSnapshot();
+  if (!wsSend({ type: 'steer', text: payload }, () => restoreDraft(draftAt))) return toast(t('未连接到内核，无法发送'), 'alert', 'warn');
   pasteStash = [];
   clearQuotes();
   ta.value = ''; autoGrow(); slashCheck(true);

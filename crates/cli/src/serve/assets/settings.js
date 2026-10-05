@@ -108,7 +108,6 @@ const ctxLen = n => typeof n === 'number' && Number.isFinite(n)
   : (n ? String(n) : '');
 const MOD_MARK = { image: '图', audio: '音', video: '视', file: '档' };
 const modMarks = m => ((m.input_modalities && m.input_modalities.length) ? m.input_modalities : (m.vision ? ['image'] : [])).map(k => MOD_MARK[k] || k).join('');
-const mbadge = m => `${modMarks(m) ? `<span class="tag">${modMarks(m)}</span>` : ''}${m.context_length ? `<span class="tag">${esc(ctxLen(m.context_length))}</span>` : ''}${m.max_output ? `<span class="tag">出${esc(ctxLen(m.max_output))}</span>` : ''}${(m.thinking || []).length ? `<span class="tag">思:${esc((m.thinking || []).map(t => String(t)).join('/'))}</span>` : ''}${m.reasoning && !(m.thinking || []).length ? '<span class="tag">思</span>' : ''}${m.supports_tools ? '<span class="tag">具</span>' : ''}`;
 function renderModelRows(p, q) {
   q = (q || '').toLowerCase();
   const rows = [];
@@ -124,7 +123,11 @@ function renderModelRows(p, q) {
   for (const n of provNames()) {
     const p0 = MODELS.providers[n], cat = p0.catalog || [];
     const shown = cat.filter(m => !q || `${n}/${m.id}`.toLowerCase().includes(q));
-    const listed = shown.map(m => `<button class="mi" data-v="${esc(n + '/' + m.id)}"><span class="mt mono"><span>${esc(n + '/' + m.id)}</span></span>${mbadge(m)}</button>`).join('');
+    // name only: the picker's job is to say which model, and the capability
+    // fields (window, output cap, thinking ladder, tool flag) turn a list you
+    // scan into one you have to read — they live in 设置 › 模型, where there
+    // is room to explain them
+    const listed = shown.map(m => `<button class="mi" data-v="${esc(n + '/' + m.id)}"><span class="mt mono"><span>${esc(n + '/' + m.id)}</span></span></button>`).join('');
     if (listed) rows.push(`<div class="lbl">${esc(n)} · ${cat.length} 个模型</div>` + listed);
   }
   $('.mp-list', p).innerHTML = rows.join('') || `<div class="hint">无匹配 — 输入 provider/model 或模型 id，回车直接切换</div>`;

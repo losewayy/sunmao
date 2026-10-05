@@ -28,6 +28,28 @@ function setConn(on) {
   d.dataset.tip = on ? t('已连接 {host}', { host: location.host }) : t('未连接 · 重连中');
   $('#df-live').classList.toggle('off', !on);
 }
+/* the turn SHAPE (`standard` | `fusion`) — the third axis, beside the
+   approval stance and the loop driver. `turn_mode` on hello/replay is the
+   kernel's answer; folding the durable `turn_mode_change` out of the replay
+   is the fallback for a host that predates the field, and the live
+   `turn.mode` hook is how another tab's switch reaches this one. */
+let turnMode = 'standard';
+function setTurnMode(m) {
+  if (m !== 'standard' && m !== 'fusion') return;
+  turnMode = m;
+  // the composer chip is the one model-shaped thing always on screen: its
+  // tooltip carries the Lead/Sidekick relationship when Fusion is armed
+  const btn = $('#model-btn');
+  if (btn) btn.dataset.tip = m === 'fusion' ? t('Fusion：本会话模型就是 Lead，Sidekick 默认继承它') : '';
+  if (view === 'settings' && setPage === 'fusion') renderFusion();
+}
+function turnModeOf(events) {
+  for (let i = (events || []).length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e && e.type === 'turn_mode_change') return e.mode;
+  }
+  return null;
+}
 function connect() {
   clearTimeout(wsTimer);
   if (TAURI) {
@@ -75,6 +97,7 @@ function route(v) {
         $('#hero-sub').textContent = project ? t('在 {p} 中开始', { p: project }) : '';
       }
       setApprovalMode(v.mode);
+      setTurnMode(v.turn_mode || turnModeOf(v.replay) || 'standard');
       setEffort(v.effort, v.effort_levels);
       sandboxPort = v.sandbox_port || 0;
       busySessions.clear(); (v.busy_sessions || []).forEach(id => busySessions.add(id));
@@ -112,6 +135,9 @@ function route(v) {
         break;
       }
       if (sess === sessionId) {
+        // a turn-mode flip in ANY tab is a `turn.mode` hook — the durable
+        // fact renders on the next replay, but the live page has to move now
+        if (v.event && v.event.type === 'hook' && v.event.event === 'turn.mode') setTurnMode(v.event.detail);
         liveEvent(v.event);
         // the first streamed row retires the hero — send() checked before
         // the echo landed (no optimistic bubble), so the empty check has
@@ -132,6 +158,7 @@ function route(v) {
       // the hard cut into a fast out/in so the swap reads as a transition
       fadeSwap($('#scroller'), () => renderReplay(v.events || []));
       setApprovalMode(v.mode);
+      setTurnMode(v.turn_mode || turnModeOf(v.events) || 'standard');
       setEffort(v.effort, v.effort_levels);
       if (v.goal) { curGoal = v.goal; renderGoalChip(); }
       setBusy(!!v.busy);
@@ -389,13 +416,15 @@ function modelsBody(edit) {
   const body = { providers, routes: (MODELS && MODELS.routes) || {} };
   const dm = edit && 'default_model' in edit ? edit.default_model : MODELS && MODELS.default_model;
   if (dm) body.default_model = dm;
-  // A rename is a new name for an entry the view only reported redacted: the
-  // server needs the hop to move the credential it never saw, and to tell a
-  // rename from a collision with a different provider. `adding` is the same
-  // declaration for the create path — the body carries the whole provider map,
-  // so only the page knows which entry is a new one.
-  if (edit && edit.renameFrom) body.rename_from = { [edit.name]: edit.renameFrom };
-  if (edit && edit.add) body.adding = edit.name;
+  // The save's request-level metadata rides in one reserved namespace: a
+  // rename must name where the credential moves (the view is redacted, so the
+  // page cannot retype it), and an add must name the entry it creates (the
+  // body always carries the whole provider map). Bare top-level names would
+  // collide with hand-written file keys, so both go under `$request`.
+  const req = {};
+  if (edit && edit.renameFrom) req.rename_from = { [edit.name]: edit.renameFrom };
+  if (edit && edit.add) req.adding = edit.name;
+  if (Object.keys(req).length) body.$request = req;
   return body;
 }
 // A save that reuses a name another provider already owns would overwrite it:
@@ -447,14 +476,14 @@ function renderDock(d) {
 }
 
 /* ================= crumb / views ================= */
-const SET_NAV = [['appearance', t('外观'), 'palette'], ['providers', t('模型与提供商'), 'cpu'], ['channels', t('IM 渠道'), 'shield-check'], ['shell', t('终端'), 'terminal'], ['hooks', t('钩子'), 'zap'], ['mcp', t('MCP 服务器'), 'blocks'], ['grants', t('已授权命令'), 'lock'], ['keys', t('快捷键'), 'keyboard'], ['about', t('关于'), 'info']];
+const SET_NAV = [['appearance', t('外观'), 'palette'], ['providers', t('模型与提供商'), 'cpu'], ['fusion', 'Fusion', 'zap'], ['channels', t('IM 渠道'), 'shield-check'], ['shell', t('终端'), 'terminal'], ['hooks', t('钩子'), 'zap'], ['mcp', t('MCP 服务器'), 'blocks'], ['grants', t('已授权命令'), 'lock'], ['keys', t('快捷键'), 'keyboard'], ['about', t('关于'), 'info']];
 function renderCrumb() {
   const c = $('#crumb');
   const interactive = view === 'session' && !!sessionId;
   let h;
   if (view === 'settings') h = `<span class="c1">${t('设置')}</span><span class="cs">/</span><span class="c2">${SET_NAV.find(x => x[0] === setPage)[1]}</span>`;
   else if (view === 'schedules') h = `<span class="c1">${t('定时任务')}</span>`;
-  else h = `<span class="c1">${esc(cwd.split(/[\\/]/).filter(Boolean).pop() || brand())}</span><span class="cs">/</span><span class="c2">${esc(sessTitle(sessionId) || (sessionId ? t('新对话') : '…'))}</span>${ic('chev-d', 'i sm')}${driver === 'ptc' ? `<span class="drv" data-tip="${t('PTC 代码模式 — 模型经 RunCode 脚本调用工具')}">PTC</span>` : ''}`;
+  else h = `<span class="c1">${esc(cwd.split(/[\\/]/).filter(Boolean).pop() || brand())}</span><span class="cs">/</span><span class="c2">${esc(sessTitle(sessionId) || (sessionId ? t('新对话') : '…'))}</span>${ic('chev-d', 'i sm')}${driver === 'ptc' ? `<span class="drv" data-tip="${esc(t('PTC 代码模式 — 模型经 RunCode 脚本调用工具'))}">PTC</span>` : ''}`;
   if (interactive) {
     c.dataset.act = 'crumb';
     c.setAttribute('aria-haspopup', 'menu');

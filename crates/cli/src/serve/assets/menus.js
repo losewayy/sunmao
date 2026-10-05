@@ -173,14 +173,27 @@ function act(name, el) {
     case 'tg': { const g = el.closest('.tools'); g.dataset.user = '1'; return foldGroup(g, !g.classList.contains('fold')); }
     case 'rewind-turn': return rewindMsg(el);
     case 'pick-mode': {
-      // same four stances the kernel gates on — labels mirror the TUI's /mode
+      // two axes on one chip: the four approval stances the kernel gates on
+      // (labels mirror the TUI's /mode), then the turn SHAPE — standard vs
+      // Fusion, whose whole point is that this session stops writing and
+      // delegates. The wire op is the same one; `parse` tries turn modes
+      // first, so the two vocabularies never collide.
       const MODES = [
         { v: 'always_ask', t: t('请求批准'), d: t('写入与风险命令前询问'), icon: 'shield-check' },
         { v: 'auto', t: t('自动'), d: t('读写直接放行，风险命令仍询问'), icon: 'shield' },
         { v: 'read_only', t: t('只读'), d: t('只能读取与搜索，不执行命令'), icon: 'eye' },
         { v: 'full_access', t: t('完全访问'), d: t('不再询问；deny 规则依旧生效'), icon: 'lock', warn: true },
       ];
-      return menuPop(el, [{ label: t('审批模式') }, ...MODES.map(m => Object.assign({}, m, { on: m.v === approvalMode }))], v => { wsSend({ type: 'mode', sel: v }); }, { place: 'top', align: 'end' });
+      const cur = typeof turnMode === 'string' ? turnMode : 'standard';
+      const TURN = [
+        { v: 'standard', t: t('标准'), d: t('单模型回合：本会话自己读写与执行'), icon: 'cpu' },
+        { v: 'fusion', t: 'Fusion', d: t('Lead 只读规划并验证，写入由 Sidekick 执行；连续两次验证不过时 Lead 接管到本回合结束'), icon: 'zap' },
+      ];
+      return menuPop(el, [
+        { label: t('审批模式') }, ...MODES.map(m => Object.assign({}, m, { on: m.v === approvalMode })),
+        '-',
+        { label: t('回合模式') }, ...TURN.map(m => Object.assign({}, m, { on: m.v === cur })),
+      ], v => { wsSend({ type: 'mode', sel: v }); }, { place: 'top', align: 'end' });
     }
     case 'pick-model': return modelPop(el);
     case 'pick-effort': return effortPop(el);

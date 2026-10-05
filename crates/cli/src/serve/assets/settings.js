@@ -1,4 +1,5 @@
-/* settings → CSS bridge and settings pages (appearance/providers/keys/about) */
+/* settings → CSS bridge and settings pages (appearance/providers/keys/about)
+   arch: allow-god-file it is the one settings-page registry plus its renderers, and the nav/render pairing is the thing the file exists to keep together */
 'use strict';
 
 /* ================= settings → CSS ================= */
@@ -45,7 +46,7 @@ function commit() { apply(); save(); }
 function renderWallGrid() {
   const g = $('#wgrid'); if (!g || view !== 'settings' || setPage !== 'appearance') return;
   const items = WALLS.map(x => ({ id: x.id, name: x.name })).concat(customImg ? [{ id: 'custom', name: t('自定义') }] : []);
-  g.innerHTML = items.map(x => `<button class="wt${S.wallpaper === x.id ? ' on' : ''}" data-wall="${x.id}"><span class="th"><canvas></canvas>${x.id === 'custom' ? `<i class="wt-x" data-wx data-tip="${t('移除自定义壁纸')}">${ic('x')}</i>` : ''}<span class="chk">${ic('check')}</span></span><span class="nm2">${x.name}</span></button>`).join('')
+  g.innerHTML = items.map(x => `<button class="wt${S.wallpaper === x.id ? ' on' : ''}" data-wall="${x.id}"><span class="th"><canvas></canvas>${x.id === 'custom' ? `<i class="wt-x" data-wx data-tip="${esc(t('移除自定义壁纸'))}">${ic('x')}</i>` : ''}<span class="chk">${ic('check')}</span></span><span class="nm2">${x.name}</span></button>`).join('')
     + `<button class="wt up" data-act="upload-wall"><span class="th">${ic('image-plus')}<em>${t('上传图片')}</em></span><span class="nm2">JPG · PNG</span></button>`;
   const dpr = Math.min(2, devicePixelRatio || 1);
   $$('.wt[data-wall]', g).forEach(b => { const c = $('canvas', b), r = c.getBoundingClientRect(); c.width = Math.round((r.width || 112) * dpr); c.height = Math.round((r.height || 70) * dpr); const ctx = c.getContext('2d'); drawWall(ctx, c.width, c.height, b.dataset.wall); });
@@ -77,7 +78,7 @@ const CLABEL = { accent: t('强调色'), background: t('背景'), foreground: t(
 function colorPop(anchor, key) {
   if (popAnchor === anchor) return closePop();
   const cur = S[key].toUpperCase();
-  pop(anchor, `<div class="lbl">${CLABEL[key]}</div><div class="sws">${SWATCH[key].map(c => `<button class="swt${c === cur ? ' on' : ''}" data-c="${c}" style="--_c:${c}" aria-label="${c}"></button>`).join('')}</div><div class="field"><i class="cdot" style="background:${cur}"></i><input value="${cur}" maxlength="7" spellcheck="false" aria-label="${t('十六进制色值')}"></div><div class="hint">${t('输入 #RRGGBB 后按 Enter')}</div>`, { align: 'end', onMount(p) {
+  pop(anchor, `<div class="lbl">${CLABEL[key]}</div><div class="sws">${SWATCH[key].map(c => `<button class="swt${c === cur ? ' on' : ''}" data-c="${c}" style="--_c:${c}" aria-label="${c}"></button>`).join('')}</div><div class="field"><i class="cdot" style="background:${cur}"></i><input value="${cur}" maxlength="7" spellcheck="false" aria-label="${esc(t('十六进制色值'))}"></div><div class="hint">${t('输入 #RRGGBB 后按 Enter')}</div>`, { align: 'end', onMount(p) {
     const setC = c => { S[key] = c.toUpperCase(); commit(); $$('.swt', p).forEach(b => b.classList.toggle('on', b.dataset.c === S[key])); $('.cdot', p).style.background = S[key]; $('input', p).value = S[key]; };
     p.addEventListener('click', e => { const b = e.target.closest('.swt'); if (b) setC(b.dataset.c); });
     const inp = $('input', p);
@@ -117,6 +118,12 @@ function renderModelRows(p, q) {
   if (modelLabel && (!q || modelLabel.toLowerCase().includes(q)))
     rows.push(`<div class="lbl">${t('当前')}</div><div class="mi cur"><span class="mt mono"><span>${esc(modelLabel)}</span><small>${t('本会话正在使用')}</small></span>${ic('check', 'i sm ck')}</div>`);
   const routes = (MODELS && MODELS.routes) || {};
+  // Fusion splits the session into a Lead and a Sidekick. The picker is
+  // where a model gets named, so the relationship belongs here: the picked
+  // model IS the Lead's, and the Sidekick inherits it unless the Lead routes
+  // one per delegation.
+  if (turnMode === 'fusion')
+    rows.push(`<div class="hint" data-fusion-note>${esc(t('Fusion 已开：本会话模型就是 Lead，Sidekick 默认继承它；Lead 可在委派时用 @route 指定别的模型'))}</div>`);
   for (const [r, chain] of Object.entries(routes)) {
     const sel = '@' + r, d = Array.isArray(chain) ? chain.join(' → ') : String(chain);
     if (!q || (sel + ' ' + d).toLowerCase().includes(q)) rows.push(`<button class="mi" data-v="${esc(sel)}">${ic('zap')}<span class="mt mono"><span>${esc(sel)}</span><small>${esc(d)}</small></span></button>`);
@@ -135,7 +142,7 @@ function renderModelRows(p, q) {
 }
 function modelPop(el) {
   if (popAnchor === el) return closePop();
-  pop(el, `<div class="field"><input id="mp-in" placeholder="${t('provider/model 或 @route — 回车切换')}" spellcheck="false" autocomplete="off"></div><div class="mp-list scroll"></div>`, { place: 'top', align: 'end', cls: 'models', onMount(p) {
+  pop(el, `<div class="field"><input id="mp-in" placeholder="${esc(t('provider/model 或 @route — 回车切换'))}" spellcheck="false" autocomplete="off"></div><div class="mp-list scroll"></div>`, { place: 'top', align: 'end', cls: 'models', onMount(p) {
     const inp = $('#mp-in', p);
     renderModelRows(p, '');
     inp.addEventListener('input', () => renderModelRows(p, inp.value.trim()));
@@ -164,7 +171,7 @@ function effortPop(el) {
     { label: t('思考强度') },
     ...effortLevels.map(l => ({ v: l, t: l, mono: true, on: l === effortLevel })),
   ];
-  if (!effortLevels.length) items.push({ label: t('catalog 未声明思考档位 — 可用 /effort <level> 直接设置') });
+  if (!effortLevels.length) items.push({ label: t('catalog 未声明思考档位 — 可用 /effort 直接指定') });
   menuPop(el, items, v => wsSend({ type: 'effort', level: v }), { place: 'top', align: 'end' });
 }
 
@@ -233,7 +240,7 @@ function renderProviders() {
     } else {
       body = `<div class="pv-h"><b class="mono">${esc(n)}</b><span class="pv-sub">${esc((p.dialect || 'openai') + ' · ' + p.base_url)}</span>`
         + `<span class="tag">${p.api_key_set ? t('key 已配置') : t('无 key')}</span>${n === MODELS.default_provider ? '<span class="tag">' + t('本会话') + '</span>' : ''}`
-        + `<div class="pv-acts"><button class="btn ghost sm" data-pv="edit" data-n="${esc(n)}" data-tip="${t('编辑')}">${ic('pen', 'i sm')}</button><button class="btn ghost sm" data-pv="del" data-n="${esc(n)}" data-tip="${t('删除')}">${ic('trash', 'i sm')}</button></div></div>`
+        + `<div class="pv-acts"><button class="btn ghost sm" data-pv="edit" data-n="${esc(n)}" data-tip="${esc(t('编辑'))}">${ic('pen', 'i sm')}</button><button class="btn ghost sm" data-pv="del" data-n="${esc(n)}" data-tip="${esc(t('删除'))}">${ic('trash', 'i sm')}</button></div></div>`
         + (cat.length
           ? `<div class="pv-cat">${cat.slice(0, 8).map(m => `<span class="tag" data-tip="${esc(n + '/' + m.id)}">${esc(m.id)}${modMarks(m) ? ' ·' + modMarks(m) : ''}${m.context_length ? ' ·' + esc(ctxLen(m.context_length)) : ''}${(m.thinking || []).length || m.reasoning ? ' ·' + t('思') : ''}</span>`).join('')}${cat.length > 8 ? `<span class="tag">${t('等 {n} 个', { n: cat.length })}</span>` : ''}</div>`
           : '');
@@ -306,7 +313,7 @@ function provForm(n, p) {
   // the user edits whatever the guess got wrong.
   const mchip = (m, kind, label) => {
     const mods = m.input_modalities || [];
-    return `<button class="pv-chip${mods.includes(kind) ? ' on' : ''}" data-mf="mod" data-mk="${kind}" data-mid="${esc(m.id)}" data-tip="${t('输入模态 · {kind}', { kind })}">${label}</button>`;
+    return `<button class="pv-chip${mods.includes(kind) ? ' on' : ''}" data-mf="mod" data-mk="${kind}" data-mid="${esc(m.id)}" data-tip="${esc(t('输入模态 · {kind}', { kind }))}">${label}</button>`;
   };
   const mflag = (m, key, label, tip) => `<button class="pv-chip${m[key] ? ' on' : ''}" data-mf="flag" data-mk="${key}" data-mid="${esc(m.id)}" data-tip="${tip}">${label}</button>`;
   // each model = one card: identity row, then labeled sections that wrap —
@@ -316,27 +323,27 @@ function provForm(n, p) {
   const mrow = m => {
     const lv = new Set(m.thinking || []);
     const tgl = !!m.reasoning && !lv.size;
-    const chips = THINK_LADDER.map(l => `<button class="pv-chip${lv.has(l) ? ' on' : ''}" data-mf="lvl" data-mk="${l}" data-mid="${esc(m.id)}" data-tip="${t('思考档位 · {l}', { l })}">${l}</button>`).join('');
+    const chips = THINK_LADDER.map(l => `<button class="pv-chip${lv.has(l) ? ' on' : ''}" data-mf="lvl" data-mk="${l}" data-mid="${esc(m.id)}" data-tip="${esc(t('思考档位 · {l}', { l }))}">${l}</button>`).join('');
     return `<div class="pv-ckr${v.sel && v.sel.has(m.id) ? ' on' : ''}"><button class="pv-ck${v.sel && v.sel.has(m.id) ? ' on' : ''}" data-mc="${esc(m.id)}">${ic(v.sel && v.sel.has(m.id) ? 'square-check' : 'square', 'i sm')}<span class="mono">${esc(m.id)}</span></button>`
-      + `<div class="pv-cf"><label class="pv-f">${t('上下文')}<input class="pv-num" data-cx="${esc(m.id)}" value="${m.context_length || ''}" placeholder="—" spellcheck="false" data-tip="${t('上下文窗口（tokens）')}"></label><label class="pv-f">${t('输出')}<input class="pv-num" data-mo="${esc(m.id)}" value="${m.max_output || ''}" placeholder="—" spellcheck="false" data-tip="${t('单次输出上限（tokens）')}"></label></div>`
-      + `<div class="pv-cf"><span class="pv-fl">${t('思考')}</span><span class="pv-chips">${chips}<button class="pv-chip${tgl ? ' on' : ''}" data-mf="tgl" data-mid="${esc(m.id)}" data-tip="${t('模型只提供思考开关，没有档位')}">${t('仅开关')}</button></span></div>`
-      + `<div class="pv-cf"><span class="pv-fl">${t('输入')}</span><span class="pv-chips"><button class="pv-chip on" data-tip="${t('文本输入 · 所有模型的基线')}" aria-disabled="true">${t('文')}</button>${mchip(m, 'image', t('图'))}${mchip(m, 'video', t('视'))}${mchip(m, 'audio', t('音'))}${mchip(m, 'file', t('档'))}<i class="pv-sep"></i>${mflag(m, 'supports_tools', t('具'), t('支持工具调用'))}${mflag(m, 'structured_outputs', t('构'), t('支持结构化输出'))}</span></div>`
+      + `<div class="pv-cf"><label class="pv-f">${t('上下文')}<input class="pv-num" data-cx="${esc(m.id)}" value="${m.context_length || ''}" placeholder="—" spellcheck="false" data-tip="${esc(t('上下文窗口（tokens）'))}"></label><label class="pv-f">${t('输出')}<input class="pv-num" data-mo="${esc(m.id)}" value="${m.max_output || ''}" placeholder="—" spellcheck="false" data-tip="${esc(t('单次输出上限（tokens）'))}"></label></div>`
+      + `<div class="pv-cf"><span class="pv-fl">${t('思考')}</span><span class="pv-chips">${chips}<button class="pv-chip${tgl ? ' on' : ''}" data-mf="tgl" data-mid="${esc(m.id)}" data-tip="${esc(t('模型只提供思考开关，没有档位'))}">${t('仅开关')}</button></span></div>`
+      + `<div class="pv-cf"><span class="pv-fl">${t('输入')}</span><span class="pv-chips"><button class="pv-chip on" data-tip="${esc(t('文本输入 · 所有模型的基线'))}" aria-disabled="true">${t('文')}</button>${mchip(m, 'image', t('图'))}${mchip(m, 'video', t('视'))}${mchip(m, 'audio', t('音'))}${mchip(m, 'file', t('档'))}<i class="pv-sep"></i>${mflag(m, 'supports_tools', t('具'), t('支持工具调用'))}${mflag(m, 'structured_outputs', t('构'), t('支持结构化输出'))}</span></div>`
       // removing one candidate is how a hand-typed id gets taken back out:
       // it never reaches the catalog, so save simply stops carrying it
       + `<button class="btn ghost sm pv-x" data-pv="delmodel" data-n="${esc(m.id)}" data-tip="${esc(t('从列表移除 {id}', { id: m.id }))}">${ic('x', 'i sm')}</button>`
       + `</div>`;
   };
   const list = cands.length
-    ? `<div class="pv-ckl scroll">${cands.map(mrow).join('')}</div><div class="pv-ckl-drag" data-tip="${t('拖动调整列表高度')}"></div>`
+    ? `<div class="pv-ckl scroll">${cands.map(mrow).join('')}</div><div class="pv-ckl-drag" data-tip="${esc(t('拖动调整列表高度'))}"></div>`
     : `<div class="pv-empty">${v.fetching ? t('拉取中…') : t('未拉取 — 也可在下方直接填 model id')}</div>`;
   return `<div class="pv-form">
-    <label>${t('名称')}<input data-f="name" value="${esc(v.formName != null ? v.formName : n)}" placeholder="${t('如 default、deepseek')}"></label>
+    <label>${t('名称')}<input data-f="name" value="${esc(v.formName != null ? v.formName : n)}" placeholder="${esc(t('如 default、deepseek'))}"></label>
     <label>Base URL<input data-f="base_url" value="${val('base_url')}" placeholder="https://api.example.com/v1"></label>
     <label>${t('协议')}<button class="pv-sel" type="button" data-pv="dialect" data-v="${val('dialect', 'openai')}"><span>${esc(DIALECTS.find(d => d.v === val('dialect', 'openai'))?.t || 'Chat Completions')}</span>${ic('chev-d')}</button></label>
-    <label>API Key<input data-f="api_key" type="password" value="${val('api_key')}" placeholder="${p && p.api_key_set ? t('已配置 — 留空保持不变') : t('sk-… 或留空（本地服务）')}"></label>
+    <label>API Key<input data-f="api_key" type="password" value="${val('api_key')}" placeholder="${p && p.api_key_set ? esc(t('已配置 — 留空保持不变')) : esc(t('sk-… 或留空（本地服务）'))}"></label>
     <div class="pv-mh"><span class="pv-ml">${t('模型（勾选要用的）')}</span><span class="pv-mr"><button class="btn ghost sm" data-pv="fetch" ${v.fetching ? 'disabled' : ''}>${ic('download')}${v.fetched ? t('重新拉取') : t('拉取模型')}</button></span></div>
     ${list}
-    <div class="pv-add"><input data-f="addmodel" placeholder="${t('手写 model id')}" spellcheck="false"><button class="btn ghost sm" data-pv="addmodel">${ic('plus')}${t('添加')}</button></div>
+    <div class="pv-add"><input data-f="addmodel" placeholder="${esc(t('手写 model id'))}" spellcheck="false"><button class="btn ghost sm" data-pv="addmodel">${ic('plus')}${t('添加')}</button></div>
     <div class="pv-acts"><button class="btn allow sm" data-pv="save">${ic('check')}${t('保存')}</button><button class="btn ghost sm" data-pv="cancel">${t('取消')}</button></div>
   </div>`;
 }
@@ -511,7 +518,7 @@ function renderGrants() {
   host.innerHTML = head(t('已授权命令'), t('审批卡上点了「本会话都别问了」留下的许可 —— 只放行完全相同的一条调用，撤销后下一次仍会询问。'))
     + (GRANTS.length
       ? sec('', '', card([
-        ...GRANTS.map(g => `<div class="cr"><code class="mono" style="flex:1;min-width:0;overflow-wrap:anywhere;text-align:left">${esc(g)}</code><button class="btn ghost sm" data-gv="${esc(g)}" data-tip="${t('撤销这条授权')}">${ic('trash')}${t('撤销')}</button></div>`),
+        ...GRANTS.map(g => `<div class="cr"><code class="mono" style="flex:1;min-width:0;overflow-wrap:anywhere;text-align:left">${esc(g)}</code><button class="btn ghost sm" data-gv="${esc(g)}" data-tip="${esc(t('撤销这条授权'))}">${ic('trash')}${t('撤销')}</button></div>`),
         ...(GRANTS.length > 1 ? [`<div class="cr"><div class="l"><b>${t('全部撤销')}</b><span>${t('清掉本页列出的所有授权')}</span></div><button class="btn ghost sm warn" data-act="grants-clear">${ic('trash')}${t('全部撤销')}</button></div>`] : []),
       ]))
       : '<div class="empty-hint">' + t('本会话还没有授权 — 审批时点 A 会把那条调用记到这里') + '</div>');
@@ -570,8 +577,50 @@ function renderMcp() {
       : '<div class="empty-hint">' + t('当前会话没有连接 MCP 服务器') + '</div>');
 }
 
+/* Fusion page — the third turn-shape axis (`standard` | `fusion`). Two kinds
+   of content only: the ONE real control (the per-session turn mode, which is
+   a session-log fact with no `.sunmao` key behind it, so there is no file
+   form to offer and a persisted toggle would be a knob that does nothing),
+   and read-only notes about what the kernel fixes at compile time. */
+function renderFusion() {
+  if (view !== 'settings' || setPage !== 'fusion') return;
+  const host = $('#set-generic');
+  const cur = turnMode === 'fusion' ? 'fusion' : 'standard';
+  const ptc = driver === 'ptc';
+  // both options always render: the live one is disabled and labelled, so
+  // the page shows the state and the way out of it in the same row
+  const opt = (v, name, desc) => row(name, desc,
+    `<button class="btn ghost sm" id="fusion-${v}" data-fusion="${v}"${(v === cur || (ptc && v === 'fusion')) ? ' disabled' : ''}>${t(v === cur ? '使用中' : '切换')}</button>`);
+  const fact = (k, b, s, code) => `<div class="cr" data-fact="${k}"><div class="l"><b>${b}</b><span>${s}</span></div><span class="mono">${code}</span></div>`;
+  host.innerHTML = head(t('Fusion'), t('回合形状的第三个轴，与审批模式、循环驱动正交。'))
+    + sec(t('本会话的回合模式'), t('立即生效；按会话记在会话日志里，恢复会话时延续。新会话默认标准。'), card([
+      row(t('当前'), t('内核报告的状态，不是本页自己记的'), `<span class="tag" id="fusion-cur" data-mode="${cur}">${cur === 'fusion' ? 'Fusion' : t('标准')}</span>`),
+      opt('standard', t('标准'), t('单模型回合：本会话自己读写与执行')),
+      opt('fusion', 'Fusion', t('本会话变成只读 Lead：不写文件、不改状态，工作交给全新上下文的 Sidekick；Sidekick 的写入受文件白名单约束，验证命令由内核真跑。')),
+      ...(ptc ? [`<div class="cr" data-fusion-why><div class="l"><b>${t('当前会话用 ptc 循环驱动')}</b><span>${t('它只声明 RunCode 一条路，Fusion 无法委派，切换会被内核拒绝。')}</span></div></div>`] : []),
+    ]))
+    + sec(t('它什么时候触发、触发后发生什么'), '', card([
+      row(t('委派'), t('Lead 自己决定要不要委派：每次委派是一次完整的 spec，Sidekick 看不到本会话的任何上下文。返回后内核真跑验证命令，不过就让 Lead 带反馈重做同一个 Sidekick。'), ''),
+    ]))
+    + sec(t('模型'), t('Fusion 没有单独的模型设置。'), card([
+      row(t('Lead'), t('就是本会话当前使用的模型'), `<span class="tag mono">${esc(modelLabel || '—')}</span>`),
+      row(t('Sidekick'), t('默认继承同一个模型；本会话换模型会一起带走。Lead 也可以在委派时用 .sunmao/models.json 里的 @route 指定别的模型。'), ''),
+    ]))
+    + sec(t('这几个是编译期常量，前端改不了'), t('写在设置页是为了让你知道它们存在、去哪改。'), card([
+      fact('escalate', t('连续失败后升级'), t('验证命令连续两次不过，Lead 的写工具解锁到本回合结束，由它自己收尾。'), 'ESCALATE_AFTER'),
+      fact('verify', t('验证命令超时'), t('单条验证命令的时限。'), 'VERIFY_TIMEOUT_SECS'),
+      fact('scope', t('生效范围'), t('回合模式只属于当前会话，不写进 .sunmao 配置，也没有全局默认。其他前端用 /mode fusion 切换。'), 'turn_mode_change'),
+      fact('prompt', t('提示词'), t('fusion-lead 与 fusion-sidekick 的提示词可以用 prompt.d/ 覆盖。'), 'prompt.d/'),
+    ]));
+  host.querySelectorAll('[data-fusion]').forEach(b => b.addEventListener('click', () => {
+    if (b.disabled) return;
+    wsSend({ type: 'mode', sel: b.dataset.fusion });
+  }));
+}
+
 const PAGES = {
   providers: () => head(t('模型与提供商'), '') + '<div class="empty-hint">' + t('正在读取模型配置…') + '</div>',
+  fusion: () => head(t('Fusion'), '') + '<div class="empty-hint">' + t('正在读取会话状态…') + '</div>',
   channels: () => head(t('IM 渠道'), '') + '<div class="empty-hint">' + t('正在读取渠道状态…') + '</div>',
   grants: () => head(t('已授权命令'), '') + '<div class="empty-hint">' + t('正在读取授权…') + '</div>',
   hooks: () => head(t('钩子'), '') + '<div class="empty-hint">' + t('正在读取钩子…') + '</div>',
@@ -590,6 +639,7 @@ function settingsPage(p) {
   renderCrumb();
   if (isA) { renderWallGrid(); syncSettingsUI(); }
   else if (p === 'providers') { renderProviders(); }
+  else if (p === 'fusion') { renderFusion(); }
   else if (p === 'channels') { refreshChannels(); }
   else if (p === 'grants') { renderGrants(); }
   else if (p === 'hooks') { renderHooks(); }

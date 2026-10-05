@@ -1,8 +1,6 @@
 # CONFIG.md — every file sunmao reads
 
-All optional. Missing file = feature off. Invalid JSON = warning, feature off.
-Project-level beats user-level; later files in each list override earlier ones
-per-key where merging applies (hooks/permissions/mcp).
+All optional. Missing file = feature off. Invalid JSON = warning, feature off. Project-level beats user-level; later files in each list override earlier ones per-key where merging applies (hooks/permissions/mcp).
 
 ## sunmao-native (`<cwd>/.sunmao/`)
 
@@ -20,17 +18,7 @@ per-key where merging applies (hooks/permissions/mcp).
 | `skills/*/SKILL.md` | frontmatter `name`/`description` + body | indexed; body read on demand. `SKILL.html` is the alternate skill body (`<title>`/`<meta name="description">` supply the index fields; `SKILL.md` wins when both exist). Bundled `*.html` files count as resources and surface in the index line |
 | `agents/*.md` | frontmatter `name`/`description`/`model`/`tools`/`spawns`/`permissions` + body | `Task` tool `subagent_type` picks; body = sub-agent system prompt; `model` routes the spawn (see below); `tools` (CSV/list) trims the child's tool registry; `spawns` (CSV/list, `*`=all) whitelists what it may itself spawn — a restricted parent's omitted `subagent_type` defaults to the first entry, self-recursion is refused; `permissions` (CSV/list of `deny:`/`ask:`-prefixed `Tool(spec)` rules, same specifier syntax as permissions.json) overlays deny/ask onto the child's permission table — `allow:`/unprefixed entries are ignored, so a def can only narrow the child's surface, never widen it (an applied overlay logs an `agent.perms` audit row) |
 
-**Sub-agent message channels** — `Task{steer:"sub-…-lN", message:"…"}` injects
-a mid-run user message into a running child (folded at its next request
-boundary; the steer queues, it doesn't interrupt). `SendMessage` is the
-child-side uplink: pushes a `<sub-agent-message id=… lane=…>`-tagged user
-message onto the parent's steer queue, same fold semantics in reverse —
-a background child can ask mid-run instead of waiting for `task_done`.
-Foreground `Task` returns `[task:sub-…-lN]` so the next call has a handle.
-The roster's cancel control (`task_cancel` ws frame → `cancel_sub`) is the
-surgical version of `agent.cancel()`: it trips that ONE child's flag+notify
-and its own finish path records `done=false` — a cancelled child is a
-failure, not a clean exit (`TurnOutcome::Cancelled` discriminates it).
+**Sub-agent message channels** — `Task{steer:"sub-…-lN", message:"…"}` injects a mid-run user message into a running child (folded at its next request boundary; the steer queues, it doesn't interrupt). `SendMessage` is the child-side uplink: pushes a `<sub-agent-message id=… lane=…>`-tagged user message onto the parent's steer queue, same fold semantics in reverse — a background child can ask mid-run instead of waiting for `task_done`. Foreground `Task` returns `[task:sub-…-lN]` so the next call has a handle. The roster's cancel control (`task_cancel` ws frame → `cancel_sub`) is the surgical version of `agent.cancel()`: it trips that ONE child's flag+notify and its own finish path records `done=false` — a cancelled child is a failure, not a clean exit (`TurnOutcome::Cancelled` discriminates it).
 | `models.json` | `{"providers": {"p": {"base_url","api_key_env","dialect"}}, "routes": {"r": "sel" \| ["sel",...]}, "default_model": "sel"}` | model routing — `model:` selectors resolve `provider/model`, bare `model` (session provider), or `@route` chains; unresolvable → inherit parent. `default_model` (optional) is the selector a **new** session starts on — `--model`/`SUNMAO_MODEL` still wins, and a session already under way keeps the model in its own log |
 | `plugin/` | same tree as a plugin root | "this project is a plugin" convention |
 | `plugins/<name>/` | plugin dir | contributes `commands/`, `skills/`, `agents/` **and** merges its `plugin.json` (`hooks` + `mcpServers`, `${CLAUDE_PLUGIN_ROOT}` → the plugin dir); `sunmao plugin install|list|remove` manages this dir — install takes a local dir, a git URL, or `owner/repo` (clones via `git`, depth 1) |
@@ -69,30 +57,17 @@ failure, not a clean exit (`TurnOutcome::Cancelled` discriminates it).
 
 ## Presets (`--preset <name>`)
 
-A preset is a directory that looks exactly like an installed plugin bundle —
-`plugin.json`, `hooks/hooks.json`, `commands/`, `skills/`, `agents/`,
-`mcp.json`, `permissions.json`. Unlike `plugins/<name>/` (always active), a
-preset contributes **only while named on the command line**:
+A preset is a directory that looks exactly like an installed plugin bundle — `plugin.json`, `hooks/hooks.json`, `commands/`, `skills/`, `agents/`, `mcp.json`, `permissions.json`. Unlike `plugins/<name>/` (always active), a preset contributes **only while named on the command line**:
 
 ```bash
 sunmao --preset strict-audit --preset +verbose   # layers in order; + is decorative
 ```
 
-Resolution: `<name>` is looked up in `<cwd>/.sunmao/presets/` first, then
-`~/.sunmao/presets/`; an unknown name is a startup error listing the dirs
-searched. Each resolved dir is an extra plugin root appended **after** the
-always-on sources — preset hooks run last, a preset `mcpServers` key
-overrides a same-named one, and `permissions.json` rules merge into the
-same deny>ask>allow table. For first-match surfaces (slash command names,
-agent defs) a preset fills gaps rather than shadowing project files.
-Sub-agents inherit the parent's presets. `sunmao --doctor` lists active and
-available presets.
+Resolution: `<name>` is looked up in `<cwd>/.sunmao/presets/` first, then `~/.sunmao/presets/`; an unknown name is a startup error listing the dirs searched. Each resolved dir is an extra plugin root appended **after** the always-on sources — preset hooks run last, a preset `mcpServers` key overrides a same-named one, and `permissions.json` rules merge into the same deny>ask>allow table. For first-match surfaces (slash command names, agent defs) a preset fills gaps rather than shadowing project files. Sub-agents inherit the parent's presets. `sunmao --doctor` lists active and available presets.
 
 ## Shell backend (`Bash` tool)
 
-`Bash` runs either on the embedded POSIX interpreter (`deno_task_shell` —
-identical syntax on every platform) or on a real PowerShell 7 via `pwsh
--EncodedCommand`. Resolution order, first hit wins:
+`Bash` runs either on the embedded POSIX interpreter (`deno_task_shell` — identical syntax on every platform) or on a real PowerShell 7 via `pwsh -EncodedCommand`. Resolution order, first hit wins:
 
 ```text
 1. SUNMAO_SHELL              (env var — the machine-wide default)
@@ -101,14 +76,7 @@ identical syntax on every platform) or on a real PowerShell 7 via `pwsh
 4. auto-detect               (no config at all)
 ```
 
-Values: `pwsh`/`powershell` pick PowerShell, `posix`/`bash`/`deno` pin the
-embedded interpreter, `auto` forces detection past a lower layer's pin.
-`pwsh` resolves only when the `pwsh` binary is on PATH — `powershell.exe`
-is Windows PowerShell 5 and never counts. Auto-detect picks `pwsh` on
-Windows when it's on PATH, Posix everywhere else; a `pwsh` request on a box
-without the binary silently falls back rather than failing every `Bash`
-call (`sunmao doctor` flags that case). `sunmao doctor` reports the
-effective backend, which layer chose it, and `pwsh --version`.
+Values: `pwsh`/`powershell` pick PowerShell, `posix`/`bash`/`deno` pin the embedded interpreter, `auto` forces detection past a lower layer's pin. `pwsh` resolves only when the `pwsh` binary is on PATH — `powershell.exe` is Windows PowerShell 5 and never counts. Auto-detect picks `pwsh` on Windows when it's on PATH, Posix everywhere else; a `pwsh` request on a box without the binary silently falls back rather than failing every `Bash` call (`sunmao doctor` flags that case). `sunmao doctor` reports the effective backend, which layer chose it, and `pwsh --version`.
 
 ## Provider config (env or flags)
 
@@ -131,14 +99,7 @@ order  source
 ——     --system flag: complete replacement, outranks everything
 ```
 
-Same stem = same section: a later file named `identity.md` replaces the
-identity section in place. `--doctor` prints the assembled byte count and
-first line. `Task` resolves `subagent_type` against `agents/*.md`, else the
-`subagent-default` section (replaceable the same way). The reserved builtin
-stems are `identity`, `tool-guidance`, `shell-dialect`, `compact`,
-`subagent-default`, `project-context` — a `prompt.d/` file under one of
-these names silently *replaces* the builtin rather than adding a section,
-so give custom sections distinct names.
+Same stem = same section: a later file named `identity.md` replaces the identity section in place. `--doctor` prints the assembled byte count and first line. `Task` resolves `subagent_type` against `agents/*.md`, else the `subagent-default` section (replaceable the same way). The reserved builtin stems are `identity`, `tool-guidance`, `shell-dialect`, `compact`, `subagent-default`, `project-context` — a `prompt.d/` file under one of these names silently *replaces* the builtin rather than adding a section, so give custom sections distinct names.
 
 ## Event vocabulary (what lands in `sessions/*.jsonl`)
 
@@ -171,15 +132,11 @@ so give custom sections distinct names.
 {"type":"checkpoint","turn":N,"files":["a.txt",...]}  // pre-write bytes snapshotted into checkpoints/{session_id}/ — audit-only, skipped by the fold; /rewind folds the manifest back
 ```
 
-`--dataflow <file>` folds these into a JSON report (files read/written,
-shell commands, tool calls/failures, compactions, token totals,
-`sub_agent_uplinks`/`sub_agent_downlinks` — the SendMessage/steer channel
-traffic listed under `data_flow`).
+`--dataflow <file>` folds these into a JSON report (files read/written, shell commands, tool calls/failures, compactions, token totals, `sub_agent_uplinks`/`sub_agent_downlinks` — the SendMessage/steer channel traffic listed under `data_flow`).
 
 ## Model routing (`models.json`)
 
-Sub-agents resolve a `model:` selector against named providers. Example —
-a cheap/fast model for scout-style agents, session model otherwise:
+Sub-agents resolve a `model:` selector against named providers. Example — a cheap/fast model for scout-style agents, session model otherwise:
 
 ```jsonc
 {
@@ -193,16 +150,9 @@ a cheap/fast model for scout-style agents, session model otherwise:
 - `big/claude-haiku` — explicit provider + model
 - `qwen-flash` — bare id on the session's provider (env/flags)
 - `@smol` — route name; a list is an ordered fallback chain
-- `agents/*.md` `model:` pins any of these; absent or unresolvable → the
-  sub-agent inherits the parent's adapter. Keys come from `api_key_env`
-  (an env var name), never the file itself.
-- `dialect`: `"openai"` (chat completions, default), `"openai-responses"`
-  (OpenAI `/responses` — required for o-series/GPT-5 reasoning; the
-  adapter chains `previous_response_id` + `prompt_cache_key` so repeat
-  requests send only new items while provider prefix caching stays warm),
-  `"anthropic"` (`/messages`).
-- `/model [selector]` in the TUI switches the *session's* active adapter
-  mid-run (next request onward); bare `/model` lists routes + providers.
+- `agents/*.md` `model:` pins any of these; absent or unresolvable → the sub-agent inherits the parent's adapter. Keys come from `api_key_env` (an env var name), never the file itself.
+- `dialect`: `"openai"` (chat completions, default), `"openai-responses"` (OpenAI `/responses` — required for o-series/GPT-5 reasoning; the adapter chains `previous_response_id` + `prompt_cache_key` so repeat requests send only new items while provider prefix caching stays warm), `"anthropic"` (`/messages`).
+- `/model [selector]` in the TUI switches the *session's* active adapter mid-run (next request onward); bare `/model` lists routes + providers.
 
 ### Catalog entries: capability flags
 
@@ -213,35 +163,16 @@ A catalog entry can carry optional capability flags beyond `id`:
   "thinking": ["low", "medium", "high"], "reasoning": true }
 ```
 
-- `vision`, `context_length` — surfaced as picker badges and available to
-  the model-choice UI.
-- `thinking` — the model's selectable thinking/effort levels. `/effort` and
-  the GUI chip list them verbatim; the vocabulary is free-form (providers
-  don't agree on one).
-- `reasoning` — the provider signals reasoning support without naming
-  levels (e.g. OpenRouter `supported_parameters` containing `"reasoning"`);
-  frontends then offer the canonical `low`/`medium`/`high` trio.
-- Both fill automatically from `/models` fetch when the endpoint declares
-  them (`supported_parameters`, `capabilities`, a truthy `reasoning`
-  field); hand-edited entries pass through verbatim.
+- `vision`, `context_length` — surfaced as picker badges and available to the model-choice UI.
+- `thinking` — the model's selectable thinking/effort levels. `/effort` and the GUI chip list them verbatim; the vocabulary is free-form (providers don't agree on one).
+- `reasoning` — the provider signals reasoning support without naming levels (e.g. OpenRouter `supported_parameters` containing `"reasoning"`); frontends then offer the canonical `low`/`medium`/`high` trio.
+- Both fill automatically from `/models` fetch when the endpoint declares them (`supported_parameters`, `capabilities`, a truthy `reasoning` field); hand-edited entries pass through verbatim.
 
-`/effort [level]` sets a session-scoped reasoning-effort override — the
-value lands in the request's dialect spelling (chat completions
-`reasoning_effort`, responses `reasoning.effort`, anthropic
-`output_config.effort`). Bare `/effort` lists the current override + the
-active model's levels; `/effort default` clears. The setting rides the
-same surfaces as `/model`: a durable `effort.change` audit fact (resume
-reseeds it), a GUI composer chip, and the ACP `ThoughtLevel` config
-option. Any string passes through — a catalog that never learned the
-provider's vocabulary is a UI hint, not a gate.
+`/effort [level]` sets a session-scoped reasoning-effort override — the value lands in the request's dialect spelling (chat completions `reasoning_effort`, responses `reasoning.effort`, anthropic `output_config.effort`). Bare `/effort` lists the current override + the active model's levels; `/effort default` clears. The setting rides the same surfaces as `/model`: a durable `effort.change` audit fact (resume reseeds it), a GUI composer chip, and the ACP `ThoughtLevel` config option. Any string passes through — a catalog that never learned the provider's vocabulary is a UI hint, not a gate.
 
 ## Eval cases (`sunmao eval <file>`)
 
-Case-driven regression runner: each case sends `prompt` through the real
-agent loop in a fresh session, then asserts against the recorded
-`ToolCall` events and the final assistant message. A case file is one JSON
-object, a JSON array of them, or JSONL (one object per line, blank lines
-and `#`/`//` comments skipped):
+Case-driven regression runner: each case sends `prompt` through the real agent loop in a fresh session, then asserts against the recorded `ToolCall` events and the final assistant message. A case file is one JSON object, a JSON array of them, or JSONL (one object per line, blank lines and `#`/`//` comments skipped):
 
 ```jsonc
 {
@@ -259,15 +190,7 @@ and `#`/`//` comments skipped):
 }
 ```
 
-Each case prints `PASS`/`FAIL name — <failures>`; a summary line and a
-nonzero exit on any failure. `--report <path>` writes the case results as
-a JSON array. Every case is a real session — its log lands in
-`--session-dir` as `s-<secs>-c<idx>.jsonl`, so hooks fire and
-`transcript_path` is a real file.
+Each case prints `PASS`/`FAIL name — <failures>`; a summary line and a nonzero exit on any failure. `--report <path>` writes the case results as a JSON array. Every case is a real session — its log lands in `--session-dir` as `s-<secs>-c<idx>.jsonl`, so hooks fire and `transcript_path` is a real file.
 
-Multi-step cases — `steps: [{prompt, expect}]` instead of the flat
-`prompt`/`expect` (mixing both is a parse error): each step is its own
-`run_turn` on the SAME session, so step 2 sees step 1's transcript.
-Per-step assertions scope to that turn's `ToolCall` events and reply;
-failures read `step N: <failure>`.
+Multi-step cases — `steps: [{prompt, expect}]` instead of the flat `prompt`/`expect` (mixing both is a parse error): each step is its own `run_turn` on the SAME session, so step 2 sees step 1's transcript. Per-step assertions scope to that turn's `ToolCall` events and reply; failures read `step N: <failure>`.
 

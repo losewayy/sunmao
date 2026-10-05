@@ -54,9 +54,9 @@ pub struct ModelsFile {
     /// model its log names, never this key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
-    /// top-level keys this build doesn't know. `PUT /models` replaces the
-    /// whole file, so a key a newer build (or a hand edit) wrote must survive
-    /// the read → write trip instead of being dropped on the floor.
+    /// top-level keys this build doesn't know. A GUI save merges the posted
+    /// body onto the file (`merge_save`), so a key a newer build (or a hand
+    /// edit) wrote survives the read → write trip instead of being dropped.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -70,6 +70,76 @@ impl ModelsFile {
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
+    }
+
+    /// Fold a GUI save body onto the file it replaces.
+    ///
+    /// `PUT /models` used to replace the whole file with a body the settings
+    /// page rebuilds from the REDACTED GET view, so whatever the view cannot
+    /// carry died with the save: a literal `api_key` a hand edit wrote, and
+    /// every top-level key this build doesn't know (`extra`). A blank form
+    /// field means "keep", so a provider whose body entry declares no
+    /// credential at all inherits what the file had; a body that names either
+    /// `api_key` OR `api_key_env` is authoritative, so a freshly typed key is
+    /// never shadowed by the env var the entry used to point at (`adapter`
+    /// prefers the env). Unknown top-level keys the body doesn't restate come
+    /// from the existing file; one the body does restate wins.
+    ///
+    /// `rename_from` maps a renamed provider's new name to its old one — the
+    /// one save where the credential has to move, and the view never showed
+    /// it, so the page declares the hop instead of retyping a secret.
+    pub fn merge_save(
+        existing: &ModelsFile,
+        body: &ModelsFile,
+        rename_from: &HashMap<String, String>,
+    ) -> ModelsFile {
+        let mut out = body.clone();
+        let carry = |dst: &mut ProviderDef, src: &ProviderDef| {
+            if dst.api_key.is_none() && dst.api_key_env.is_none() {
+                dst.api_key = src.api_key.clone();
+                dst.api_key_env = src.api_key_env.clone();
+            }
+        };
+        for (new, old) in rename_from {
+            let (Some(src), Some(dst)) = (existing.providers.get(old), out.providers.get_mut(new))
+            else {
+                continue;
+            };
+            carry(dst, src);
+        }
+        for (name, p) in out.providers.iter_mut() {
+            let Some(old) = existing.providers.get(name) else {
+                continue;
+            };
+            carry(p, old);
+        }
+        for (k, v) in &existing.extra {
+            out.extra.entry(k.clone()).or_insert_with(|| v.clone());
+        }
+        out
+    }
+
+    /// Drop a `default_model` whose `provider/model` prefix no longer names a
+    /// provider — deleting a provider must not write a dead pin back. A bare
+    /// id resolves through the session's own provider (never in the file) and
+    /// `@route` through `routes`, so only a concrete `provider/...` pin can
+    /// dangle. `session_provider` is that injected name. Returns whether the
+    /// pin was cleared.
+    pub fn prune_dangling_default(&mut self, session_provider: &str) -> bool {
+        let Some(sel) = self.default_model.as_deref() else {
+            return false;
+        };
+        if sel.starts_with('@') {
+            return false;
+        }
+        let Some((prov, _)) = sel.split_once('/') else {
+            return false;
+        };
+        if prov.is_empty() || self.providers.contains_key(prov) || prov == session_provider {
+            return false;
+        }
+        self.default_model = None;
+        true
     }
 }
 

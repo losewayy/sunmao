@@ -25,15 +25,7 @@ fn adapter(store: Arc<Store>) -> WechatAdapter {
 }
 
 fn store() -> (Arc<Store>, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!(
-        "sunmao-im-wechat-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::im::test_dir("wechat");
     (Arc::new(Store::open(&dir).unwrap()), dir)
 }
 

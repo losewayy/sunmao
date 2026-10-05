@@ -12,7 +12,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use tokio::sync::mpsc;
 
-use super::{ChannelAdapter, InboundMsg};
+use super::{ChannelAdapter, InboundMsg, SendFailure, SendResult};
 use crate::im::config::TelegramSpec;
 use crate::im::route::ImSource;
 use crate::im::{redact, scope};
@@ -219,15 +219,18 @@ impl ChannelAdapter for TelegramAdapter {
         }
     }
 
-    async fn send_text(&self, chat_id: &str, text: &str) -> Result<Option<String>> {
+    async fn send_text(&self, chat_id: &str, text: &str) -> SendResult {
         let mut first_id = None;
-        for piece in chunk(text) {
+        let pieces = chunk(text);
+        let total = pieces.len();
+        for (delivered, piece) in pieces.into_iter().enumerate() {
             let res = self
                 .api_call(
                     "sendMessage",
                     &serde_json::json!({"chat_id": chat_id, "text": piece}),
                 )
-                .await?;
+                .await
+                .map_err(|e| SendFailure::new(delivered, total, e))?;
             if first_id.is_none() {
                 first_id = res["message_id"].as_i64().map(|i| i.to_string());
             }
@@ -267,15 +270,7 @@ mod tests {
     const TOKEN: &str = "123456:AAHtesttoken";
 
     fn store() -> (Arc<Store>, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!(
-            "sunmao-im-tg-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::im::test_dir("telegram");
         (Arc::new(Store::open(&dir).unwrap()), dir)
     }
 

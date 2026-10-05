@@ -17,7 +17,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use tokio::sync::mpsc;
 
-use super::{ChannelAdapter, InboundMsg};
+use super::{ChannelAdapter, InboundMsg, SendFailure, SendResult};
 use crate::im::config::WechatSpec;
 use crate::im::store::Store;
 
@@ -160,16 +160,20 @@ impl WechatAdapter {
         protocol::extract_dm(msg)
     }
 
-    async fn send_message(&self, chat_id: &str, text: &str) -> Result<Option<String>> {
+    async fn send_message(&self, chat_id: &str, text: &str) -> SendResult {
         let Some(context_token) = self.context_of(chat_id) else {
-            anyhow::bail!(
+            return Err(SendFailure::before_send(anyhow::anyhow!(
                 "wechat: no reply window for {chat_id}; the peer has to message \
                  first, and a window older than 24h is closed"
-            );
+            )));
         };
-        for piece in protocol::chunk(text) {
+        let pieces = protocol::chunk(text);
+        let total = pieces.len();
+        for (delivered, piece) in pieces.into_iter().enumerate() {
             let body = protocol::send_body(chat_id, &piece, &protocol::uuid_v4(), &context_token);
-            self.api_post(protocol::SEND_PATH, &body).await?;
+            self.api_post(protocol::SEND_PATH, &body)
+                .await
+                .map_err(|e| SendFailure::new(delivered, total, e))?;
         }
         // iLink answers with no message id, and there is no edit API — the
         // delivery ledger owns the reply, the progress draft re-posts.
@@ -238,7 +242,7 @@ impl ChannelAdapter for WechatAdapter {
         }
     }
 
-    async fn send_text(&self, chat_id: &str, text: &str) -> Result<Option<String>> {
+    async fn send_text(&self, chat_id: &str, text: &str) -> SendResult {
         self.send_message(chat_id, text).await
     }
 

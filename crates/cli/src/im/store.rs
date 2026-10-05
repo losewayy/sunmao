@@ -91,11 +91,25 @@ impl Store {
                state    TEXT NOT NULL,
                attempts INTEGER NOT NULL DEFAULT 0,
                created  INTEGER NOT NULL,
-               updated  INTEGER NOT NULL);
+               updated  INTEGER NOT NULL,
+               note     TEXT NOT NULL DEFAULT '');
              CREATE TABLE IF NOT EXISTS meta(
                key   TEXT PRIMARY KEY,
                value TEXT NOT NULL);",
         )?;
+        // a DB created before the dead-letter note existed still needs the
+        // column — SQLite has no `ADD COLUMN IF NOT EXISTS`
+        let has_note: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('delivery') WHERE name='note')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !has_note {
+            conn.execute(
+                "ALTER TABLE delivery ADD COLUMN note TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+        }
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -349,14 +363,30 @@ impl Store {
         Ok(())
     }
 
-    /// Dead-letter a row that exhausted its retry budget — it stays in
-    /// the ledger (audit) but leaves the replay set.
-    pub fn deliver_dead(&self, id: i64) -> anyhow::Result<()> {
+    /// Dead-letter a row — it stays in the ledger (audit) but leaves the
+    /// replay set. `note` records why, because "gave up after part of it
+    /// landed" and "never got out" need different follow-up (the first is a
+    /// truncated answer the peer actually saw).
+    pub fn deliver_dead(&self, id: i64, note: &str) -> anyhow::Result<()> {
         self.conn.lock().unwrap().execute(
-            "UPDATE delivery SET state='dead', updated=?2 WHERE id=?1",
-            rusqlite::params![id, now()],
+            "UPDATE delivery SET state='dead', note=?3, updated=?2 WHERE id=?1",
+            rusqlite::params![id, now(), note],
         )?;
         Ok(())
+    }
+
+    /// `(state, note)` of one ledger row. The note is the dead-letter reason,
+    /// so "gave up after part of it landed" stays distinguishable from "never
+    /// got out" long after the log line scrolled away.
+    #[cfg(test)]
+    pub fn delivery_state_note(&self, id: i64) -> Option<(String, String)> {
+        self.conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT state, note FROM delivery WHERE id=?1", [id], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .ok()
     }
 
     /// Everything that never made it — pending (never attempted) and
@@ -410,15 +440,7 @@ mod tests {
     use super::*;
 
     fn store() -> (Store, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!(
-            "sunmao-im-store-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::im::test_dir("store");
         (Store::open(&dir).unwrap(), dir)
     }
 
@@ -467,6 +489,46 @@ mod tests {
         assert_eq!(s.deliver_outstanding().len(), 1);
         s.deliver_done(id).unwrap();
         assert!(s.deliver_outstanding().is_empty());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// A state DB written before the dead-letter note existed has to gain the
+    /// column on open — `CREATE TABLE IF NOT EXISTS` leaves an old table
+    /// alone, so the migration is the only thing that adds it.
+    #[test]
+    fn an_old_delivery_table_gains_the_note_column() {
+        let dir = crate::im::test_dir("store-old");
+        std::fs::create_dir_all(&dir).unwrap();
+        {
+            let conn = rusqlite::Connection::open(dir.join("state.db")).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE delivery(
+                   id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                   channel  TEXT NOT NULL,
+                   chat     TEXT NOT NULL,
+                   text     TEXT NOT NULL,
+                   state    TEXT NOT NULL,
+                   attempts INTEGER NOT NULL DEFAULT 0,
+                   created  INTEGER NOT NULL,
+                   updated  INTEGER NOT NULL);
+                 INSERT INTO delivery(channel, chat, text, state, attempts, created, updated)
+                 VALUES('telegram','42','hi','pending',0,0,0);",
+            )
+            .unwrap();
+        }
+        // opening runs the migration; writing a note proves the column is there
+        let s = Store::open(&dir).unwrap();
+        let id = s.deliver_pending("telegram", "42", "again").unwrap();
+        s.deliver_dead(id, "partial: 1/2 chunks delivered").unwrap();
+        assert_eq!(
+            s.delivery_state_note(id).unwrap(),
+            (
+                "dead".to_string(),
+                "partial: 1/2 chunks delivered".to_string()
+            )
+        );
+        // the row the old version left behind is still readable
+        assert_eq!(s.deliver_outstanding().len(), 1);
         std::fs::remove_dir_all(dir).ok();
     }
 }

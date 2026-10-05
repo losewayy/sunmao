@@ -181,15 +181,7 @@ mod tests {
     }
 
     fn store() -> (Store, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!(
-            "sunmao-im-authz-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::im::test_dir("authz");
         (Store::open(&dir).unwrap(), dir)
     }
 

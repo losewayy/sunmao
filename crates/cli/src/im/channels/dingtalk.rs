@@ -16,7 +16,7 @@ use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
-use super::{ChannelAdapter, InboundMsg};
+use super::{ChannelAdapter, InboundMsg, SendFailure, SendResult};
 use crate::im::config::DingtalkSpec;
 use crate::im::redact;
 
@@ -235,13 +235,15 @@ impl ChannelAdapter for DingtalkAdapter {
         }
     }
 
-    async fn send_text(&self, chat_id: &str, text: &str) -> Result<Option<String>> {
+    async fn send_text(&self, chat_id: &str, text: &str) -> SendResult {
         let url = api::dm_send_url(&self.api_base);
         let pieces = protocol::chunk(text);
         let total = pieces.len();
         for (index, piece) in pieces.iter().enumerate() {
             let body = protocol::send_body(&self.robot_code, chat_id, piece, index, total);
-            self.robot_call(&url, &body, "send").await?;
+            self.robot_call(&url, &body, "send")
+                .await
+                .map_err(|e| SendFailure::new(index, total, e))?;
         }
         // batchSend answers with a process query key, not a message id, and
         // robot messages cannot be edited — there is nothing for the

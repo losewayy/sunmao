@@ -15,6 +15,9 @@ function pop(anchor, html, o = {}) {
   // down over the send button.
   if (o.onMount) o.onMount(p);
   place(p, anchor, o);
+  // a dock guest is a native child window: it paints over whatever the page
+  // draws in its rect, so a popover that lands on the pane parks it first
+  brOverlay(p.getBoundingClientRect());
   requestAnimationFrame(() => p.classList.add('show'));
   return p;
 }
@@ -44,6 +47,7 @@ function closePop() {
   const p = popEl; popEl = null;
   if (popAnchor && popAnchor.classList) popAnchor.classList.remove('pressed');
   popAnchor = null; p.classList.remove('show'); setTimeout(() => p.remove(), motion.dur('fast'));
+  brOverlay(null);
 }
 document.addEventListener('mousedown', e => { if (popEl && !popEl.contains(e.target) && !(popAnchor && popAnchor.contains && popAnchor.contains(e.target))) closePop(); }, true);
 function menuHTML(items) {
@@ -57,13 +61,16 @@ function menuPop(anchor, items, onPick, o = {}) {
   if (popAnchor === anchor) return closePop();
   pop(anchor, menuHTML(items), Object.assign({}, o, { onMount(p) { p.addEventListener('click', e => { const b = e.target.closest('.mi'); if (!b) return; closePop(); onPick(b.dataset.v); }); } }));
 }
-const tip = $('#tip'); let tipT = 0, tipFor = null;
+const tip = $('#tip'); let tipT = 0, tipFor = null, tipHeld = false;
 document.addEventListener('mouseover', e => {
   const el = e.target.closest('[data-tip]');
   if (el === tipFor) return;
   clearTimeout(tipT); tip.classList.remove('show'); tipFor = el;
   if (!el) return;
   tipT = setTimeout(() => {
+    // a gesture owns the pointer: a resize drag keeps re-entering the strip,
+    // and the bubble that landed mid-drag read as a notification
+    if (tipHeld || app.dataset.dragging) return;
     if (!document.body.contains(el) || !el.dataset.tip) return;
     const [t, k] = el.dataset.tip.split('|');
     tip.innerHTML = esc(t) + (k ? `<kbd>${esc(k)}</kbd>` : '');
@@ -85,7 +92,18 @@ document.addEventListener('mouseover', e => {
     tip.style.transform = `translate(${Math.round(left)}px,${Math.round(top)}px)`; tip.classList.add('show');
   }, motion.delay('tip'));
 });
-document.addEventListener('mousedown', () => { clearTimeout(tipT); tip.classList.remove('show'); });
+// A gesture start hides it: `pointerdown` and not just `mousedown` — the
+// resize handles call preventDefault() on pointerdown, which suppresses the
+// compatibility mouse events, so a mousedown-only listener never ran and the
+// hover bubble stayed up for the whole drag.
+document.addEventListener('pointerdown', () => { tipHeld = true; clearTimeout(tipT); tip.classList.remove('show'); }, true);
+document.addEventListener('mousedown', () => { tipHeld = true; clearTimeout(tipT); tip.classList.remove('show'); });
+document.addEventListener('mouseup', () => { tipHeld = false; });
+document.addEventListener('pointerup', () => { tipHeld = false; });
+document.addEventListener('pointercancel', () => { tipHeld = false; });
+// a release outside the window never reaches mouseup — heal on the next free move
+document.addEventListener('mousemove', e => { if (!e.buttons) tipHeld = false; });
+window.addEventListener('blur', () => { tipHeld = false; });
 function toast(msg, icon = 'check', cls = '') {
   const t = document.createElement('div'); t.className = 'toast glass' + (cls ? ' ' + cls : '');
   t.innerHTML = ic(icon) + `<span>${esc(msg)}</span>`; $('#toasts').appendChild(t);
@@ -94,8 +112,8 @@ function toast(msg, icon = 'check', cls = '') {
 
 /* ================= palette ================= */
 let palItems = [], palIdx = 0;
-function openPalette() { closePop(); const p = $('#palette'); p.classList.remove('out'); p.hidden = false; const i = $('#pal-in'); i.value = ''; palIdx = 0; renderPal(); setTimeout(() => i.focus(), 10); }
-function closePalette() { const p = $('#palette'); if (p.hidden) return; p.classList.add('out'); setTimeout(() => { if (p.classList.contains('out')) { p.hidden = true; p.classList.remove('out'); } }, motion.dur('fast')); }
+function openPalette() { closePop(); const p = $('#palette'); p.classList.remove('out'); p.hidden = false; const i = $('#pal-in'); i.value = ''; palIdx = 0; renderPal(); brOverlay(true); setTimeout(() => i.focus(), 10); }
+function closePalette() { const p = $('#palette'); if (p.hidden) return; p.classList.add('out'); setTimeout(() => { if (p.classList.contains('out')) { p.hidden = true; p.classList.remove('out'); } }, motion.dur('fast')); brOverlay(null); }
 function palSource() {
   return [
     { g: '操作', t: '新对话', i: 'pen', k: 'Ctrl N', run: newChat },

@@ -179,8 +179,9 @@ function openImv(src, cap) {
   imv.classList.remove('out');
   img.src = src; lab.textContent = cap || '';
   imv.hidden = false;
+  brOverlay(true);
 }
-function closeImv() { const v = $('#imv'); v.classList.add('out'); setTimeout(() => { if (v.classList.contains('out')) { v.hidden = true; v.classList.remove('out'); $('#imv-img').src = ''; } }, motion.dur('fast')); }
+function closeImv() { const v = $('#imv'); v.classList.add('out'); setTimeout(() => { if (v.classList.contains('out')) { v.hidden = true; v.classList.remove('out'); $('#imv-img').src = ''; } }, motion.dur('fast')); brOverlay(null); }
 
 /* ================= global input ================= */
 document.addEventListener('click', e => {

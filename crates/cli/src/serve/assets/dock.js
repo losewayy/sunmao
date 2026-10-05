@@ -110,6 +110,27 @@ function dockClose(id) {
    - `create` is only for a guest that does not exist yet; an existing one
      is moved with `rect`, so a resize never re-navigates the page. */
 const BR_PARK = { x: -40000, y: 0, w: 10, h: 10 };
+/* A page overlay (menu, popover, palette, image viewer) and a native guest
+   cannot share pixels: the guest is a child HWND, so it paints over — and
+   eats the pointer of — whatever the page draws inside its rect. While an
+   overlay is open, the guests it would cover are parked offscreen at the
+   pane's own size: invisible, but no reflow, so the page comes straight back
+   when the overlay closes. `true` means "the overlay is the whole window". */
+let brOverlayBox = null;
+/* takes a DOMRect (a popover) or `true` (the overlay is the whole window);
+   both normalize to the {x,y,w,h} shape the hit test reads */
+const brBox = b => b === true
+  ? { x: 0, y: 0, w: innerWidth, h: innerHeight }
+  : { x: b.x, y: b.y, w: b.width ?? b.w, h: b.height ?? b.h };
+const brOverlayHits = r => !!brOverlayBox && !!r &&
+  brOverlayBox.x < r.x + r.w && r.x < brOverlayBox.x + brOverlayBox.w &&
+  brOverlayBox.y < r.y + r.h && r.y < brOverlayBox.y + brOverlayBox.h;
+function brOverlay(box) {
+  const next = box ? brBox(box) : null;
+  const had = !!brOverlayBox;
+  brOverlayBox = next;
+  if (had || next) brSyncAll();
+}
 const brSt = id => (BR[id] = BR[id] || { hist: [], hi: -1, live: false });
 function brSendId(id, op) {
   const st = brSt(id);
@@ -130,6 +151,7 @@ function brSyncNative(b) {
   const st = brSt(b.id), pane = brPane(b);
   const rect = b.url && pane && !pane.hidden && $('#app').dataset.dock === 'on' ? brViewRect(b) : null;
   if (!rect) { brSend(b, { op: 'rect', id: b.id, rect: BR_PARK }); return false; }
+  if (brOverlayHits(rect)) { brSend(b, { op: 'rect', id: b.id, rect: Object.assign({}, rect, { x: BR_PARK.x }) }); return false; }
   if (st.live || st.creating) { brSend(b, { op: 'rect', id: b.id, rect }); return false; }
   st.creating = true;
   brSend(b, { op: 'create', id: b.id, url: b.url, rect })

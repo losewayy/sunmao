@@ -158,6 +158,7 @@ const I18N_EN_CHROME = {
   "每个渠道 + 聊天一个会话": "A session per channel + chat",
   "面板不透明度": "Panel opacity",
   "描述任务，/ 调用命令": "Describe a task, / for commands",
+  "名称已存在：{n}": "Name already exists: {n}",
   "命令": "Commands",
   "命令面板|Ctrl K": "Command palette|Ctrl K",
   "模型切换为 {model}": "Switched to {model}",

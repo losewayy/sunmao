@@ -28,7 +28,7 @@ function newChatPop(el) {
     `</div><div class="mp-list scroll" id="np-list">` +
     `<button class="mi" data-browse="1">${ic('folder')}<span class="mt"><span>${t('浏览文件夹…')}</span><small>${t('系统目录选择器')}</small></span></button>` +
     list.map(p => `<button class="mi" data-v="${esc(p)}">${ic('folder')}<span class="mt mono"><span>${esc(projectName(p) || p)}</span><small>${esc(p)}</small></span>${p === cwd ? ic('check', 'i sm ck') : ''}</button>`).join('') +
-    `</div><div class="field"><input id="np-in" placeholder="${t('或直接输入路径，回车创建')}" spellcheck="false" autocomplete="off"></div>`,
+    `</div><div class="field"><input id="np-in" placeholder="${esc(t('或直接输入路径，回车创建'))}" spellcheck="false" autocomplete="off"></div>`,
     { place: 'bottom', cls: 'models', onMount(p) {
       const inp = $('#np-in', p);
       inp.addEventListener('keydown', e => {
@@ -105,7 +105,7 @@ const sessRow = (id, showProj = true) => {
   // same-project majority stays clean; grouped mode suppresses the tag
   // entirely (the group header already names it)
   const foreign = showProj && proj && cwd && proj !== cwd ? `<span class="tag">${esc(proj.split(/[\\/]/).filter(Boolean).pop() || proj)}</span>` : '';
-  const state = wait ? `<i class="sd wait" aria-label="${t('等待批准')}"></i>` : run ? `<i class="sd run" aria-label="${t('运行中')}"></i>` : `<span class="when">${sessWhen(m.mtime)}</span>`;
+  const state = wait ? `<i class="sd wait" aria-label="${esc(t('等待批准'))}"></i>` : run ? `<i class="sd run" aria-label="${esc(t('运行中'))}"></i>` : `<span class="when">${sessWhen(m.mtime)}</span>`;
   return `<button class="row sess${on ? ' on' : ''}" data-sess="${esc(id)}" data-tip="${esc((proj ? proj + ' · ' : '') + (title ? title + '|' + id : id))}" data-tip-side="right"><span class="t${title ? '' : ' untitled'}">${esc(title || t('新对话'))}</span>${foreign}${state}</button>`;
 };
 

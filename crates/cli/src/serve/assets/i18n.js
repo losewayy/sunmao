@@ -6,9 +6,18 @@
  * shows up as Chinese text rather than as a key name. The table ships as
  * two classic scripts (chrome and settings panels) because one file would
  * run past the repo's god-file budget; both are loaded together and merged
- * into the single `I18N_EN` the lookup below reads. Everything here runs at
- * render time, so switching the language reloads once instead of hunting
- * live nodes.
+ * into the single `I18N_EN` the lookup below reads. The two file names are
+ * a size device, not a taxonomy: `panels` holds whatever a panel source json
+ * declares in `_scratch/i18n/merge.mjs` (settings, channels, schedules,
+ * default-model) and `chrome` everything else, so a string both halves use
+ * lands in one of them. Nothing here depends on which half a key is in, and
+ * everything here runs at render time, so switching the language reloads
+ * once instead of hunting live nodes.
+ *
+ * Translations are plain text: no `"`, `<`, `>` and no HTML entity. A value
+ * is injected both as text and into attributes, so a quote has to be “ ”,
+ * and the site that interpolates it into an attribute wraps it in esc()
+ * (enforced at generation time by merge.mjs).
  *
  * The brand follows the language: 榫卯 in Chinese, sunmao everywhere else.
  * `S.lang` is the setting ('auto' | 'zh' | 'en'); 'auto' reads the system

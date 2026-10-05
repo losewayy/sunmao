@@ -19,14 +19,14 @@ const qRows = () => $$('.q-row[data-qid]', qBox());
 
 function qRowHTML(o) {
   const grip = o.steer
-    ? `<span class="q-grip pin" data-tip="${t('引导已入队 · 下个请求边界注入')}">${ic('zap', 'i xs')}</span>`
-    : `<button class="q-grip" type="button" data-grip="${o.id}" aria-label="${t('拖动调整顺序 · Alt+↑/↓ 移动')}" data-tip="${t('拖动调整顺序 · Alt+↑/↓ 移动')}">${ic('grip')}</button>`;
+    ? `<span class="q-grip pin" data-tip="${esc(t('引导已入队 · 下个请求边界注入'))}">${ic('zap', 'i xs')}</span>`
+    : `<button class="q-grip" type="button" data-grip="${o.id}" aria-label="${esc(t('拖动调整顺序 · Alt+↑/↓ 移动'))}" data-tip="${esc(t('拖动调整顺序 · Alt+↑/↓ 移动'))}">${ic('grip')}</button>`;
   const body = o.steer
     ? `<span class="q-text">${qClip(o.text)}</span>`
-    : `<button class="q-text" type="button" data-qedit="${o.id}" data-tip="${t('排队中 · 点击编辑')}">${qClip(o.text)}</button>`;
+    : `<button class="q-text" type="button" data-qedit="${o.id}" data-tip="${esc(t('排队中 · 点击编辑'))}">${qClip(o.text)}</button>`;
   const x = o.steer
-    ? `<button class="chip-x" type="button" data-si="${o.si}" aria-label="${t('撤回')}">×</button>`
-    : `<button class="chip-x" type="button" data-qx="${o.id}" aria-label="${t('移除')}">×</button>`;
+    ? `<button class="chip-x" type="button" data-si="${o.si}" aria-label="${esc(t('撤回'))}">×</button>`
+    : `<button class="chip-x" type="button" data-qx="${o.id}" aria-label="${esc(t('移除'))}">×</button>`;
   return `<div class="q-row${o.steer ? ' q-steer' : ''}"${o.steer ? '' : ` data-qid="${o.id}"`}>`
     + grip + `<span class="q-state">${t('等待发送')}</span>` + body + x + '</div>';
 }

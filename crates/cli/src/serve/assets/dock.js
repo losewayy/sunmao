@@ -43,7 +43,7 @@ function renderDockTabs() {
       const m = PANE_META[t.pane] || {};
       return `<button class="dock-tab" role="tab" data-act="dock-tab" data-tab="${esc(tb.pane)}" aria-selected="${cur === tb.pane}"><svg class="i"><use href="#i-${m.i}"/></svg><span>${esc(m.t)}</span>${m.num ? `<i class="dt-num" id="${m.num}"></i>` : ''}<i class="dt-x" data-bclose="${tb.id}">×</i></button>`;
     }
-    return `<button class="dock-tab dock-dyn" role="tab" data-act="dock-tab" data-tab="br:${tb.id}" aria-selected="${cur === 'br:' + tb.id}" data-tip="${esc(tb.url || t('新标签页'))}"><svg class="i"><use href="#i-globe"/></svg><span>${esc(brTitle(tb))}</span><i class="dt-x" data-bclose="${tb.id}">×</i></button>`;
+    return `<button class="dock-tab dock-dyn" role="tab" data-act="dock-tab" data-tab="br:${tb.id}" aria-selected="${cur === 'br:' + tb.id}" data-tip="${esc(tb.url || esc(t('新标签页')))}"><svg class="i"><use href="#i-globe"/></svg><span>${esc(brTitle(tb))}</span><i class="dt-x" data-bclose="${tb.id}">×</i></button>`;
   }).join('');
   // empty panel = the launcher itself: the strip goes away and the body
   // is a vertical menu of everything you can add (KanaMi's shape)
@@ -186,13 +186,13 @@ function mountBrowser(b) {
   const tb = () => sessionTabs().find(t => t.id === bid) || b;
   const pane = append($('#dock'), `<div class="dock-pane br" data-pane="br:${bid}" hidden>
     <div class="br-bar">
-      <button class="ib sm" data-bnav="back" data-tip="${t('后退')}" aria-label="${t('后退')}"><svg class="i"><use href="#i-chev-l"/></svg></button>
-      <button class="ib sm" data-bnav="fwd" data-tip="${t('前进')}" aria-label="${t('前进')}"><svg class="i"><use href="#i-chev-r"/></svg></button>
-      <button class="ib sm" data-bnav="reload" data-tip="${t('刷新')}" aria-label="${t('刷新')}"><svg class="i"><use href="#i-rotate"/></svg></button>
-      <input class="br-url mono" placeholder="${t('输入网址 — localhost:3000 或 https://…')}" spellcheck="false" autocomplete="off">
-      ${nativeBr() ? '' : `<button class="ib sm br-proxy" data-bnav="proxy" data-tip="${t('代理加载 — 跨源站点经本地代理后可元素批注（页面脚本不运行）')}" aria-label="${t('代理加载')}"><svg class="i"><use href="#i-shield"/></svg></button>`}
-      <button class="ib sm" data-act="annotate" data-tip="${t('批注页面元素或区域')}" aria-label="${t('批注')}"><svg class="i"><use href="#i-note"/></svg></button>
-      <button class="ib sm" data-bnav="external" data-tip="${t('在系统浏览器中打开')}" aria-label="${t('外部打开')}"><svg class="i"><use href="#i-external"/></svg></button>
+      <button class="ib sm" data-bnav="back" data-tip="${esc(t('后退'))}" aria-label="${esc(t('后退'))}"><svg class="i"><use href="#i-chev-l"/></svg></button>
+      <button class="ib sm" data-bnav="fwd" data-tip="${esc(t('前进'))}" aria-label="${esc(t('前进'))}"><svg class="i"><use href="#i-chev-r"/></svg></button>
+      <button class="ib sm" data-bnav="reload" data-tip="${esc(t('刷新'))}" aria-label="${esc(t('刷新'))}"><svg class="i"><use href="#i-rotate"/></svg></button>
+      <input class="br-url mono" placeholder="${esc(t('输入网址 — localhost:3000 或 https://…'))}" spellcheck="false" autocomplete="off">
+      ${nativeBr() ? '' : `<button class="ib sm br-proxy" data-bnav="proxy" data-tip="${esc(t('代理加载 — 跨源站点经本地代理后可元素批注（页面脚本不运行）'))}" aria-label="${esc(t('代理加载'))}"><svg class="i"><use href="#i-shield"/></svg></button>`}
+      <button class="ib sm" data-act="annotate" data-tip="${esc(t('批注页面元素或区域'))}" aria-label="${esc(t('批注'))}"><svg class="i"><use href="#i-note"/></svg></button>
+      <button class="ib sm" data-bnav="external" data-tip="${esc(t('在系统浏览器中打开'))}" aria-label="${esc(t('外部打开'))}"><svg class="i"><use href="#i-external"/></svg></button>
     </div>
     <div class="br-view">
       <div class="br-empty"><svg class="i"><use href="#i-globe"/></svg><p>${t('输入网址回车加载')}</p><small>${nativeBr() ? t('原生内核 — 任何站点都能开') : t('本地 dev 服务器直接可交互；跨源站点开 {proxy} 后可批注元素', { proxy: '<b>' + t('代理') + '</b>' })}</small></div>

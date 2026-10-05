@@ -156,7 +156,7 @@ function renderAtts() {
   const box = $('#cmp-atts');
   box.hidden = !pendingAtts.length;
   box.innerHTML = pendingAtts.map((a, i) =>
-    `<span class="att-chip"><img src="${a.thumb || attURL(a.path)}" alt=""><span class="att-n">${esc(a.name || attBase(a.path))}</span><button class="chip-x" data-ri="${i}" aria-label="${t('移除附件')}">×</button></span>`).join('');
+    `<span class="att-chip"><img src="${a.thumb || attURL(a.path)}" alt=""><span class="att-n">${esc(a.name || attBase(a.path))}</span><button class="chip-x" data-ri="${i}" aria-label="${esc(t('移除附件'))}">×</button></span>`).join('');
 }
 function removeAtt(i) {
   const a = pendingAtts[i];

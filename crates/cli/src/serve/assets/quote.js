@@ -35,7 +35,7 @@ function renderQuotes() {
   quoteFullHide(); // the DOM under the pointer is about to be replaced
   box.hidden = !pendingQuotes.length;
   box.innerHTML = pendingQuotes.map((q, i) =>
-    `<span class="quote-chip" data-qi="${i}">${ic('quote', 'i xs')}<span class="quote-n">${esc(q.head)}</span><button class="chip-x" data-qx="${i}" aria-label="${t('移除')}">×</button></span>`).join('');
+    `<span class="quote-chip" data-qi="${i}">${ic('quote', 'i xs')}<span class="quote-n">${esc(q.head)}</span><button class="chip-x" data-qx="${i}" aria-label="${esc(t('移除'))}">×</button></span>`).join('');
   box.querySelectorAll('.quote-chip').forEach(c => {
     c.addEventListener('mouseenter', () => quoteFullShow(c));
     c.addEventListener('mouseleave', quoteFullHide);

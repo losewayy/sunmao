@@ -390,7 +390,7 @@ function chMarkup() {
     <span>${chDirty ? t('有未保存的改动') : t('重启 IM 服务后生效')}</span>
   </div>`;
   html += sec(t('高级'), t('表单没覆盖到的字段（渠道级覆盖、新 kind）可以直接改 JSON。'),
-    `<div class="card glass cfg"><textarea id="ch-cfg" class="channel-config" aria-label="${t('IM 渠道配置')}" spellcheck="false">${esc(chCfgText())}</textarea></div>
+    `<div class="card glass cfg"><textarea id="ch-cfg" class="channel-config" aria-label="${esc(t('IM 渠道配置'))}" spellcheck="false">${esc(chCfgText())}</textarea></div>
      ${chCfgErr ? `<div class="empty-hint">${esc(t('当前文件不是合法 JSON：{msg}', { msg: chCfgErr }))}<br>${esc(t('下面是文件原文，修好后点保存；解析不通过不会写回。'))}</div>` : ''}
      <div class="channel-save"><button class="btn ghost sm" data-chraw>${t('用这段 JSON 覆盖表单')}</button></div>`);
 

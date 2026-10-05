@@ -16,7 +16,7 @@ use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
-use super::{ChannelAdapter, InboundMsg};
+use super::{ChannelAdapter, InboundMsg, SendFailure, SendResult};
 use crate::im::config::{FeishuRegion, FeishuSpec};
 use crate::im::route::ImSource;
 
@@ -524,13 +524,16 @@ impl ChannelAdapter for FeishuAdapter {
         }
     }
 
-    async fn send_text(&self, chat_id: &str, text: &str) -> Result<Option<String>> {
+    async fn send_text(&self, chat_id: &str, text: &str) -> SendResult {
         let mut first_id = None;
-        for piece in chunk(text) {
+        let pieces = chunk(text);
+        let total = pieces.len();
+        for (delivered, piece) in pieces.into_iter().enumerate() {
             let (url, body) = send_request(self.base, chat_id, &piece);
             let res = self
                 .api_call(reqwest::Method::POST, &url, Some(&body), "message create")
-                .await?;
+                .await
+                .map_err(|e| SendFailure::new(delivered, total, e))?;
             if first_id.is_none() {
                 first_id = res["data"]["message_id"]
                     .as_str()

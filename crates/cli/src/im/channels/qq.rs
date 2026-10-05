@@ -17,7 +17,7 @@ use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
-use super::{ChannelAdapter, InboundMsg};
+use super::{ChannelAdapter, InboundMsg, SendFailure, SendResult};
 use crate::im::config::QqSpec;
 use crate::im::store::Store;
 use protocol::{
@@ -385,11 +385,20 @@ impl QqAdapter {
 
     /// One message per chunk. The chat's target type is whatever its inbound
     /// event wrote; an unknown chat is probed as a DM only.
-    async fn send_message(&self, chat_id: &str, text: &str) -> Result<Option<String>> {
-        let token = self.access_token().await?;
+    async fn send_message(&self, chat_id: &str, text: &str) -> SendResult {
+        // the token is fetched before anything is sent
+        let token = self
+            .access_token()
+            .await
+            .map_err(SendFailure::before_send)?;
+        let bodies = self.reply_bodies(chat_id, text);
+        let total = bodies.len();
         let mut first_id = None;
-        for body in self.reply_bodies(chat_id, text) {
-            let res = self.post_message(&token, chat_id, &body).await?;
+        for (delivered, body) in bodies.into_iter().enumerate() {
+            let res = self
+                .post_message(&token, chat_id, &body)
+                .await
+                .map_err(|e| SendFailure::new(delivered, total, e))?;
             if first_id.is_none() {
                 first_id = res["id"].as_str().map(str::to_string);
             }
@@ -451,7 +460,7 @@ impl ChannelAdapter for QqAdapter {
         }
     }
 
-    async fn send_text(&self, chat_id: &str, text: &str) -> Result<Option<String>> {
+    async fn send_text(&self, chat_id: &str, text: &str) -> SendResult {
         self.send_message(chat_id, text).await
     }
 

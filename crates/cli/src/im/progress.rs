@@ -295,7 +295,7 @@ async fn flush_on_turn_end(frame: &serde_json::Value, state: &Shared, channels: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::im::channels::ChannelAdapter;
+    use crate::im::channels::{ChannelAdapter, SendResult};
     use crate::im::store::Store;
 
     #[test]
@@ -338,7 +338,7 @@ mod tests {
             self.name
         }
         async fn poll(&self, _tx: tokio::sync::mpsc::Sender<crate::im::channels::InboundMsg>) {}
-        async fn send_text(&self, chat_id: &str, text: &str) -> anyhow::Result<Option<String>> {
+        async fn send_text(&self, chat_id: &str, text: &str) -> SendResult {
             self.sends
                 .lock()
                 .unwrap()
@@ -356,15 +356,7 @@ mod tests {
     }
 
     fn store() -> (Arc<Store>, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!(
-            "sunmao-im-prog-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::im::test_dir("prog");
         (Arc::new(Store::open(&dir).unwrap()), dir)
     }
 

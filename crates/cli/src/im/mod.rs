@@ -32,3 +32,21 @@ pub mod store;
 mod runtime;
 pub use runtime::PairingArgs;
 pub(crate) use runtime::{pairing, run};
+
+/// A scratch directory no other test can claim, removed if a previous run
+/// left it behind. The process id is not enough on its own: tests run
+/// concurrently inside one process, and a coarse clock can hand two of them
+/// the same timestamp, which leaves both fighting over one SQLite file.
+#[cfg(test)]
+pub(crate) fn test_dir(tag: &str) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "sunmao-im-{tag}-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}

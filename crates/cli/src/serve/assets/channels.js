@@ -114,7 +114,7 @@ const CHANNEL_UNAUTH = [
   { v: 'ignore', t: '完全静默', d: '回复本身就暴露了 bot 的存在' },
 ];
 
-let CHANNELS = null, chCfg = null, chCfgErr = '', chDirty = false;
+let CHANNELS = null, chCfg = null, chCfgErr = '', chRaw = '', chDirty = false, chChans = null;
 
 async function refreshChannels() {
   try {
@@ -123,24 +123,50 @@ async function refreshChannels() {
     CHANNELS = { error: e.message };
   }
   chCfg = null;
+  chChans = null;
   chDirty = false;
   renderChannels();
 }
 
 /* the JSON text is the contract: parse it into the editable shape, and keep
-   the original string only for the advanced editor */
+   the original string. When the file does not parse, that string is the only
+   copy the user can repair — a JSON.stringify of the fallback would be the
+   empty document this page would then save over the file. */
 function chParse(text) {
   chCfgErr = '';
+  /* whatever the endpoint hands over is kept as the text this page shows and
+     may write back: a string verbatim, anything else as its JSON form */
+  chRaw = typeof text === 'string' ? text : (text == null ? '' : JSON.stringify(text));
+  let v;
   try {
-    const v = text && text.trim() ? JSON.parse(text) : {};
-    return (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+    v = chRaw.trim() ? JSON.parse(chRaw) : {};
   } catch (e) {
     chCfgErr = e.message;
     return {};
   }
+  if (v && typeof v === 'object' && !Array.isArray(v)) return v;
+  chCfgErr = t('顶层不是对象（读到 {type}）', { type: chType(v) });
+  return {};
 }
 const chCfgOf = () => chCfg || (chCfg = chParse((CHANNELS && CHANNELS.config) || ''));
-const chChannels = () => { const c = chCfgOf(); return Array.isArray(c.channels) ? c.channels : (c.channels = []); };
+/* the schema types these as arrays, but a hand edit can put anything in
+   either. The form still renders and leaves the value alone unless the user
+   actually edits that field — clearing it here is how a save used to write
+   `{"channels": []}` over the file. */
+const chType = v => Array.isArray(v) ? 'array' : v === null ? 'null' : typeof v;
+const chArr = v => Array.isArray(v) ? v : [];
+/* the allowlist box shows whatever the file holds: the joined array, or the
+   value's own text form when a hand edit put something else there */
+const chListText = v => {
+  if (Array.isArray(v)) return v.join(', ');
+  if (v == null) return '';
+  return typeof v === 'object' ? JSON.stringify(v) : String(v);
+};
+const chChannels = () => {
+  const c = chCfgOf();
+  if (Array.isArray(c.channels)) return c.channels;
+  return chChans || (chChans = []);
+};
 const chPlatform = kind => CHANNEL_PLATFORMS.find(p => p.kind === kind);
 
 /* Every card renders whether or not the file declares the platform, so the
@@ -153,6 +179,9 @@ function chEntry(kind, create) {
   if (hit || !create) return hit || null;
   const c = { kind, enabled: false };
   list.push(c);
+  // the first real edit is what replaces a hand-edited `channels` value
+  const cfg = chCfgOf();
+  if (cfg.channels !== list) cfg.channels = list;
   return c;
 }
 
@@ -263,14 +292,40 @@ function renderChannels() {
     host.innerHTML = head(t('IM 渠道'), '') + `<div class="empty-hint">${esc(t('读取失败：{msg}', { msg: CHANNELS.error }))}</div>`;
     return;
   }
+  /* the markup is built before it is committed: a throw in here (a shape the
+     form did not expect) used to land before host.innerHTML, leaving the
+     page on its loading hint with the error going nowhere */
+  let html;
+  try {
+    html = chMarkup();
+  } catch (e) {
+    html = head(t('IM 渠道'), '') + `<div class="empty-hint">${esc(t('渲染失败：{msg}', { msg: (e && e.message) || e }))}</div>`;
+  }
+  host.innerHTML = html;
+}
+
+/* the page's markup, from the parsed config. Anything the schema types as an
+   array may arrive as something else after a hand edit: it is reported and
+   shown as-is, never rewritten and never fatal. */
+function chMarkup() {
   const cfg = chCfgOf();
   const st = CHANNELS.status;
-  const pairing = CHANNELS.pairing || [];
-  const allow = CHANNELS.allowlist || [];
+  const pairing = chArr(CHANNELS.pairing);
+  const allow = chArr(CHANNELS.allowlist);
   const v = channelVerdict(cfg, st);
   const chans = chChannels();
+  const notes = [];
+  const wantArr = (key, val) => {
+    if (val != null && !Array.isArray(val))
+      notes.push(t('字段 {key} 不是{want}（读到 {type}），按原样显示。', { key, want: t('数组'), type: chType(val) }));
+  };
+  wantArr('channels', cfg.channels);
+  wantArr('allowlist', cfg.allowlist);
+  wantArr('pairing', CHANNELS.pairing);
+  wantArr('allowlist', CHANNELS.allowlist);
 
   let html = head(t('IM 渠道'), t('每个平台一张卡，固定顺序，不用挑选也不用增删；改完保存，重启 IM 服务后生效。'));
+  if (notes.length) html += `<div class="empty-hint">${notes.map(n => esc(n)).join('<br>')}</div>`;
 
   // ── status: the verdict plus what it was read from ──
   const heartbeat = st
@@ -304,7 +359,7 @@ function renderChannels() {
     row(t('陌生人私聊'), t('未配对的人发消息时怎么处理'), pill('dm_policy', t(lab(CHANNEL_POLICIES, cfg.dm_policy || 'pairing')), cfg.dm_policy)),
     row(t('会话归并'), t('DM 落到哪个会话里'), pill('dm_scope', t(lab(CHANNEL_SCOPES, cfg.dm_scope || 'main')), cfg.dm_scope)),
     row(t('未授权回复'), t('配对策略下对陌生人的回应'), pill('unauthorized', t(lab(CHANNEL_UNAUTH, cfg.unauthorized_dm_behavior || 'pair')), cfg.unauthorized_dm_behavior)),
-    row(t('配置白名单'), t('channel:sender，逗号分隔；留空即只认配对结果'), `<input class="ch-in mono" data-chin="allowlist" value="${esc((cfg.allowlist || []).join(', '))}" placeholder="telegram:12345" spellcheck="false">`),
+    row(t('配置白名单'), t('channel:sender，逗号分隔；留空即只认配对结果'), `<input class="ch-in mono" data-chin="allowlist" value="${esc(chListText(cfg.allowlist))}" placeholder="telegram:12345" spellcheck="false">`),
     row(t('管理员'), t('可用 /pairing 的 sender；首个批准者自动成为管理员'), `<span class="tag mono">${esc(cfg.owner || t('未指定'))}</span>`),
   ]));
 
@@ -335,12 +390,18 @@ function renderChannels() {
     <span>${chDirty ? t('有未保存的改动') : t('重启 IM 服务后生效')}</span>
   </div>`;
   html += sec(t('高级'), t('表单没覆盖到的字段（渠道级覆盖、新 kind）可以直接改 JSON。'),
-    `<div class="card glass cfg"><textarea id="ch-cfg" class="channel-config" aria-label="${t('IM 渠道配置')}" spellcheck="false">${esc(JSON.stringify(cfg, null, 2))}</textarea></div>
-     ${chCfgErr ? `<div class="ch-hint warn">${esc(t('当前文件不是合法 JSON：{msg}', { msg: chCfgErr }))}</div>` : ''}
+    `<div class="card glass cfg"><textarea id="ch-cfg" class="channel-config" aria-label="${t('IM 渠道配置')}" spellcheck="false">${esc(chCfgText())}</textarea></div>
+     ${chCfgErr ? `<div class="empty-hint">${esc(t('当前文件不是合法 JSON：{msg}', { msg: chCfgErr }))}<br>${esc(t('下面是文件原文，修好后点保存；解析不通过不会写回。'))}</div>` : ''}
      <div class="channel-save"><button class="btn ghost sm" data-chraw>${t('用这段 JSON 覆盖表单')}</button></div>`);
 
-  host.innerHTML = html;
+  return html;
 }
+
+/* The advanced editor's text. When the file does not parse, its own bytes are
+   what the user has to repair — the "save" button below picks this same
+   textarea on that path, so a stringify of the empty fallback would end up
+   replacing the file with `{"channels": []}` (the audit's repro). */
+const chCfgText = () => chCfgErr ? chRaw : JSON.stringify(chCfgOf(), null, 2);
 
 /* write the parsed shape back as text; the daemon re-reads it at startup */
 async function chSave(text) {
@@ -349,6 +410,21 @@ async function chSave(text) {
     toast(t('配置已保存；重启 IM 服务后生效'), 'check');
   } catch (err) { toast(t('保存失败：{msg}', { msg: err.message }), 'alert', 'warn'); }
   return refreshChannels();
+}
+
+/* the repair path for a file that does not parse: only text that parses again
+   may go back to the server, so the fallback can never be written over the
+   user's bytes */
+async function chSaveText(text) {
+  let v;
+  try {
+    v = text.trim() ? JSON.parse(text) : {};
+  } catch (err) {
+    return toast(t('JSON 有问题：{msg}', { msg: err.message }), 'alert', 'warn');
+  }
+  if (!v || typeof v !== 'object' || Array.isArray(v))
+    return toast(t('顶层不是对象（读到 {type}）', { type: chType(v) }), 'alert', 'warn');
+  return chSave(JSON.stringify(v, null, 2));
 }
 const chTouch = () => { chDirty = true; if (view === 'settings' && setPage === 'channels') renderChannels(); };
 
@@ -405,7 +481,9 @@ document.addEventListener('click', async e => {
   }
   if (e.target.closest('[data-chsave]')) {
     const ta = $('#ch-cfg');
-    if (ta && chCfgErr) return chSave(ta.value); // a broken file can only be fixed by hand
+    // a broken file can only be repaired by hand — and only text that parses
+    // again is allowed back to the server, never the in-memory fallback
+    if (ta && chCfgErr) return chSaveText(ta.value);
     return chSave(JSON.stringify(chCfgOf(), null, 2));
   }
   if (e.target.closest('[data-chraw]')) {
@@ -414,6 +492,7 @@ document.addEventListener('click', async e => {
     const v = chParse($('#ch-cfg').value);
     if (chCfgErr) return toast(t('JSON 有问题：{msg}', { msg: chCfgErr }), 'alert', 'warn');
     chCfg = v;
+    chChans = null;
     return chTouch();
   }
 });

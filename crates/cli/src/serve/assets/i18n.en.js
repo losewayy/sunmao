@@ -196,6 +196,7 @@ const I18N_EN_CHROME = {
   "凭据": "Credential",
   "企业内部机器人，Stream 模式接入": "Enterprise-internal bot, Stream mode transport",
   "前进": "Forward",
+  "前台转后台": "Moved to background",
   "浅色": "Light",
   "切换会话分组": "Change session grouping",
   "请求批准": "Ask first",

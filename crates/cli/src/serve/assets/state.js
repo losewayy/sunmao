@@ -172,9 +172,58 @@ const DEFAULTS = { mode: 'dark', motion: 'system', accent: '#339CFF', background
 const INITIAL = Object.assign(clone(DEFAULTS), { wallpaper: 'dusk-ridge', dim: 0.08, panelOpacity: 0.56, translucentSidebar: true, lang: 'auto' });
 /* state source of truth: `<project>/.sunmao/ui.json` via GET/PUT /ui;
    localStorage is only a first-frame cache (prevents a flash of defaults
-   while the fetch is in flight). A failed fetch keeps the cached state. */
-const mergeUi = v => (v && typeof v === 'object') ? Object.assign(clone(INITIAL), v, { fonts: Object.assign({}, INITIAL.fonts, v.fonts || {}) }) : clone(INITIAL);
-let S = (() => { try { return mergeUi(JSON.parse(localStorage.getItem('sunmao.ui'))); } catch { return clone(INITIAL); } })();
+   while the fetch is in flight). A failed fetch keeps the cached state.
+ *
+ * Both copies are hand-editable text, and one wrong type in either used to
+ * throw inside apply() (settings.js does `S.dim.toFixed(3)` and
+ * `hex2rgb(S.background)`): at boot.js that took i18n, the shell and
+ * connect() down with it, and nothing repaired the cache. healUi() coerces
+ * every key the render path reads; a value it cannot repair is dropped so
+ * the default takes over, and the caller writes the healed object back so
+ * the bad value can never bite twice. */
+const UI_NUM = { dim: [0, 1], panelOpacity: [0, 1], blur: [0, 64], contrast: [0, 100], zoom: [0.2, 5] };
+const UI_STR = ['mode', 'motion', 'accent', 'background', 'foreground', 'wallpaper', 'lang', 'railGroup', 'loopDriver'];
+const uiNum = v => {
+  const n = typeof v === 'number' ? v : (typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);
+  return Number.isFinite(n) ? n : null;
+};
+/* one stored ui object -> a shape the render path can trust, plus the names
+   of the keys that had to be coerced or dropped */
+function healUi(v) {
+  const o = (v && typeof v === 'object' && !Array.isArray(v)) ? Object.assign(clone(INITIAL), v) : clone(INITIAL);
+  const bad = [];
+  for (const [k, [lo, hi]] of Object.entries(UI_NUM)) {
+    if (!(k in o)) continue;
+    const n = uiNum(o[k]);
+    const fixed = n === null ? null : Math.min(hi, Math.max(lo, n));
+    if (fixed === null) { delete o[k]; bad.push(k); }
+    else if (fixed !== o[k]) { o[k] = fixed; bad.push(k); }
+  }
+  for (const k of UI_STR) if (k in o && !(typeof o[k] === 'string' && o[k])) { delete o[k]; bad.push(k); }
+  if ('translucentSidebar' in o && typeof o.translucentSidebar !== 'boolean') { delete o.translucentSidebar; bad.push('translucentSidebar'); }
+  if ('railFold' in o && (!o.railFold || typeof o.railFold !== 'object' || Array.isArray(o.railFold))) { delete o.railFold; bad.push('railFold'); }
+  const fonts = (o.fonts && typeof o.fonts === 'object' && !Array.isArray(o.fonts)) ? o.fonts : {};
+  o.fonts = Object.assign({}, INITIAL.fonts);
+  for (const k of ['ui', 'code']) {
+    if (typeof fonts[k] === 'string' && fonts[k]) o.fonts[k] = fonts[k];
+    else if (k in fonts) bad.push('fonts.' + k);
+  }
+  return { state: o, bad };
+}
+let S = (() => {
+  let cached = null;
+  try { cached = JSON.parse(localStorage.getItem('sunmao.ui')); } catch { cached = null; }
+  const { state, bad } = healUi(cached);
+  const usable = !!(cached && typeof cached === 'object' && !Array.isArray(cached));
+  if (cached !== null && cached !== undefined) {
+    try {
+      if (!usable) localStorage.removeItem('sunmao.ui'); /* not a store at all: ignore the key */
+      else if (bad.length) localStorage.setItem('sunmao.ui', JSON.stringify(state));
+    } catch {}
+    if (bad.length) console.warn('sunmao: repaired ui cache: ' + bad.join(', '));
+  }
+  return state;
+})();
 /* the language is resolved here, before anything renders: `auto` follows the
    system locale, and the brand (榫卯 / sunmao) follows the language */
 uiLang = detectLang(S.lang);
@@ -182,8 +231,15 @@ async function loadUi() {
   try {
     const v = await api('/ui');
     if (v && v.ui) {
-      S = mergeUi(v.ui);
+      const { state, bad } = healUi(v.ui);
+      S = state;
       apply();
+      /* the server copy was hand-edited too: put the repaired shape back so
+         every later load starts clean, and so the cache and the file agree */
+      if (bad.length) {
+        console.warn('sunmao: repaired /ui payload: ' + bad.join(', '));
+        save();
+      }
       if (S.wallpaper === 'custom') loadCustom();
       if (TAURI && TAURI.setZoom) TAURI.setZoom(S.zoom || 1);
       if (typeof dockSessionSwap === 'function') dockSessionSwap();

@@ -295,17 +295,21 @@ pub(crate) async fn shell_webview(
         "annotate" => {
             if let Some(w) = find() {
                 // the picker runs in the *browsed page's* realm, which knows
-                // nothing about our i18n. Evaluating the table there twice
-                // would redeclare its consts and kill the picker, so it is
-                // wrapped in a function and cached on the guest's window;
+                // nothing about our i18n. Evaluating the tables there twice
+                // would redeclare their consts and kill the picker, so they
+                // are wrapped in a function and cached on the guest's window;
                 // the language is then pinned to the shell's (the site's own
-                // navigator.language is not ours to trust)
+                // navigator.language is not ours to trust). Both halves of the
+                // dictionary go in: the picker's own copy lands in the panels
+                // one.
                 let lang = match op["lang"].as_str() {
                     Some("en") => "en",
                     _ => "zh",
                 };
                 let prelude = [
                     "window.__smI18n = window.__smI18n || (function () {\n",
+                    sunmao::I18N_EN_PANELS_JS,
+                    "\n",
                     sunmao::I18N_EN_JS,
                     "\n",
                     sunmao::I18N_JS,

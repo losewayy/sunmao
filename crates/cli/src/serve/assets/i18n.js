@@ -1,16 +1,27 @@
 /* UI language.
  *
  * Chinese is this page's source language, so `t()`'s key IS the Chinese
- * string and `assets/i18n.en.js` maps it to English — no key vocabulary to
- * keep in sync, and an untranslated line shows up as Chinese text rather
- * than as a key name. Everything here runs at render time, so switching the
- * language reloads once instead of hunting live nodes.
+ * string and `assets/i18n.en.js` + `assets/i18n.en.panels.js` map it to
+ * English — no key vocabulary to keep in sync, and an untranslated line
+ * shows up as Chinese text rather than as a key name. The table ships as
+ * two classic scripts (chrome and settings panels) because one file would
+ * run past the repo's god-file budget; both are loaded together and merged
+ * into the single `I18N_EN` the lookup below reads. Everything here runs at
+ * render time, so switching the language reloads once instead of hunting
+ * live nodes.
  *
  * The brand follows the language: 榫卯 in Chinese, sunmao everywhere else.
  * `S.lang` is the setting ('auto' | 'zh' | 'en'); 'auto' reads the system
  * locale, so a Chinese Windows shows 榫卯 with nothing configured.
  */
 let uiLang = 'zh';
+
+/* One lookup table out of the two halves. `typeof` guards, not a plain
+   reference: the annotate prelude injects this file into a browsed page's
+   realm, which may carry only one half of the dictionary. */
+const I18N_EN = Object.assign({},
+  typeof I18N_EN_CHROME !== 'undefined' ? I18N_EN_CHROME : {},
+  typeof I18N_EN_PANELS !== 'undefined' ? I18N_EN_PANELS : {});
 
 function detectLang(pref) {
   if (pref === 'zh' || pref === 'en') return pref;

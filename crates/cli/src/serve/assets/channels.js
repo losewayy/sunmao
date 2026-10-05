@@ -1,26 +1,84 @@
-/* IM channels page — `~/.sunmao/channels.json` is a policy header plus a
-   list of channel adapters. GET /channels hands over the raw text, so this
+/* IM channels page — `~/.sunmao/channels.json` is a policy header plus one
+   block per platform adapter. GET /channels hands over the raw text, so this
    page parses it, edits the keys it knows and writes the same document back:
    an entry the form doesn't cover (a newer kind, a channel-scoped override)
    survives the round trip untouched.
  *
+ * One card per platform, always, in a fixed order — the file decides what a
+ * block holds, never which platforms exist. `impl` marks the adapter this
+ * version actually ships; the cards without one say so on their face instead
+ * of passing for working channels.
+ *
  * Status is a verdict, not "the file exists": a declared channel, a
-   credential and a fresh status.json heartbeat all have to agree before
-   anything here says 在线. Telegram is the only kind this version ships
-   (docs/IM.md §非目标 covers the rest), so the channel list is driven by
-   CHANNEL_KINDS — a new kind is a row there, not a new page.
+ * credential and a fresh status.json heartbeat all have to agree before
+ * anything here says 在线.
  */
 'use strict';
 
-const CHANNEL_KINDS = [
-  { kind: 'telegram', t: 'Telegram', d: 'Bot API 长轮询，不需要公网入口' },
-];
 /* status.json is rewritten at startup and on every reconnect-worthy event;
    silence for this long means the daemon is not running */
 const CHANNEL_STALE_SECS = 90;
-/* a fresh channel starts on the schema's own default, so an untouched card
-   writes what the daemon would have assumed anyway */
+/* an untouched field writes nothing, so the daemon's own default applies —
+   this is the schema's value for it */
 const CHANNEL_DEFAULT_POLL_SECS = 30;
+/* feishu and lark are one protocol on two hosts; the schema names the choice
+   `region` and defaults to the China one */
+const CHANNEL_REGION_DEFAULT = 'feishu_cn';
+const CHANNEL_REGIONS = [
+  { v: 'feishu_cn', t: '飞书（中国）', d: 'open.feishu.cn' },
+  { v: 'lark_global', t: 'Lark（国际）', d: 'open.larksuite.com' },
+];
+
+/* The five platforms, in the order the page renders them. Each field carries
+   what the form needs: `req` is what the adapter cannot run without (the
+   verdict reads these, so "has a credential" is per-platform rather than
+   `token_env` alone), `pw` is secret, `src` is the telegram shape where the
+   config names where the token lives instead of carrying it, `pick` renders
+   a menu and `ph` is the placeholder that shows the schema default. */
+const CHANNEL_PLATFORMS = [
+  {
+    kind: 'wechat', t: '微信', d: '个人号 iLink 协议，扫码绑定，只能被动回复',
+    impl: false, ownerId: 'wxid',
+    creds: [{ k: 'bot_token', t: 'Bot Token', d: '扫码登录后由服务自动写入，不要手填', pw: true, req: true }],
+  },
+  {
+    kind: 'qq', t: 'QQ', d: 'QQ 机器人开放平台，WebSocket 接入',
+    impl: false, ownerId: 'openid',
+    creds: [
+      { k: 'app_id', t: 'App ID', d: '开放平台应用的 App ID', req: true },
+      { k: 'app_secret', t: 'App Secret', d: '开放平台应用的 App Secret', pw: true, req: true },
+    ],
+  },
+  {
+    kind: 'feishu', t: '飞书', d: 'App ID + Secret，长连接接收事件，不需要回调地址',
+    impl: false, ownerId: 'open_id',
+    creds: [
+      { k: 'app_id', t: 'App ID', d: '开放平台应用的 App ID', req: true },
+      { k: 'app_secret', t: 'App Secret', d: '开放平台应用的 App Secret', pw: true, req: true },
+      { k: 'region', t: 'Region', pick: true },
+    ],
+  },
+  {
+    kind: 'dingtalk', t: '钉钉', d: '企业内部机器人，Stream 模式接入',
+    impl: false, ownerId: 'userId',
+    creds: [
+      { k: 'corp_id', t: 'Corp ID', req: true },
+      { k: 'client_id', t: 'Client ID', d: '应用的 AppKey（Client ID）', req: true },
+      { k: 'client_secret', t: 'Client Secret', d: '应用的 AppSecret（Client Secret）', pw: true, req: true },
+      { k: 'robot_code', t: 'Robot Code', req: true },
+      { k: 'api_base_url', t: 'API Base URL', ph: 'https://api.dingtalk.com/v1.0' },
+    ],
+  },
+  {
+    kind: 'telegram', t: 'Telegram', d: 'Bot Token，长轮询',
+    impl: true, ownerId: 'chat_id',
+    creds: [
+      { k: 'cred', t: '凭据', d: '配置里不写 token 明文，只写来源', src: true, req: true },
+      { k: 'poll_timeout_secs', t: '轮询超时', d: '长轮询秒数，默认 30', ph: String(CHANNEL_DEFAULT_POLL_SECS) },
+    ],
+  },
+];
+
 const CHANNEL_POLICIES = [
   { v: 'pairing', t: '配对', d: '陌生人拿到配对码，由你在这里批准' },
   { v: 'allowlist', t: '白名单', d: '只回应名单里的 sender' },
@@ -63,23 +121,103 @@ function chParse(text) {
 }
 const chCfgOf = () => chCfg || (chCfg = chParse((CHANNELS && CHANNELS.config) || ''));
 const chChannels = () => { const c = chCfgOf(); return Array.isArray(c.channels) ? c.channels : (c.channels = []); };
-const chCred = c => (c.token_env ? 'token_env' : (c.token_file ? 'token_file' : ''));
+const chPlatform = kind => CHANNEL_PLATFORMS.find(p => p.kind === kind);
+
+/* Every card renders whether or not the file declares the platform, so the
+   first edit is what brings a block into existence. A created block is
+   disabled until the switch says otherwise — that is the schema's own
+   default for a missing `enabled`, so the switch and the daemon agree. */
+function chEntry(kind, create) {
+  const list = chChannels();
+  const hit = list.find(x => x && x.kind === kind);
+  if (hit || !create) return hit || null;
+  const c = { kind, enabled: false };
+  list.push(c);
+  return c;
+}
+
+/* one source at a time: the schema has no plaintext token field, and neither
+   key present means the env var — the resolver's first choice */
+const chCredKey = c => (c && c.token_file != null && c.token_env == null ? 'token_file' : 'token_env');
+function chWriteCred(c, val) {
+  const key = chCredKey(c);
+  if (val) c[key] = val; else delete c[key];
+}
+
+/* "has a credential" is per-platform: telegram names where the token lives,
+   the other four carry their secret inline */
+function chArmed(c) {
+  const p = chPlatform(c && c.kind);
+  if (!p) return false;
+  return p.creds.filter(f => f.req).every(f => f.src
+    ? !!(c.token_env || c.token_file)
+    : !!(c[f.k] != null && String(c[f.k]).trim()));
+}
+const chImpl = c => { const p = chPlatform(c && c.kind); return !!(p && p.impl); };
+const chLabel = c => { const p = chPlatform(c && c.kind); return p ? t(p.t) : String((c && c.kind) || ''); };
 
 /* What the page is allowed to claim. Each verdict names the one thing that
    is missing, because "在线" over an unconfigured file is exactly the lie
-   this replaced. */
+   this replaced. Only a shipped adapter can be missing a credential — a card
+   whose adapter does not exist yet is reported, never nagged about. */
 function channelVerdict(cfg, st) {
   const all = Array.isArray(cfg.channels) ? cfg.channels : [];
-  const on = all.filter(c => c && c.enabled !== false);
+  const on = all.filter(c => c && c.enabled === true);
   const running = (st && Array.isArray(st.channels)) ? st.channels : [];
   const fresh = !!(st && (Date.now() / 1000 - Number(st.updated || 0)) < CHANNEL_STALE_SECS);
-  const armed = on.filter(c => c.token_env || c.token_file);
+  const live = on.filter(c => chImpl(c) && chArmed(c));
+  const uncred = on.filter(c => chImpl(c) && !chArmed(c));
+  const unimpl = on.filter(c => !chImpl(c));
   if (!all.length) return { key: 'none', cls: '' };
   if (!on.length) return { key: 'off', cls: '' };
-  if (!armed.length) return { key: 'nocred', cls: 'warn' };
-  if (!fresh) return { key: 'down', cls: 'off' };
-  if (!running.length) return { key: 'idle', cls: 'warn' };
-  return { key: 'on', cls: 'online', running };
+  if (uncred.length) return { key: 'nocred', cls: 'warn', uncred, unimpl };
+  if (!fresh) return { key: 'down', cls: 'off', unimpl };
+  // a heartbeat alone is not 在线: something this build can actually run has
+  // to be enabled, armed and named by status.json
+  if (!live.length || !running.length) return { key: 'idle', cls: 'warn', unimpl };
+  return { key: 'on', cls: 'online', running, unimpl };
+}
+
+/* one field control — the same .ch-in box every other settings input here
+   uses; a value the form does not hold stays absent from the file and the
+   placeholder shows what the daemon would assume */
+const chIn = (kind, k, val, ph, type) =>
+  `<input class="ch-in mono"${type ? ` type="${type}"` : ''} data-chin="${kind}.${k}"` +
+  ` value="${esc(val == null ? '' : val)}" placeholder="${esc(ph || '')}" spellcheck="false">`;
+
+/* one settings row per field: label, description, control. A field with no
+   description of its own still marks 必填, and a value the form does not
+   hold stays absent from the file — the placeholder shows the default */
+function chRow(p, c, f) {
+  const v = c ? c[f.k] : undefined;
+  const parts = [];
+  if (f.d) parts.push(esc(t(f.d)));
+  if (f.req) parts.push(esc(t('必填')));
+  const desc = parts.join(' · ');
+  if (f.pick) {
+    const hit = CHANNEL_REGIONS.find(x => x.v === (v || CHANNEL_REGION_DEFAULT)) || CHANNEL_REGIONS[0];
+    return row(t(f.t), desc, `<button class="pill plain" data-chpick="${p.kind}.${f.k}"><span>${esc(t(hit.t))}</span>${ic('chev-d')}</button>`);
+  }
+  if (f.src) {
+    const key = chCredKey(c);
+    const cred = key === 'token_file'
+      ? { v: (c && c.token_file) || '', ph: 'D:/secrets/tg.txt' }
+      : { v: (c && c.token_env) || '', ph: 'SUNMAO_TG_TOKEN' };
+    return row(t(f.t), desc, `<div class="ch-acts"><button class="pill plain" data-chpick="${p.kind}.${f.k}"><span>${t(key === 'token_file' ? '文件' : '环境变量')}</span>${ic('chev-d')}</button>${chIn(p.kind, f.k, cred.v, cred.ph)}</div>`);
+  }
+  return row(t(f.t), desc, chIn(p.kind, f.k, v, f.ph, f.pw ? 'password' : ''));
+}
+
+/* one card per platform: the platform row carries the switch, then the
+   credential fields, then the optional owner id */
+function chCard(p, c) {
+  const desc = esc(t(p.d)) + (p.impl ? '' : ` · ${esc(t('适配器尚未实现'))}`);
+  let rows = row(esc(t(p.t)), desc,
+    `<button class="sw" role="switch" data-ch="${p.kind}.enabled" aria-checked="${!!(c && c.enabled === true)}" aria-label="${esc(t('启用'))}"></button>`);
+  for (const f of p.creds) rows += chRow(p, c, f);
+  rows += row(t('管理员'), t('这个平台的用户 ID（{id}），可选', { id: p.ownerId }),
+    chIn(p.kind, 'owner', c && c.owner, p.ownerId));
+  return card([rows]);
 }
 
 function renderChannels() {
@@ -99,26 +237,30 @@ function renderChannels() {
   const pairing = CHANNELS.pairing || [];
   const allow = CHANNELS.allowlist || [];
   const v = channelVerdict(cfg, st);
+  const chans = chChannels();
 
-  let html = head(t('IM 渠道'), t('每个渠道是一份独立配置；改完保存，重启 IM 服务后生效。'));
+  let html = head(t('IM 渠道'), t('每个平台一张卡，固定顺序，不用挑选也不用增删；改完保存，重启 IM 服务后生效。'));
 
   // ── status: the verdict plus what it was read from ──
   const heartbeat = st
     ? t('最近心跳 {when}', { when: new Date(Number(st.updated || 0) * 1000).toLocaleString() })
     : t('没有心跳：IM 服务没在这台机器上跑过');
-  // every arm of this map is evaluated, so the running list is joined once
-  // up front — `on` is not the only key this object gets built for
+  // every arm of this map is evaluated, so the running and pending lists are
+  // joined once up front — `on` is not the only key this object gets built for
   const runningText = (v.running || []).join('、');
+  const uncredText = (v.uncred || []).map(chLabel).join('、');
+  const unimplText = (v.unimpl || []).map(chLabel).join('、');
   const detail = {
-    none: t('还没有渠道。先在下面添加一个，再启动服务。'),
+    none: t('配置文件里还没有声明渠道；打开下面某个平台的开关就会写入。'),
     off: t('渠道都已停用。'),
-    nocred: t('渠道缺凭据：填 token_env 或 token_file。'),
+    nocred: t('渠道缺凭据：{kinds}。', { kinds: uncredText }),
     down: t('服务未运行。在部署机上执行 sunmao im。'),
     idle: t('服务在跑，但没有渠道在监听。'),
     on: t('服务在跑：{chans}', { chans: runningText }),
   }[v.key];
+  const note = unimplText ? ` · ${t('适配器尚未实现')}：${unimplText}` : '';
   html += sec(t('服务状态'), '', card([
-    row(t(v.key === 'on' ? '运行状态' : '运行状态'), `${detail} · ${heartbeat}`,
+    row(t('运行状态'), `${detail}${note} · ${heartbeat}`,
       `<span class="channel-state ${v.cls}"><i class="sd ${v.key === 'on' ? 'done' : 'off'}"></i>${t({
         none: '未配置', off: '已停用', nocred: '缺凭据', down: '未运行', idle: '空转', on: '在线',
       }[v.key])}</span>`),
@@ -135,32 +277,11 @@ function renderChannels() {
     row(t('管理员'), t('可用 /pairing 的 sender；首个批准者自动成为管理员'), `<span class="tag mono">${esc(cfg.owner || t('未指定'))}</span>`),
   ]));
 
-  // ── one card per channel entry ──
-  // rows, not a bespoke grid: the header is the card's title (the kind) with
-  // its actions in flow beside it, then one .cr row per field — the same
-  // shape every other settings card uses, so nothing overlaps anything.
-  const chans = chChannels();
-  const cards = chans.map((c, i) => {
-    const kind = CHANNEL_KINDS.find(k => k.kind === c.kind);
-    const src = chCred(c);
-    const cred = src === 'token_file'
-      ? { v: c.token_file || '', ph: 'D:/secrets/tg.txt' }
-      : { v: c.token_env || '', ph: 'SUNMAO_TG_TOKEN' };
-    const title = kind ? kind.t : (c.kind || t('未知渠道'));
-    const desc = kind
-      ? t(kind.d)
-      : t('这个 kind 不是本版认识的渠道；保存时会原样保留，服务会跳过它。');
-    // a kind picker only earns its place once there is more than one kind
-    const picker = CHANNEL_KINDS.length > 1
-      ? `<button class="pill plain" data-chpick="kind:${i}"><span>${t('渠道类型')}</span>${ic('chev-d')}</button>`
-      : '';
-    return `<div class="card glass cfg">
-      ${row(esc(title), esc(desc), `<div class="ch-acts">${picker}<button class="sw" role="switch" data-chtog="${i}" aria-checked="${c.enabled !== false}" aria-label="${t('启用')}"></button><button class="btn ghost sm" data-chdel="${i}" data-tip="${t('移除这个渠道')}">${ic('x', 'i sm')}</button></div>`)}
-      ${row(t('凭据'), t('配置里不写 token 明文，只写来源'), `<div class="ch-acts"><button class="pill plain" data-chpick="cred:${i}"><span>${t(src === 'token_file' ? '文件' : '环境变量')}</span>${ic('chev-d')}</button><input class="ch-in mono" data-chin="cred:${i}" value="${esc(cred.v)}" placeholder="${cred.ph}" spellcheck="false"></div>`)}
-      ${row(t('轮询超时'), t('长轮询秒数，默认 30'), `<input class="ch-in mono" data-chin="timeout:${i}" value="${esc(c.poll_timeout_secs != null ? c.poll_timeout_secs : '')}" placeholder="30" spellcheck="false">`)}
-    </div>`;
-  }).join('');
-  html += sec(t('渠道'), '', cards + `<div class="channel-save"><button class="btn ghost sm" data-chadd>${ic('plus')}${t('添加渠道')}</button></div>`);
+  // ── the five cards, in table order, one .cr row per field; a block whose
+  //    kind has no card is not rendered, and the JSON editor below is where
+  //    it stays visible (and preserved) ──
+  const cards = CHANNEL_PLATFORMS.map(p => chCard(p, chans.find(c => c && c.kind === p.kind))).join('');
+  html += sec(t('渠道'), '', cards);
 
   // ── admission ledger ──
   html += sec(t('待处理配对'), '',
@@ -209,36 +330,34 @@ document.addEventListener('click', async e => {
     } catch (err) { toast(t('操作失败：{msg}', { msg: err.message }), 'alert', 'warn'); }
     return refreshChannels();
   }
-  if (e.target.closest('[data-chadd]')) {
-    chChannels().push({ kind: CHANNEL_KINDS[0].kind, enabled: true, token_env: '', poll_timeout_secs: CHANNEL_DEFAULT_POLL_SECS });
-    return chTouch();
-  }
-  const del = e.target.closest('[data-chdel]');
-  if (del) {
-    chChannels().splice(+del.dataset.chdel, 1);
-    return chTouch();
-  }
-  const tog = e.target.closest('[data-chtog]');
-  if (tog) {
-    const c = chChannels()[+tog.dataset.chtog];
-    if (c) c.enabled = c.enabled === false;
+  const sw = e.target.closest('[data-ch]');
+  if (sw) {
+    const [kind, key] = sw.dataset.ch.split('.');
+    if (key !== 'enabled') return;
+    // flip the model, not the button: menus.js has a global .sw handler that
+    // rewrites aria-checked first (it is registered earlier), so reading the
+    // DOM here would invert the switch
+    const c = chEntry(kind, true);
+    c.enabled = c.enabled !== true;
     return chTouch();
   }
   const pick = e.target.closest('[data-chpick]');
   if (pick) {
     const cfg = chCfgOf(), k = pick.dataset.chpick;
     const setTop = (key, v) => { cfg[key] = v; };
-    if (k === 'dm_policy') return menuPop(pick, CHANNEL_POLICIES.map(o => Object.assign({}, o, { on: o.v === (cfg.dm_policy || 'pairing') })), x => { setTop('dm_policy', x); chTouch(); }, { place: 'top', align: 'end' });
-    if (k === 'dm_scope') return menuPop(pick, CHANNEL_SCOPES.map(o => Object.assign({}, o, { on: o.v === (cfg.dm_scope || 'main') })), x => { setTop('dm_scope', x); chTouch(); }, { place: 'top', align: 'end' });
-    if (k === 'unauthorized') return menuPop(pick, CHANNEL_UNAUTH.map(o => Object.assign({}, o, { on: o.v === (cfg.unauthorized_dm_behavior || 'pair') })), x => { setTop('unauthorized_dm_behavior', x); chTouch(); }, { place: 'top', align: 'end' });
-    const [what, idx] = k.split(':');
-    const c = chChannels()[+idx];
-    if (!c) return;
-    if (what === 'kind') {
-      return menuPop(pick, CHANNEL_KINDS.map(o => ({ v: o.kind, t: o.t, d: o.d, on: o.kind === c.kind })), x => { c.kind = x; chTouch(); }, { place: 'top', align: 'end' });
+    if (k === 'dm_policy') return menuPop(pick, CHANNEL_POLICIES.map(o => Object.assign({}, o, { t: t(o.t), d: t(o.d), on: o.v === (cfg.dm_policy || 'pairing') })), x => { setTop('dm_policy', x); chTouch(); }, { place: 'top', align: 'end' });
+    if (k === 'dm_scope') return menuPop(pick, CHANNEL_SCOPES.map(o => Object.assign({}, o, { t: t(o.t), d: t(o.d), on: o.v === (cfg.dm_scope || 'main') })), x => { setTop('dm_scope', x); chTouch(); }, { place: 'top', align: 'end' });
+    if (k === 'unauthorized') return menuPop(pick, CHANNEL_UNAUTH.map(o => Object.assign({}, o, { t: t(o.t), d: t(o.d), on: o.v === (cfg.unauthorized_dm_behavior || 'pair') })), x => { setTop('unauthorized_dm_behavior', x); chTouch(); }, { place: 'top', align: 'end' });
+    const dot = k.indexOf('.');           // "<kind>.<field>"
+    const c = chEntry(k.slice(0, dot), true);
+    const f = k.slice(dot + 1);
+    if (!c || !f) return;
+    if (f === 'region') {
+      return menuPop(pick, CHANNEL_REGIONS.map(o => ({ v: o.v, t: t(o.t), d: o.d, on: o.v === (c.region || CHANNEL_REGION_DEFAULT) })),
+        x => { c.region = x; chTouch(); }, { place: 'top', align: 'end' });
     }
-    if (what === 'cred') {
-      const cur = chCred(c) || 'token_env';
+    if (f === 'cred') {
+      const cur = chCredKey(c);
       return menuPop(pick, [
         { v: 'token_env', t: t('环境变量'), d: 'SUNMAO_TG_TOKEN', on: cur === 'token_env' },
         { v: 'token_file', t: t('文件'), d: 'D:/secrets/tg.txt', on: cur === 'token_file' },
@@ -268,19 +387,20 @@ document.addEventListener('click', async e => {
 document.addEventListener('input', e => {
   const inp = e.target.closest('[data-chin]');
   if (!inp) return;
-  const cfg = chCfgOf(), k = inp.dataset.chin, val = inp.value.trim();
-  if (k === 'allowlist') {
-    cfg.allowlist = val ? val.split(',').map(s => s.trim()).filter(Boolean) : [];
-  } else if (k.startsWith('cred:')) {
-    const c = chChannels()[+k.slice(5)];
-    if (!c) return;
-    if (c.token_file != null) { if (val) c.token_file = val; else delete c.token_file; }
-    else if (val) c.token_env = val; else delete c.token_env;
-  } else if (k.startsWith('timeout:')) {
-    const c = chChannels()[+k.slice(8)];
-    if (!c) return;
-    const n = parseInt(val.replace(/[^\d]/g, ''), 10);
-    if (Number.isFinite(n) && n > 0) c.poll_timeout_secs = n; else delete c.poll_timeout_secs;
-  } else return;
+  const key = inp.dataset.chin, val = inp.value.trim();
+  if (key === 'allowlist') {
+    chCfgOf().allowlist = val ? val.split(',').map(s => s.trim()).filter(Boolean) : [];
+  } else {
+    const dot = key.indexOf('.');         // "<kind>.<field>"
+    const c = chEntry(key.slice(0, dot), true);
+    const k = key.slice(dot + 1);
+    if (!c || !k) return;
+    if (k === 'cred') chWriteCred(c, val);
+    else if (k === 'poll_timeout_secs') {
+      const n = parseInt(val.replace(/[^\d]/g, ''), 10);
+      if (Number.isFinite(n) && n > 0) c[k] = n; else delete c[k];
+    } else if (val) c[k] = val;
+    else delete c[k];
+  }
   chDirty = true; // the re-render would steal focus; the save bar reads this on the next pass
 });

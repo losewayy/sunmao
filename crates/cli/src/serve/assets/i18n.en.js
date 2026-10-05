@@ -284,6 +284,7 @@ const I18N_EN = {
   "区域": "Region",
   "渠道": "Channels",
   "渠道都已停用。": "Every channel is disabled.",
+  "渠道类型": "Channel type",
   "渠道配置": "Channel config",
   "渠道缺凭据：填 token_env 或 token_file。": "A channel has no credential: fill in token_env or token_file.",
   "取消": "Cancel",

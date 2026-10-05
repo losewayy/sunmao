@@ -125,6 +125,9 @@
    visible: a hand-typed model id is otherwise impossible to take back */
 .pv-x{position:absolute;top:var(--s-4);right:var(--s-6);color:var(--c-text-3);padding:var(--s-2)}
 .pv-x:hover{color:var(--c-danger-solid)}
+/* a settings row's controls, laid out in flow (the channel cards and the
+   policy rows share it) */
+.ch-acts{display:flex;align-items:center;gap:var(--s-8)}
 /* each model is one card: identity row then labeled sections — the rows
    wrap freely so a narrow pane can't push fields past the card edge */
 .pv-cf{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-6) var(--s-10);padding-left:calc(var(--s-16) + var(--icon-sm))}

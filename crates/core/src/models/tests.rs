@@ -164,23 +164,103 @@ fn default_model_parses_and_blanks_are_unpinned() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// `PUT /models` replaces the whole file: a top-level key this build doesn't
-/// know has to come back out of the parse, or a GUI save silently deletes it.
+/// The GUI's save body is built from the REDACTED GET view: no literal key,
+/// no unknown top-level key. `merge_save` folds it onto the file so neither
+/// dies on save. (The route-level GET→PUT trip is
+/// `crates/cli/src/serve/request/models.rs::tests`, which core can't reach —
+/// the old version of this test only round-tripped the struct through serde
+/// and stayed green while every real save erased the key.)
 #[test]
-fn unknown_top_level_keys_survive_a_round_trip() {
-    let dir = crate::fresh_test_dir("models-extra");
-    write_models(
-        &dir,
-        ".sunmao",
-        r#"{"providers":{},"default_model":"@fast","something_new":{"a":1}}"#,
+fn merge_save_keeps_what_the_redacted_view_cannot_carry() {
+    let existing: ModelsFile = serde_json::from_str(
+        r#"{"providers":{
+             "local":{"base_url":"http://local/v1","api_key":"sk-x","catalog":[{"id":"m1"}]},
+             "plain":{"base_url":"http://plain/v1"}},
+           "routes":{"fast":"local/m1"},"default_model":"local/m1","something_new":{"a":1}}"#,
+    )
+    .unwrap();
+    // what `connection.js::modelsBody` builds for a default-model pick
+    let body: ModelsFile = serde_json::from_str(
+        r#"{"providers":{
+             "local":{"base_url":"http://local/v1","catalog":[{"id":"m1"}]},
+             "plain":{"base_url":"http://plain/v1"}},
+           "routes":{"fast":"local/m1"},"default_model":"plain/m2"}"#,
+    )
+    .unwrap();
+    let merged = ModelsFile::merge_save(&existing, &body, &HashMap::new());
+    assert_eq!(merged.providers["local"].api_key.as_deref(), Some("sk-x"));
+    assert_eq!(merged.extra["something_new"]["a"], 1);
+    assert_eq!(
+        merged.extra.len(),
+        1,
+        "only the unknown key lands in `extra`"
     );
-    let file = read_models_file(&dir);
-    let text = serde_json::to_string(&file).unwrap();
-    let back: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(back["something_new"]["a"], 1);
-    assert_eq!(back["default_model"], "@fast");
-    assert_eq!(file.extra.len(), 1, "only the unknown key lands in `extra`");
-    std::fs::remove_dir_all(&dir).ok();
+    assert_eq!(merged.default_model.as_deref(), Some("plain/m2"));
+
+    // a rename declares the hop, and the key moves with it
+    let renamed: ModelsFile = serde_json::from_str(
+        r#"{"providers":{"renamed":{"base_url":"http://local/v1","catalog":[{"id":"m1"}]}},"routes":{}}"#,
+    )
+    .unwrap();
+    let hop = HashMap::from([("renamed".to_string(), "local".to_string())]);
+    let merged = ModelsFile::merge_save(&existing, &renamed, &hop);
+    assert!(!merged.providers.contains_key("local"), "the source goes");
+    assert_eq!(merged.providers["renamed"].api_key.as_deref(), Some("sk-x"));
+    assert_eq!(
+        merged.extra.len(),
+        1,
+        "unknown top-level keys still ride along"
+    );
+
+    // a body that declares a credential is authoritative: typing a literal
+    // key must not resurrect the env var the entry used to have (`adapter`
+    // prefers the env, so a carried-over one would silently win)
+    let env_only: ModelsFile = serde_json::from_str(
+        r#"{"providers":{"p":{"base_url":"http://p/v1","api_key_env":"OLD_ENV"}}}"#,
+    )
+    .unwrap();
+    let typed: ModelsFile = serde_json::from_str(
+        r#"{"providers":{"p":{"base_url":"http://p/v1","api_key":"sk-typed"}}}"#,
+    )
+    .unwrap();
+    let merged = ModelsFile::merge_save(&env_only, &typed, &HashMap::new());
+    assert_eq!(merged.providers["p"].api_key.as_deref(), Some("sk-typed"));
+    assert!(
+        merged.providers["p"].api_key_env.is_none(),
+        "the stale env must not shadow the typed key"
+    );
+    // ...while a keyless body entry keeps what the file had
+    let untouched: ModelsFile =
+        serde_json::from_str(r#"{"providers":{"p":{"base_url":"http://p/v1"}}}"#).unwrap();
+    let merged = ModelsFile::merge_save(&env_only, &untouched, &HashMap::new());
+    assert_eq!(
+        merged.providers["p"].api_key_env.as_deref(),
+        Some("OLD_ENV")
+    );
+}
+
+/// Deleting a provider must not leave `default_model` pointing at it; a pin
+/// that still resolves, a bare id, and an `@route` alias all stay.
+#[test]
+fn prune_dangling_default_only_drops_dead_provider_pins() {
+    let mut f: ModelsFile = serde_json::from_str(
+        r#"{"providers":{"other":{"base_url":"http://other/v1"}},"default_model":"local/m1"}"#,
+    )
+    .unwrap();
+    assert!(f.prune_dangling_default("default"));
+    assert_eq!(f.default_model, None);
+
+    for pin in ["other/m9", "bare-id", "@fast"] {
+        let mut f: ModelsFile =
+            serde_json::from_str(r#"{"providers":{"other":{"base_url":"http://o/v1"}}}"#).unwrap();
+        f.default_model = Some(pin.into());
+        assert!(!f.prune_dangling_default("default"), "{pin} must survive");
+        assert_eq!(f.default_model.as_deref(), Some(pin));
+    }
+    // the session's own provider is injected, never in the file — not dangling
+    let mut f: ModelsFile =
+        serde_json::from_str(r#"{"providers":{},"default_model":"default/m1"}"#).unwrap();
+    assert!(!f.prune_dangling_default("default"));
 }
 
 /// The `.claude` compat layer overrides a `.sunmao` twin per key — the

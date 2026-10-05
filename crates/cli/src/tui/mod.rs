@@ -304,8 +304,12 @@ async fn run_inner(
     // the log's recorded stance wins — a resumed full_access session must
     // not look like it was auto all along
     app.approval_mode = agent.approval_mode();
-    app.effort = agent.reasoning_effort();
+    // ladder first: it is also what fixes the session's default level, so the
+    // chip shows the level the session will actually run at, not the
+    // "nothing dialed" state
     app.effort_levels = agent.effort_levels().await;
+    agent.resolve_effort_default().await;
+    app.effort = agent.reasoning_effort();
     if !replay.is_empty() {
         app.replay(&replay);
     }

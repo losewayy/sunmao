@@ -92,6 +92,12 @@ impl Client {
             id: CLIENT_IDS.fetch_add(1, Ordering::Relaxed) + 1,
             forward,
         };
+        // a page that just attached is about to build the composer chip, so
+        // settle the session's default level first — a client never sees the
+        // "provider default" state, only the level it would run at
+        if let Some(h) = host.as_ref() {
+            h.agent.resolve_effort_default().await;
+        }
         client.emit(serde_json::json!({
             "type": "hello",
             "client": client.id,
@@ -147,6 +153,7 @@ impl Client {
     /// of a session renders (same fold the TUI gets on --resume).
     async fn send_replay(&self, host: &Host) {
         let evs = host.agent.session_events().await;
+        host.agent.resolve_effort_default().await;
         self.emit(serde_json::json!({
             "type": "replay",
             "session": host.id,

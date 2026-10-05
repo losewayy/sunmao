@@ -276,10 +276,12 @@ pub(crate) fn input_queue_frame(host: &Host) -> serde_json::Value {
     })
 }
 
-/// `effort` live frame — the session's reasoning-effort override plus the
-/// level vocabulary the active model advertises. Broadcast on `/effort`
-/// and after a `/model` swap (the picker follows the new vocabulary).
+/// `effort` live frame — the level in force plus the vocabulary the active
+/// model advertises. Broadcast on `/effort`, after a `/model` swap, and
+/// when the catalog itself changes: reading the ladder is also what fixes a
+/// session's default level, so the frame carries whatever the edit implies.
 pub(crate) async fn effort_frame(host: &Host) -> serde_json::Value {
+    host.agent.resolve_effort_default().await;
     serde_json::json!({
         "type": "effort",
         "sess": host.id,

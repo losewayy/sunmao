@@ -385,6 +385,10 @@ pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
     }
 
     let agent = AgentLoop::new(ctx.clone());
+    // settle the session's default effort before the first request: the
+    // local frontends have no frame to carry it, and the level in force is
+    // what the prompt line / TUI chip shows
+    agent.resolve_effort_default().await;
 
     if let Some(prompt) = &cli.print {
         let obs = repl::StdoutObserver::new();

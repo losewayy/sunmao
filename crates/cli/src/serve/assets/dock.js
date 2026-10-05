@@ -236,9 +236,71 @@ function mountBrowser(b) {
   if (live.url && !EMBED) brGo(live, live.url, false); // persisted tab restores loaded
 }
 
+/* ---- 元素批注（原生 guest）----
+   The guest is its own document, so the page cannot pick anything in it: the
+   shell injects the picker (annotate.js) into the guest and the whole
+   gesture happens there. The result comes back through `ann-poll` and lands
+   in the Composer — the selector plus the page URL is what an agent needs to
+   go fix it. Canvas/iframe targets degrade to a region inside the guest. */
+const brAnnBtn = id => $(`#dock .dock-pane[data-pane="br:${id}"] [data-act="annotate"]`);
+function brAnnStop(id) {
+  const st = BR[id];
+  if (st && st.ann) { clearTimeout(st.ann); st.ann = 0; }
+  const btn = brAnnBtn(id);
+  if (btn) btn.classList.remove('on');
+}
+function brAnnLine(p) {
+  const sel = p.sel || {};
+  if (sel.kind === 'region') return `批注 ${p.url} 区域 ${sel.rect.x},${sel.rect.y} ${sel.rect.w}×${sel.rect.h}`;
+  return `批注 ${p.url} ${sel.css || selLabel(sel)}${sel.text ? `「${sel.text.slice(0, 40)}」` : ''}`;
+}
+function brAnnToComposer(p) {
+  const ta = $('#input');
+  ta.value = (ta.value.trim() ? ta.value.trimEnd() + '\n' : '') + `${brAnnLine(p)}：${p.note}`;
+  autoGrow(); ta.focus();
+  toast('批注已写入输入框', 'note');
+}
+/* click again to disarm; the poll is the only way back from a foreign page.
+   Self-scheduling, not setInterval: a poll can sit for its full timeout when
+   the guest is mid-navigation, and they must not stack up on the runtime.
+   The wait is a poll interval, not motion — a named constant, same as the
+   debounces in state.js. */
+const ANN_POLL_MS = 300;
+function brAnnToggle(pane) {
+  const id = +(pane.dataset.pane || 'br:0').slice(3);
+  const st = brSt(id);
+  if (st.ann) { brAnnStop(id); return; }
+  const btn = brAnnBtn(id);
+  if (btn) btn.classList.add('on');
+  brSendId(id, { op: 'annotate', id });
+  // a navigation throws the injected picker away, so the poll must not
+  // outlive it: `brGo` disarms, and this cap covers a guest that navigated
+  // on its own (a link in the page)
+  let left = 1200;
+  const tick = async () => {
+    if (!st.ann) return;
+    if (--left < 0) { brAnnStop(id); return; }
+    let raw = null;
+    try { raw = await TAURI.webview({ op: 'ann-poll', id }); } catch { /* guest busy */ }
+    if (!st.ann) return;
+    // the payload may arrive as an object or as its JSON text — accept both
+    let v = raw;
+    for (let i = 0; i < 2 && typeof v === 'string'; i++) { try { v = JSON.parse(v); } catch { v = null; break; } }
+    if (v && typeof v === 'object') {
+      brAnnStop(id);
+      if (!v.cancel) brAnnToComposer(v);
+      return;
+    }
+    st.ann = setTimeout(tick, ANN_POLL_MS);
+  };
+  st.ann = setTimeout(tick, ANN_POLL_MS);
+}
+
 function brGo(b, raw, push = true) {
   let url = String(raw || '').trim();
   if (!url) return;
+  // any navigation replaces the guest document, picker and all
+  if (BR[b.id] && BR[b.id].ann) brAnnStop(b.id);
   if (url.startsWith('/')) url = location.origin + url;
   if (!/^[a-z]+:\/\//i.test(url)) url = (/^[\w.-]+(:\d+)?([/:]|$)/.test(url) ? 'http://' : 'https://') + url;
   const st = brSt(b.id), pane = brPane(b);

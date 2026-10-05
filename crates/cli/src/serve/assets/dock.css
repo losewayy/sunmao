@@ -54,6 +54,9 @@
 
 /* ---- browser pane ---- */
 .dock-pane.br{padding:0;gap:0;overflow:hidden;position:relative}
+/* armed element picker: the overlay itself lives inside the guest webview,
+   so this lamp on the button is the only host-side feedback */
+.dock-pane.br .ib[data-act="annotate"].on{color:var(--c-accent);background:var(--c-accent-soft-2)}
 .br-bar{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-4) var(--s-6);border-bottom:var(--bw-hairline) solid var(--c-stroke);flex:none}
 .br-bar .ib[disabled]{opacity:.35;pointer-events:none}
 .br-url{flex:1;min-width:0;height:var(--h-md);padding:0 var(--s-10);border:0;outline:0;border-radius:var(--r-full);background:var(--c-fill-1);font-size:var(--fs-xs);color:var(--c-text)}

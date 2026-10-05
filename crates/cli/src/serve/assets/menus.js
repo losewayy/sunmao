@@ -97,7 +97,14 @@ function act(name, el) {
       if (view !== 'session' || !sessionId) return;
       return menuPop(el, sessionMenu(sessionId), v => sessionAction(v, sessionId, el));
     case 'help': return menuPop(el, [{ v: 'keys', t: '键盘快捷键', icon: 'keyboard' }, { v: 'about', t: '关于 sunmao', icon: 'info' }], v => { show('settings'); settingsPage(v); }, { place: 'top' });
-    case 'annotate': return annToggle(el.closest('.island,.dock-pane.br'));
+    case 'annotate': {
+      // a dock browser tab is a real guest webview: its document is out of
+      // this page's reach, so the picker runs in there (the shell injects it)
+      // and only the finished note comes back
+      const bp = el.closest('.dock-pane.br');
+      if (bp && nativeBr()) return brAnnToggle(bp);
+      return annToggle(el.closest('.island,.dock-pane.br'));
+    }
     case 'dock-add': return dockAdd(el);
     case 'note-add': return submitNote(el.dataset.name, el);
     case 'island-tall': { const isl = el.closest('.island'), on = isl.classList.toggle('tall'); el.innerHTML = ic(on ? 'shrink' : 'expand'); el.dataset.tip = on ? '收起' : '展开'; return; }

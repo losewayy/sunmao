@@ -42,8 +42,16 @@ pub trait ChannelAdapter: Send + Sync {
     async fn send_typing(&self, _chat_id: &str) {}
 }
 
+mod dingtalk;
+mod feishu;
+mod qq;
 mod telegram;
+mod wechat;
+pub use dingtalk::DingtalkAdapter;
+pub use feishu::FeishuAdapter;
+pub use qq::QqAdapter;
 pub use telegram::TelegramAdapter;
+pub use wechat::WechatAdapter;
 
 /// Build the adapter for one enabled channel block — the single wiring
 /// point for a new kind: add its `ChannelSpec` variant, its
@@ -52,10 +60,111 @@ pub use telegram::TelegramAdapter;
 pub fn build(spec: &ChannelSpec, store: Arc<Store>) -> Result<Arc<dyn ChannelAdapter>> {
     match spec {
         ChannelSpec::Telegram(tg) => Ok(Arc::new(TelegramAdapter::new(tg, store)?)),
-        // never built: `enabled_specs()` drops unknown kinds, and a
-        // config-only kind has no adapter in this binary
+        // feishu needs no store: the WS carries no resume offset
+        ChannelSpec::Feishu(fs) => Ok(Arc::new(FeishuAdapter::new(fs)?)),
+        // qq keeps its reply-target map and passive cursor in `qq:*`
+        ChannelSpec::Qq(qq) => Ok(Arc::new(QqAdapter::new(qq, store)?)),
+        // dingtalk needs no store: the Stream registration carries no cursor
+        ChannelSpec::Dingtalk(dt) => Ok(Arc::new(DingtalkAdapter::new(dt)?)),
+        // wechat keeps its `get_updates_buf` cursor and reply windows in `wx:*`
+        ChannelSpec::Wechat(wx) => Ok(Arc::new(WechatAdapter::new(wx, store)?)),
         ChannelSpec::Unknown => anyhow::bail!("no adapter for channel kind {}", spec.kind_name()),
         #[cfg(test)]
         ChannelSpec::Test(_) => anyhow::bail!("no adapter for test channel"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::im::config::{DingtalkSpec, FeishuRegion, FeishuSpec, QqSpec, TestSpec, WechatSpec};
+
+    fn store(dir: &std::path::Path) -> Arc<Store> {
+        let _ = std::fs::remove_dir_all(dir);
+        Arc::new(Store::open(dir).unwrap())
+    }
+
+    /// The factory is the single wiring point: every shipped adapter builds
+    /// without touching the network (construction only resolves
+    /// credentials — polling is what connects), and a kind without an
+    /// adapter in this binary fails with its kind named.
+    #[test]
+    fn factory_wires_every_shipped_kind() {
+        let dir = std::env::temp_dir().join(format!("sunmao-im-factory-{}", std::process::id()));
+        let store = store(&dir);
+        let secret = dir.join("secret.txt");
+        std::fs::write(&secret, "shh").unwrap();
+
+        let cases = [
+            (
+                ChannelSpec::Feishu(FeishuSpec {
+                    enabled: true,
+                    app_id: "cli_x".into(),
+                    app_secret_env: None,
+                    app_secret_file: Some(secret.clone()),
+                    region: FeishuRegion::default(),
+                    owner: None,
+                    dm_policy: None,
+                    allowlist: Vec::new(),
+                }),
+                "feishu",
+            ),
+            (
+                ChannelSpec::Qq(QqSpec {
+                    enabled: true,
+                    app_id: "1024".into(),
+                    app_secret_env: None,
+                    app_secret_file: Some(secret.clone()),
+                    owner: None,
+                    dm_policy: None,
+                    allowlist: Vec::new(),
+                }),
+                "qq",
+            ),
+            (
+                ChannelSpec::Dingtalk(DingtalkSpec {
+                    enabled: true,
+                    corp_id: "corp".into(),
+                    client_id: "key".into(),
+                    client_secret_env: None,
+                    client_secret_file: Some(secret.clone()),
+                    robot_code: "robot".into(),
+                    api_base_url: "https://api.dingtalk.com/v1.0".into(),
+                    owner: None,
+                    dm_policy: None,
+                    allowlist: Vec::new(),
+                }),
+                "dingtalk",
+            ),
+            (
+                ChannelSpec::Wechat(WechatSpec {
+                    enabled: true,
+                    bot_token_env: None,
+                    bot_token_file: Some(secret.clone()),
+                    owner: None,
+                    dm_policy: None,
+                    allowlist: Vec::new(),
+                }),
+                "wechat",
+            ),
+        ];
+        for (spec, expected) in cases {
+            assert_eq!(build(&spec, store.clone()).unwrap().channel(), expected);
+        }
+
+        // kinds with no adapter in this binary name themselves in the error
+        let test = ChannelSpec::Test(TestSpec {
+            enabled: true,
+            dm_policy: None,
+            allowlist: Vec::new(),
+        });
+        for spec in [ChannelSpec::Unknown, test] {
+            let err = match build(&spec, store.clone()) {
+                Ok(_) => panic!("{} built an adapter", spec.kind_name()),
+                Err(e) => e.to_string(),
+            };
+            assert!(err.contains(spec.kind_name()), "{err}");
+        }
+        std::fs::remove_dir_all(dir).ok();
     }
 }

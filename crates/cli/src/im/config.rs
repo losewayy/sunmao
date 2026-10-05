@@ -66,13 +66,33 @@ pub enum UnauthorizedBehavior {
     Ignore,
 }
 
+/// Feishu's data residency picks the API host: `feishu_cn` = open.feishu.cn,
+/// `lark_global` = open.larksuite.com. Credentials are not portable between
+/// the two — an app registered on one domain does not authenticate on the
+/// other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FeishuRegion {
+    #[default]
+    FeishuCn,
+    LarkGlobal,
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChannelSpec {
     Telegram(TelegramSpec),
+    Feishu(FeishuSpec),
+    Qq(QqSpec),
+    /// DingTalk enterprise internal bot over Stream: the registration
+    /// endpoint hands back a WebSocket the platform pushes callbacks down.
+    Dingtalk(DingtalkSpec),
+    /// WeChat personal account over iLink: one long poll for messages plus a
+    /// windowed send per peer.
+    Wechat(WechatSpec),
     /// Test-only kind — drives the kind-agnostic `enabled()`/`scoped()`
-    /// path a new adapter (feishu/wechat/qq) takes without shipping a
-    /// stub adapter for it. Compiled into test builds only.
+    /// path a new adapter takes without shipping a stub adapter for it.
+    /// Compiled into test builds only.
     #[cfg(test)]
     Test(TestSpec),
     /// A kind this binary doesn't know — the doc comment promises
@@ -89,6 +109,9 @@ pub enum ChannelSpec {
 pub struct ChannelScoped<'a> {
     pub dm_policy: Option<DmPolicy>,
     pub allowlist: &'a [String],
+    /// Channel-level owner (`channel:sender` or a bare sender id) — the
+    /// per-block row the settings UI writes.
+    pub owner: Option<&'a str>,
 }
 
 impl ChannelSpec {
@@ -96,6 +119,10 @@ impl ChannelSpec {
     pub fn kind_name(&self) -> &'static str {
         match self {
             Self::Telegram(_) => "telegram",
+            Self::Feishu(_) => "feishu",
+            Self::Qq(_) => "qq",
+            Self::Dingtalk(_) => "dingtalk",
+            Self::Wechat(_) => "wechat",
             #[cfg(test)]
             Self::Test(_) => "test",
             Self::Unknown => "unknown",
@@ -107,6 +134,10 @@ impl ChannelSpec {
     pub fn enabled(&self) -> bool {
         match self {
             Self::Telegram(t) => t.enabled,
+            Self::Feishu(t) => t.enabled,
+            Self::Qq(t) => t.enabled,
+            Self::Dingtalk(t) => t.enabled,
+            Self::Wechat(t) => t.enabled,
             #[cfg(test)]
             Self::Test(t) => t.enabled,
             Self::Unknown => false,
@@ -120,11 +151,33 @@ impl ChannelSpec {
             Self::Telegram(t) => Some(ChannelScoped {
                 dm_policy: t.dm_policy,
                 allowlist: &t.allowlist,
+                owner: t.owner.as_deref(),
+            }),
+            Self::Feishu(t) => Some(ChannelScoped {
+                dm_policy: t.dm_policy,
+                allowlist: &t.allowlist,
+                owner: t.owner.as_deref(),
+            }),
+            Self::Qq(t) => Some(ChannelScoped {
+                dm_policy: t.dm_policy,
+                allowlist: &t.allowlist,
+                owner: t.owner.as_deref(),
+            }),
+            Self::Dingtalk(t) => Some(ChannelScoped {
+                dm_policy: t.dm_policy,
+                allowlist: &t.allowlist,
+                owner: t.owner.as_deref(),
+            }),
+            Self::Wechat(t) => Some(ChannelScoped {
+                dm_policy: t.dm_policy,
+                allowlist: &t.allowlist,
+                owner: t.owner.as_deref(),
             }),
             #[cfg(test)]
             Self::Test(t) => Some(ChannelScoped {
                 dm_policy: t.dm_policy,
                 allowlist: &t.allowlist,
+                owner: None,
             }),
             Self::Unknown => None,
         }
@@ -159,6 +212,9 @@ pub struct TelegramSpec {
     pub token_file: Option<PathBuf>,
     #[serde(default = "default_poll_timeout")]
     pub poll_timeout_secs: u64,
+    /// Config-level owner for this channel (the UI writes one per block).
+    #[serde(default)]
+    pub owner: Option<String>,
     /// Channel-scoped overrides — inherit the top-level values when unset.
     #[serde(default)]
     pub dm_policy: Option<DmPolicy>,
@@ -166,6 +222,102 @@ pub struct TelegramSpec {
     pub allowlist: Vec<String>,
     #[serde(default)]
     pub enabled: bool,
+}
+
+/// Feishu/Lark custom app — App ID + App Secret buy a
+/// `tenant_access_token`; inbound rides a WebSocket long connection
+/// subscribed to `im.message.receive_v1` (no callback URL, no public
+/// endpoint).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct FeishuSpec {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub app_id: String,
+    #[serde(default)]
+    pub app_secret_env: Option<String>,
+    #[serde(default)]
+    pub app_secret_file: Option<PathBuf>,
+    #[serde(default)]
+    pub region: FeishuRegion,
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub dm_policy: Option<DmPolicy>,
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+}
+
+/// QQ 开放平台 bot (v2 API) — AppID + AppSecret buy an `access_token`,
+/// the gateway URL comes from `/gateway`, and messages arrive over that
+/// bot's own WebSocket.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct QqSpec {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub app_id: String,
+    #[serde(default)]
+    pub app_secret_env: Option<String>,
+    #[serde(default)]
+    pub app_secret_file: Option<PathBuf>,
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub dm_policy: Option<DmPolicy>,
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+}
+
+/// DingTalk Stream bot — an enterprise internal app: corp id + client
+/// id/secret buy the access token, and `robot_code` names the bot that
+/// answers. Inbound rides a reverse WebSocket (`gateway/connections/open`),
+/// so no public callback URL is needed.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DingtalkSpec {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub corp_id: String,
+    #[serde(default)]
+    pub client_id: String,
+    #[serde(default)]
+    pub client_secret_env: Option<String>,
+    #[serde(default)]
+    pub client_secret_file: Option<PathBuf>,
+    #[serde(default)]
+    pub robot_code: String,
+    #[serde(default = "default_dingtalk_api_base")]
+    pub api_base_url: String,
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub dm_policy: Option<DmPolicy>,
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+}
+
+/// WeChat personal account over iLink — the `bot_token` is the whole
+/// credential. QR-code login is not part of this version, so the token comes
+/// from `bot_token_env`/`bot_token_file` like every other one.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WechatSpec {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub bot_token_env: Option<String>,
+    #[serde(default)]
+    pub bot_token_file: Option<PathBuf>,
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub dm_policy: Option<DmPolicy>,
+    #[serde(default)]
+    pub allowlist: Vec<String>,
 }
 
 fn default_dm_policy() -> DmPolicy {
@@ -176,6 +328,37 @@ fn default_unauthorized() -> UnauthorizedBehavior {
 }
 fn default_poll_timeout() -> u64 {
     30
+}
+fn default_dingtalk_api_base() -> String {
+    "https://api.dingtalk.com/v1.0".to_string()
+}
+
+/// Resolve a secret by reference — `<field>_env` first, then
+/// `<field>_file`; neither set is a config error, not a runtime surprise.
+/// The secret itself never reaches the store or a log line.
+fn resolve_secret(
+    env: Option<&str>,
+    file: Option<&Path>,
+    channel: &str,
+    field: &str,
+) -> anyhow::Result<String> {
+    if let Some(env) = env {
+        if let Ok(v) = std::env::var(env)
+            && !v.trim().is_empty()
+        {
+            return Ok(v.trim().to_string());
+        }
+        anyhow::bail!("{field}_env {env} is unset or empty");
+    }
+    if let Some(file) = file {
+        let t = std::fs::read_to_string(file)
+            .map_err(|e| anyhow::anyhow!("{field}_file {}: {e}", file.display()))?;
+        if t.trim().is_empty() {
+            anyhow::bail!("{field}_file {} is empty", file.display());
+        }
+        return Ok(t.trim().to_string());
+    }
+    anyhow::bail!("{channel} channel needs {field}_env or {field}_file")
 }
 
 /// `~` home dir the same way the rest of the codebase resolves it.
@@ -229,92 +412,64 @@ impl ChannelsConfig {
 
 impl TelegramSpec {
     /// Resolve the bot token: `token_env` first, then `token_file`.
-    /// Neither set → Err naming the file (config explains itself).
+    /// Neither set → Err naming the field pair (config explains itself).
     pub fn token(&self) -> anyhow::Result<String> {
-        if let Some(env) = &self.token_env {
-            if let Ok(v) = std::env::var(env)
-                && !v.trim().is_empty()
-            {
-                return Ok(v.trim().to_string());
-            }
-            anyhow::bail!("token_env {env} is unset or empty");
-        }
-        if let Some(file) = &self.token_file {
-            let t = std::fs::read_to_string(file)
-                .map_err(|e| anyhow::anyhow!("token_file {}: {e}", file.display()))?;
-            if t.trim().is_empty() {
-                anyhow::bail!("token_file {} is empty", file.display());
-            }
-            return Ok(t.trim().to_string());
-        }
-        anyhow::bail!("telegram channel needs token_env or token_file")
+        resolve_secret(
+            self.token_env.as_deref(),
+            self.token_file.as_deref(),
+            "telegram",
+            "token",
+        )
+    }
+}
+
+impl FeishuSpec {
+    /// `app_secret_env` first, then `app_secret_file`.
+    pub fn app_secret(&self) -> anyhow::Result<String> {
+        resolve_secret(
+            self.app_secret_env.as_deref(),
+            self.app_secret_file.as_deref(),
+            "feishu",
+            "app_secret",
+        )
+    }
+}
+
+impl QqSpec {
+    /// `app_secret_env` first, then `app_secret_file`.
+    pub fn app_secret(&self) -> anyhow::Result<String> {
+        resolve_secret(
+            self.app_secret_env.as_deref(),
+            self.app_secret_file.as_deref(),
+            "qq",
+            "app_secret",
+        )
+    }
+}
+
+impl DingtalkSpec {
+    /// `client_secret_env` first, then `client_secret_file`.
+    pub fn client_secret(&self) -> anyhow::Result<String> {
+        resolve_secret(
+            self.client_secret_env.as_deref(),
+            self.client_secret_file.as_deref(),
+            "dingtalk",
+            "client_secret",
+        )
+    }
+}
+
+impl WechatSpec {
+    /// `bot_token_env` first, then `bot_token_file`.
+    pub fn bot_token(&self) -> anyhow::Result<String> {
+        resolve_secret(
+            self.bot_token_env.as_deref(),
+            self.bot_token_file.as_deref(),
+            "wechat",
+            "bot_token",
+        )
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_minimal_config() {
-        let cfg = serde_json::from_str::<ChannelsConfig>(
-            r#"{"channels":[{"kind":"telegram","enabled":true,"token_env":"TG_TOKEN"}]}"#,
-        )
-        .unwrap();
-        assert_eq!(cfg.dm_policy, DmPolicy::Pairing);
-        assert_eq!(cfg.dm_scope, DmScope::Main);
-        assert_eq!(cfg.enabled_specs().count(), 1);
-    }
-
-    #[test]
-    fn disabled_channel_skips() {
-        let cfg = serde_json::from_str::<ChannelsConfig>(
-            r#"{"channels":[{"kind":"telegram","enabled":false,"token_env":"T"}]}"#,
-        )
-        .unwrap();
-        assert_eq!(cfg.enabled_specs().count(), 0);
-    }
-
-    #[test]
-    fn missing_is_none_not_err() {
-        assert!(
-            ChannelsConfig::load(Path::new("/nonexistent/channels.json"))
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    /// A kind that is not telegram lands on its own variant and keeps its
-    /// scoped policy — the generic path every new adapter rides.
-    #[test]
-    fn new_kind_parses_with_its_own_scope() {
-        let cfg = serde_json::from_str::<ChannelsConfig>(
-            r#"{"channels":[{"kind":"test","enabled":true,
-                "dm_policy":"open","allowlist":["test:7"]}]}"#,
-        )
-        .unwrap();
-        let spec = cfg.specs().next().unwrap();
-        assert_eq!(spec.kind_name(), "test");
-        assert!(spec.enabled());
-        let scoped = spec.scoped().unwrap();
-        assert_eq!(scoped.dm_policy, Some(DmPolicy::Open));
-        assert_eq!(scoped.allowlist, ["test:7"]);
-        assert_eq!(cfg.enabled_specs().count(), 1);
-    }
-
-    /// A config written for a newer binary must parse and be skipped —
-    /// never an error, never an enabled channel.
-    #[test]
-    fn unknown_kind_parses_and_skips() {
-        let cfg = serde_json::from_str::<ChannelsConfig>(
-            r#"{"channels":[{"kind":"future_channel","enabled":true,"whatever":1}]}"#,
-        )
-        .unwrap();
-        let spec = cfg.specs().next().unwrap();
-        assert!(matches!(spec, ChannelSpec::Unknown));
-        assert_eq!(spec.kind_name(), "unknown");
-        assert!(!spec.enabled());
-        assert!(spec.scoped().is_none());
-        assert_eq!(cfg.enabled_specs().count(), 0);
-    }
-}
+mod tests;

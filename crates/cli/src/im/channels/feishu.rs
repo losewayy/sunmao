@@ -8,6 +8,8 @@
 //! authz are DM-only, see `authz.rs`), media, CardKit streaming, the
 //! contact API (the sender label falls back to the `open_id`).
 
+// arch: allow-god-file one protocol surface: the token exchange, the message calls and the long-connection endpoint strip transport URLs together
+
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -134,10 +136,12 @@ impl FeishuAdapter {
             .json(&body)
             .send()
             .await
+            .map_err(redact::transport)
             .context("feishu tenant_access_token")?;
         let v: serde_json::Value = resp
             .json()
             .await
+            .map_err(redact::transport)
             .context("feishu tenant_access_token decode")?;
         let token = v["tenant_access_token"]
             .as_str()
@@ -216,8 +220,13 @@ impl FeishuAdapter {
             .json(&serde_json::json!({"AppID": self.app_id, "AppSecret": self.app_secret}))
             .send()
             .await
+            .map_err(redact::transport)
             .context("feishu ws endpoint")?;
-        let v: serde_json::Value = resp.json().await.context("feishu ws endpoint decode")?;
+        let v: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(redact::transport)
+            .context("feishu ws endpoint decode")?;
         let code = v["code"].as_i64().unwrap_or(0);
         anyhow::ensure!(
             code == 0,

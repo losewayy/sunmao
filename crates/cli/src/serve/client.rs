@@ -112,6 +112,11 @@ impl Client {
                 .collect::<Vec<_>>(),
             "models": host.as_ref().map(|h| h.agent.model_choices()).unwrap_or_default(),
             "mode": host.as_ref().map(|h| h.agent.approval_mode().as_str()).unwrap_or("auto"),
+            // the third axis rides the frame too — the page draws its
+            // turn-mode switch and its Fusion note off it, and a frontend
+            // that could only fold `turn_mode_change` out of the replay
+            // would be guessing on every reconnect
+            "turn_mode": host.as_ref().map(|h| h.agent.turn_mode().as_str()).unwrap_or("standard"),
             // which loop driver the viewed session froze at creation —
             // the crumb shows a PTC badge so the mode is never invisible
             "driver": host.as_ref().map(|h| h.agent.context().loop_driver.as_str()).unwrap_or(""),
@@ -161,6 +166,9 @@ impl Client {
             "cwd": display_path(&host.agent.session_cwd()),
             "busy": host.busy.load(Ordering::Relaxed) > 0,
             "mode": host.agent.approval_mode().as_str(),
+            // a `view` switch must land on the mode the session actually
+            // resumed at, not on whatever the previous one was
+            "turn_mode": host.agent.turn_mode().as_str(),
             "driver": host.agent.context().loop_driver.as_str(),
             "effort": host.agent.reasoning_effort(),
             "effort_levels": host.agent.effort_levels().await,
@@ -345,20 +353,14 @@ impl Client {
                         });
                         let t0 = std::time::Instant::now();
                         let ctx = h.agent.context().clone();
-                        let (ok, output, code) = match sunmao_core::tool::run_foreground(
-                            &cmd,
-                            cwd,
-                            120,
-                            ctx.shell,
-                            Some(ctx.cancel_signal()),
+                        // same job-aware run the TUI's `!` and the `Bash` tool
+                        // make: a timeout moves the command to the background
+                        let (ok, output, code) = match sunmao_core::tool::run_local_shell(
+                            &cmd, cwd, 120, ctx.shell, &ctx,
                         )
                         .await
                         {
-                            Ok(run) => (
-                                run.exit_code == 0,
-                                sunmao_core::tool::render_run(&run),
-                                run.exit_code,
-                            ),
+                            Ok(run) => (run.ok(), run.render(), run.record_code()),
                             Err(msg) => (false, msg, -1),
                         };
                         h.agent.record_local_shell(&cmd, code, &output).await;

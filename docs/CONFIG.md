@@ -28,7 +28,7 @@ All optional. Missing file = feature off. Invalid JSON = warning, feature off. P
 | `ui.json` | `{"mode","accent","background","foreground","wallpaper","dim","panelOpacity","blur","translucentSidebar","contrast","fonts"{ui,code},"zoom",...}` | GUI appearance preferences — the browser settings page persists via `GET|PUT /ui`; browser localStorage is only a first-frame cache. `zoom` is the Tauri shell's webview zoom factor (Ctrl/Cmd+=/-/0), restored on startup |
 | `wallpapers/` | runtime state | uploaded custom wallpaper (`custom.{jpg,png,webp}`, one file — `PUT /wallpaper` rotates it; `GET /wallpaper` serves it) |
 | `checkpoints/{session_id}/` | runtime state | snapshot-before-write ledger — `{seq}-{hash}.bak` blobs + `manifest.jsonl`; `/rewind` restores files from the earliest entry at/after the target turn |
-| `jobs/{id}/` | runtime state | background `Bash` jobs — `output.log` + `exit.json` (on finish) |
+| `jobs/{id}/` | runtime state | background `Bash` jobs — `output.log` + `exit.json` (on finish); `job.json`'s `foreground` marker keeps an inline command out of the panel until a timeout moves it to the background, and a command that ends inside its budget retires its own dir |
 | `artifacts/` | runtime state | `HtmlArtifact` outputs — `{name}.html` plus `{name}.state.json` human-annotation sidecars |
 
 ## Claude-compatible (`<cwd>/.claude/`, `~/.claude/`)

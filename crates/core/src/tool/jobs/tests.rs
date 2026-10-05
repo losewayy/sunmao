@@ -418,3 +418,82 @@ async fn job_list_pages_and_takes_a_limit() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The frontends' `!` local shell goes through the SAME job-aware run as the
+/// `Bash` tool: reaching the budget moves it to the background instead of
+/// killing it, so a long build the user started stays alive and the prompt is
+/// free again. The old kill-on-timeout contract survives only in
+/// `run_foreground`, for callers that need a verdict now.
+#[tokio::test]
+async fn a_local_shell_timeout_moves_to_the_background() {
+    let dir = crate::fresh_test_dir("local-shell-bg");
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = SessionLog::open(dir.join("sess"), "s1").await.unwrap();
+    let ctx = ctx_with(&dir, log, None);
+
+    let out = crate::tool::run_local_shell(
+        "echo local-first; sleep 4; echo local-second",
+        dir.clone(),
+        2,
+        crate::tool::ShellBackend::Posix,
+        &ctx,
+    )
+    .await
+    .expect("the local shell must start");
+
+    let text = out.render();
+    assert!(
+        !text.contains("killed"),
+        "a `!` command that reaches its budget must not be killed: {text}"
+    );
+    assert!(
+        text.contains("moved to the background"),
+        "the frontend must be handed the job: {text}"
+    );
+    let (id, log_path) = match &out {
+        crate::tool::LocalShell::Detached { id, log_path, .. } => (id.clone(), log_path.clone()),
+        crate::tool::LocalShell::Done(run) => {
+            panic!(
+                "the timeout must detach, not finish (exit {})",
+                run.exit_code
+            )
+        }
+    };
+    assert!(
+        out.ok(),
+        "a run that is still going is not a failure: {text}"
+    );
+    assert_eq!(
+        out.record_code(),
+        -1,
+        "a detached run has no exit code yet; JobDone carries the real one"
+    );
+    assert!(
+        log_path.starts_with(&dir) && log_path.is_file(),
+        "the caller is pointed at the job's own log: {log_path:?}"
+    );
+
+    // it is a real job from here on: registered, visible, still logging
+    assert!(
+        jobs::snapshot(&ctx.jobs)
+            .iter()
+            .any(|e| e.id == id && e.status.is_running()),
+        "the detached local shell must sit in the registry: {:?}",
+        jobs::snapshot(&ctx.jobs)
+    );
+    assert!(
+        wait_until(|| read(&log_path).contains("local-second"), 15).await,
+        "the detached local shell stopped logging: {:?}",
+        read(&log_path)
+    );
+    let meta = read(&log_path.with_file_name("job.json"));
+    assert!(
+        meta.contains("\"foreground\":false"),
+        "a detached local shell must become visible to the jobs panel: {meta}"
+    );
+    assert!(
+        wait_until(|| log_path.with_file_name("exit.json").exists(), 20).await,
+        "the detached local shell never settled its exit.json"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

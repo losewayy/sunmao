@@ -412,19 +412,16 @@ pub(super) fn spawn(
                     let shell_cwd = cwd.clone();
                     let t0 = std::time::Instant::now();
                     let ctx = agent.context().clone();
-                    let (ok, output, code) = match sunmao_core::tool::run_foreground(
-                        &cmd,
-                        shell_cwd,
-                        120,
-                        ctx.shell,
-                        Some(ctx.cancel_signal()),
+                    // Same job-aware run as the `Bash` tool: hitting the
+                    // budget moves the command to the background instead of
+                    // killing it, and the rendered note hands the user the
+                    // job id; completion arrives as a `[job … done]` note.
+                    let (ok, output, code) = match sunmao_core::tool::run_local_shell(
+                        &cmd, shell_cwd, 120, ctx.shell, &ctx,
                     )
                     .await
                     {
-                        Ok(run) => {
-                            let ok = run.exit_code == 0;
-                            (ok, sunmao_core::tool::render_run(&run), run.exit_code)
-                        }
+                        Ok(run) => (run.ok(), run.render(), run.record_code()),
                         Err(msg) => (false, msg, -1),
                     };
                     agent.record_local_shell(&cmd, code, &output).await;

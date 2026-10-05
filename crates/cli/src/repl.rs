@@ -205,25 +205,21 @@ pub async fn run(
         }
         // `!cmd` — local shell, same engine as the TUI's bash mode. Output
         // prints here and folds into the session as SessionEvent::LocalShell.
+        // It is job-aware too: reaching the budget moves the command to the
+        // background instead of killing it.
         if let Some(cmd) = line.strip_prefix('!') {
             let cmd = cmd.trim();
             if cmd.is_empty() {
                 continue;
             }
             let ctx = agent.context().clone();
-            match sunmao_core::tool::run_foreground(
-                cmd,
-                cwd.to_path_buf(),
-                120,
-                ctx.shell,
-                Some(ctx.cancel_signal()),
-            )
-            .await
+            match sunmao_core::tool::run_local_shell(cmd, cwd.to_path_buf(), 120, ctx.shell, &ctx)
+                .await
             {
                 Ok(run) => {
-                    let out = sunmao_core::tool::render_run(&run);
+                    let out = run.render();
                     println!("{out}");
-                    agent.record_local_shell(cmd, run.exit_code, &out).await;
+                    agent.record_local_shell(cmd, run.record_code(), &out).await;
                 }
                 Err(msg) => println!("{msg}"),
             }

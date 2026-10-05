@@ -231,9 +231,18 @@ function renderProviders() {
     if (pvEdit && pvEdit.cklTop) newCkl.scrollTop = pvEdit.cklTop;
   }
   // capability inputs write straight into pvEdit.cands — the save path
-  // serializes them verbatim into catalog entries
+  // serializes them verbatim into catalog entries. The provider's own fields
+  // (name, base url, key) go into pvEdit too: a re-render — the one 拉取模型
+  // does before it awaits — must not throw away what was just typed.
   host.oninput = e => {
     if (!pvEdit) return;
+    const f = e.target.closest('[data-f]');
+    if (f) {
+      const k = f.dataset.f;
+      if (k === 'name') pvEdit.formName = f.value;
+      else if (k) pvEdit[k] = f.value;
+      return;
+    }
     const num = e.target.closest('.pv-num');
     if (!num) return;
     const c = pvEdit.cands.find(m => m.id === (num.dataset.cx || num.dataset.mo));
@@ -282,7 +291,7 @@ function provForm(n, p) {
     const lv = new Set(m.thinking || []);
     const tgl = !!m.reasoning && !lv.size;
     const chips = THINK_LADDER.map(l => `<button class="pv-chip${lv.has(l) ? ' on' : ''}" data-mf="lvl" data-mk="${l}" data-mid="${esc(m.id)}" data-tip="${t('思考档位 · {l}', { l })}">${l}</button>`).join('');
-    return `<div class="pv-ckr"><button class="pv-ck" data-mc="${esc(m.id)}">${ic(v.sel && v.sel.has(m.id) ? 'square-check' : 'square', 'i sm')}<span class="mono">${esc(m.id)}</span></button>`
+    return `<div class="pv-ckr${v.sel && v.sel.has(m.id) ? ' on' : ''}"><button class="pv-ck${v.sel && v.sel.has(m.id) ? ' on' : ''}" data-mc="${esc(m.id)}">${ic(v.sel && v.sel.has(m.id) ? 'square-check' : 'square', 'i sm')}<span class="mono">${esc(m.id)}</span></button>`
       + `<div class="pv-cf"><label class="pv-f">${t('上下文')}<input class="pv-num" data-cx="${esc(m.id)}" value="${m.context_length || ''}" placeholder="—" spellcheck="false" data-tip="${t('上下文窗口（tokens）')}"></label><label class="pv-f">${t('输出')}<input class="pv-num" data-mo="${esc(m.id)}" value="${m.max_output || ''}" placeholder="—" spellcheck="false" data-tip="${t('单次输出上限（tokens）')}"></label></div>`
       + `<div class="pv-cf"><span class="pv-fl">${t('思考')}</span><span class="pv-chips">${chips}<button class="pv-chip${tgl ? ' on' : ''}" data-mf="tgl" data-mid="${esc(m.id)}" data-tip="${t('模型只提供思考开关，没有档位')}">${t('仅开关')}</button></span></div>`
       + `<div class="pv-cf"><span class="pv-fl">${t('输入')}</span><span class="pv-chips"><button class="pv-chip on" data-tip="${t('文本输入 · 所有模型的基线')}" aria-disabled="true">${t('文')}</button>${mchip(m, 'image', t('图'))}${mchip(m, 'video', t('视'))}${mchip(m, 'audio', t('音'))}${mchip(m, 'file', t('档'))}<i class="pv-sep"></i>${mflag(m, 'supports_tools', t('具'), t('支持工具调用'))}${mflag(m, 'structured_outputs', t('构'), t('支持结构化输出'))}</span></div>`
@@ -295,7 +304,7 @@ function provForm(n, p) {
     ? `<div class="pv-ckl scroll">${cands.map(mrow).join('')}</div><div class="pv-ckl-drag" data-tip="${t('拖动调整列表高度')}"></div>`
     : `<div class="pv-empty">${v.fetching ? t('拉取中…') : t('未拉取 — 也可在下方直接填 model id')}</div>`;
   return `<div class="pv-form">
-    <label>${t('名称')}<input data-f="name" value="${esc(n)}" ${n ? 'disabled' : ''} placeholder="${t('如 default、deepseek')}"></label>
+    <label>${t('名称')}<input data-f="name" value="${esc(v.formName != null ? v.formName : n)}" placeholder="${t('如 default、deepseek')}"></label>
     <label>Base URL<input data-f="base_url" value="${val('base_url')}" placeholder="https://api.example.com/v1"></label>
     <label>${t('协议')}<button class="pv-sel" type="button" data-pv="dialect" data-v="${val('dialect', 'openai')}"><span>${esc(DIALECTS.find(d => d.v === val('dialect', 'openai'))?.t || 'Chat Completions')}</span>${ic('chev-d')}</button></label>
     <label>API Key<input data-f="api_key" type="password" value="${val('api_key')}" placeholder="${p && p.api_key_set ? t('已配置 — 留空保持不变') : t('sk-… 或留空（本地服务）')}"></label>
@@ -325,12 +334,16 @@ async function providerAction(kind, el) {
     return renderProviders();
   }
   if (kind === 'save') {
-    const name = pvEdit && pvEdit.name != null ? pvEdit.name : g('name');
+    // the name is editable now: a typed value that differs from the entry we
+    // opened is a rename, which the PUT body spells as remove-old + add-new
+    const typed = (pvEdit && pvEdit.formName != null ? pvEdit.formName : g('name')).trim();
+    const name = typed || (pvEdit && pvEdit.name) || '';
     const base = g('base_url');
     if (!name || !base) return toast(t('名称与 Base URL 必填'), 'alert', 'warn');
     const catalog = (pvEdit.cands || []).filter(m => pvEdit.sel.has(m.id));
     const dBtn = cardEl.querySelector('[data-pv="dialect"]');
     const edit = { name, base_url: base, dialect: (dBtn && dBtn.dataset.v) || 'openai', api_key: g('api_key') || null, keepKey: true, keepCatalog: false, setCatalog: catalog };
+    if (pvEdit && pvEdit.name && pvEdit.name !== name) edit.renameFrom = pvEdit.name;
     pvEdit = null;
     return saveProviders(edit, t('已保存 provider {n}', { n: name }));
   }
@@ -365,7 +378,9 @@ async function providerAction(kind, el) {
       const r = await api('/models/fetch', jpost(body));
       const cat = r.catalog || [];
       const have = new Set(pvEdit.cands.map(m => m.id));
-      for (const m of cat) if (!have.has(m.id)) { pvEdit.cands.push(m); pvEdit.sel.add(m.id); }
+      // the listing is a menu, not a decision: everything lands in the list
+      // unchecked, and the user ticks what this provider should actually serve
+      for (const m of cat) if (!have.has(m.id)) pvEdit.cands.push(m);
       pvEdit.fetched = true;
       if (!cat.length) toast(t('该 provider 返回了空列表'), 'alert', 'warn');
     } catch (e) { toast(t('拉取失败：{msg}', { msg: e.message }), 'alert', 'warn'); }

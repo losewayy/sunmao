@@ -168,6 +168,12 @@ impl Observer for AcpObserver {
                     self.next_id("msg"),
                 )));
             }
+            LiveEvent::JobDone { id, ok, .. } => {
+                self.send(v2::SessionUpdate::AgentMessageChunk(v2::ContentChunk::new(
+                    format!("[job {id} {}]\n", if *ok { "done" } else { "failed" }).into(),
+                    self.next_id("msg"),
+                )));
+            }
         }
     }
 }

@@ -84,6 +84,18 @@ pub enum SessionEvent {
         ok: bool,
         output: String,
     },
+    /// A background job — an explicit `background: true` spawn, or a
+    /// foreground command the timeout moved to the background — finished.
+    /// Same push-style delivery as `TaskDone` (the model is told, it never
+    /// polls): the fold turns this into a tagged user message naming the
+    /// durable log. `bytes` is output.log's size at exit.
+    JobDone {
+        id: String,
+        ok: bool,
+        exit_code: i32,
+        output_path: String,
+        bytes: u64,
+    },
     /// The model's task list after a `TodoWrite` — durable so /resume and
     /// compaction never silently lose the plan. Kept OUT of the message
     /// fold: the turn loop injects the current list as a synthetic user
@@ -388,6 +400,13 @@ fn reduce_event(out: &mut Vec<Message>, ev: &SessionEvent) {
             output,
         } => out.push(local_shell_message(command, *exit_code, output)),
         SessionEvent::TaskDone { id, ok, output } => out.push(task_done_message(id, *ok, output)),
+        SessionEvent::JobDone {
+            id,
+            ok,
+            exit_code,
+            output_path,
+            bytes,
+        } => out.push(job_done_message(id, *ok, *exit_code, output_path, *bytes)),
         _ => {}
     }
 }
@@ -489,6 +508,21 @@ fn task_done_message(id: &str, ok: bool, output: &str) -> Message {
     let status = if ok { "done" } else { "failed" };
     Message::user(format!(
         "<task-result id=\"{id}\" status=\"{status}\">\n{output}\n</task-result>"
+    ))
+}
+
+/// A finished background job folds in as a tagged user message — the
+/// notification IS the delivery. The log stays on disk and the message
+/// carries its path and size, so the model reads the full output with Read
+/// (or JobOutput for the tail) instead of having it inlined into every
+/// replayed turn.
+fn job_done_message(id: &str, ok: bool, exit_code: i32, output_path: &str, bytes: u64) -> Message {
+    let status = if ok { "done" } else { "failed" };
+    Message::user(format!(
+        "<job-result id=\"{id}\" status=\"{status}\" exit=\"{exit_code}\" \
+         bytes=\"{bytes}\" log=\"{output_path}\">\n\
+         background job finished — read the log above if you need its output.\n\
+         </job-result>"
     ))
 }
 

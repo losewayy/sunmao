@@ -17,6 +17,8 @@ impl ToolImpl for WebFetchTool {
         Tool::function(
             "WebFetch",
             "Fetch a URL and return readable text (tags stripped, ~24KB cap). \
+             Loopback and private-network addresses are refused unless \
+             SUNMAO_WEBFETCH_ALLOW_PRIVATE=1. \
              For docs, error lookups, changelog checks.",
             json!({
                 "type": "object",
@@ -48,5 +50,31 @@ impl ToolImpl for WebFetchTool {
             output: truncated,
             ok: true,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WebFetchTool;
+    use crate::tool::ToolImpl;
+
+    /// The private-network refusal is policy the model has to be able to read
+    /// off the declaration: a refusal that names no escape hatch reads as a
+    /// dead end, so the opt-in lives on the wire description too.
+    #[test]
+    fn decl_names_the_private_network_escape_hatch() {
+        let d = WebFetchTool.decl();
+        assert!(
+            d.function.description.contains("~24KB cap"),
+            "{}",
+            d.function.description
+        );
+        assert!(
+            d.function
+                .description
+                .contains("SUNMAO_WEBFETCH_ALLOW_PRIVATE=1"),
+            "the declaration must carry the private-network escape hatch: {}",
+            d.function.description
+        );
     }
 }

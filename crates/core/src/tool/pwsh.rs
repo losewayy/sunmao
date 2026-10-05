@@ -8,12 +8,17 @@
 //!    orphan pwsh, and a GUI-subsystem host must not pop a console window.
 //!  - stdout/stderr are drained on their own tasks — a pipe buffer fills
 //!    (~64KB) and the child deadlocks if nobody reads while we wait().
+//!
+//! Both streams fan out to the job log and a bounded in-memory copy, the
+//! same two-consumer shape the deno path uses; a pwsh job is stopped by
+//! killing its process tree.
 
 use anyhow::Context as _;
 use base64::Engine as _;
 
+use super::jobs;
 use super::shell::ShellRun;
-use crate::context::MutexRecover;
+use crate::tool::ToolResult;
 
 /// `pwsh -NoProfile -NonInteractive -EncodedCommand <utf16le-b64>`.
 /// EncodedCommand instead of `-Command` because the latter round-trips the
@@ -50,215 +55,254 @@ fn pwsh_command(command: &str) -> tokio::process::Command {
     c
 }
 
+/// `Bash` on the pwsh backend: register the run as a job, wait only as long
+/// as the budget allows, then either render the result or move it to the
+/// background.
+pub(crate) async fn bash(
+    command: &str,
+    timeout: Option<u64>,
+    background: bool,
+    ctx: &crate::context::Context,
+) -> anyhow::Result<ToolResult> {
+    let timeout_secs = super::timeout::effective_timeout(timeout);
+    if background {
+        return spawn_background(command, ctx).await;
+    }
+    let paths = jobs::JobPaths::create(ctx, jobs::next_job_id())?;
+    let notifier = jobs::JobNotifier::from_ctx(ctx).await;
+    let mut run = match spawn_run(command, &ctx.cwd, Some(&paths)) {
+        Ok(r) => r,
+        Err(e) => {
+            paths.discard(); // a dir with no run reads as "still running"
+            return Err(e);
+        }
+    };
+    run.register(&ctx.jobs, command, true);
+
+    let fg = jobs::wait_foreground(
+        &mut run,
+        timeout_secs,
+        super::timeout::AUTO_BACKGROUND_ON_TIMEOUT,
+        Some(ctx.cancel_signal()),
+    )
+    .await;
+
+    if matches!(fg, jobs::Foreground::Detached) {
+        let output = run.out.text();
+        let (id, log_path, pid) = (run.id.clone(), run.log_path.clone(), run.pid);
+        jobs::hand_off(
+            run,
+            notifier,
+            ctx.jobs.clone(),
+            super::timeout::BACKGROUND_TIMEOUT_SECS,
+        );
+        return Ok(ToolResult {
+            output: jobs::detached_result(&id, pid, &log_path, &output),
+            ok: true,
+        });
+    }
+
+    let label = fg.label(timeout_secs);
+    let end = fg.end().unwrap_or_else(jobs::RunEnd::lost);
+    let run_out = ShellRun {
+        exit_code: end.code,
+        stdout: run.out.text(),
+        stderr: run.err.text(),
+        preflight: String::new(),
+        ended: jobs::ended_note(end.ended, label),
+    };
+    jobs::conclude(&notifier, &ctx.jobs, &run.id, &run.dir, end.code, false).await;
+    // same rule as the deno path: an inline run retires itself, dir and all
+    jobs::retire(&ctx.jobs, &run.id, &run.dir);
+    let out = super::shell::render_run(&run_out);
+    Ok(ToolResult {
+        output: out,
+        ok: run_out.exit_code == 0,
+    })
+}
+
 /// Foreground pwsh run — same contract as the deno path: partial output is
-/// kept on timeout/cancel, `ended` names how it stopped.
+/// kept on timeout/cancel, `ended` names how it stopped. No job identity,
+/// so it keeps the plain kill-on-timeout behavior.
 pub async fn run_foreground(
     command: &str,
     cwd: std::path::PathBuf,
     timeout_secs: u64,
     cancel: Option<crate::context::CancelSignal>,
 ) -> Result<ShellRun, String> {
-    let mut child = pwsh_command(command)
-        .current_dir(&cwd)
-        .spawn()
-        .map_err(|e| format!("cannot spawn pwsh: {e}"))?;
-
-    let mut out_pipe = child.stdout.take().unwrap();
-    let mut err_pipe = child.stderr.take().unwrap();
-    // the buffers live outside the drain tasks: a detached grandchild
-    // keeps the pipe's write end open past exit, and `read_to_end` would
-    // hang forever — the timeout below keeps the partial bytes instead.
-    let out_buf = super::SharedBuf::default();
-    let err_buf = super::SharedBuf::default();
-    let out_task = {
-        let buf = out_buf.clone();
-        tokio::spawn(async move {
-            let mut chunk = [0u8; 8192];
-            loop {
-                match tokio::io::AsyncReadExt::read(&mut out_pipe, &mut chunk).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => buf.0.lock_or_recover().extend_from_slice(&chunk[..n]),
-                }
-            }
-        })
-    };
-    let err_task = {
-        let buf = err_buf.clone();
-        tokio::spawn(async move {
-            let mut chunk = [0u8; 8192];
-            loop {
-                match tokio::io::AsyncReadExt::read(&mut err_pipe, &mut chunk).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => buf.0.lock_or_recover().extend_from_slice(&chunk[..n]),
-                }
-            }
-        })
-    };
-
-    // the kill waiter is a `CancelSignal`, not a bare `Notified`: a cancel
-    // that landed before the waiter registered (a stored `Notify` permit
-    // would have covered it, `notify_waiters` does not) is lost otherwise,
-    // and the run would sit until its own timeout
-    let cancel_fut = async move {
-        match cancel {
-            Some(c) => c.wait().await,
-            None => std::future::pending::<()>().await,
-        }
-    };
-    tokio::pin!(cancel_fut);
-
-    enum End {
-        Natural(i32),
-        Timeout,
-        Cancelled,
-    }
-    let end = tokio::select! {
-        r = child.wait() => match r {
-            Ok(s) => End::Natural(s.code().unwrap_or(-1)),
-            Err(e) => return Err(format!("pwsh wait failed: {e}")),
-        },
-        () = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs)) => End::Timeout,
-        () = &mut cancel_fut => End::Cancelled,
-    };
-
-    let (code, ended) = match end {
-        End::Natural(c) => (c, None),
-        End::Timeout => {
-            // start_kill, then still wait — the pipes must drain and the
-            // process must reap; `kill_on_drop` alone can't give us output.
-            let _ = child.start_kill();
-            let c = child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
-            (c, Some(format!("timed out after {timeout_secs}s — killed")))
-        }
-        End::Cancelled => {
-            let _ = child.start_kill();
-            let c = child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
-            (c, Some("cancelled by user — killed".to_string()))
-        }
-    };
-
-    // pwsh writes pipes in [Console]::OutputEncoding (the OEM codepage
-    // unless the box opted into UTF-8) — console_text covers both.
-    // The join is bounded: a detached grandchild holding a pipe's write
-    // end would otherwise hang the run past pwsh's own exit.
-    let truncated = tokio::time::timeout(
-        super::PIPE_DRAIN_TIMEOUT,
-        futures_util::future::join(out_task, err_task),
-    )
-    .await
-    .is_err();
-    let mut ended = ended;
-    if truncated {
-        let tag = format!(
-            "output truncated — pipes still held {}s after exit",
-            super::PIPE_DRAIN_TIMEOUT.as_secs()
-        );
-        ended = Some(match ended {
-            Some(e) => format!("{e}; {tag}"),
-            None => tag,
-        });
-    }
-    let stdout = out_buf.text();
-    let stderr = err_buf.text();
-
+    let mut run = spawn_run(command, &cwd, None).map_err(|e| format!("{e:#}"))?;
+    let fg = jobs::wait_foreground(&mut run, timeout_secs, false, cancel).await;
+    let label = fg.label(timeout_secs);
+    let end = fg.end().unwrap_or_else(jobs::RunEnd::lost);
     Ok(ShellRun {
-        exit_code: code,
-        stdout,
-        stderr,
+        exit_code: end.code,
+        stdout: run.out.text(),
+        stderr: run.err.text(),
         preflight: String::new(),
-        ended,
+        ended: jobs::ended_note(end.ended, label),
     })
 }
 
-/// Background pwsh job — same `.sunmao/jobs/{id}/` shape as the deno path
-/// so `JobOutput` reads it identically: stdout+stderr merge into
-/// `output.log` (the deno path's try_clone semantics — stderr the model
-/// can't see is a tool that fails silently), exit lands in `exit.json`.
-/// The `Notify` handle is the cancel wire for the job — a stopped turn
-/// kills a background pwsh too (POSIX jobs are intentionally detached
-/// and unaffected).
-pub async fn spawn_background(
+/// Start a pwsh run as a job. The child is owned by its own wait task, so
+/// the caller can simply stop waiting; stdout and stderr drain straight to
+/// the job log and to the bounded in-memory copy.
+fn spawn_run(
+    command: &str,
+    cwd: &std::path::Path,
+    job: Option<&jobs::JobPaths>,
+) -> anyhow::Result<jobs::JobRun> {
+    let mut child = pwsh_command(command)
+        .current_dir(cwd)
+        .spawn()
+        .with_context(|| "cannot spawn pwsh")?;
+    let pid = child.id();
+    let log_path = job.map(|j| j.log());
+    let (id, dir) = match job {
+        Some(j) => (j.id.clone(), j.dir.clone()),
+        None => (String::new(), std::path::PathBuf::new()),
+    };
+
+    let out_mem = jobs::CappedBuf::default();
+    let err_mem = jobs::CappedBuf::default();
+    // stdout and stderr merge into one log — stderr the model can't see is
+    // a tool that fails silently, and `JobOutput` reads a single file.
+    let out_task = spawn_drain(
+        child.stdout.take().expect("piped stdout"),
+        log_path.clone(),
+        out_mem.clone(),
+    );
+    let err_task = spawn_drain(
+        child.stderr.take().expect("piped stderr"),
+        log_path.clone(),
+        err_mem.clone(),
+    );
+
+    let kill = jobs::KillSwitch::new();
+    let kill_watch = kill.clone();
+
+    let (end_tx, release) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        // no clock and no cancel wire of our own — a background job is meant
+        // to outlive the turn; whoever is waiting enforces its own budget
+        // through the kill switch (see timeout.rs). The watch races the
+        // child's own exit, so a late stop request can never hit a pid the
+        // OS has already recycled.
+        let wait = child.wait();
+        tokio::pin!(wait);
+        let code = match pid {
+            Some(p) => tokio::select! {
+                r = &mut wait => r.ok().and_then(|s| s.code()).unwrap_or(-1),
+                () = kill_watch.wait() => {
+                    jobs::kill_tree(p);
+                    wait.await.ok().and_then(|s| s.code()).unwrap_or(-1)
+                }
+            },
+            None => wait.await.ok().and_then(|s| s.code()).unwrap_or(-1),
+        };
+        // a detached grandchild holding a pipe's write end would otherwise
+        // hang this wait past pwsh's own exit — bound it and keep the bytes
+        let truncated = tokio::time::timeout(
+            super::PIPE_DRAIN_TIMEOUT,
+            futures_util::future::join(out_task, err_task),
+        )
+        .await
+        .is_err();
+        let ended = truncated.then(|| {
+            format!(
+                "output truncated — pipes still held {}s after exit",
+                super::PIPE_DRAIN_TIMEOUT.as_secs()
+            )
+        });
+        let _ = end_tx.send(jobs::RunEnd { code, ended });
+    });
+
+    Ok(jobs::JobRun {
+        id,
+        dir,
+        log_path: log_path.unwrap_or_default(),
+        out: out_mem,
+        err: err_mem,
+        pid,
+        started_at: jobs::now_ms(),
+        kill,
+        release: Some(release),
+    })
+}
+
+/// A `background: true` spawn — an explicit job, so no clock of its own.
+async fn spawn_background(
     command: &str,
     ctx: &crate::context::Context,
-) -> anyhow::Result<super::ToolResult> {
-    let id = super::shell::next_job_id();
-    let dir = super::shell::jobs_dir(ctx).join(&id);
-    let log_path = dir.join("output.log");
-    let exit_path = dir.join("exit.json");
-
-    // spawn BEFORE the dir and the "started" nudge — a missing pwsh used
-    // to leave an empty jobs/{id}/ dir that read as a running job.
-    let mut child = pwsh_command(command)
-        .current_dir(&ctx.cwd)
-        .spawn()
-        .with_context(|| "cannot spawn pwsh (background)")?;
-    std::fs::create_dir_all(&dir)?;
-
-    let sink = ctx.live_sink.get().cloned();
-    if let Some(s) = &sink {
+) -> anyhow::Result<ToolResult> {
+    let paths = jobs::JobPaths::create(ctx, jobs::next_job_id())?;
+    let notifier = jobs::JobNotifier::from_ctx(ctx).await;
+    let run = match spawn_run(command, &ctx.cwd, Some(&paths)) {
+        Ok(r) => r,
+        Err(e) => {
+            paths.discard();
+            return Err(e);
+        }
+    };
+    run.register(&ctx.jobs, command, false);
+    if let Some(s) = ctx.live_sink.get() {
         s.on_event(&crate::agent::LiveEvent::Hook {
             event: "jobs.changed".into(),
-            detail: format!("{id} started"),
+            detail: format!("{} started", paths.id),
         });
     }
+    let log_path = run.log_path.clone();
+    jobs::hand_off(run, notifier, ctx.jobs.clone(), None);
+    Ok(ToolResult {
+        output: format!("job {} started; log: {}", paths.id, log_path.display()),
+        ok: true,
+    })
+}
 
-    // background jobs stream their own output.log — a chatty long-runner
-    // would grow an in-memory Vec unboundedly (and JobOutput reads nothing
-    // until exit) if we buffered; drain both pipes straight to disk instead.
-    // Both pipes share the log: opened in append mode so concurrent writes
-    // concatenate rather than overwrite each other's offsets.
-    let mut out_pipe = child.stdout.take().unwrap();
-    let mut err_pipe = child.stderr.take().unwrap();
-    let log_path2 = log_path.clone();
+/// One pipe reader, two consumers: the job log (durable) and the bounded
+/// in-memory copy the foreground result renders from.
+fn spawn_drain<R>(
+    mut pipe: R,
+    log: Option<std::path::PathBuf>,
+    mem: jobs::CappedBuf,
+) -> tokio::task::JoinHandle<()>
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
     tokio::spawn(async move {
-        use tokio::io::AsyncWriteExt;
-        async fn open_log(path: &std::path::Path) -> Option<tokio::fs::File> {
-            tokio::fs::OpenOptions::new()
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // append handles, so concurrent writes concatenate rather than
+        // overwrite each other's offsets
+        let mut file = match &log {
+            Some(p) => tokio::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(path)
+                .open(p)
                 .await
-                .ok()
-        }
-        let err_log = log_path2.clone();
-        let write_err = async {
-            if let Some(mut f) = open_log(&err_log).await {
-                let _ = tokio::io::copy(&mut err_pipe, &mut f).await;
-                let _ = f.flush().await;
-            }
+                .ok(),
+            None => None,
         };
-        let write_out = async {
-            if let Some(mut f) = open_log(&log_path2).await {
-                let _ = tokio::io::copy(&mut out_pipe, &mut f).await;
-                let _ = f.flush().await;
+        let mut chunk = [0u8; 8192];
+        loop {
+            match pipe.read(&mut chunk).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if let Some(f) = &mut file {
+                        let _ = f.write_all(&chunk[..n]).await;
+                    }
+                    mem.push(&chunk[..n]);
+                }
             }
-        };
-        tokio::join!(write_out, write_err);
-    });
-
-    let job_id = id.clone();
-    let sink2 = sink.clone();
-    tokio::spawn(async move {
-        // no timeout, no cancel wire — a background job is meant to outlive
-        // the turn; kill it by deleting its process tree externally.
-        let code = child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
-        let _ = std::fs::write(&exit_path, format!("{{\"exit_code\":{code}}}"));
-        if let Some(s) = &sink2 {
-            s.on_event(&crate::agent::LiveEvent::Hook {
-                event: "jobs.changed".into(),
-                detail: format!("{job_id} exit {code}"),
-            });
         }
-    });
-
-    Ok(super::ToolResult {
-        output: format!("job {id} started; log: {}", log_path.display()),
-        ok: true,
+        if let Some(f) = &mut file {
+            let _ = f.flush().await;
+        }
     })
 }
 
 #[cfg(test)]
 mod tests {
+    use super::bash;
+
     struct StubLlm;
 
     #[async_trait::async_trait]
@@ -292,8 +336,10 @@ mod tests {
             crate::tool::builtin_registry(),
             dir.clone(),
         ));
-        super::spawn_background(
+        bash(
             "[Console]::Error.WriteLine('pwsh-err-marker'); 'pwsh-out-marker'",
+            None,
+            true,
             &ctx,
         )
         .await

@@ -7,6 +7,13 @@
 # (long-running agents are the feature — cancel them with the UI/Esc, not
 # a clock). Project override: `.sunmao/tool-timeouts.txt` rows replace
 # builtins by name; `0` or a huge number effectively disables a row.
+#
+# The job tools are all local filesystem/kill work — a scan of the job
+# table, a read of one output.log, one signal to a process tree. These rows
+# are ceilings against a wedged call, not budgets: 30s is already far past
+# anything they should ever take.
 WebFetch | 60
 mcp__ | 120
 HtmlArtifact | 30
+JobList | 30
+JobStop | 30

@@ -201,6 +201,12 @@ pub struct Context {
     /// their own (a child's roster is its own spawn tree's, not ours).
     /// `Arc` because the detached spawn outlives its `&Context` borrow.
     pub live_tasks: std::sync::Arc<std::sync::Mutex<Vec<TaskEntry>>>,
+    /// Live background-job registry — foreground `Bash` calls register here
+    /// too, so "what is running right now" has one answer. The durable half
+    /// of a job stays `.sunmao/jobs/{id}/`; this table adds the fields the
+    /// disk can't answer mid-run (pid, command, foreground, stop wire).
+    /// Per-context, like `live_tasks`: a sub-agent's jobs are its own.
+    pub jobs: crate::tool::JobTable,
     /// The model's task list (`TodoWrite`) — seeded from the log's latest
     /// `Todos` event at build and on `/resume`, echoed into every request
     /// so compaction never erases the plan. The LOG is source of truth;
@@ -465,6 +471,7 @@ impl Context {
             hook_tail: std::sync::Mutex::new(Vec::new()),
             promoted_tools: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            jobs: crate::tool::jobs::new_table(),
             todos: std::sync::Mutex::new(todos),
             ptc_store: std::sync::Mutex::new(ptc_store),
             goal: std::sync::Mutex::new(goal),

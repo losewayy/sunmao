@@ -80,8 +80,9 @@ pub fn readonly_verbs(extra: &[String]) -> std::collections::HashSet<String> {
 }
 
 /// Would running this tool call mutate anything outside the transcript?
-/// Read-only tools (Read/Grep/Glob/WebFetch/JobOutput/SearchTools) pass; everything
-/// write-shaped — files, artifacts, the task list, sub-agents — mutates.
+/// Read-only tools (Read/Grep/Glob/WebFetch/JobOutput/JobList/SearchTools)
+/// pass; everything write-shaped — files, artifacts, the task list,
+/// sub-agents, a job's process tree (`JobStop`) — mutates.
 /// `Bash` walks the parsed command list (or the pwsh segment scan under
 /// `ShellBackend::Pwsh`). Unknown tools (MCP, ext) are mutations:
 /// read-only mode must not guess at a surface it can't see.
@@ -92,7 +93,7 @@ pub fn call_mutates(
     shell: crate::tool::ShellBackend,
 ) -> bool {
     match tool {
-        "Read" | "Grep" | "Glob" | "WebFetch" | "JobOutput" | "SearchTools" => false,
+        "Read" | "Grep" | "Glob" | "WebFetch" | "JobOutput" | "JobList" | "SearchTools" => false,
         // fusion delegation is the Lead's whole point — exempting it lets
         // a read_only Lead still dispatch work to the Sidekick (the
         // mutation itself happens in the child's context, under ITS gate)
@@ -464,6 +465,11 @@ mod tests {
         assert!(call_mutates("HtmlArtifact", &no_args, &v, posix));
         assert!(call_mutates("mcp__x__y", &no_args, &v, posix));
         assert!(!call_mutates("SearchTools", &no_args, &v, posix));
+        // job tools: listing is a read, stopping a job kills a process tree
+        // — a mutation the dispatch gate must be able to refuse or prompt on
+        assert!(!call_mutates("JobList", &no_args, &v, posix));
+        assert!(!call_mutates("JobOutput", &no_args, &v, posix));
+        assert!(call_mutates("JobStop", &no_args, &v, posix));
         assert!(!call_mutates(
             "Bash",
             &serde_json::json!({"command":"ls"}),

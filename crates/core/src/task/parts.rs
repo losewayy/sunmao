@@ -254,6 +254,10 @@ pub(crate) async fn build_sub_ctx(
         // a tagged user message. Cloning the Arc keeps the address stable
         // across the parent's `/resume` (the QUEUE survives a log swap).
         parent_steer: Some(ctx.steer.clone()),
+        // the child's job registry is its own, same rule as live_tasks — a
+        // sub-agent's background jobs are listed and stopped from its own
+        // surface, and their completion lands in its own log.
+        jobs: crate::tool::jobs::new_table(),
         // own fence: children must never queue behind the parent's turn
         turn_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
     };

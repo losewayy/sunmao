@@ -397,6 +397,16 @@ impl App {
                         if *ok { "done" } else { "failed" }
                     ));
                 }
+                E::JobDone {
+                    id, ok, exit_code, ..
+                } => {
+                    // same posture as TaskDone: the model-facing <job-result>
+                    // fold is the delivery, this is the audit row.
+                    self.push_audit(&format!(
+                        "job {id} — {} (exit {exit_code})",
+                        if *ok { "done" } else { "failed" }
+                    ));
+                }
                 E::Checkpoint { turn, files } => {
                     // audit-visible like hook events: which files this turn
                     // preserved (rewind reads the manifest, not the fold)

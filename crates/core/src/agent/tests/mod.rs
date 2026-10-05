@@ -136,6 +136,7 @@ impl Observer for RecObserver {
             LiveEvent::Todos { .. } => "Todos".into(),
             LiveEvent::Goal { .. } => "Goal".into(),
             LiveEvent::TaskDone { .. } => "TaskDone".into(),
+            LiveEvent::JobDone { .. } => "JobDone".into(),
             LiveEvent::UserMessage { .. } => "UserMessage".into(),
             LiveEvent::TurnBoundary { .. } => "TurnBoundary".into(),
         };

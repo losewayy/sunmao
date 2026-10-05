@@ -168,12 +168,35 @@ fn check_god_file(file: &Path, root: &Path, violations: &mut Vec<String>) {
         Err(_) => return,
     };
     let lines = text.lines().count();
-    if lines > GOD_FILE_BUDGET {
-        violations.push(format!(
-            "god file: {} has {lines} lines (budget {GOD_FILE_BUDGET}) — split by responsibility",
-            rel(file, root)
-        ));
+    if lines <= GOD_FILE_BUDGET {
+        return;
     }
+    // The budget is a prompt to split, not a law of nature: a file that is one
+    // cohesive thing can say so at the top and be allowed to stay large. The
+    // reason is always printed, so the exceptions stay visible in every run.
+    if let Some(reason) = allowed_god_file(&text) {
+        println!(
+            "god file allowed: {} has {lines} lines (budget {GOD_FILE_BUDGET}): {reason}",
+            rel(file, root)
+        );
+        return;
+    }
+    violations.push(format!(
+        "god file: {} has {lines} lines (budget {GOD_FILE_BUDGET}) — split by responsibility, or put `arch: allow-god-file <reason>` near the top",
+        rel(file, root)
+    ));
+}
+
+/// An over-budget file may say why it is one: a line near the top of the form
+/// `arch: allow-god-file <reason>`, with a reason long enough to mean
+/// something. Nothing else about the file is inspected.
+fn allowed_god_file(text: &str) -> Option<String> {
+    const MARK: &str = "arch: allow-god-file";
+    text.lines()
+        .take(12)
+        .find_map(|l| l.split_once(MARK).map(|(_, r)| r.trim().trim_end_matches("*/").trim()))
+        .filter(|r| r.chars().count() >= 12)
+        .map(|r| r.to_string())
 }
 
 /// Rule 4 — layers run one way: cli → core → llm. A lower crate importing a
@@ -598,4 +621,33 @@ fn rel(p: &Path, root: &Path) -> String {
         .display()
         .to_string()
         .replace('\\', "/")
+}
+
+#[cfg(test)]
+mod god_file_tests {
+    use super::allowed_god_file;
+
+    #[test]
+    fn an_over_budget_file_may_say_why() {
+        let text = "//! header
+// arch: allow-god-file one cohesive scanner, split would hurt
+fn a() {}
+";
+        assert_eq!(
+            allowed_god_file(text).as_deref(),
+            Some("one cohesive scanner, split would hurt")
+        );
+    }
+
+    #[test]
+    fn a_marker_needs_a_real_reason_and_a_place_near_the_top() {
+        assert_eq!(allowed_god_file("// arch: allow-god-file
+"), None, "no reason");
+        assert_eq!(allowed_god_file("// arch: allow-god-file too short
+"), None, "reason too short");
+        let far = "// filler
+".repeat(20) + "// arch: allow-god-file a perfectly good reason
+";
+        assert_eq!(allowed_god_file(&far), None, "the marker has to be near the top");
+    }
 }

@@ -412,6 +412,7 @@ async fn neither_the_token_nor_the_ws_endpoint_echoes_its_url() {
     drop(listener); // nothing listens there now
 
     let dir = crate::im::test_dir("feishu-endpoints");
+    std::fs::create_dir_all(&dir).unwrap();
     let secret = dir.join("secret.txt");
     std::fs::write(&secret, "shh").unwrap();
     let mut adapter = FeishuAdapter::new(&FeishuSpec {

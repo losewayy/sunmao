@@ -1,4 +1,4 @@
-/* composer — the prompt bar: status strip, queue chips (steer + queued
+/* composer — the prompt bar: status strip, queue rows (steer + queued
    prompts), attachment chips, input row and its mode/model/send buttons. */
 /* ---------- composer ---------- */
 .composer{position:absolute;left:50%;bottom:var(--s-16);transform:translateX(-50%);width:min(var(--w-read),calc(100% - var(--s-48)));border-radius:var(--r-2xl);--ga:var(--glass-raised);border-color:var(--c-stroke-2);box-shadow:var(--sh-inset-hi),var(--sh-2);z-index:var(--z-composer);overflow:hidden}
@@ -41,20 +41,28 @@
 .cb.send.stop:hover{background:var(--c-err);color:var(--c-on-accent);filter:brightness(1.1)}
 .cb.send.off{background:var(--c-fill-3);color:var(--c-text-3)}
 .cb.icon{width:var(--h-xl);justify-content:center}
-.cmp-queue{display:flex;flex-wrap:wrap;gap:var(--s-6);padding:var(--s-6) var(--s-8) 0}
+.cmp-queue{display:flex;flex-direction:column;gap:var(--s-4);padding:var(--s-6) var(--s-8) 0}
 .cmp-queue[hidden]{display:none}
-.chip{display:inline-flex;align-items:center;gap:var(--s-4);animation:k-rise var(--dur-fast) var(--ease-out);padding:var(--s-2) var(--s-4) var(--s-2) var(--s-8);border-radius:var(--r-full);background:var(--c-fill-2);color:var(--c-text-2);font-size:var(--fs-xs);box-shadow:var(--ring-1)}
 .chip-x{display:inline-flex;align-items:center;justify-content:center;width:var(--s-16);height:var(--s-16);border-radius:var(--r-full);color:var(--c-text-3);font-size:var(--fs-xs);line-height:var(--lh-none)}
 .chip-x:hover{background:var(--c-fill-3);color:var(--c-err)}
-/* queue chips — steer (⚡, boundary injection) vs queued prompts (FIFO,
-   reorderable/editable). Same pill; the accent + controls differ. */
-.chip.q-steer{color:var(--c-accent);background:var(--c-accent-soft)}
-.chip.q-in{color:var(--c-text)}
-.chip-btn{display:inline-flex;align-items:center;justify-content:center;width:var(--s-16);height:var(--s-16);border-radius:var(--r-full);color:var(--c-text-3);line-height:var(--lh-none)}
-.chip-btn:hover{background:var(--c-fill-3);color:var(--c-text)}
-.chip-t{color:inherit;background:none;border:0;padding:0;font:inherit;cursor:text;text-align:left;max-width:var(--w-chip-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chip-t:hover{color:var(--c-accent)}
-.cmp-queue input{font:inherit;font-size:var(--fs-xs);color:var(--c-text);background:var(--c-fill-1);border:var(--bw-hairline) solid var(--c-accent);border-radius:var(--r-sm);padding:0 var(--s-4);min-width:var(--w-field-sm);outline:none}
+/* queue rows — one waiting message per line. The left slot is the grip that
+   reorders the FIFO rows, or the ⚡ marker on the steer rows pinned above
+   them (the kernel hands steer no reorder op). No per-row entry animation:
+   moving a row mid-drag would replay it on every step. */
+.q-row{display:flex;align-items:center;gap:var(--s-6);min-width:0;padding:var(--s-2) var(--s-4) var(--s-2) var(--s-2);border-radius:var(--r-md);background:var(--c-fill-2);box-shadow:var(--ring-1);color:var(--c-text-2);font-size:var(--fs-xs)}
+.q-row:hover{color:var(--c-text)}
+.q-row.drag{background:var(--c-fill-3);box-shadow:var(--ring-2),var(--sh-0)}
+.q-row.q-steer{color:var(--c-accent);background:var(--c-accent-soft)}
+.q-grip{display:inline-flex;align-items:center;justify-content:center;flex:none;width:var(--s-16);height:var(--s-16);border-radius:var(--r-sm);color:var(--c-text-3);cursor:grab;touch-action:none}
+.q-grip:hover{background:var(--c-fill-3);color:var(--c-text)}
+.q-grip.pin{color:var(--c-accent);cursor:default}
+.cmp-queue.dragging .q-grip{cursor:grabbing}
+.q-state{flex:none;color:var(--c-text-3)}
+.q-row.q-steer .q-state{color:var(--c-accent)}
+.q-text{flex:1;min-width:0;background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+button.q-text{cursor:text}
+button.q-text:hover{color:var(--c-accent)}
+.cmp-queue input{flex:1;font:inherit;font-size:var(--fs-xs);color:var(--c-text);background:var(--c-fill-1);border:var(--bw-hairline) solid var(--c-accent);border-radius:var(--r-sm);padding:0 var(--s-4);min-width:var(--w-field-sm);outline:none}
 .cmp-atts{display:flex;flex-wrap:wrap;gap:var(--s-6);padding:var(--s-6) var(--s-8) 0}
 .cmp-atts[hidden]{display:none}
 .att-chip{display:inline-flex;align-items:center;gap:var(--s-6);padding:var(--s-2) var(--s-4) var(--s-2) var(--s-2);border-radius:var(--r-md);background:var(--c-fill-2);box-shadow:var(--ring-1);cursor:zoom-in}

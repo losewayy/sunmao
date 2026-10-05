@@ -273,7 +273,7 @@ function brAnnToggle(pane) {
   if (st.ann) { brAnnStop(id); return; }
   const btn = brAnnBtn(id);
   if (btn) btn.classList.add('on');
-  brSendId(id, { op: 'annotate', id });
+  brSendId(id, { op: 'annotate', id, lang: uiLang });
   // a navigation throws the injected picker away, so the poll must not
   // outlive it: `brGo` disarms, and this cap covers a guest that navigated
   // on its own (a link in the page)

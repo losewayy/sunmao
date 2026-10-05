@@ -251,7 +251,7 @@ const I18N_EN = {
   "配对": "Pairing",
   "配对策略下对陌生人的回应": "How pairing mode answers a stranger",
   "配置白名单": "Config allowlist",
-  "配置里不写 token 明文，只写来源": "The config never carries the token itself, only where to read it",
+  "配置里不写密钥明文，只写来源": "The config never carries the secret itself, only where to read it",
   "配置文件里还没有声明渠道；打开下面某个平台的开关就会写入。": "The config declares no channel yet; turning on a platform below writes one.",
   "配置已保存；重启 IM 服务后生效": "Config saved; takes effect after restarting the IM service",
   "批注": "Annotate",

@@ -31,22 +31,31 @@ const CHANNEL_REGIONS = [
 
 /* The five platforms, in the order the page renders them. Each field carries
    what the form needs: `req` is what the adapter cannot run without (the
-   verdict reads these, so "has a credential" is per-platform rather than
-   `token_env` alone), `pw` is secret, `src` is the telegram shape where the
-   config names where the token lives instead of carrying it, `pick` renders
-   a menu and `ph` is the placeholder that shows the schema default. */
+   verdict reads these, so "has a credential" is per-platform rather than one
+   key), `src` is the [env, file] pair the secret's source may live in (the box shows the source, never the secret)
+   under — the config names where to read it instead of carrying it, with
+   `env`/`file` the example each source shows — `pick` renders a menu and `ph`
+   is the placeholder that shows the schema default. */
 const CHANNEL_PLATFORMS = [
   {
     kind: 'wechat', t: '微信', d: '个人号 iLink 协议，扫码绑定，只能被动回复',
     impl: false, ownerId: 'wxid',
-    creds: [{ k: 'bot_token', t: 'Bot Token', d: '扫码登录后由服务自动写入，不要手填', pw: true, req: true }],
+    creds: [{
+      k: 'cred', t: 'Bot Token', d: '扫码登录后由服务自动写入，不要手填',
+      req: true, src: ['bot_token_env', 'bot_token_file'],
+      env: 'SUNMAO_WECHAT_BOT_TOKEN', file: 'D:/secrets/wechat.txt',
+    }],
   },
   {
     kind: 'qq', t: 'QQ', d: 'QQ 机器人开放平台，WebSocket 接入',
     impl: false, ownerId: 'openid',
     creds: [
       { k: 'app_id', t: 'App ID', d: '开放平台应用的 App ID', req: true },
-      { k: 'app_secret', t: 'App Secret', d: '开放平台应用的 App Secret', pw: true, req: true },
+      {
+        k: 'cred', t: 'App Secret', d: '开放平台应用的 App Secret',
+        req: true, src: ['app_secret_env', 'app_secret_file'],
+        env: 'SUNMAO_QQ_APP_SECRET', file: 'D:/secrets/qq.txt',
+      },
     ],
   },
   {
@@ -54,7 +63,11 @@ const CHANNEL_PLATFORMS = [
     impl: false, ownerId: 'open_id',
     creds: [
       { k: 'app_id', t: 'App ID', d: '开放平台应用的 App ID', req: true },
-      { k: 'app_secret', t: 'App Secret', d: '开放平台应用的 App Secret', pw: true, req: true },
+      {
+        k: 'cred', t: 'App Secret', d: '开放平台应用的 App Secret',
+        req: true, src: ['app_secret_env', 'app_secret_file'],
+        env: 'SUNMAO_FEISHU_APP_SECRET', file: 'D:/secrets/feishu.txt',
+      },
       { k: 'region', t: 'Region', pick: true },
     ],
   },
@@ -64,7 +77,11 @@ const CHANNEL_PLATFORMS = [
     creds: [
       { k: 'corp_id', t: 'Corp ID', req: true },
       { k: 'client_id', t: 'Client ID', d: '应用的 AppKey（Client ID）', req: true },
-      { k: 'client_secret', t: 'Client Secret', d: '应用的 AppSecret（Client Secret）', pw: true, req: true },
+      {
+        k: 'cred', t: 'Client Secret', d: '应用的 AppSecret（Client Secret）',
+        req: true, src: ['client_secret_env', 'client_secret_file'],
+        env: 'SUNMAO_DINGTALK_CLIENT_SECRET', file: 'D:/secrets/dingtalk.txt',
+      },
       { k: 'robot_code', t: 'Robot Code', req: true },
       { k: 'api_base_url', t: 'API Base URL', ph: 'https://api.dingtalk.com/v1.0' },
     ],
@@ -73,7 +90,10 @@ const CHANNEL_PLATFORMS = [
     kind: 'telegram', t: 'Telegram', d: 'Bot Token，长轮询',
     impl: true, ownerId: 'chat_id',
     creds: [
-      { k: 'cred', t: '凭据', d: '配置里不写 token 明文，只写来源', src: true, req: true },
+      {
+        k: 'cred', t: '凭据', req: true, src: ['token_env', 'token_file'],
+        env: 'SUNMAO_TG_TOKEN', file: 'D:/secrets/tg.txt',
+      },
       { k: 'poll_timeout_secs', t: '轮询超时', d: '长轮询秒数，默认 30', ph: String(CHANNEL_DEFAULT_POLL_SECS) },
     ],
   },
@@ -136,21 +156,29 @@ function chEntry(kind, create) {
   return c;
 }
 
-/* one source at a time: the schema has no plaintext token field, and neither
-   key present means the env var — the resolver's first choice */
-const chCredKey = c => (c && c.token_file != null && c.token_env == null ? 'token_file' : 'token_env');
-function chWriteCred(c, val) {
-  const key = chCredKey(c);
+/* one source at a time: a secret is never written inline, the config names
+   the key it lives under instead. `f.src` is the [env, file] pair; with
+   neither key present the env var wins, the resolver's first choice. */
+const chCredKey = (c, f) => {
+  const [env, file] = f.src;
+  return c && c[file] != null && c[env] == null ? file : env;
+};
+function chWriteCred(c, f, val) {
+  const key = chCredKey(c, f);
   if (val) c[key] = val; else delete c[key];
 }
+const chField = (kind, k) => {
+  const p = chPlatform(kind);
+  return (p && p.creds.find(f => f.k === k)) || null;
+};
 
-/* "has a credential" is per-platform: telegram names where the token lives,
-   the other four carry their secret inline */
+/* "has a credential" is per-platform: every required field has to carry a
+   value, and a split secret counts when either source does */
 function chArmed(c) {
   const p = chPlatform(c && c.kind);
   if (!p) return false;
   return p.creds.filter(f => f.req).every(f => f.src
-    ? !!(c.token_env || c.token_file)
+    ? f.src.some(k => !!(c[k] != null && String(c[k]).trim()))
     : !!(c[f.k] != null && String(c[f.k]).trim()));
 }
 const chImpl = c => { const p = chPlatform(c && c.kind); return !!(p && p.impl); };
@@ -193,19 +221,22 @@ function chRow(p, c, f) {
   const parts = [];
   if (f.d) parts.push(esc(t(f.d)));
   if (f.req) parts.push(esc(t('必填')));
+  // a split secret is never in the file: the row picks where to read it
+  if (f.src) parts.push(esc(t('配置里不写密钥明文，只写来源')));
   const desc = parts.join(' · ');
   if (f.pick) {
     const hit = CHANNEL_REGIONS.find(x => x.v === (v || CHANNEL_REGION_DEFAULT)) || CHANNEL_REGIONS[0];
     return row(t(f.t), desc, `<button class="pill plain" data-chpick="${p.kind}.${f.k}"><span>${esc(t(hit.t))}</span>${ic('chev-d')}</button>`);
   }
   if (f.src) {
-    const key = chCredKey(c);
-    const cred = key === 'token_file'
-      ? { v: (c && c.token_file) || '', ph: 'D:/secrets/tg.txt' }
-      : { v: (c && c.token_env) || '', ph: 'SUNMAO_TG_TOKEN' };
-    return row(t(f.t), desc, `<div class="ch-acts"><button class="pill plain" data-chpick="${p.kind}.${f.k}"><span>${t(key === 'token_file' ? '文件' : '环境变量')}</span>${ic('chev-d')}</button>${chIn(p.kind, f.k, cred.v, cred.ph)}</div>`);
+    const [env, file] = f.src;
+    const key = chCredKey(c, f);
+    const cred = key === file
+      ? { v: (c && c[file]) || '', ph: f.file }
+      : { v: (c && c[env]) || '', ph: f.env };
+    return row(t(f.t), desc, `<div class="ch-acts"><button class="pill plain" data-chpick="${p.kind}.${f.k}"><span>${t(key === file ? '文件' : '环境变量')}</span>${ic('chev-d')}</button>${chIn(p.kind, f.k, cred.v, cred.ph)}</div>`);
   }
-  return row(t(f.t), desc, chIn(p.kind, f.k, v, f.ph, f.pw ? 'password' : ''));
+  return row(t(f.t), desc, chIn(p.kind, f.k, v, f.ph));
 }
 
 /* one card per platform: the platform row carries the switch, then the
@@ -357,13 +388,16 @@ document.addEventListener('click', async e => {
         x => { c.region = x; chTouch(); }, { place: 'top', align: 'end' });
     }
     if (f === 'cred') {
-      const cur = chCredKey(c);
+      const field = chField(c.kind, 'cred');
+      if (!field) return;
+      const [env, file] = field.src;
+      const cur = chCredKey(c, field);
       return menuPop(pick, [
-        { v: 'token_env', t: t('环境变量'), d: 'SUNMAO_TG_TOKEN', on: cur === 'token_env' },
-        { v: 'token_file', t: t('文件'), d: 'D:/secrets/tg.txt', on: cur === 'token_file' },
+        { v: env, t: t('环境变量'), d: field.env, on: cur === env },
+        { v: file, t: t('文件'), d: field.file, on: cur === file },
       ], x => {
-        // one source at a time: the schema has no plaintext token field
-        if (x === 'token_file') { delete c.token_env; c.token_file = ''; } else { delete c.token_file; c.token_env = ''; }
+        // one source at a time: the schema has no plaintext secret field
+        if (x === file) { delete c[env]; c[file] = ''; } else { delete c[file]; c[env] = ''; }
         chTouch();
       }, { place: 'top', align: 'end' });
     }
@@ -395,8 +429,10 @@ document.addEventListener('input', e => {
     const c = chEntry(key.slice(0, dot), true);
     const k = key.slice(dot + 1);
     if (!c || !k) return;
-    if (k === 'cred') chWriteCred(c, val);
-    else if (k === 'poll_timeout_secs') {
+    if (k === 'cred') {
+      const field = chField(c.kind, 'cred');
+      if (field) chWriteCred(c, field, val);
+    } else if (k === 'poll_timeout_secs') {
       const n = parseInt(val.replace(/[^\d]/g, ''), 10);
       if (Number.isFinite(n) && n > 0) c[k] = n; else delete c[k];
     } else if (val) c[k] = val;

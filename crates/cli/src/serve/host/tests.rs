@@ -176,6 +176,7 @@ fn shared_with_models(
                             api_key: None,
                             dialect: "openai".into(),
                             catalog: Vec::new(),
+                            extra: Default::default(),
                         },
                         "default",
                     );

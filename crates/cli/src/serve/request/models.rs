@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use super::super::host::{Host, Shared};
+use super::super::host::{Host, Shared, effort_frame};
 use super::HostResponse;
 
 // ── provider/model surface (GUI settings page + composer picker) ──
@@ -148,6 +148,11 @@ pub(super) async fn put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> H
     for id in s.live_ids() {
         if let Some(h) = s.host(&id) {
             h.agent.reload_models();
+            // the level vocabulary (and the default it implies) comes from
+            // the catalog this write just replaced: re-announce it now, or
+            // the composer keeps yesterday's ladder until a model swap or a
+            // restart. Broadcast, not `emit` — every open page needs it.
+            let _ = s.live.send(effort_frame(&h).await);
         }
     }
     s.emit(serde_json::json!({"type": "models_changed"}));

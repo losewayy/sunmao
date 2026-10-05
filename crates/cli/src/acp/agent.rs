@@ -108,9 +108,10 @@ pub(super) async fn config_options(
     // bind before the await — a read-guard temporary inside the vec! would
     // hold a !Send lock across it
     let mode = mode_config(*ctx.approval_mode.read_or_recover());
-    let effort = effort_config(
-        agent_loop.reasoning_effort().as_deref(),
-        &agent_loop.effort_levels().await,
-    );
+    // the ladder settles the session's default level; the select shows the
+    // level in force, so resolve before reading it
+    let levels = agent_loop.effort_levels().await;
+    agent_loop.resolve_effort_default().await;
+    let effort = effort_config(agent_loop.reasoning_effort().as_deref(), &levels);
     vec![mode, effort]
 }

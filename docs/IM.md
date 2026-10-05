@@ -32,7 +32,7 @@ crates/cli/src/im/ —— gateway
 
 ## 渠道一览
 
-五个适配器都只收**单聊**（群聊一律丢弃，见「非目标」），都已经接进`channels::build()` 这一处工厂——加渠道 = 一个 `ChannelSpec` 变体 +它的 `scoped()` 分支 + 工厂一个真臂，别处不动。
+五个适配器都只收**单聊**（群聊一律丢弃，见「非目标」），都已经接进 `channels::build()` 这一处工厂——加渠道 = 一个 `ChannelSpec` 变体 + 它的 `scoped()` 分支 + 工厂一个真臂，别处不动。
 
 | 渠道 | 入站 | 出站 | 分片 | 草稿编辑 | 群聊 |
 |---|---|---|---|---|---|
@@ -52,7 +52,7 @@ crates/cli/src/im/ —— gateway
 - **`/stop` 只停主 agent**：不级联子代理（`cancel_main()`）。停单个子代理在 GUI 的子代理面板操作，或让主代理去停。
 - **cwd 固定**：`~/.sunmao/im/workspace/`。
 - **审批 = full_access**：IM 渠道一律 full_access——手机端没有按钮审批的位置。安全靠 pairing/allowlist 准入 + `deny` 权限规则兜底。
-- **投递 = at-least-once**：SQLite 账本；`attempting` 态重启重投带"♻️ 可能重复"前缀（诚实语义）。
+- **投递 = at-least-once**：SQLite 账本；`attempting` 态重启重投带 "♻️ 可能重复"前缀（诚实语义）。
 
 ## 配置：`~/.sunmao/channels.json`
 
@@ -106,16 +106,16 @@ crates/cli/src/im/ —— gateway
 
 ## 各渠道要点
 
-- **telegram**：`token_env`/`token_file` 换 Bot API token；`poll_timeout_secs` 是 `getUpdates` 的 hold 时间（默认 30）。
-- **feishu**：`region` 决定 API 域名（`feishu_cn` = open.feishu.cn，`lark_global` = open.larksuite.com），两边的应用不通用。
+- **telegram**：`token_env`/`token_file` 换 Bot API token； `poll_timeout_secs` 是 `getUpdates` 的 hold 时间（默认 30）。
+- **feishu**：`region` 决定 API 域名（`feishu_cn` = open.feishu.cn， `lark_global` = open.larksuite.com），两边的应用不通用。
 - **qq**：`app_id` + `app_secret` 换 `access_token`；回复挂在用户那条消息的被动窗口（5 分钟内），窗口外的回复不带 `msg_id` 发出。
-- **dingtalk**：企业内部机器人走 **Stream 模式**——`POST /gateway/connections/open` 拿到一次性 `endpoint` + `ticket` 后拨反向WebSocket，平台把回调推下来；**每条回调都要回 ACK**，不回会被重投。业务接口用 `x-acs-dingtalk-access-token`（`POST /oauth2/{corpId}/token`换取，提前 60 秒过期），单聊发送走 `/robot/oToMessages/batchSend`。断线固定 5 秒重连。
-- **wechat**：`bot_token` 换 iLink 机器人身份。增量靠 `get_updates_buf`游标（落盘，重启续传）；**回复有窗口**——必须持有该用户最近的`context_token`（入站消息带回，缓存 24 小时），没有就直接报错不发送。`ret/errcode == -14` 表示 session 过期：停止轮询并报错，重新签发token 才行。**扫码登录本版未提供**，`bot_token` 只能按上面的凭据约定手工提供。
+- **dingtalk**：企业内部机器人走 **Stream 模式**——`POST /gateway/connections/open` 拿到一次性 `endpoint` + `ticket` 后拨反向 WebSocket，平台把回调推下来；**每条回调都要回 ACK**，不回会被重投。业务接口用 `x-acs-dingtalk-access-token`（`POST /oauth2/{corpId}/token` 换取，提前 60 秒过期），单聊发送走 `/robot/oToMessages/batchSend`。断线固定 5 秒重连。
+- **wechat**：`bot_token` 换 iLink 机器人身份。增量靠 `get_updates_buf` 游标（落盘，重启续传）；**回复有窗口**——必须持有该用户最近的 `context_token`（入站消息带回，缓存 24 小时），没有就直接报错不发送。 `ret/errcode == -14` 表示 session 过期：停止轮询并报错，重新签发 token 才行。**扫码登录本版未提供**，`bot_token` 只能按上面的凭据约定手工提供。
 
 ## 准入流程（dm_policy: pairing）
 
 1. 陌生 sender 发 DM → 收到 8 位配对码（无歧义字母表，1h TTL，每渠道 ≤3 个 pending，每 sender 60s 冷却）。
-2. 部署机上 `sunmao pairing approve <code>`（或 GUI 设置页"IM 渠道" 里批准）→ sender 进 allowlist；**首个批准者 = owner**。
+2. 部署机上 `sunmao pairing approve <code>`（或 GUI 设置页 "IM 渠道" 里批准）→ sender 进 allowlist；**首个批准者 = owner**。
 3. `sunmao pairing list` 看待批准/已批准；`revoke <sender>` 撤销。
 4. IM 内 owner 可用 `/pairing` 看待批准列表。
 
@@ -128,7 +128,7 @@ crates/cli/src/im/ —— gateway
 
 ## serve 集成
 
-`GET /channels`（配置文本 + status.json + pairing/allowlist）、`PUT /channels`（写前先解析校验）、`POST /channels/pairing/approve`——三条路由 axum 与 Tauri scheme 同享。设置页 "IM 渠道" 分区即它们的前端。`sunmao im` 进程内建完整 host（无 HTTP 监听）；im 会话是普通SessionLog，serve 同机启动即可看到 `im-main` 日志。
+`GET /channels`（配置文本 + status.json + pairing/allowlist）、 `PUT /channels`（写前先解析校验）、`POST /channels/pairing/approve`—— 三条路由 axum 与 Tauri scheme 同享。设置页 "IM 渠道" 分区即它们的前端。 `sunmao im` 进程内建完整 host（无 HTTP 监听）；im 会话是普通 SessionLog，serve 同机启动即可看到 `im-main` 日志。
 
 ## 状态文件
 
@@ -148,8 +148,8 @@ crates/cli/src/im/ —— gateway
 
 ## 非目标（本版）
 
-- **群聊仍不做**：五个渠道一律丢弃群消息（飞书 `chat_type != p2p`、QQ `GROUP_AT_MESSAGE_CREATE`、钉钉 `conversationType != 1`），微信个人号本来就只有单聊。理由是群里回一条配对码等于当众泄漏配对码，而配对是给单个 sender 的事。
-- **微信扫码登录不做**：`get_bot_qrcode` / `get_qrcode_status` 不接，`bot_token` 由配置提供（见「各渠道要点」）。
+- **群聊仍不做**：五个渠道一律丢弃群消息（飞书 `chat_type != p2p`、 QQ `GROUP_AT_MESSAGE_CREATE`、钉钉 `conversationType != 1`），微信个人号本来就只有单聊。理由是群里回一条配对码等于当众泄漏配对码，而配对是给单个 sender 的事。
+- **微信扫码登录不做**：`get_bot_qrcode` / `get_qrcode_status` 不接， `bot_token` 由配置提供（见「各渠道要点」）。
 - **媒体不做**：微信 iLink 的 AES-128-ECB CDN 上传/下载、飞书/钉钉的图片/文件/语音附件都不下载也不上传；微信语音的转写文本算文本，照收。
 - `streaming:draft` 模式、跨渠道身份合并、多 profile 不做。
 - Session key 结构（`im:{channel}:dm:{chat}`）为群聊 `:u{user}` 段预留了位置。

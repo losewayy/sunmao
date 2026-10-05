@@ -71,6 +71,7 @@
 <symbol id="i-reset" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></symbol>
 <symbol id="c-min" viewBox="0 0 10 10"><path d="M0 5.5h10"/></symbol>
 <symbol id="c-max" viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" rx="1.5"/></symbol>
+<symbol id="c-restore" viewBox="0 0 10 10"><rect x=".5" y="2.75" width="6.75" height="6.75" rx="1.4"/><path d="M3.25.5h4.55a1.7 1.7 0 0 1 1.7 1.7v4.55"/></symbol>
 <symbol id="c-close" viewBox="0 0 10 10"><path d="M.5.5l9 9M9.5.5l-9 9"/></symbol>
 </defs>
 </svg>
@@ -92,7 +93,7 @@
     </div>
     <div class="caption">
       <button class="cap" data-act="win-min" data-tip="最小化" aria-label="最小化"><svg><use href="#c-min"/></svg></button>
-      <button class="cap" data-act="win-max" data-tip="最大化" aria-label="最大化"><svg><use href="#c-max"/></svg></button>
+      <button class="cap" data-act="win-max" id="cap-max" data-tip="最大化" aria-label="最大化"><svg><use href="#c-max"/></svg></button>
       <button class="cap close" data-act="win-close" data-tip="关闭" aria-label="关闭"><svg><use href="#c-close"/></svg></button>
     </div>
   </div>

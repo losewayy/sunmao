@@ -92,6 +92,30 @@ if (TAURI) {
     const sc = view === 'settings' ? $('#set-scroll') : $('#scroller');
     sc.scrollBy({ top: e.deltaY, left: 0 });
   }, { passive: true });
+  /* The caption's maximize/restore glyph follows the WINDOW, not the last
+     click: maximize, Aero snap, and un-snapping by dragging a maximized
+     window all have to land on the right icon, so the page asks the shell
+     for the real state after every resize (and once at boot, in case the
+     window-state plugin restored the window maximized). */
+  const capMax = $('#cap-max');
+  let winStateT = 0;
+  const readWinState = async () => {
+    if (!capMax) return;
+    let on = false;
+    try {
+      const s = await TAURI.win('state');
+      on = !!(s && s.maximized);
+    } catch { return; }
+    $('use', capMax).setAttribute('href', on ? '#c-restore' : '#c-max');
+    const label = on ? '还原' : '最大化';
+    capMax.dataset.tip = label;
+    capMax.setAttribute('aria-label', label);
+  };
+  readWinState();
+  window.addEventListener('resize', () => {
+    clearTimeout(winStateT);
+    winStateT = setTimeout(readWinState, DEBOUNCE_RESIZE);
+  });
 }
 
 /* Zoom — the shell's Ctrl/Cmd+=/-/0 ladder lives on `S.zoom` like every

@@ -73,6 +73,7 @@ const OVERLAY_CSS: &str = include_str!("serve/assets/overlay.css");
 /// index.html is load order.
 pub const I18N_EN_JS: &str = include_str!("serve/assets/i18n.en.js");
 pub const I18N_JS: &str = include_str!("serve/assets/i18n.js");
+const QUOTE_JS: &str = include_str!("serve/assets/quote.js");
 const STATE_JS: &str = include_str!("serve/assets/state.js");
 const WALLPAPER_JS: &str = include_str!("serve/assets/wallpaper.js");
 const SETTINGS_JS: &str = include_str!("serve/assets/settings.js");

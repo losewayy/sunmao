@@ -10,9 +10,13 @@
    message. */
 const QUOTE_MAX = 500;      // characters kept; the tail is elided
 const QUOTE_MIN = 2;        // a stray click should not offer it
-const QUOTE_GAP = 34;       // the button sits this far above the selection
-const QUOTE_W = 96, QUOTE_HALF = 40;
 let quoteBtn = null, quoteText = '';
+/* geometry comes from the tokens (`motion.px`), never from literals here */
+const quoteGeom = () => ({
+  gap: motion.px('--quote-gap', 34),
+  w: motion.px('--quote-w', 96),
+  margin: motion.px('--quote-margin', 8),
+});
 
 function quoteLine(text) {
   const clipped = text.length > QUOTE_MAX ? text.slice(0, QUOTE_MAX).trimEnd() + '…' : text;
@@ -53,9 +57,10 @@ function quotePick() {
     quoteBtn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); quoteToComposer(); });
     document.body.appendChild(quoteBtn);
   }
+  const g = quoteGeom();
   const r = sel.getRangeAt(0).getBoundingClientRect();
-  quoteBtn.style.top = Math.max(8, r.top - QUOTE_GAP) + 'px';
-  quoteBtn.style.left = Math.max(8, Math.min(r.left + r.width / 2 - QUOTE_HALF, innerWidth - QUOTE_W)) + 'px';
+  quoteBtn.style.top = Math.max(g.margin, r.top - g.gap) + 'px';
+  quoteBtn.style.left = Math.max(g.margin, Math.min(r.left + r.width / 2 - g.w / 2, innerWidth - g.w)) + 'px';
 }
 document.addEventListener('pointerup', () => setTimeout(quotePick, 0));
 document.addEventListener('selectionchange', () => {

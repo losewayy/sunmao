@@ -194,7 +194,10 @@ fn allowed_god_file(text: &str) -> Option<String> {
     const MARK: &str = "arch: allow-god-file";
     text.lines()
         .take(12)
-        .find_map(|l| l.split_once(MARK).map(|(_, r)| r.trim().trim_end_matches("*/").trim()))
+        .find_map(|l| {
+            l.split_once(MARK)
+                .map(|(_, r)| r.trim().trim_end_matches("*/").trim())
+        })
         .filter(|r| r.chars().count() >= 12)
         .map(|r| r.to_string())
 }
@@ -641,13 +644,31 @@ fn a() {}
 
     #[test]
     fn a_marker_needs_a_real_reason_and_a_place_near_the_top() {
-        assert_eq!(allowed_god_file("// arch: allow-god-file
-"), None, "no reason");
-        assert_eq!(allowed_god_file("// arch: allow-god-file too short
-"), None, "reason too short");
+        assert_eq!(
+            allowed_god_file(
+                "// arch: allow-god-file
+"
+            ),
+            None,
+            "no reason"
+        );
+        assert_eq!(
+            allowed_god_file(
+                "// arch: allow-god-file too short
+"
+            ),
+            None,
+            "reason too short"
+        );
         let far = "// filler
-".repeat(20) + "// arch: allow-god-file a perfectly good reason
+"
+        .repeat(20)
+            + "// arch: allow-god-file a perfectly good reason
 ";
-        assert_eq!(allowed_god_file(&far), None, "the marker has to be near the top");
+        assert_eq!(
+            allowed_god_file(&far),
+            None,
+            "the marker has to be near the top"
+        );
     }
 }

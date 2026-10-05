@@ -24,7 +24,10 @@ commit、git 历史、`.crate` 包体、文档、注释、CI 产物——**一�
 2. `git grep` 全历史扫：绝对路径盘符、私人代号、履历类词汇
 3. `.gitignore` 已覆盖私人文档；**"先删文件再 commit"不算修复**——历史仍携带
 4. `cargo package --list` 确认打进 `.crate` 的每个文件都过了闸——
-   包体上传后**不可删除**，只能 yank
+   包体上传后**不可删除**，只能 yank。发布的安装包同样过闸：release
+   构建要带 `--remap-path-prefix`（配方见 `CONTRIBUTING.md` §Packaging），
+   并用 grep 确认成品 exe 里本机路径零命中——panic 位置字符串会把构建机
+   的家目录原样带进去
 5. 仓内出现过的隐私内容，唯一根治是**重写历史/删库重建**；追加删除 commit 无效
 
 发现泄露：立即上报，说清泄露面+根治方案，不许"删一个文件就算修好"。

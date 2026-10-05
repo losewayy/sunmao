@@ -25,25 +25,25 @@ const BR = {}; // id → {hist, hi, live, chain} — live-only, not persisted
 let brSeq = Date.now() % 100000; // ids must not collide across sessions' webview labels
 
 const PANE_META = {
-  overview: { t: '概览', i: 'zap', num: '' },
-  agents: { t: '子代理', i: 'blocks', num: 'dt-count' },
-  jobs: { t: '后台', i: 'clock', num: 'dj-count' },
-  flow: { t: '流向', i: 'file-code', num: '' },
+  overview: { t: t('概览'), i: 'zap', num: '' },
+  agents: { t: t('子代理'), i: 'blocks', num: 'dt-count' },
+  jobs: { t: t('后台'), i: 'clock', num: 'dj-count' },
+  flow: { t: t('流向'), i: 'file-code', num: '' },
 };
 const brHost = u => { try { return new URL(u).host || u; } catch { return u; } };
 const brPane = b => $(`#dock .dock-pane[data-pane="br:${b.id}"]`);
-const brTitle = b => b.title || (b.url ? brHost(b.url) : '浏览器');
+const brTitle = b => b.title || (b.url ? brHost(b.url) : t('浏览器'));
 const nativeBr = () => !!(TAURI && TAURI.webview);
 
 /* ---- tab strip ---- */
 function renderDockTabs() {
   const tabs = sessionTabs(), cur = $('#dock').dataset.tab;
-  $('#dt-dyn').innerHTML = tabs.map(t => {
+  $('#dt-dyn').innerHTML = tabs.map(tb => {
     if (t.kind === 'pane') {
       const m = PANE_META[t.pane] || {};
-      return `<button class="dock-tab" role="tab" data-act="dock-tab" data-tab="${esc(t.pane)}" aria-selected="${cur === t.pane}"><svg class="i"><use href="#i-${m.i}"/></svg><span>${esc(m.t)}</span>${m.num ? `<i class="dt-num" id="${m.num}"></i>` : ''}<i class="dt-x" data-bclose="${t.id}">×</i></button>`;
+      return `<button class="dock-tab" role="tab" data-act="dock-tab" data-tab="${esc(tb.pane)}" aria-selected="${cur === tb.pane}"><svg class="i"><use href="#i-${m.i}"/></svg><span>${esc(m.t)}</span>${m.num ? `<i class="dt-num" id="${m.num}"></i>` : ''}<i class="dt-x" data-bclose="${tb.id}">×</i></button>`;
     }
-    return `<button class="dock-tab dock-dyn" role="tab" data-act="dock-tab" data-tab="br:${t.id}" aria-selected="${cur === 'br:' + t.id}" data-tip="${esc(t.url || '新标签页')}"><svg class="i"><use href="#i-globe"/></svg><span>${esc(brTitle(t))}</span><i class="dt-x" data-bclose="${t.id}">×</i></button>`;
+    return `<button class="dock-tab dock-dyn" role="tab" data-act="dock-tab" data-tab="br:${tb.id}" aria-selected="${cur === 'br:' + tb.id}" data-tip="${esc(tb.url || t('新标签页'))}"><svg class="i"><use href="#i-globe"/></svg><span>${esc(brTitle(tb))}</span><i class="dt-x" data-bclose="${tb.id}">×</i></button>`;
   }).join('');
   // empty panel = the launcher itself: the strip goes away and the body
   // is a vertical menu of everything you can add (KanaMi's shape)
@@ -52,7 +52,7 @@ function renderDockTabs() {
   if (!tabs.length) {
     $('#de-rows').innerHTML = [
       ...Object.entries(PANE_META).map(([v, m]) => ({ v, t: m.t, i: m.i })),
-      { v: 'browser', t: '浏览器标签页', i: 'globe' },
+      { v: 'browser', t: t('浏览器标签页'), i: 'globe' },
     ].map(o => `<button class="de-row" data-deadd="${o.v}"><svg class="i"><use href="#i-${o.i}"/></svg><span>${esc(o.t)}</span></button>`).join('');
   }
 }
@@ -68,7 +68,7 @@ function dockAdd(el) {
   const items = Object.entries(PANE_META)
     .filter(([k]) => !have.has(k))
     .map(([v, m]) => ({ v, t: m.t, icon: m.i }));
-  items.push({ v: 'browser', t: '浏览器标签页', icon: 'globe' });
+  items.push({ v: 'browser', t: t('浏览器标签页'), icon: 'globe' });
   menuPop(el, items, dockAddKind, { place: 'bottom', align: 'end' });
 }
 
@@ -158,7 +158,7 @@ function brSyncNative(b) {
   brSend(b, { op: 'create', id: b.id, url: b.url, rect })
     .then(() => { st.live = true; }, e => {
       const em = pane && $('.br-empty small', pane);
-      if (em) em.textContent = `原生窗口创建失败：${e}`;
+      if (em) em.textContent = t('原生窗口创建失败：{e}', { e });
     })
     .finally(() => { st.creating = false; });
   return true;
@@ -186,16 +186,16 @@ function mountBrowser(b) {
   const tb = () => sessionTabs().find(t => t.id === bid) || b;
   const pane = append($('#dock'), `<div class="dock-pane br" data-pane="br:${bid}" hidden>
     <div class="br-bar">
-      <button class="ib sm" data-bnav="back" data-tip="后退" aria-label="后退"><svg class="i"><use href="#i-chev-l"/></svg></button>
-      <button class="ib sm" data-bnav="fwd" data-tip="前进" aria-label="前进"><svg class="i"><use href="#i-chev-r"/></svg></button>
-      <button class="ib sm" data-bnav="reload" data-tip="刷新" aria-label="刷新"><svg class="i"><use href="#i-rotate"/></svg></button>
-      <input class="br-url mono" placeholder="输入网址 — localhost:3000 或 https://…" spellcheck="false" autocomplete="off">
-      ${nativeBr() ? '' : '<button class="ib sm br-proxy" data-bnav="proxy" data-tip="代理加载 — 跨源站点经本地代理后可元素批注（页面脚本不运行）" aria-label="代理加载"><svg class="i"><use href="#i-shield"/></svg></button>'}
-      <button class="ib sm" data-act="annotate" data-tip="批注页面元素或区域" aria-label="批注"><svg class="i"><use href="#i-note"/></svg></button>
-      <button class="ib sm" data-bnav="external" data-tip="在系统浏览器中打开" aria-label="外部打开"><svg class="i"><use href="#i-external"/></svg></button>
+      <button class="ib sm" data-bnav="back" data-tip="${t('后退')}" aria-label="${t('后退')}"><svg class="i"><use href="#i-chev-l"/></svg></button>
+      <button class="ib sm" data-bnav="fwd" data-tip="${t('前进')}" aria-label="${t('前进')}"><svg class="i"><use href="#i-chev-r"/></svg></button>
+      <button class="ib sm" data-bnav="reload" data-tip="${t('刷新')}" aria-label="${t('刷新')}"><svg class="i"><use href="#i-rotate"/></svg></button>
+      <input class="br-url mono" placeholder="${t('输入网址 — localhost:3000 或 https://…')}" spellcheck="false" autocomplete="off">
+      ${nativeBr() ? '' : `<button class="ib sm br-proxy" data-bnav="proxy" data-tip="${t('代理加载 — 跨源站点经本地代理后可元素批注（页面脚本不运行）')}" aria-label="${t('代理加载')}"><svg class="i"><use href="#i-shield"/></svg></button>`}
+      <button class="ib sm" data-act="annotate" data-tip="${t('批注页面元素或区域')}" aria-label="${t('批注')}"><svg class="i"><use href="#i-note"/></svg></button>
+      <button class="ib sm" data-bnav="external" data-tip="${t('在系统浏览器中打开')}" aria-label="${t('外部打开')}"><svg class="i"><use href="#i-external"/></svg></button>
     </div>
     <div class="br-view">
-      <div class="br-empty"><svg class="i"><use href="#i-globe"/></svg><p>输入网址回车加载</p><small>${nativeBr() ? '原生内核 — 任何站点都能开' : '本地 dev 服务器直接可交互；跨源站点开 <b>代理</b> 后可批注元素'}</small></div>
+      <div class="br-empty"><svg class="i"><use href="#i-globe"/></svg><p>${t('输入网址回车加载')}</p><small>${nativeBr() ? t('原生内核 — 任何站点都能开') : t('本地 dev 服务器直接可交互；跨源站点开 {proxy} 后可批注元素', { proxy: '<b>' + t('代理') + '</b>' })}</small></div>
       <iframe hidden></iframe>
     </div>
   </div>`);
@@ -228,7 +228,7 @@ function mountBrowser(b) {
       case 'proxy': live.proxy = !live.proxy; nb.classList.toggle('on', live.proxy); save(); if (live.url) brGo(live, live.url, false); break;
       case 'external': {
         if (!live.url) break;
-        if (TAURI && TAURI.openExternal) return Promise.resolve(TAURI.openExternal(live.url)).catch(er => toast(`打开失败：${er}`, 'alert', 'warn'));
+        if (TAURI && TAURI.openExternal) return Promise.resolve(TAURI.openExternal(live.url)).catch(er => toast(t('打开失败：{e}', { e: er }), 'alert', 'warn'));
         return open(live.url, '_blank');
       }
     }
@@ -252,14 +252,14 @@ function brAnnStop(id) {
 }
 function brAnnLine(p) {
   const sel = p.sel || {};
-  if (sel.kind === 'region') return `批注 ${p.url} 区域 ${sel.rect.x},${sel.rect.y} ${sel.rect.w}×${sel.rect.h}`;
-  return `批注 ${p.url} ${sel.css || selLabel(sel)}${sel.text ? `「${sel.text.slice(0, 40)}」` : ''}`;
+  if (sel.kind === 'region') return t('批注 {url} 区域 {x},{y} {w}×{h}：{note}', { url: p.url, x: sel.rect.x, y: sel.rect.y, w: sel.rect.w, h: sel.rect.h, note: p.note });
+  return t(sel.text ? '批注 {url} {sel}「{text}」：{note}' : '批注 {url} {sel}：{note}', { url: p.url, sel: sel.css || selLabel(sel), text: (sel.text || '').slice(0, 40), note: p.note });
 }
 function brAnnToComposer(p) {
   const ta = $('#input');
-  ta.value = (ta.value.trim() ? ta.value.trimEnd() + '\n' : '') + `${brAnnLine(p)}：${p.note}`;
+  ta.value = (ta.value.trim() ? ta.value.trimEnd() + '\n' : '') + brAnnLine(p);
   autoGrow(); ta.focus();
-  toast('批注已写入输入框', 'note');
+  toast(t('批注已写入输入框'), 'note');
 }
 /* click again to disarm; the poll is the only way back from a foreign page.
    Self-scheduling, not setInterval: a poll can sit for its full timeout when

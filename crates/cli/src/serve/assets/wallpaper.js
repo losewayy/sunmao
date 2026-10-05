@@ -92,7 +92,7 @@ function makeNoise() {
   for (let i = 0; i < d.data.length; i += 4) { const v = R() < .5 ? 0 : 255; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 5 + (R() * 9 | 0); }
   g.putImageData(d, 0, 0); root.style.setProperty('--noise', `url(${c.toDataURL()})`);
 }
-const WALLS = [{ id: 'dusk-ridge', name: '暮岭', paint: paintRidge }, { id: 'ink-mist', name: '松烟', paint: paintInk }, { id: 'deep-tide', name: '深潮', paint: paintTide }, { id: 'walnut', name: '胡桃木', paint: paintWalnut }, { id: 'graphite', name: '石墨', paint: paintGraphite }];
+const WALLS = [{ id: 'dusk-ridge', name: t('暮岭'), paint: paintRidge }, { id: 'ink-mist', name: t('松烟'), paint: paintInk }, { id: 'deep-tide', name: t('深潮'), paint: paintTide }, { id: 'walnut', name: t('胡桃木'), paint: paintWalnut }, { id: 'graphite', name: t('石墨'), paint: paintGraphite }];
 let customImg = null;
 function drawWall(ctx, w, h, id) {
   if (id === 'custom' && customImg) { const s = Math.max(w / customImg.naturalWidth, h / customImg.naturalHeight), iw = customImg.naturalWidth * s, ih = customImg.naturalHeight * s; ctx.drawImage(customImg, (w - iw) / 2, (h - ih) / 2, iw, ih); return; }
@@ -124,7 +124,7 @@ function paintWall(force) {
 }
 function setCustom(url, select) {
   const im = new Image();
-  im.onload = () => { customImg = im; if (select) { S.wallpaper = 'custom'; commit(); toast('已更换壁纸', 'image'); } else if (S.wallpaper === 'custom') paintWall(true); renderWallGrid(); };
+  im.onload = () => { customImg = im; if (select) { S.wallpaper = 'custom'; commit(); toast(t('已更换壁纸'), 'image'); } else if (S.wallpaper === 'custom') paintWall(true); renderWallGrid(); };
   /* the server having no image while ui.json still says "custom" must not
      leave a blank canvas — paintWall's customImg-null guard draws the
      default instead */
@@ -159,9 +159,9 @@ $('#file-wall').addEventListener('change', e => {
        the PUT lands (a failed upload must not persist a phantom choice) */
     fetch(wallUrl(), { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: url })
       .then(r => { if (!r.ok) throw new Error(r.status); setCustom(url, true); })
-      .catch(() => toast('壁纸保存失败', 'alert', 'warn'));
+      .catch(() => toast(t('壁纸保存失败'), 'alert', 'warn'));
   };
-  img.onerror = () => toast('无法读取这张图片', 'alert', 'warn');
+  img.onerror = () => toast(t('无法读取这张图片'), 'alert', 'warn');
   img.src = URL.createObjectURL(f);
 });
 

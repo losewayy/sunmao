@@ -25,7 +25,7 @@ function setConn(on) {
   connected = on;
   const d = $('#conn-dot');
   d.className = 'sd ' + (on ? 'done' : 'off');
-  d.dataset.tip = on ? '已连接 ' + location.host : '未连接 · 重连中';
+  d.dataset.tip = on ? t('已连接 {host}', { host: location.host }) : t('未连接 · 重连中');
   $('#df-live').classList.toggle('off', !on);
 }
 function connect() {
@@ -34,14 +34,14 @@ function connect() {
     const ch = new TAURI.Channel();
     ch.onmessage = v => route(v); // Channel delivers parsed objects
     window.__TAURI_INTERNALS__.invoke('session_events', { events: ch })
-      .then(() => { const was = !connected; setConn(true); wsDelay = 800; if (was) toast('已连接 ' + location.host, 'check'); })
+      .then(() => { const was = !connected; setConn(true); wsDelay = 800; if (was) toast(t('已连接 {host}', { host: location.host }), 'check'); })
       .catch(() => { setConn(false); wsTimer = setTimeout(connect, wsDelay); wsDelay = Math.min(8000, wsDelay * 1.8); });
     return;
   }
   try { ws && ws.close(); } catch {}
   ws = new WebSocket(`ws://${location.host}/ws`);
-  ws.onopen = () => { const was = !connected; setConn(true); wsDelay = 800; if (was) toast('已连接 ' + location.host, 'check'); };
-  ws.onclose = () => { const was = connected; setConn(false); if (was) toast('与内核断开连接，重连中…', 'alert', 'warn'); wsTimer = setTimeout(connect, wsDelay); wsDelay = Math.min(8000, wsDelay * 1.8); };
+  ws.onopen = () => { const was = !connected; setConn(true); wsDelay = 800; if (was) toast(t('已连接 {host}', { host: location.host }), 'check'); };
+  ws.onclose = () => { const was = connected; setConn(false); if (was) toast(t('与内核断开连接，重连中…'), 'alert', 'warn'); wsTimer = setTimeout(connect, wsDelay); wsDelay = Math.min(8000, wsDelay * 1.8); };
   ws.onerror = () => {};
   ws.onmessage = e => {
     let v; try { v = JSON.parse(e.data); } catch { return; }
@@ -72,7 +72,7 @@ function route(v) {
         const project = projectName(cwd);
         $('#df-cwd').textContent = project || '—';
         $('#df-cwd').dataset.tip = cwd;
-        $('#hero-sub').textContent = project ? `在 ${project} 中开始` : '';
+        $('#hero-sub').textContent = project ? t('在 {p} 中开始', { p: project }) : '';
       }
       setApprovalMode(v.mode);
       setEffort(v.effort, v.effort_levels);
@@ -115,7 +115,7 @@ function route(v) {
         if (v.event && (v.event.type === 'tool_start' || v.event.type === 'tool_done')) refreshJobsSoon();
       }
       if (v.event && v.event.type === 'turn_end' && !shellFocused()) {
-        shellNotify('回合结束', sessTitle(sess) || sess);
+        shellNotify(t('回合结束'), sessTitle(sess) || sess);
       }
       break;
     case 'replay':
@@ -136,7 +136,7 @@ function route(v) {
       break;
     case 'approval':
       waitingSessions.add(sess);
-      if (!shellFocused()) shellNotify('需要批准', `${v.tool || ''} · ${(v.detail || '').slice(0, 80)}`);
+      if (!shellFocused()) shellNotify(t('需要批准'), `${v.tool || ''} · ${(v.detail || '').slice(0, 80)}`);
       if (sess === sessionId) { approvalCard(v); logEv('hook', `approval requested · ${v.tool}: ${(v.detail || '').slice(0, 80)}`); }
       else {
         // a background session raised an approval — surface it as a
@@ -145,12 +145,12 @@ function route(v) {
         // approval, and stacking duplicates is pure noise
         const dup = [...$('#toasts').querySelectorAll('.toast.jump')].some(x => x.dataset.ap === sess);
         if (dup) break;
-        const t = document.createElement('div'); t.className = 'toast glass jump';
-        t.dataset.ap = sess;
-        t.innerHTML = ic('shield-check') + `<span>待审批 · <b>${esc(v.tool || '?')}</b> · ${esc(sess)}</span>` + ic('arrow-l', 'i xs');
-        t.addEventListener('click', () => { resumeSession(sess); t.classList.add('out'); setTimeout(() => t.remove(), motion.dur('fast')); });
-        $('#toasts').appendChild(t);
-        setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), motion.dur('fast')); }, motion.hold('toast-long'));
+        const node = document.createElement('div'); node.className = 'toast glass jump';
+        node.dataset.ap = sess;
+        node.innerHTML = ic('shield-check') + `<span>${t('待审批')} · <b>${esc(v.tool || '?')}</b> · ${esc(sess)}</span>` + ic('arrow-l', 'i xs');
+        node.addEventListener('click', () => { resumeSession(sess); node.classList.add('out'); setTimeout(() => node.remove(), motion.dur('fast')); });
+        $('#toasts').appendChild(node);
+        setTimeout(() => { node.classList.add('out'); setTimeout(() => node.remove(), motion.dur('fast')); }, motion.hold('toast-long'));
       }
       renderRail();
       break;
@@ -163,8 +163,8 @@ function route(v) {
       if (card) {
         pendingApprovals.delete(v.id);
         const detail = $('.cmd', card) ? $('.cmd', card).textContent.trim() : '';
-        const why = v.why === 'cancelled' ? '已取消' : '已由其他窗口答复';
-        collapse(card, `<div class="ap-done">${stIcon('ok')}<b>已处理</b><code>${esc(detail)}</code><span>${why}</span></div>`);
+        const why = v.why === 'cancelled' ? t('已取消') : t('已由其他窗口答复');
+        collapse(card, `<div class="ap-done">${stIcon('ok')}<b>${t('已处理')}</b><code>${esc(detail)}</code><span>${why}</span></div>`);
         syncWait();
       }
       renderRail();
@@ -199,8 +199,8 @@ function route(v) {
     case 'sessions_changed': refreshSessions(); break;
     case 'schedules_changed': if (view === 'schedules') refreshSchedules(); break;
     case 'sched_fired': {
-      toast(`定时任务已启动${v.name ? `：${v.name}` : ''}`, 'zap');
-      if (!shellFocused()) shellNotify('定时任务已启动', v.name || v.task || '');
+      toast(v.name ? t('定时任务已启动：{name}', { name: v.name }) : t('定时任务已启动'), 'zap');
+      if (!shellFocused()) shellNotify(t('定时任务已启动'), v.name || v.task || '');
       break;
     }
     case 'steer_queue':
@@ -214,13 +214,13 @@ function route(v) {
     case 'shell_changed': refreshShell(); break;
     case 'wallpaper_changed': loadCustom(true); break;
     case 'model':
-      if (sess === sessionId) { modelLabel = v.label || modelLabel; $('#cmp-model').textContent = modelLabel; toast(`模型切换为 ${v.label}`, 'cpu'); }
+      if (sess === sessionId) { modelLabel = v.label || modelLabel; $('#cmp-model').textContent = modelLabel; toast(t('模型切换为 {model}', { model: v.label }), 'cpu'); }
       break;
     case 'mode':
-      if (sess === sessionId) { setApprovalMode(v.mode); toast(`审批模式切换为 ${MODE_LABELS[v.mode] || v.mode}`, 'shield'); }
+      if (sess === sessionId) { setApprovalMode(v.mode); toast(t('审批模式切换为 {mode}', { mode: modeLabel(v.mode) }), 'shield'); }
       break;
     case 'effort':
-      if (sess === sessionId) { setEffort(v.level, v.levels); toast(`思考强度 → ${v.level || '默认'}`, 'sparkles'); }
+      if (sess === sessionId) { setEffort(v.level, v.levels); toast(t('思考强度 → {level}', { level: v.level || t('默认') }), 'sparkles'); }
       break;
     case 'busy':
       busySessions[v.busy ? 'add' : 'delete'](sess);
@@ -264,18 +264,18 @@ async function resumeSession(id) {
     await api(`/session/${encodeURIComponent(id)}/resume`, { method: 'POST' });
     // a dead socket leaves the host adopted but this tab still viewing the
     // old session — surface it instead of silent drift
-    if (!wsSend({ type: 'view', id })) toast('已接入会话，但连接断开——重连后刷新视图', 'alert', 'warn');
+    if (!wsSend({ type: 'view', id })) toast(t('已接入会话，但连接断开——重连后刷新视图'), 'alert', 'warn');
   }
-  catch (e) { toast(`resume 失败：${e.message}`, 'alert', 'warn'); }
+  catch (e) { toast(t('resume 失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
 async function forkSession(id) {
   try {
     const r = await api(`/session/${encodeURIComponent(id)}/fork`, { method: 'POST' });
     if (r && r.session && !wsSend({ type: 'view', id: r.session }))
-      toast('已分叉，但连接断开——重连后刷新视图', 'alert', 'warn');
-    toast(`已分叉 ${id}`, 'fork');
+      toast(t('已分叉，但连接断开——重连后刷新视图'), 'alert', 'warn');
+    toast(t('已分叉 {id}', { id }), 'fork');
   }
-  catch (e) { toast(`fork 失败：${e.message}`, 'alert', 'warn'); }
+  catch (e) { toast(t('fork 失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
 async function newChat(project) {
   if (view !== 'session') show('session');
@@ -288,15 +288,15 @@ async function newChat(project) {
     const r = await api('/session/new', jpost({ ...(project ? { cwd: project } : {}), ...(S.loopDriver ? { loop: S.loopDriver } : {}) }));
     if (r && r.session) { sessionId = r.session; if (typeof dockSessionSwap === 'function') dockSessionSwap(); wsSend({ type: 'view', id: r.session }); }
     renderCrumb(); refreshSessions();
-  } catch (e) { toast(`新会话失败：${e.message}`, 'alert', 'warn'); }
+  } catch (e) { toast(t('新会话失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
 async function renameSession(id, title) {
   try {
     await api(`/session/${encodeURIComponent(id)}/rename`, jpost({ title }));
     const m = SESSION_META[id] || (SESSION_META[id] = {});
     m.title = title; renderRail(); renderCrumb();
-    toast('已重命名', 'pen');
-  } catch (e) { toast(`重命名失败：${e.message}`, 'alert', 'warn'); }
+    toast(t('已重命名'), 'pen');
+  } catch (e) { toast(t('重命名失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
 async function deleteSession(id) {
   try {
@@ -304,8 +304,8 @@ async function deleteSession(id) {
     delete SESSION_META[id];
     SESSION_IDS = SESSION_IDS.filter(x => x !== id);
     renderRail();
-    toast('已删除会话', 'trash');
-  } catch (e) { toast(`删除失败：${e.message}`, 'alert', 'warn'); }
+    toast(t('已删除会话'), 'trash');
+  } catch (e) { toast(t('删除失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
 /* ---- export — a GET on the session's `/md` route gives us the server's
    `commands::export::markdown` output (the SAME fold `/export-md` and the
@@ -324,14 +324,14 @@ async function exportSession(id) {
     // manager asynchronously (Firefox) read an empty file if we revoke
     // in the same task
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-    toast(`已导出 ${id}.md`, 'download');
-  } catch (e) { toast(`导出失败：${e.message}`, 'alert', 'warn'); }
+    toast(t('已导出 {name}', { name: id + '.md' }), 'download');
+  } catch (e) { toast(t('导出失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
 let dfTimer = 0;
 function refreshDataflowSoon() { clearTimeout(dfTimer); dfTimer = setTimeout(refreshDataflow, DEBOUNCE_DATAFLOW); }
 async function refreshDataflow() {
   try { renderDock(await api('/dataflow?sess=' + encodeURIComponent(sessionId))); }
-  catch { $('#df-sub').textContent = '无可读会话日志'; }
+  catch { $('#df-sub').textContent = t('无可读会话日志'); }
 }
 
 /* ================= providers / models ================= */
@@ -378,7 +378,7 @@ async function saveProviders(edit, ok) {
     models = MODELS.selectors || [];
     if (ok) toast(ok, 'check');
     if (view === 'settings' && setPage === 'providers') renderProviders();
-  } catch (e) { toast(`保存失败：${e.message}`, 'alert', 'warn'); }
+  } catch (e) { toast(t('保存失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
 async function refreshShell() {
   try { SHELL = await api('/shell'); } catch { SHELL = null; }
@@ -393,7 +393,7 @@ function renderDock(d) {
   const idle = !(tok.prompt || tok.completion);
   $('#df-hit').textContent = idle ? '–' : hit + '%';
   $('#df-hit').classList.toggle('idle', idle);
-  $('#df-sub').textContent = idle ? '尚无模型调用' : `缓存读取 ${nf(tok.cache_read || 0)} tokens`;
+  $('#df-sub').textContent = idle ? t('尚无模型调用') : t('缓存读取 {n} tokens', { n: nf(tok.cache_read || 0) });
   $('#df-bar').style.width = Math.min(100, hit) + '%';
   $('#df-prompt').textContent = nf(tok.prompt || 0);
   $('#df-comp').textContent = nf(tok.completion || 0);
@@ -403,19 +403,19 @@ function renderDock(d) {
   const flow = d.data_flow || {};
   const grp = (icon, label, items) => items && items.length
     ? `<div class="fl-g"><div class="fl-t">${ic(icon)}${label}<b>${items.length}</b></div>${items.slice(-8).map(x => `<div class="fl-i" data-tip="${esc(x)}">${esc(x)}</div>`).join('')}</div>` : '';
-  const flowHtml = grp('file', '读取', flow.files_read) + grp('file-pen', '写入', flow.files_written) + grp('terminal', '命令', flow.shell_commands);
-  $('#df-flow').innerHTML = `<div class="df-h"><span>数据流向</span></div>` + (flowHtml || '<div class="empty-row">尚无文件/命令记录</div>');
+  const flowHtml = grp('file', t('读取'), flow.files_read) + grp('file-pen', t('写入'), flow.files_written) + grp('terminal', t('命令'), flow.shell_commands);
+  $('#df-flow').innerHTML = `<div class="df-h"><span>${t('数据流向')}</span></div>` + (flowHtml || `<div class="empty-row">${t('尚无文件/命令记录')}</div>`);
 }
 
 /* ================= crumb / views ================= */
-const SET_NAV = [['appearance', '外观', 'palette'], ['providers', '模型与提供商', 'cpu'], ['channels', 'IM 渠道', 'shield-check'], ['shell', '终端', 'terminal'], ['hooks', '钩子', 'zap'], ['mcp', 'MCP 服务器', 'blocks'], ['grants', '已授权命令', 'lock'], ['keys', '快捷键', 'keyboard'], ['about', '关于', 'info']];
+const SET_NAV = [['appearance', t('外观'), 'palette'], ['providers', t('模型与提供商'), 'cpu'], ['channels', t('IM 渠道'), 'shield-check'], ['shell', t('终端'), 'terminal'], ['hooks', t('钩子'), 'zap'], ['mcp', t('MCP 服务器'), 'blocks'], ['grants', t('已授权命令'), 'lock'], ['keys', t('快捷键'), 'keyboard'], ['about', t('关于'), 'info']];
 function renderCrumb() {
   const c = $('#crumb');
   const interactive = view === 'session' && !!sessionId;
   let h;
-  if (view === 'settings') h = `<span class="c1">设置</span><span class="cs">/</span><span class="c2">${SET_NAV.find(x => x[0] === setPage)[1]}</span>`;
-  else if (view === 'schedules') h = `<span class="c1">定时任务</span>`;
-  else h = `<span class="c1">${esc(cwd.split(/[\\/]/).filter(Boolean).pop() || 'sunmao')}</span><span class="cs">/</span><span class="c2">${esc(sessTitle(sessionId) || (sessionId ? '新对话' : '…'))}</span>${ic('chev-d', 'i sm')}${driver === 'ptc' ? '<span class="drv" data-tip="PTC 代码模式 — 模型经 RunCode 脚本调用工具">PTC</span>' : ''}`;
+  if (view === 'settings') h = `<span class="c1">${t('设置')}</span><span class="cs">/</span><span class="c2">${SET_NAV.find(x => x[0] === setPage)[1]}</span>`;
+  else if (view === 'schedules') h = `<span class="c1">${t('定时任务')}</span>`;
+  else h = `<span class="c1">${esc(cwd.split(/[\\/]/).filter(Boolean).pop() || brand())}</span><span class="cs">/</span><span class="c2">${esc(sessTitle(sessionId) || (sessionId ? t('新对话') : '…'))}</span>${ic('chev-d', 'i sm')}${driver === 'ptc' ? `<span class="drv" data-tip="${t('PTC 代码模式 — 模型经 RunCode 脚本调用工具')}">PTC</span>` : ''}`;
   if (interactive) {
     c.dataset.act = 'crumb';
     c.setAttribute('aria-haspopup', 'menu');

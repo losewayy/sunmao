@@ -31,9 +31,9 @@ function send() {
     const atts = pendingAtts.slice();
     const restore = () => {
       pendingAtts = atts.map(a => a.file ? { ...a, thumb: URL.createObjectURL(a.file) } : a);
-      renderAtts(); toast('发送失败，草稿已恢复', 'alert', 'warn');
+      renderAtts(); toast(t('发送失败，草稿已恢复'), 'alert', 'warn');
     };
-    if (!wsSend({ type: 'prompt', text: '', attachments: atts.map(a => ({ path: a.path, mime: a.mime })) }, restore)) return toast('未连接到内核，无法发送', 'alert', 'warn');
+    if (!wsSend({ type: 'prompt', text: '', attachments: atts.map(a => ({ path: a.path, mime: a.mime })) }, restore)) return toast(t('未连接到内核，无法发送'), 'alert', 'warn');
     for (const a of atts) if (a.thumb) URL.revokeObjectURL(a.thumb);
     pendingAtts = []; renderAtts(); autoGrow();
     return;
@@ -46,10 +46,10 @@ function send() {
     if (lc[1] === 'clear') { clearTranscript(); return; }
     if (lc[1] === 'quit' || lc[1] === 'exit') {
       const w = shellWin();
-      if (w) w.win('close'); else toast('serve 模式：直接关闭此标签页即可退出', 'info');
+      if (w) w.win('close'); else toast(t('serve 模式：直接关闭此标签页即可退出'), 'info');
       return;
     }
-    toast('多行输入：Shift+Enter 换行，Enter 发送', 'info');
+    toast(t('多行输入：Shift+Enter 换行，Enter 发送'), 'info');
     return;
   }
   // `!` local shell — the user runs it, no gate, no turn; output lands in
@@ -61,8 +61,8 @@ function send() {
     // whose failure only surfaces async via the invoke rejection
     if (!wsSend({ type: 'local_shell', cmd }, () => {
       ta.value = text; autoGrow(); slashCheck(true);
-      toast('执行失败，命令已恢复到输入框', 'alert', 'warn');
-    })) return toast('未连接到内核，无法执行', 'alert', 'warn');
+      toast(t('执行失败，命令已恢复到输入框'), 'alert', 'warn');
+    })) return toast(t('未连接到内核，无法执行'), 'alert', 'warn');
     ta.value = ''; autoGrow(); slashCheck(true);
     return;
   }
@@ -85,9 +85,9 @@ function send() {
     pasteStash = draftAt.stash;
     renderAtts();
     ta.value = draftAt.text; autoGrow(); slashCheck(true);
-    toast('发送失败，草稿已恢复', 'alert', 'warn');
+    toast(t('发送失败，草稿已恢复'), 'alert', 'warn');
   };
-  if (!wsSend(frame, restoreDraft)) return toast('未连接到内核，无法发送', 'alert', 'warn');
+  if (!wsSend(frame, restoreDraft)) return toast(t('未连接到内核，无法发送'), 'alert', 'warn');
   // consume the stash wholesale — the draft shipped; a `[paste #N]` typed
   // into a NEW draft must never resurrect the old clipboard content
   pasteStash = [];
@@ -115,12 +115,12 @@ function renderQueueChips() {
   const box = $('#cmp-queue');
   if (!steerQ.length && !inputQ.length) { box.hidden = true; box.innerHTML = ''; return; }
   box.hidden = false;
-  const clip = t => esc(t.length > 40 ? t.slice(0, 40) + '…' : t);
+  const clip = s => esc(s.length > 40 ? s.slice(0, 40) + '…' : s);
   box.innerHTML =
-    steerQ.map((t, i) =>
-      `<span class="chip q-steer" data-tip="引导已入队 · 下个请求边界注入"><span>${ic('zap', 'i xs')} ${clip(t)}</span><button class="chip-x" data-si="${i}" aria-label="撤回">×</button></span>`).join('') +
+    steerQ.map((s, i) =>
+      `<span class="chip q-steer" data-tip="${t('引导已入队 · 下个请求边界注入')}"><span>${ic('zap', 'i xs')} ${clip(s)}</span><button class="chip-x" data-si="${i}" aria-label="${t('撤回')}">×</button></span>`).join('') +
     inputQ.map(q =>
-      `<span class="chip q-in" data-tip="排队中 · 点击编辑"><button class="chip-btn" data-mv="${q.id},-1" aria-label="前移">${ic('chev-l', 'i xs')}</button><button class="chip-btn" data-mv="${q.id},1" aria-label="后移">${ic('chev-r', 'i xs')}</button><button class="chip-t" data-qedit="${q.id}">${clip(q.text)}</button><button class="chip-x" data-qx="${q.id}" aria-label="移除">×</button></span>`).join('');
+      `<span class="chip q-in" data-tip="${t('排队中 · 点击编辑')}"><button class="chip-btn" data-mv="${q.id},-1" aria-label="${t('前移')}">${ic('chev-l', 'i xs')}</button><button class="chip-btn" data-mv="${q.id},1" aria-label="${t('后移')}">${ic('chev-r', 'i xs')}</button><button class="chip-t" data-qedit="${q.id}">${clip(q.text)}</button><button class="chip-x" data-qx="${q.id}" aria-label="${t('移除')}">×</button></span>`).join('');
 }
 $('#cmp-queue').addEventListener('click', e => {
   const b = e.target.closest('[data-si],[data-mv],[data-qx],[data-qedit]');
@@ -163,12 +163,12 @@ function steerSend() {
   const ta = $('#input'), text = ta.value.trim();
   if (!text) return ta.focus();
   if (pendingAtts.length) {
-    toast('引导只带文本 — 附件消息走 Enter 排队', 'alert', 'warn');
+    toast(t('引导只带文本 — 附件消息走 Enter 排队'), 'alert', 'warn');
     return send();
   }
   const payload = expandPastes(text);
-  const restore = () => { ta.value = text; autoGrow(); slashCheck(true); toast('发送失败，草稿已恢复', 'alert', 'warn'); };
-  if (!wsSend({ type: 'steer', text: payload }, restore)) return toast('未连接到内核，无法发送', 'alert', 'warn');
+  const restore = () => { ta.value = text; autoGrow(); slashCheck(true); toast(t('发送失败，草稿已恢复'), 'alert', 'warn'); };
+  if (!wsSend({ type: 'steer', text: payload }, restore)) return toast(t('未连接到内核，无法发送'), 'alert', 'warn');
   pasteStash = [];
   ta.value = ''; autoGrow(); slashCheck(true);
   logEv('message', 'steer · ' + payload.slice(0, 60));
@@ -179,7 +179,7 @@ function renderAtts() {
   const box = $('#cmp-atts');
   box.hidden = !pendingAtts.length;
   box.innerHTML = pendingAtts.map((a, i) =>
-    `<span class="att-chip"><img src="${a.thumb || attURL(a.path)}" alt=""><span class="att-n">${esc(a.name || attBase(a.path))}</span><button class="chip-x" data-ri="${i}" aria-label="移除附件">×</button></span>`).join('');
+    `<span class="att-chip"><img src="${a.thumb || attURL(a.path)}" alt=""><span class="att-n">${esc(a.name || attBase(a.path))}</span><button class="chip-x" data-ri="${i}" aria-label="${t('移除附件')}">×</button></span>`).join('');
 }
 function removeAtt(i) {
   const a = pendingAtts[i];
@@ -225,12 +225,12 @@ async function uploadImageFile(file) {
   const r = await api('/attachments?ext=' + ext + '&sess=' + encodeURIComponent(sessionId), { method: 'POST', body: bytes });
   pendingAtts.push({ path: r.path, mime: r.mime, name: r.name, thumb: URL.createObjectURL(file), file });
   renderAtts();
-  toast(`图片已附加 → ${r.name}`, 'note');
+  toast(t('图片已附加 → {name}', { name: r.name }), 'note');
 }
 $('#att-file').addEventListener('change', e => {
   for (const f of [...e.target.files]) {
-    if (!/^image\//.test(f.type)) { toast(`只收图片：${f.name}`, 'alert', 'warn'); continue; }
-    uploadImageFile(f).catch(err => toast(`图片上传失败：${err.message || err}`, 'alert', 'warn'));
+    if (!/^image\//.test(f.type)) { toast(t('只收图片：{name}', { name: f.name }), 'alert', 'warn'); continue; }
+    uploadImageFile(f).catch(err => toast(t('图片上传失败：{msg}', { msg: err.message || err }), 'alert', 'warn'));
   }
   e.target.value = ''; // same file twice in a row must re-fire change
 });
@@ -239,7 +239,7 @@ $('#input').addEventListener('paste', e => {
   const file = e.clipboardData && [...(e.clipboardData.files || [])].find(f => /^image\//.test(f.type));
   if (file) {
     e.preventDefault();
-    uploadImageFile(file).catch(err => toast(`图片上传失败：${err.message || err}`, 'alert', 'warn'));
+    uploadImageFile(file).catch(err => toast(t('图片上传失败：{msg}', { msg: err.message || err }), 'alert', 'warn'));
     return;
   }
   const text = e.clipboardData && e.clipboardData.getData('text/plain') || '';
@@ -251,7 +251,7 @@ $('#input').addEventListener('paste', e => {
     const s = ta.selectionStart;
     ta.value = ta.value.slice(0, s) + marker + ta.value.slice(ta.selectionEnd);
     ta.selectionStart = ta.selectionEnd = s + marker.length;
-    toast(`已粘贴 ${text.length} 字符 → ${marker}（发送时展开）`, 'note');
+    toast(t('已粘贴 {n} 字符 → {marker}（发送时展开）', { n: text.length, marker }), 'note');
   }
   setTimeout(autoGrow);
 });
@@ -305,7 +305,7 @@ async function atCheck(hide) {
     atEl.addEventListener('click', e => { const b = e.target.closest('.mi'); if (b) pickAt(b.dataset.p); });
     popShow(atEl);
   }
-  atEl.innerHTML = '<div class="lbl">@ 文件提及 — Enter 选中，目录可继续下钻</div>'
+  atEl.innerHTML = `<div class="lbl">${t('@ 文件提及 — Enter 选中，目录可继续下钻')}</div>`
     + atItems.map((p, i) => `<button class="mi${i === atIdx ? ' hl' : ''}" data-p="${esc(p)}">${ic(p.endsWith('/') ? 'folder' : 'file', 'i sm')}<span class="mt mono"><span>${esc(p)}</span></span></button>`).join('');
   atEl.querySelector('.hl')?.scrollIntoView({ block: 'nearest' });
 }
@@ -353,7 +353,7 @@ function slashCheck(hide) {
 }
 function renderSlash() {
   if (!slashEl) return;
-  slashEl.innerHTML = '<div class="lbl">/ 命令 — Enter 执行，Tab 补全</div>'
+  slashEl.innerHTML = `<div class="lbl">${t('/ 命令 — Enter 执行，Tab 补全')}</div>`
     + slashItems.map((c, i) => `<button class="mi${i === slashIdx ? ' hl' : ''}" data-c="${esc(c.name)}">${ic(c.kind === 'skill' ? 'sparkles' : 'terminal', 'i sm')}<span class="mt mono"><span>/${esc(c.name)}</span>${c.desc ? `<small>${esc(c.desc)}</small>` : ''}</span></button>`).join('');
   // keyboard nav must drag the viewport — the highlight re-renders on
   // every arrow, so scroll the fresh .hl into the scroller's nearest edge

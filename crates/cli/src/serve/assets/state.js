@@ -107,7 +107,7 @@ if (TAURI) {
       on = !!(s && s.maximized);
     } catch { return; }
     $('use', capMax).setAttribute('href', on ? '#c-restore' : '#c-max');
-    const label = on ? '还原' : '最大化';
+    const label = on ? t('还原') : t('最大化');
     capMax.dataset.tip = label;
     capMax.setAttribute('aria-label', label);
   };
@@ -141,12 +141,17 @@ let clientId = 0; // hello assigns this tab's id — directed frames name it
 const busySessions = new Set(), waitingSessions = new Set();
 let driver = ''; // loop driver the viewed session froze at creation ('' = not a live view yet)
 let approvalMode = 'auto'; // kernel-reported stance — the only source of truth
-const MODE_LABELS = { always_ask: '请求批准', auto: '自动', read_only: '只读', full_access: '完全访问' };
+/* approval-mode labels — resolved through t() at render time: `uiLang` only
+   settles further down this file, so a load-time map would freeze whichever
+   language the previous render already had */
+const modeLabel = m => ({
+  always_ask: t('请求批准'), auto: t('自动'), read_only: t('只读'), full_access: t('完全访问'),
+}[m] || m);
 const MODE_ICONS = { always_ask: 'shield-check', auto: 'shield', read_only: 'eye', full_access: 'lock' };
 function setApprovalMode(m) {
   if (!m) return;
   approvalMode = m;
-  $('#cmp-mode').textContent = MODE_LABELS[m] || m;
+  $('#cmp-mode').textContent = modeLabel(m);
   $('#mode-ic').setAttribute('href', '#i-' + (MODE_ICONS[m] || 'shield'));
 }
 /* reasoning-effort override — kernel truth arrives on hello/replay/effort
@@ -157,20 +162,43 @@ let effortLevel = null, effortLevels = [];
 function setEffort(level, levels) {
   effortLevel = level || null;
   if (Array.isArray(levels)) effortLevels = levels;
-  $('#cmp-effort').textContent = effortLevel || '默认';
+  $('#cmp-effort').textContent = effortLevel || t('默认');
   $('#effort-btn').classList.toggle('lit', !!effortLevel);
 }
 let SESSION_IDS = [], SESSION_META = {};
 const EVLOG = [];
 
 const DEFAULTS = { mode: 'dark', motion: 'system', accent: '#339CFF', background: '#16181F', foreground: '#E8E9F0', wallpaper: 'graphite', dim: 0.16, panelOpacity: 0.72, blur: 24, translucentSidebar: false, contrast: 50, railGroup: 'time', railFold: {}, loopDriver: '', fonts: { ui: 'HarmonyOS Sans SC', code: 'Maple Mono CN' } };
-const INITIAL = Object.assign(clone(DEFAULTS), { wallpaper: 'dusk-ridge', dim: 0.08, panelOpacity: 0.56, translucentSidebar: true });
+const INITIAL = Object.assign(clone(DEFAULTS), { wallpaper: 'dusk-ridge', dim: 0.08, panelOpacity: 0.56, translucentSidebar: true, lang: 'auto' });
 /* state source of truth: `<project>/.sunmao/ui.json` via GET/PUT /ui;
    localStorage is only a first-frame cache (prevents a flash of defaults
    while the fetch is in flight). A failed fetch keeps the cached state. */
 const mergeUi = v => (v && typeof v === 'object') ? Object.assign(clone(INITIAL), v, { fonts: Object.assign({}, INITIAL.fonts, v.fonts || {}) }) : clone(INITIAL);
 let S = (() => { try { return mergeUi(JSON.parse(localStorage.getItem('sunmao.ui'))); } catch { return clone(INITIAL); } })();
-async function loadUi() { try { const v = await api('/ui'); if (v && v.ui) { S = mergeUi(v.ui); apply(); if (S.wallpaper === 'custom') loadCustom(); if (TAURI && TAURI.setZoom) TAURI.setZoom(S.zoom || 1); if (typeof dockSessionSwap === 'function') dockSessionSwap(); } } catch {} }
+/* the language is resolved here, before anything renders: `auto` follows the
+   system locale, and the brand (榫卯 / sunmao) follows the language */
+uiLang = detectLang(S.lang);
+async function loadUi() {
+  try {
+    const v = await api('/ui');
+    if (v && v.ui) {
+      S = mergeUi(v.ui);
+      apply();
+      if (S.wallpaper === 'custom') loadCustom();
+      if (TAURI && TAURI.setZoom) TAURI.setZoom(S.zoom || 1);
+      if (typeof dockSessionSwap === 'function') dockSessionSwap();
+      // the server copy is authoritative for a client whose cache is empty
+      // (or stale): one reload aligns it, and the flag keeps that from
+      // looping when the two disagree for another reason
+      if (detectLang(S.lang) !== uiLang) {
+        if (!sessionStorage.getItem('lang-sync')) {
+          sessionStorage.setItem('lang-sync', '1');
+          location.reload();
+        }
+      } else sessionStorage.removeItem('lang-sync');
+    }
+  } catch {}
+}
 let uiSaveT = 0;
 const save = () => {
   try { localStorage.setItem('sunmao.ui', JSON.stringify(S)); } catch {}

@@ -5,16 +5,16 @@
 function sessionMenu(id) {
   const cur = id === sessionId;
   const items = [];
-  if (!cur) items.push({ v: 'resume', t: '打开此会话', icon: 'history' });
-  items.push({ v: 'fork', t: '基于此会话新建对话', icon: 'fork' });
-  items.push({ v: 'rewind', t: '回退到某一轮', icon: 'reset' });
-  if (cur) items.push({ v: 'compact', t: '压缩上下文', icon: 'shrink' });
+  if (!cur) items.push({ v: 'resume', t: t('打开此会话'), icon: 'history' });
+  items.push({ v: 'fork', t: t('基于此会话新建对话'), icon: 'fork' });
+  items.push({ v: 'rewind', t: t('回退到某一轮'), icon: 'reset' });
+  if (cur) items.push({ v: 'compact', t: t('压缩上下文'), icon: 'shrink' });
   items.push('-');
-  items.push({ v: 'rename', t: '重命名', icon: 'pen' });
-  items.push({ v: 'export', t: '导出为 Markdown', icon: 'download' });
-  items.push({ v: 'delete', t: '删除会话', icon: 'trash', warn: true });
+  items.push({ v: 'rename', t: t('重命名'), icon: 'pen' });
+  items.push({ v: 'export', t: t('导出为 Markdown'), icon: 'download' });
+  items.push({ v: 'delete', t: t('删除会话'), icon: 'trash', warn: true });
   items.push('-');
-  items.push({ v: 'copy', t: '复制会话 ID', icon: 'copy' });
+  items.push({ v: 'copy', t: t('复制会话 ID'), icon: 'copy' });
   return items;
 }
 function sessionAction(v, id, at) {
@@ -25,10 +25,10 @@ function sessionAction(v, id, at) {
   else if (v === 'rename') renamePop(id, at);
   else if (v === 'export') exportSession(id);
   else if (v === 'delete') deletePop(id, at);
-  else if (v === 'copy') { if (navigator.clipboard) navigator.clipboard.writeText(id).catch(() => {}); toast('已复制会话 ID', 'copy'); }
+  else if (v === 'copy') { if (navigator.clipboard) navigator.clipboard.writeText(id).catch(() => {}); toast(t('已复制会话 ID'), 'copy'); }
 }
 function renamePop(id, at) {
-  pop(at, `<div class="lbl">重命名会话</div><div class="field"><input id="rn-in" placeholder="${esc(sessTitle(id) || id)}" spellcheck="false" autocomplete="off"></div>`, { onMount(p) {
+  pop(at, `<div class="lbl">${t('重命名会话')}</div><div class="field"><input id="rn-in" placeholder="${esc(sessTitle(id) || id)}" spellcheck="false" autocomplete="off"></div>`, { onMount(p) {
     const inp = $('#rn-in', p);
     inp.addEventListener('keydown', e => {
       if (e.key !== 'Enter') return;
@@ -40,7 +40,7 @@ function renamePop(id, at) {
 }
 function deletePop(id, at) {
   const title = sessTitle(id) || id;
-  pop(at, `<div class="lbl">删除会话</div><div class="mp-list"><div class="empty-hint">将永久删除“${esc(title)}”及其聊天记录。</div><button class="mi warn" data-yes="1">${ic('trash')}<span class="mt"><span>确认删除</span></span></button></div>`, { onMount(p) {
+  pop(at, `<div class="lbl">${t('删除会话')}</div><div class="mp-list"><div class="empty-hint">${t('将永久删除“{title}”及其聊天记录。', { title: esc(title) })}</div><button class="mi warn" data-yes="1">${ic('trash')}<span class="mt"><span>${t('确认删除')}</span></span></button></div>`, { onMount(p) {
     p.addEventListener('click', ev => {
       if (!ev.target.closest('[data-yes]')) return;
       closePop(); deleteSession(id);
@@ -50,19 +50,19 @@ function deletePop(id, at) {
 async function rewindPick(id, at) {
   let turns = [];
   try { turns = (await api(`/session/${encodeURIComponent(id)}/turns`)).turns || []; }
-  catch (e) { toast(`回退列表失败：${e.message}`, 'alert', 'warn'); return; }
-  if (!turns.length) return toast('没有可回退的轮次', 'reset');
-  const items = turns.map(t => ({ v: String(t.n), t: `第 ${t.n} 轮`, d: t.preview }));
-  menuPop(at, [{ label: '选择要回退到的位置' }, ...items], v => rewindTo(id, +v));
+  catch (e) { toast(t('回退列表失败：{msg}', { msg: e.message }), 'alert', 'warn'); return; }
+  if (!turns.length) return toast(t('没有可回退的轮次'), 'reset');
+  const items = turns.map(turn => ({ v: String(turn.n), t: t('第 {n} 轮', { n: turn.n }), d: turn.preview }));
+  menuPop(at, [{ label: t('选择要回退到的位置') }, ...items], v => rewindTo(id, +v));
 }
 async function rewindTo(id, n) {
   try {
     const r = await api(`/session/${encodeURIComponent(id)}/rewind`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ turn: n, mode: 'both' }) });
     const files = (r.restored || []).length;
     if (r.session) wsSend({ type: 'view', id: r.session });
-    toast(`已回退到第 ${n} 轮之前${files ? `，恢复 ${files} 个文件` : ''}`, 'reset');
+    toast(t('已回退到第 {n} 轮之前', { n }) + (files ? t('，恢复 {files} 个文件', { files }) : ''), 'reset');
   }
-  catch (e) { toast(`回退失败：${e.message}`, 'alert', 'warn'); }
+  catch (e) { toast(t('回退失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
 // per-message rewind: trim to just before this user turn (files restored
 // by the same checkpoint path), then hand its text back to the composer
@@ -80,9 +80,9 @@ async function submitNote(name, btn) {
   try {
     const r = await api(`/artifacts/${encodeURIComponent(name)}/annotate?sess=${encodeURIComponent(sessionId)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ note: v }) });
     inp.value = '';
-    toast((r.result || '已写入').replace(/^\[|\]$/g, ''), 'note');
+    toast((r.result || t('已写入')).replace(/^\[|\]$/g, ''), 'note');
     refreshNotes(btn.closest('.island'), name);
-  } catch (e) { toast(`批注失败：${e.message}`, 'alert', 'warn'); }
+  } catch (e) { toast(t('批注失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
 
 function act(name, el) {
@@ -96,7 +96,7 @@ function act(name, el) {
     case 'crumb':
       if (view !== 'session' || !sessionId) return;
       return menuPop(el, sessionMenu(sessionId), v => sessionAction(v, sessionId, el));
-    case 'help': return menuPop(el, [{ v: 'keys', t: '键盘快捷键', icon: 'keyboard' }, { v: 'about', t: '关于 sunmao', icon: 'info' }], v => { show('settings'); settingsPage(v); }, { place: 'top' });
+    case 'help': return menuPop(el, [{ v: 'keys', t: t('键盘快捷键'), icon: 'keyboard' }, { v: 'about', t: t('关于 {brand}', { brand: brand() }), icon: 'info' }], v => { show('settings'); settingsPage(v); }, { place: 'top' });
     case 'annotate': {
       // a dock browser tab is a real guest webview: its document is out of
       // this page's reach, so the picker runs in there (the shell injects it)
@@ -107,7 +107,7 @@ function act(name, el) {
     }
     case 'dock-add': return dockAdd(el);
     case 'note-add': return submitNote(el.dataset.name, el);
-    case 'island-tall': { const isl = el.closest('.island'), on = isl.classList.toggle('tall'); el.innerHTML = ic(on ? 'shrink' : 'expand'); el.dataset.tip = on ? '收起' : '展开'; return; }
+    case 'island-tall': { const isl = el.closest('.island'), on = isl.classList.toggle('tall'); el.innerHTML = ic(on ? 'shrink' : 'expand'); el.dataset.tip = on ? t('收起') : t('展开'); return; }
     case 'rev-prev': case 'rev-next': {
       const isl = el.closest('.island');
       const cur = +isl.dataset.revCur || 1, max = +isl.dataset.revMax || 1;
@@ -122,7 +122,7 @@ function act(name, el) {
       // an external browser can't resolve it; open the real file path
       if (TAURI) {
         const p = `${cwd}/.sunmao/artifacts/${isl.dataset.artifact}.html`;
-        return Promise.resolve(TAURI.openExternal(p)).catch(e => toast(`打开失败：${e}`, 'alert', 'warn'));
+        return Promise.resolve(TAURI.openExternal(p)).catch(e => toast(t('打开失败：{msg}', { msg: e }), 'alert', 'warn'));
       }
       return open('/artifacts/' + encodeURIComponent(isl.dataset.artifact) + q, '_blank');
     }
@@ -132,12 +132,12 @@ function act(name, el) {
     case 'pick-mode': {
       // same four stances the kernel gates on — labels mirror the TUI's /mode
       const MODES = [
-        { v: 'always_ask', t: '请求批准', d: '写入与风险命令前询问', icon: 'shield-check' },
-        { v: 'auto', t: '自动', d: '读写直接放行，风险命令仍询问', icon: 'shield' },
-        { v: 'read_only', t: '只读', d: '只能读取与搜索，不执行命令', icon: 'eye' },
-        { v: 'full_access', t: '完全访问', d: '不再询问；deny 规则依旧生效', icon: 'lock', warn: true },
+        { v: 'always_ask', t: t('请求批准'), d: t('写入与风险命令前询问'), icon: 'shield-check' },
+        { v: 'auto', t: t('自动'), d: t('读写直接放行，风险命令仍询问'), icon: 'shield' },
+        { v: 'read_only', t: t('只读'), d: t('只能读取与搜索，不执行命令'), icon: 'eye' },
+        { v: 'full_access', t: t('完全访问'), d: t('不再询问；deny 规则依旧生效'), icon: 'lock', warn: true },
       ];
-      return menuPop(el, [{ label: '审批模式' }, ...MODES.map(m => Object.assign({}, m, { on: m.v === approvalMode }))], v => { wsSend({ type: 'mode', sel: v }); }, { place: 'top', align: 'end' });
+      return menuPop(el, [{ label: t('审批模式') }, ...MODES.map(m => Object.assign({}, m, { on: m.v === approvalMode }))], v => { wsSend({ type: 'mode', sel: v }); }, { place: 'top', align: 'end' });
     }
     case 'pick-model': return modelPop(el);
     case 'pick-effort': return effortPop(el);
@@ -156,19 +156,14 @@ function act(name, el) {
     case 'sched-toggle': return schedToggle(el.dataset.id);
     case 'sched-del': return schedDel(el.dataset.id);
     case 'sched-run': return schedRun(el.dataset.id);
-    case 'starter': {
-      $('#input').value = el.dataset.prompt || '';
-      autoGrow();
-      $('#input').focus();
-      return;
-    }
     case 'upload-wall': return $('#file-wall').click();
     case 'color': return colorPop(el, el.dataset.key);
     case 'font': return fontPop(el, el.dataset.key);
     case 'motion': return motionPop(el);
+    case 'lang': return langPick();
     case 'shell-pick': return shellPick(el);
     case 'side': S.translucentSidebar = !S.translucentSidebar; return commit();
-    case 'reset-ui': S = clone(DEFAULTS); commit(); renderWallGrid(); return toast('已恢复默认外观', 'reset');
+    case 'reset-ui': S = clone(DEFAULTS); commit(); renderWallGrid(); return toast(t('已恢复默认外观'), 'reset');
     case 'win-min': { const w = shellWin(); if (w) w.win('min'); return; }
     case 'win-max': { const w = shellWin(); if (w) w.win('max'); return; }
     case 'win-close': { const w = shellWin(); if (w) w.win('close'); return; }

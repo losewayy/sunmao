@@ -18,6 +18,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::{ChannelAdapter, InboundMsg, SendFailure, SendResult};
 use crate::im::config::{FeishuRegion, FeishuSpec};
+use crate::im::redact;
 use crate::im::route::ImSource;
 
 mod frame;
@@ -59,6 +60,19 @@ fn token_ttl(v: &serde_json::Value) -> u64 {
 /// In-flight chunked events: per `message_id`, when the first frame
 /// landed and the slots seen so far (`None` = still missing).
 type ChunkBufs = HashMap<String, (Instant, Vec<Option<Vec<u8>>>)>;
+
+/// What one data frame did to the assembly state. `Pending` and `Refused`
+/// are different things to the caller: the platform redelivers a frame it
+/// was not acked, which is how a chunked event gets its siblings — but a
+/// header that can never form an event would just be redelivered forever.
+enum ChunkOutcome {
+    /// The event is whole; the joined payload is here.
+    Complete(Vec<u8>),
+    /// A slot of a chunked event, still waiting for its siblings.
+    Pending,
+    /// Impossible to assemble; dropped on purpose.
+    Refused,
+}
 
 /// The API host for a region — an app registered on one domain does not
 /// authenticate on the other.
@@ -158,11 +172,20 @@ impl FeishuAdapter {
         if let Some(body) = body {
             req = req.json(body);
         }
-        let resp = req.send().await.with_context(|| format!("feishu {what}"))?;
+        // The edit path carries the platform's `message_id` and the create
+        // path its `chat_id`, and reqwest prints the URL of a failed request
+        // in its `Display` — so the URL is stripped before the error can
+        // reach a log line or a ledger row.
+        let resp = req
+            .send()
+            .await
+            .map_err(redact::transport)
+            .with_context(|| format!("feishu {what}"))?;
         let status = resp.status();
         let v: serde_json::Value = resp
             .json()
             .await
+            .map_err(redact::transport)
             .with_context(|| format!("feishu {what} decode"))?;
         let code = v["code"]
             .as_i64()
@@ -259,11 +282,25 @@ impl FeishuAdapter {
                             let sum = f.header("sum").and_then(|s| s.parse().ok()).unwrap_or(1);
                             let seq = f.header("seq").and_then(|s| s.parse().ok()).unwrap_or(0);
                             let message_id = f.header("message_id").unwrap_or("").to_string();
-                            let Some(payload) =
-                                merge_chunk(&mut chunks, &message_id, sum, seq, &f.payload)
-                            else {
-                                continue; // chunked event, still incomplete
-                            };
+                            let payload =
+                                match merge_chunk(&mut chunks, &message_id, sum, seq, &f.payload) {
+                                    ChunkOutcome::Complete(payload) => payload,
+                                    // a slot of an event that is still assembling
+                                    ChunkOutcome::Pending => continue,
+                                    ChunkOutcome::Refused => {
+                                        // No redelivery can complete this frame, and an
+                                        // unacked frame is redelivered forever. Ack it,
+                                        // drop it, and name it in the log.
+                                        tracing::warn!(
+                                            "feishu ws: unassemblable frame refused \
+                                             (message_id={message_id:?} sum={sum} seq={seq})"
+                                        );
+                                        sink.send(Message::binary(frame::ack(&f, 0)))
+                                            .await
+                                            .context("feishu ws ack")?;
+                                        continue;
+                                    }
+                                };
                             sink.send(Message::binary(frame::ack(&f, 0)))
                                 .await
                                 .context("feishu ws ack")?;
@@ -305,20 +342,22 @@ fn service_id(url: &str) -> i32 {
 
 /// Fold one data frame into its event's chunk buffer. Unchunked frames
 /// (`sum <= 1`) pass straight through; a chunked event yields its joined
-/// payload only once every slot has arrived. A `sum` past `MAX_CHUNK_SUM` is
-/// refused before it can size an allocation.
+/// payload only once every slot has arrived. A header that can never form an
+/// event is `Refused` rather than left hanging: a `sum` past `MAX_CHUNK_SUM`
+/// (it would size an allocation before any payload arrives), a missing
+/// `message_id`, or a `seq` outside the event.
 fn merge_chunk(
     bufs: &mut ChunkBufs,
     message_id: &str,
     sum: usize,
     seq: usize,
     payload: &[u8],
-) -> Option<Vec<u8>> {
+) -> ChunkOutcome {
     if sum <= 1 {
-        return Some(payload.to_vec());
+        return ChunkOutcome::Complete(payload.to_vec());
     }
     if message_id.is_empty() || seq >= sum || sum > MAX_CHUNK_SUM {
-        return None;
+        return ChunkOutcome::Refused;
     }
     bufs.retain(|_, (seen, _)| seen.elapsed() < CHUNK_TTL);
     {
@@ -330,11 +369,13 @@ fn merge_chunk(
         }
         entry.1[seq] = Some(payload.to_vec());
         if entry.1.iter().any(Option::is_none) {
-            return None;
+            return ChunkOutcome::Pending;
         }
     }
-    let (_, slots) = bufs.remove(message_id)?;
-    Some(slots.into_iter().flatten().flatten().collect())
+    let Some((_, slots)) = bufs.remove(message_id) else {
+        return ChunkOutcome::Pending;
+    };
+    ChunkOutcome::Complete(slots.into_iter().flatten().flatten().collect())
 }
 
 /// Map one `im.message.receive_v1` envelope to an inbound DM. Anything

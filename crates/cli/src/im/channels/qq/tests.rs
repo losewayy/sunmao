@@ -28,6 +28,12 @@ fn store() -> (Arc<Store>, std::path::PathBuf) {
     (Arc::new(Store::open(&dir).unwrap()), dir)
 }
 
+/// A loopback port nothing listens on.
+fn closed_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.local_addr().unwrap().port()
+}
+
 fn c2c(content: &str) -> serde_json::Value {
     serde_json::json!({
         "id": "msg_1",
@@ -302,4 +308,35 @@ fn an_unknown_chat_is_only_ever_probed_as_a_dm() {
         send_candidates(Some(ChatTarget::Group)),
         [ChatTarget::Group].as_slice()
     );
+}
+
+/// A v2 send path is `/v2/users/{openid}/messages`, and reqwest prints the
+/// URL of a failed request in its `Display` — an un-scrubbed error would put
+/// a peer identifier into every log line and every delivery-ledger row.
+#[tokio::test]
+async fn a_transport_error_never_carries_the_openid() {
+    let (store, dir) = store();
+    let openid = "ou_9f8a7b6c5d4e3f2a";
+    let a = adapter(store).with_api_base(format!("http://127.0.0.1:{}", closed_port()));
+    let err = a
+        .api_call(
+            reqwest::Method::POST,
+            &ChatTarget::User.path(openid),
+            None,
+            "tok",
+            "send",
+        )
+        .await
+        .unwrap_err();
+    let text = format!("{err:#}");
+    assert!(
+        !text.contains(openid),
+        "the openid reached the error: {text}"
+    );
+    assert!(
+        !text.contains("http://"),
+        "the URL reached the error: {text}"
+    );
+    assert!(text.contains("qq send"), "the diagnosis is gone: {text}");
+    std::fs::remove_dir_all(dir).ok();
 }

@@ -36,7 +36,9 @@ pub struct PairingRow {
 
 /// A delivery-ledger row — `state` is pending → attempting → delivered.
 /// `attempting` rows at startup are the redelivery set (their text already
-/// gets the ♻️ prefix by the replayer, not stored).
+/// gets the ♻️ prefix by the replayer, not stored). `note` is the
+/// dead-letter reason ("partial: 1/3 chunks delivered"), the only place a
+/// truncated answer stays distinguishable from one that never went out.
 #[derive(Debug, Clone)]
 pub struct DeliveryRow {
     pub id: i64,
@@ -45,6 +47,7 @@ pub struct DeliveryRow {
     pub text: String,
     pub state: String,
     pub attempts: i64,
+    pub note: String,
 }
 
 /// Shared handle — `pub(crate)` clone-able so the `sunmao pairing` CLI and
@@ -375,18 +378,32 @@ impl Store {
         Ok(())
     }
 
-    /// `(state, note)` of one ledger row. The note is the dead-letter reason,
-    /// so "gave up after part of it landed" stays distinguishable from "never
-    /// got out" long after the log line scrolled away.
-    #[cfg(test)]
-    pub fn delivery_state_note(&self, id: i64) -> Option<(String, String)> {
-        self.conn
-            .lock()
-            .unwrap()
-            .query_row("SELECT state, note FROM delivery WHERE id=?1", [id], |r| {
-                Ok((r.get(0)?, r.get(1)?))
+    /// The dead letters of one channel, oldest first. A dead row is never
+    /// replayed, so its note is the only surviving record of *why* it was
+    /// abandoned — the delivery lane reports these at every start, and a
+    /// future console/CLI view would read them from here.
+    pub fn deliver_dead_rows(&self, channel: &str) -> Vec<DeliveryRow> {
+        let conn = self.conn.lock().unwrap();
+        let mut st = conn
+            .prepare(
+                "SELECT id, channel, chat, text, state, attempts, note FROM delivery
+                 WHERE channel=?1 AND state='dead' ORDER BY id",
+            )
+            .unwrap();
+        st.query_map([channel], |r| {
+            Ok(DeliveryRow {
+                id: r.get(0)?,
+                channel: r.get(1)?,
+                chat: r.get(2)?,
+                text: r.get(3)?,
+                state: r.get(4)?,
+                attempts: r.get(5)?,
+                note: r.get(6)?,
             })
-            .ok()
+        })
+        .unwrap()
+        .flatten()
+        .collect()
     }
 
     /// Everything that never made it — pending (never attempted) and
@@ -395,7 +412,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut st = conn
             .prepare(
-                "SELECT id, channel, chat, text, state, attempts FROM delivery
+                "SELECT id, channel, chat, text, state, attempts, note FROM delivery
                  WHERE state IN ('pending','attempting') ORDER BY id",
             )
             .unwrap();
@@ -407,6 +424,7 @@ impl Store {
                 text: r.get(3)?,
                 state: r.get(4)?,
                 attempts: r.get(5)?,
+                note: r.get(6)?,
             })
         })
         .unwrap()
@@ -520,13 +538,9 @@ mod tests {
         let s = Store::open(&dir).unwrap();
         let id = s.deliver_pending("telegram", "42", "again").unwrap();
         s.deliver_dead(id, "partial: 1/2 chunks delivered").unwrap();
-        assert_eq!(
-            s.delivery_state_note(id).unwrap(),
-            (
-                "dead".to_string(),
-                "partial: 1/2 chunks delivered".to_string()
-            )
-        );
+        let dead = s.deliver_dead_rows("telegram");
+        assert_eq!(dead.len(), 1);
+        assert_eq!(dead[0].note, "partial: 1/2 chunks delivered");
         // the row the old version left behind is still readable
         assert_eq!(s.deliver_outstanding().len(), 1);
         std::fs::remove_dir_all(dir).ok();

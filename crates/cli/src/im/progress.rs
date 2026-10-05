@@ -33,11 +33,14 @@ pub struct ChatKey {
 /// One chat's live draft — the status message's channel-side id and the
 /// throttle cursor. `None` id = draft not yet posted (first event creates
 /// it lazily — a turn may end before any activity is worth showing).
+/// `abandoned` = a draft send stopped after part of it had already landed,
+/// so this turn keeps the partial bubble instead of posting a second one.
 #[derive(Default)]
 struct Draft {
     message_id: Option<String>,
     last_edit: Option<Instant>,
     last_typing: Option<Instant>,
+    abandoned: bool,
 }
 
 /// The lane's shared state — ingress adds chats, the subscriber drains.
@@ -212,28 +215,54 @@ async fn tick(state: &Shared, channels: &[Arc<Delivery>]) {
                         .last_typing = Some(Instant::now());
                 }
             }
-            let (id, due) = {
+            let (id, due, abandoned) = {
                 let st = state.lock().unwrap();
                 let d = st.drafts.get(key);
                 (
                     d.and_then(|d| d.message_id.clone()),
                     d.and_then(|d| d.last_edit)
                         .is_none_or(|t| t.elapsed() >= EDIT_INTERVAL),
+                    d.is_some_and(|d| d.abandoned),
                 )
             };
-            if !due {
+            if abandoned || !due {
                 continue;
             }
             match id {
                 // first frame → post the draft, keep the id for edits
-                None => {
-                    if let Ok(Some(mid)) = adapter.send_text(&key.chat_id, &text).await {
+                None => match adapter.send_text(&key.chat_id, &text).await {
+                    Ok(Some(mid)) => {
                         let mut st = state.lock().unwrap();
                         let d = st.drafts.entry(key.clone()).or_default();
                         d.message_id = Some(mid);
                         d.last_edit = Some(Instant::now());
                     }
-                }
+                    // The draft is a status bubble, not the answer. When part
+                    // of it already landed, posting the rest from the top is
+                    // the duplicate the delivery ledger stopped doing — this
+                    // lane has no ledger and nothing to resume from, so the
+                    // chat keeps the partial bubble and this turn stops
+                    // drafting. The final answer still goes out through the
+                    // ledger, which is the message that matters.
+                    Err(e) if e.is_partial() => {
+                        tracing::warn!(
+                            "im draft for {} on {} stopped at {}/{} chunk(s): not reposted",
+                            key.chat_id,
+                            key.channel,
+                            e.delivered(),
+                            e.total()
+                        );
+                        state
+                            .lock()
+                            .unwrap()
+                            .drafts
+                            .entry(key.clone())
+                            .or_default()
+                            .abandoned = true;
+                    }
+                    // nothing landed: the next tick may post the draft cleanly
+                    _ => {}
+                },
                 Some(mid) => {
                     if adapter.edit_text(&key.chat_id, &mid, &text).await.is_ok()
                         && let Some(d) = state.lock().unwrap().drafts.get_mut(key)
@@ -295,7 +324,7 @@ async fn flush_on_turn_end(frame: &serde_json::Value, state: &Shared, channels: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::im::channels::{ChannelAdapter, SendResult};
+    use crate::im::channels::{ChannelAdapter, SendFailure, SendResult};
     use crate::im::store::Store;
 
     #[test]
@@ -358,6 +387,133 @@ mod tests {
     fn store() -> (Arc<Store>, std::path::PathBuf) {
         let dir = crate::im::test_dir("prog");
         (Arc::new(Store::open(&dir).unwrap()), dir)
+    }
+
+    /// Scripted adapter whose first draft send delivers `delivered` of
+    /// `total` chunks and then fails; every later send succeeds. That is the
+    /// shape that used to make the next tick post the whole bubble again.
+    struct PartialDraftAdapter {
+        delivered: usize,
+        total: usize,
+        sends: std::sync::Mutex<Vec<String>>,
+        failed_once: std::sync::Mutex<bool>,
+    }
+
+    impl PartialDraftAdapter {
+        fn new(delivered: usize, total: usize) -> Self {
+            Self {
+                delivered,
+                total,
+                sends: std::sync::Mutex::new(Vec::new()),
+                failed_once: std::sync::Mutex::new(false),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChannelAdapter for PartialDraftAdapter {
+        fn channel(&self) -> &'static str {
+            "test"
+        }
+        async fn poll(&self, _tx: tokio::sync::mpsc::Sender<crate::im::channels::InboundMsg>) {}
+        async fn send_text(&self, _chat_id: &str, text: &str) -> SendResult {
+            let mut failed = self.failed_once.lock().unwrap();
+            if !*failed {
+                *failed = true;
+                if self.delivered > 0 {
+                    // the chunks that landed show up in the chat
+                    self.sends.lock().unwrap().push(text.to_string());
+                }
+                return Err(SendFailure::new(
+                    self.delivered,
+                    self.total,
+                    anyhow::anyhow!("a chunk hit a transient error"),
+                ));
+            }
+            drop(failed);
+            self.sends.lock().unwrap().push(text.to_string());
+            Ok(Some("1".into()))
+        }
+        async fn edit_text(
+            &self,
+            _chat_id: &str,
+            _message_id: &str,
+            _text: &str,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn drafting_state(key: &ChatKey) -> Shared {
+        let state = new_shared();
+        let mut st = state.lock().unwrap();
+        st.running = true;
+        st.turn_started = Some(Instant::now());
+        st.pending.insert(key.clone());
+        drop(st);
+        state
+    }
+
+    /// A draft that delivered part of its bubble must not be posted again
+    /// from the top: the chat would show the first chunk twice. The lane has
+    /// no ledger to resume from, so the turn simply stops drafting and the
+    /// final answer still goes out through the ledger.
+    #[tokio::test]
+    async fn a_partial_draft_is_not_reposted() {
+        let (s, dir) = store();
+        let a = Arc::new(PartialDraftAdapter::new(1, 2));
+        let delivery = Delivery::new(s.clone(), a.clone());
+        let key = ChatKey {
+            channel: "test".into(),
+            chat_id: "42".into(),
+        };
+        let state = drafting_state(&key);
+        let channels = [Arc::new(delivery)];
+        tick(&state, &channels).await;
+        assert_eq!(
+            a.sends.lock().unwrap().len(),
+            1,
+            "the first draft attempt went out once"
+        );
+        // without the guard the next tick posts the whole bubble again: the
+        // failure left the draft unthrottled (last_edit is still None)
+        tick(&state, &channels).await;
+        assert_eq!(
+            a.sends.lock().unwrap().len(),
+            1,
+            "a partially delivered draft must not be reposted"
+        );
+        assert!(
+            state.lock().unwrap().drafts[&key].abandoned,
+            "the turn's drafting stops, it does not retry"
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// Nothing landed, so the next tick is free to try again — the guard only
+    /// covers the duplicate case.
+    #[tokio::test]
+    async fn a_draft_that_delivered_nothing_is_retried_next_tick() {
+        let (s, dir) = store();
+        let a = Arc::new(PartialDraftAdapter::new(0, 2));
+        let delivery = Delivery::new(s.clone(), a.clone());
+        let key = ChatKey {
+            channel: "test".into(),
+            chat_id: "42".into(),
+        };
+        let state = drafting_state(&key);
+        let channels = [Arc::new(delivery)];
+        tick(&state, &channels).await;
+        assert!(!state.lock().unwrap().drafts[&key].abandoned);
+        assert!(
+            a.sends.lock().unwrap().is_empty(),
+            "nothing reached the chat"
+        );
+        // the retry posts it once, cleanly
+        tick(&state, &channels).await;
+        assert_eq!(a.sends.lock().unwrap().len(), 1);
+        assert!(!state.lock().unwrap().drafts[&key].abandoned);
+        std::fs::remove_dir_all(dir).ok();
     }
 
     async fn wait_for(mut f: impl FnMut() -> bool) -> bool {

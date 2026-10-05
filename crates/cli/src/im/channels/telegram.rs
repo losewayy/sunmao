@@ -30,6 +30,13 @@ const MAX_POLL_SECS: u64 = 300;
 /// The HTTP timeout has to outlive the server-side hold.
 const POLL_TIMEOUT_MARGIN_SECS: u64 = 15;
 
+/// The hold time this adapter will use, and the ask when it had to be moved.
+/// `Some(asked)` is what drives the warning, so a clamp cannot be silent.
+fn clamp_poll_secs(asked: u64) -> (u64, Option<u64>) {
+    let hold = asked.clamp(MIN_POLL_SECS, MAX_POLL_SECS);
+    (hold, (hold != asked).then_some(asked))
+}
+
 /// Bot API client + poller for one `{"kind":"telegram"}` channels.json
 /// entry. The token lives in the `api` URL string for the process's life —
 /// which is why every transport error is stripped of its URL before it can
@@ -39,7 +46,17 @@ pub struct TelegramAdapter {
     api: String,
     /// `getUpdates` hold time — configured per channel, default 30s.
     hold_secs: u64,
-    /// The `getUpdates` offset slot, namespaced to this bot token.
+    /// The `getUpdates` offset slot, namespaced to this bot token. The
+    /// unscoped `tg:offset` a pre-scoping build wrote is deliberately not
+    /// adopted. `offset` is a *confirmation watermark*, not a position in a
+    /// local log: the Bot API answers offset 0 with "updates starting with
+    /// the earliest unconfirmed update", so losing the local copy costs at
+    /// most the last batch received but not yet confirmed. `update_id` on the
+    /// other hand is per-bot ("start from a certain positive number and
+    /// increase sequentially"), and any offset above a new bot's updates
+    /// makes the server forget them ("all previous updates will be
+    /// forgotten") — adopting another bot's offset would silently drop the
+    /// first messages a fresh bot ever receives.
     offset_key: String,
     store: std::sync::Arc<crate::im::store::Store>,
 }
@@ -50,7 +67,15 @@ impl TelegramAdapter {
         store: std::sync::Arc<crate::im::store::Store>,
     ) -> Result<Self> {
         let token = spec.token()?;
-        let hold_secs = spec.poll_timeout_secs.clamp(MIN_POLL_SECS, MAX_POLL_SECS);
+        let (hold_secs, clamped) = clamp_poll_secs(spec.poll_timeout_secs);
+        if let Some(asked) = clamped {
+            // 0 is a legal Bot API value (short polling) but a daemon that
+            // spins on getUpdates is not what anyone wants, and a value past
+            // the ceiling is a typo. Say so rather than clamping in silence.
+            tracing::warn!(
+                "telegram: poll_timeout_secs {asked} clamped to {hold_secs} (allowed {MIN_POLL_SECS}..={MAX_POLL_SECS})"
+            );
+        }
         Ok(Self {
             http: reqwest::Client::builder()
                 // long-poll reads must outlive the server-side hold
@@ -119,6 +144,15 @@ impl TelegramAdapter {
             )
             .await?;
         Ok(res.as_array().cloned().unwrap_or_default())
+    }
+
+    /// The offset a poll resumes from — this bot's scoped slot only. See
+    /// `offset_key` for why the legacy unscoped key is not consulted.
+    fn resume_offset(&self) -> i64 {
+        self.store
+            .kv_get(&self.offset_key)
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0)
     }
 
     /// Advance the durable cursor past `update_id` — written to the store
@@ -190,11 +224,7 @@ impl ChannelAdapter for TelegramAdapter {
     }
 
     async fn poll(&self, tx: mpsc::Sender<InboundMsg>) {
-        let mut offset = self
-            .store
-            .kv_get(&self.offset_key)
-            .and_then(|v| v.parse::<i64>().ok())
-            .unwrap_or(0);
+        let mut offset = self.resume_offset();
         loop {
             match self.poll_once(offset).await {
                 Ok(updates) => {
@@ -262,232 +292,4 @@ impl ChannelAdapter for TelegramAdapter {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::im::store::Store;
-    use std::sync::Arc;
-
-    const TOKEN: &str = "123456:AAHtesttoken";
-
-    fn store() -> (Arc<Store>, std::path::PathBuf) {
-        let dir = crate::im::test_dir("telegram");
-        (Arc::new(Store::open(&dir).unwrap()), dir)
-    }
-
-    /// A token by file, so the tests never touch process environment.
-    fn adapter(store: Arc<Store>, dir: &std::path::Path, poll_secs: u64) -> TelegramAdapter {
-        let secret = dir.join("token.txt");
-        std::fs::write(&secret, TOKEN).unwrap();
-        TelegramAdapter::new(
-            &TelegramSpec {
-                token_env: None,
-                token_file: Some(secret),
-                poll_timeout_secs: poll_secs,
-                owner: None,
-                dm_policy: None,
-                allowlist: Vec::new(),
-                enabled: true,
-            },
-            store,
-        )
-        .unwrap()
-    }
-
-    /// A loopback port nothing listens on.
-    fn closed_port() -> u16 {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.local_addr().unwrap().port()
-    }
-
-    fn update(chat_type: &str, from: serde_json::Value, text: Option<&str>) -> serde_json::Value {
-        let mut update = serde_json::json!({
-            "update_id": 41,
-            "message": {"chat": {"id": 7, "type": chat_type}, "from": from},
-        });
-        if let Some(text) = text {
-            update["message"]["text"] = serde_json::json!(text);
-        }
-        update
-    }
-
-    #[test]
-    fn chunks_under_limit() {
-        assert_eq!(chunk("short"), vec!["short".to_string()]);
-        let long = "a".repeat(MSG_LIMIT * 2 + 5);
-        let parts = chunk(&long);
-        assert_eq!(parts.len(), 3);
-        assert!(parts.iter().all(|p| p.len() <= MSG_LIMIT));
-        assert_eq!(parts.concat(), long);
-    }
-
-    #[test]
-    fn chunks_prefer_paragraph_breaks() {
-        let text = format!("{}\n\n{}", "x".repeat(3000), "y".repeat(2000));
-        let parts = chunk(&text);
-        assert_eq!(parts.len(), 2);
-        assert_eq!(parts[0], "x".repeat(3000) + "\n");
-    }
-
-    /// The cut is by byte, so a multi-byte character at the limit is where a
-    /// naive slice would panic or split a glyph.
-    #[test]
-    fn chunks_never_split_a_character() {
-        let cjk = "中".repeat(MSG_LIMIT);
-        let parts = chunk(&cjk);
-        assert_eq!(parts.concat(), cjk);
-        assert!(parts.iter().all(|p| p.len() <= MSG_LIMIT));
-        assert!(
-            parts.iter().all(|p| p.chars().all(|c| c == '中')),
-            "{parts:?}"
-        );
-
-        // an emoji is four bytes: the cut has to land on a boundary
-        let crab = "🦀".repeat(MSG_LIMIT / 4 + 3);
-        let parts = chunk(&crab);
-        assert_eq!(parts.concat(), crab);
-        assert!(parts.iter().all(|p| p.len() <= MSG_LIMIT));
-        assert!(
-            parts.iter().all(|p| p.chars().all(|c| c == '🦀')),
-            "{parts:?}"
-        );
-    }
-
-    #[test]
-    fn a_private_text_update_maps_to_a_dm() {
-        let msg = TelegramAdapter::extract_dm(&update(
-            "private",
-            serde_json::json!({"id": 9, "first_name": "Ada"}),
-            Some("hi bot"),
-        ))
-        .unwrap();
-        assert_eq!(msg.source.channel, "telegram");
-        assert_eq!(msg.source.chat_id, "7");
-        assert_eq!(msg.source.sender_id, "9");
-        assert_eq!(msg.source.sender_name, "Ada");
-        assert_eq!(msg.text, "hi bot");
-    }
-
-    #[test]
-    fn the_sender_label_prefers_the_username_then_the_real_name() {
-        let named = TelegramAdapter::extract_dm(&update(
-            "private",
-            serde_json::json!({"id": 9, "username": "ada", "first_name": "Ada"}),
-            Some("hi"),
-        ))
-        .unwrap();
-        assert_eq!(named.source.sender_name, "@ada");
-
-        // no name at all: the numeric id is the honest label
-        let bare = TelegramAdapter::extract_dm(&update(
-            "private",
-            serde_json::json!({"id": 9}),
-            Some("hi"),
-        ))
-        .unwrap();
-        assert_eq!(bare.source.sender_name, "9");
-    }
-
-    /// Non-private chats never map to a session, so a room can never be
-    /// answered — `allowed_updates` filters most of this, but the mapper is
-    /// the guarantee.
-    #[test]
-    fn group_and_channel_updates_are_dropped() {
-        for chat_type in ["group", "supergroup", "channel"] {
-            assert!(
-                TelegramAdapter::extract_dm(&update(
-                    chat_type,
-                    serde_json::json!({"id": 9}),
-                    Some("hi")
-                ))
-                .is_none(),
-                "{chat_type} must not enter the DM-only gateway"
-            );
-        }
-    }
-
-    #[test]
-    fn updates_without_a_readable_sender_or_body_are_dropped() {
-        let cases = [
-            update("private", serde_json::json!({"id": 9}), None),
-            update("private", serde_json::json!({"id": 9}), Some("   ")),
-            update("private", serde_json::json!({}), Some("hi")),
-            update(
-                "private",
-                serde_json::json!({"id": "not-a-number"}),
-                Some("hi"),
-            ),
-            serde_json::json!({"update_id": 1}),
-        ];
-        for case in cases {
-            assert!(TelegramAdapter::extract_dm(&case).is_none(), "{case}");
-        }
-    }
-
-    #[test]
-    fn the_get_updates_offset_is_scoped_to_the_bot_token() {
-        let (store, dir) = store();
-        let first = adapter(store.clone(), &dir, 30);
-        assert_eq!(first.advance_offset(41).unwrap(), 42);
-        assert_eq!(
-            store.kv_get(&scope::scoped("tg:offset", TOKEN)).as_deref(),
-            Some("42")
-        );
-        assert_eq!(
-            store.kv_get("tg:offset"),
-            None,
-            "one shared offset slot replays or drops updates after a token swap"
-        );
-        // a rebuilt adapter for the same token resumes where it stopped
-        assert_eq!(
-            adapter(store.clone(), &dir, 30).offset_key,
-            first.offset_key
-        );
-        std::fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn an_absurd_poll_timeout_is_clamped_not_overflowing() {
-        let (store, dir) = store();
-        for (asked, expected) in [
-            (u64::MAX, MAX_POLL_SECS),
-            (0, MIN_POLL_SECS),
-            (30, 30),
-            (10_000, MAX_POLL_SECS),
-        ] {
-            let adapter = adapter(store.clone(), &dir, asked);
-            assert_eq!(adapter.hold_secs, expected, "poll_timeout_secs={asked}");
-        }
-        std::fs::remove_dir_all(dir).ok();
-    }
-
-    /// The bot token rides the request URL, and reqwest prints that URL into
-    /// its error `Display` — which is exactly what the poll loop logs and the
-    /// delivery ledger records.
-    #[tokio::test]
-    async fn a_transport_error_never_carries_the_bot_token() {
-        let (store, dir) = store();
-        let adapter = adapter(store, &dir, MIN_POLL_SECS)
-            .with_api_base(format!("http://127.0.0.1:{}/bot{TOKEN}", closed_port()));
-        let err = adapter
-            .api_call(
-                "sendMessage",
-                &serde_json::json!({"chat_id": "1", "text": "hi"}),
-            )
-            .await
-            .unwrap_err();
-        let text = format!("{err:#}");
-        assert!(
-            !text.contains(TOKEN),
-            "the bot token reached the error: {text}"
-        );
-        assert!(
-            !text.contains("http://"),
-            "the URL reached the error: {text}"
-        );
-        assert!(
-            text.contains("sendMessage"),
-            "the diagnosis is gone: {text}"
-        );
-        std::fs::remove_dir_all(dir).ok();
-    }
-}
+mod tests;

@@ -6,6 +6,29 @@
 use super::api::*;
 use super::protocol::*;
 
+/// The Stream ticket is one-shot material and it rides the endpoint URL; a
+/// failed handshake is logged with `{e:#}`, so whatever the transport error
+/// echoes back must not be the credential.
+#[test]
+fn a_handshake_error_never_carries_the_ticket() {
+    let ticket = "TICKET-SECRET-9f3a";
+    let url = format!("wss://example.invalid/connect?ticket={ticket}");
+    // anyhow::Error carries an inherent `context`
+    let err = anyhow::anyhow!("{url}: handshake failed").context("dingtalk ws connect");
+    let secrets = ["client-secret", ticket, url.as_str()];
+    let text = format!("{:#}", crate::im::redact::masked_error(err, &secrets));
+    assert!(!text.contains(ticket), "the ticket reached the log: {text}");
+    assert!(
+        !text.contains("client-secret"),
+        "the client secret reached the log: {text}"
+    );
+    assert!(
+        text.contains("handshake failed"),
+        "the diagnosis is gone: {text}"
+    );
+    assert!(text.contains("dingtalk ws connect"), "{text}");
+}
+
 const ROBOT: &str = "ding_robot";
 
 fn dm(text: &str) -> serde_json::Value {

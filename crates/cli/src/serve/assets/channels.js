@@ -106,13 +106,16 @@ function renderChannels() {
   const heartbeat = st
     ? t('最近心跳 {when}', { when: new Date(Number(st.updated || 0) * 1000).toLocaleString() })
     : t('没有心跳：IM 服务没在这台机器上跑过');
+  // every arm of this map is evaluated, so the running list is joined once
+  // up front — `on` is not the only key this object gets built for
+  const runningText = (v.running || []).join('、');
   const detail = {
     none: t('还没有渠道。先在下面添加一个，再启动服务。'),
     off: t('渠道都已停用。'),
     nocred: t('渠道缺凭据：填 token_env 或 token_file。'),
     down: t('服务未运行。在部署机上执行 sunmao im。'),
     idle: t('服务在跑，但没有渠道在监听。'),
-    on: t('服务在跑：{chans}', { chans: v.running.join('、') }),
+    on: t('服务在跑：{chans}', { chans: runningText }),
   }[v.key];
   html += sec(t('服务状态'), '', card([
     row(t(v.key === 'on' ? '运行状态' : '运行状态'), `${detail} · ${heartbeat}`,

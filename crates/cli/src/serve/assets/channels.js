@@ -136,23 +136,28 @@ function renderChannels() {
   ]));
 
   // ── one card per channel entry ──
+  // rows, not a bespoke grid: the header is the card's title (the kind) with
+  // its actions in flow beside it, then one .cr row per field — the same
+  // shape every other settings card uses, so nothing overlaps anything.
   const chans = chChannels();
   const cards = chans.map((c, i) => {
     const kind = CHANNEL_KINDS.find(k => k.kind === c.kind);
     const src = chCred(c);
-    return `<div class="card glass cfg ch-card">
-      <div class="ch-head">
-        <button class="pv-sel" data-chpick="kind:${i}"><span>${esc(kind ? kind.t : (c.kind || t('未知渠道')))}</span>${ic('chev-d')}</button>
-        <button class="sw" role="switch" data-chtog="${i}" aria-checked="${c.enabled !== false}" aria-label="${t('启用')}"></button>
-        <button class="btn ghost sm pv-x" data-chdel="${i}" data-tip="${t('移除这个渠道')}">${ic('x', 'i sm')}</button>
-      </div>
-      ${kind ? `<div class="ch-hint">${esc(t(kind.d))}</div>` : `<div class="ch-hint warn">${esc(t('这个 kind 不是本版认识的渠道；保存时会原样保留，服务会跳过它。'))}</div>`}
-      <div class="cr"><div class="l"><b>${t('凭据')}</b><span>${t('配置里不写 token 明文，只写来源')}</span></div>
-        <div class="ch-cred">
-          <button class="pill plain" data-chpick="cred:${i}"><span>${t(src === 'token_file' ? '文件' : '环境变量')}</span>${ic('chev-d')}</button>
-          <input class="ch-in mono" data-chin="cred:${i}" value="${esc(src === 'token_file' ? (c.token_file || '') : (c.token_env || ''))}" placeholder="${src === 'token_file' ? 'D:/secrets/tg.txt' : 'SUNMAO_TG_TOKEN'}" spellcheck="false">
-        </div></div>
-      <div class="cr"><div class="l"><b>${t('轮询超时')}</b><span>${t('长轮询秒数，默认 30')}</span></div><input class="ch-in mono" data-chin="timeout:${i}" value="${esc(c.poll_timeout_secs != null ? c.poll_timeout_secs : '')}" placeholder="30" spellcheck="false"></div>
+    const cred = src === 'token_file'
+      ? { v: c.token_file || '', ph: 'D:/secrets/tg.txt' }
+      : { v: c.token_env || '', ph: 'SUNMAO_TG_TOKEN' };
+    const title = kind ? kind.t : (c.kind || t('未知渠道'));
+    const desc = kind
+      ? t(kind.d)
+      : t('这个 kind 不是本版认识的渠道；保存时会原样保留，服务会跳过它。');
+    // a kind picker only earns its place once there is more than one kind
+    const picker = CHANNEL_KINDS.length > 1
+      ? `<button class="pill plain" data-chpick="kind:${i}"><span>${t('渠道类型')}</span>${ic('chev-d')}</button>`
+      : '';
+    return `<div class="card glass cfg">
+      ${row(esc(title), esc(desc), `<div class="ch-acts">${picker}<button class="sw" role="switch" data-chtog="${i}" aria-checked="${c.enabled !== false}" aria-label="${t('启用')}"></button><button class="btn ghost sm" data-chdel="${i}" data-tip="${t('移除这个渠道')}">${ic('x', 'i sm')}</button></div>`)}
+      ${row(t('凭据'), t('配置里不写 token 明文，只写来源'), `<div class="ch-acts"><button class="pill plain" data-chpick="cred:${i}"><span>${t(src === 'token_file' ? '文件' : '环境变量')}</span>${ic('chev-d')}</button><input class="ch-in mono" data-chin="cred:${i}" value="${esc(cred.v)}" placeholder="${cred.ph}" spellcheck="false"></div>`)}
+      ${row(t('轮询超时'), t('长轮询秒数，默认 30'), `<input class="ch-in mono" data-chin="timeout:${i}" value="${esc(c.poll_timeout_secs != null ? c.poll_timeout_secs : '')}" placeholder="30" spellcheck="false">`)}
     </div>`;
   }).join('');
   html += sec(t('渠道'), '', cards + `<div class="channel-save"><button class="btn ghost sm" data-chadd>${ic('plus')}${t('添加渠道')}</button></div>`);

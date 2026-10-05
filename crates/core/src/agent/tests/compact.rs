@@ -113,7 +113,12 @@ async fn auto_compact_does_not_run_twice_on_stale_usage() {
         provider.clone(),
         SessionLog::ephemeral(),
         builtin_registry(),
-        std::env::temp_dir(),
+        // A directory of this test's own: `Context` reads project context
+        // through its cwd, and the machine's shared %TEMP% (full of other
+        // runs' leftovers) moved this test's provider-call count — it failed
+        // on a dev box and passed with a clean TMP. `fresh_test_dir` is the
+        // same isolation the rest of the suite uses.
+        crate::fresh_test_dir("compact-stale-usage"),
     ));
     // a Usage fact describing the PRE-compact transcript — the seed message
     // alone (~5k est-tokens) trips the head check, and the folded

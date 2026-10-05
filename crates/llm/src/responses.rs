@@ -79,7 +79,7 @@ impl ResponsesClient {
         api_key: impl Into<String>,
         model: impl Into<String>,
     ) -> Self {
-        let base_url = base_url.into().trim_end_matches('/').to_string();
+        let base_url = crate::canonical_base(&base_url.into());
         let model = model.into();
         Self {
             // same socket policy as the other dialects — see OaiClient.

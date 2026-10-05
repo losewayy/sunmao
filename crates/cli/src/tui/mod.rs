@@ -417,6 +417,12 @@ async fn run_inner(
                         if ok { "done" } else { "failed" }
                     ));
                 }
+                LiveEvent::JobDone { id, ok, .. } => {
+                    app.push_note(&format!(
+                        "[job {id} {}]",
+                        if ok { "done" } else { "failed" }
+                    ));
+                }
                 LiveEvent::TurnEnd { outcome } => {
                     app.close_turn();
                     // one queued submission moved from waiting → running

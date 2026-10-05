@@ -211,6 +211,8 @@ pub fn builtin_registry() -> ToolRegistry {
     r.register(GlobTool);
     r.register(GrepTool);
     r.register(JobOutputTool);
+    r.register(JobListTool);
+    r.register(JobStopTool);
     r.register(HtmlArtifactTool);
     r.register(TodoWriteTool);
     r.register(UpdateGoalTool);
@@ -229,6 +231,8 @@ pub fn builtin_registry() -> ToolRegistry {
 mod artifact;
 mod fs;
 mod goal;
+pub(crate) mod jobs;
+mod jobtools;
 mod kind;
 mod ptc;
 mod pwsh;
@@ -246,11 +250,13 @@ pub(crate) use goal::GOAL_LINE_PREFIX;
 #[cfg(test)]
 pub(crate) use goal::apply_blocker;
 pub use goal::{BLOCKED_MIN_ROUNDS, GoalState, GoalStatus, UpdateGoalTool, status_name};
+pub use jobs::{JobEntry, JobStatus, JobTable};
+pub use jobtools::{JobListTool, JobOutputTool, JobStopTool};
 pub use kind::{ShellBackend, ShellResolution, ShellSource};
 pub use ptc::{RunCodeTool, SearchToolsTool};
 pub use search::{GlobTool, GrepTool};
 pub use sendmsg::SendMessageTool;
-pub use shell::{BashTool, JobOutputTool, ShellRun, render_run, run_foreground};
+pub use shell::{BashTool, ShellRun, render_run, run_foreground};
 pub(crate) use todo::TODOS_LINE_PREFIX;
 pub use todo::{
     TodoItem, TodoStatus, TodoWriteTool, inject_text as todos_inject_text, render as render_todos,

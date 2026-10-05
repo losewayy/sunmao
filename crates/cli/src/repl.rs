@@ -117,6 +117,10 @@ impl Observer for StdoutObserver {
                 let mark = if *ok { "✓" } else { "✗" };
                 println!("\n\x1b[36m[sub-agent {id} {mark}]\x1b[0m");
             }
+            LiveEvent::JobDone { id, ok, .. } => {
+                let mark = if *ok { "✓" } else { "✗" };
+                println!("\n\x1b[36m[job {id} {mark}]\x1b[0m");
+            }
             LiveEvent::TurnEnd { outcome } => {
                 if *in_r {
                     eprintln!("\x1b[0m");

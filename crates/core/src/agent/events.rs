@@ -117,6 +117,18 @@ pub enum LiveEvent {
         ok: bool,
         output: String,
     },
+    /// A background job finished and wrote back — mirrors
+    /// `SessionEvent::JobDone`. Foreground results already arrive as
+    /// `ToolDone`; only the push-style path (a job the caller stopped
+    /// waiting on) needs this. Frontends use it to refresh the job card
+    /// and to stop showing the job as running.
+    JobDone {
+        id: String,
+        ok: bool,
+        exit_code: i32,
+        output_path: String,
+        bytes: u64,
+    },
     TurnEnd {
         outcome: TurnOutcome,
     },

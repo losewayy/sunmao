@@ -55,8 +55,8 @@ fn display_path_strips_verbatim_prefix() {
 
 /// A `Shared` whose factory never runs — rename/delete/search are pure
 /// filesystem operations on dormant logs, so the make-closure just errors
-/// if called.
-fn shared_at(cwd: std::path::PathBuf) -> super::super::host::Shared {
+/// if called. Shared with `ops`'s own cases, which build one for `/jobs`.
+pub(super) fn shared_at(cwd: std::path::PathBuf) -> super::super::host::Shared {
     use std::collections::HashMap;
     use std::sync::atomic::AtomicU64;
     use std::sync::{Arc, Mutex};

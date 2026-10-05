@@ -197,31 +197,49 @@ fn job_exit(dir: &std::path::Path) -> Option<i64> {
         .and_then(|v| v["exit_code"].as_i64())
 }
 
+/// `job.json` 的 `foreground` 标记：内联 `Bash` 调用在超时转后台之前一直是
+/// true，而面板是"后台任务"名册，所以这类目录不进列表。标记缺失或损坏按
+/// false 处理 —— 宁可多显示一条，也不静默吞掉一个真后台任务。
+fn job_foreground(dir: &std::path::Path) -> bool {
+    std::fs::read_to_string(dir.join("job.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v["foreground"].as_bool())
+        .unwrap_or(false)
+}
+
 /// `GET /jobs?sess=…` — 会话项目 `.sunmao/jobs/{id}/` 的目录扫描：
 /// `exit` 即完结码（null = 仍在跑），`mtime` 是目录修改时间（启动时刻的
-/// 近似），`preview` 是日志末尾。
+/// 近似），`preview` 是日志末尾。只列后台任务：内联前台命令在转后台前
+/// （`job.json` 的 `foreground` 为 true）不出现在面板里。
 pub(super) fn jobs_list(s: &Arc<Shared>, sess: Option<String>) -> HostResponse {
     let dir = project_for(s, sess).join(".sunmao").join("jobs");
     let mut jobs: Vec<serde_json::Value> = std::fs::read_dir(&dir)
         .map(|rd| {
             rd.flatten()
                 .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-                .map(|e| {
+                .filter_map(|e| {
+                    let path = e.path();
+                    let foreground = job_foreground(&path);
+                    if foreground {
+                        return None;
+                    }
                     let id = e.file_name().to_string_lossy().to_string();
-                    let exit = job_exit(&e.path());
+                    let exit = job_exit(&path);
                     let mtime = e
                         .metadata()
                         .and_then(|m| m.modified())
                         .ok()
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|d| d.as_millis() as u64);
-                    serde_json::json!({
+                    Some(serde_json::json!({
                         "id": id,
                         "running": exit.is_none(),
                         "exit": exit,
+                        "foreground": foreground,
                         "mtime": mtime,
-                        "preview": log_tail(&e.path().join("output.log"), 500),
-                    })
+                        "preview": log_tail(&path.join("output.log"), 500),
+                    }))
                 })
                 .collect()
         })
@@ -263,4 +281,49 @@ pub(super) fn job_output(
         "total": data.len(),
         "chunk": sunmao_core::console::console_text(&data[offset..end]),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `GET /jobs` is a *background* roster. An inline foreground run's dir
+    /// carries `job.json {"foreground":true}` and must stay out of the list;
+    /// a detached run (rewritten to false) and a dir from the pre-marker
+    /// layout both show up.
+    #[tokio::test]
+    async fn jobs_list_hides_foreground_runs_until_they_detach() {
+        let root = std::env::temp_dir().join(format!("sunmao-fgjobs-{}", std::process::id()));
+        let jobs = root.join(".sunmao").join("jobs");
+        for (id, meta) in [
+            ("j-fg", r#"{"foreground":true}"#),
+            ("j-bg", r#"{"foreground":false}"#),
+        ] {
+            std::fs::create_dir_all(jobs.join(id)).unwrap();
+            std::fs::write(jobs.join(id).join("output.log"), b"hello\n").unwrap();
+            std::fs::write(jobs.join(id).join("job.json"), meta).unwrap();
+        }
+        // the pre-marker layout: no job.json, so nothing calls it foreground
+        std::fs::create_dir_all(jobs.join("j-legacy")).unwrap();
+        std::fs::write(jobs.join("j-legacy").join("output.log"), b"old\n").unwrap();
+
+        let s = std::sync::Arc::new(super::super::tests::shared_at(root.clone()));
+        let r = jobs_list(&s, None);
+        let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+        let rows = v["jobs"].as_array().unwrap();
+        let ids: Vec<&str> = rows.iter().map(|j| j["id"].as_str().unwrap()).collect();
+        assert_eq!(
+            ids.len(),
+            2,
+            "only background rows belong in the panel: {ids:?}"
+        );
+        assert!(
+            !ids.contains(&"j-fg"),
+            "an inline foreground run must stay hidden: {ids:?}"
+        );
+        let by_id = |id: &str| rows.iter().find(|j| j["id"] == id).unwrap();
+        assert_eq!(by_id("j-bg")["foreground"], false);
+        assert_eq!(by_id("j-legacy")["foreground"], false);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

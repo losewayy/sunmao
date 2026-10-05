@@ -24,7 +24,9 @@ pub mod config;
 mod deliver;
 mod messages;
 pub mod progress;
+mod redact;
 pub mod route;
+mod scope;
 pub mod store;
 
 mod runtime;

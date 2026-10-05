@@ -106,22 +106,28 @@ impl WechatAdapter {
         .await
     }
 
-    /// The persisted cursor, empty on a first run.
+    /// The persisted cursor, empty on a first run. Scoped to this bot token:
+    /// another token's cursor is a position in another update stream.
     fn load_cursor(&self) -> String {
-        self.store.kv_get(protocol::CURSOR_KEY).unwrap_or_default()
+        self.store
+            .kv_get(&protocol::cursor_key(&self.bot_token))
+            .unwrap_or_default()
     }
 
     /// Persist the cursor before its messages are dispatched, so a crash
     /// replays at most the batch already in hand.
     fn remember_cursor(&self, cursor: &str) {
-        if let Err(e) = self.store.kv_set(protocol::CURSOR_KEY, cursor) {
+        if let Err(e) = self
+            .store
+            .kv_set(&protocol::cursor_key(&self.bot_token), cursor)
+        {
             tracing::warn!("wechat: cursor not persisted: {e:#}");
         }
     }
 
-    /// Open (or refresh) one peer's reply window.
+    /// Open (or refresh) one peer's reply window, under this bot token.
     fn remember_context(&self, chat_id: &str, token: &str) {
-        let key = protocol::context_key(chat_id);
+        let key = protocol::context_key(&self.bot_token, chat_id);
         let value = protocol::encode_context(token, crate::im::store::now());
         if let Err(e) = self.store.kv_set(&key, &value) {
             tracing::warn!("wechat: reply window not persisted: {e:#}");
@@ -132,7 +138,7 @@ impl WechatAdapter {
     /// platform's 24h. An expired window is cleared, not left to expire
     /// again on every send.
     fn context_of(&self, chat_id: &str) -> Option<String> {
-        let key = protocol::context_key(chat_id);
+        let key = protocol::context_key(&self.bot_token, chat_id);
         let raw = self.store.kv_get(&key)?;
         match protocol::decode_context(&raw, crate::im::store::now()) {
             Some((token, _)) => Some(token),

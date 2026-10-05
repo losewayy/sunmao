@@ -260,3 +260,54 @@ fn stale_chunks_are_abandoned() {
         "the stale slot must not complete the event"
     );
 }
+
+/// The `sum` header sizes an allocation before any payload arrives, so an
+/// absurd value has to be refused rather than trusted.
+#[test]
+fn an_absurd_chunk_count_is_refused_not_allocated() {
+    let mut bufs = HashMap::new();
+    assert!(merge_chunk(&mut bufs, "om_big", usize::MAX, 0, b"A").is_none());
+    assert!(bufs.is_empty(), "no slot vector may be allocated for it");
+    assert!(merge_chunk(&mut bufs, "om_big", MAX_CHUNK_SUM + 1, 0, b"A").is_none());
+    assert!(bufs.is_empty());
+    // a legal multi-chunk event still assembles
+    assert!(merge_chunk(&mut bufs, "om_ok", 2, 0, b"A").is_none());
+    assert_eq!(merge_chunk(&mut bufs, "om_ok", 2, 1, b"B").unwrap(), b"AB");
+}
+
+/// `Instant + Duration` panics on an absurd TTL, and a sub-minute one spins
+/// the token endpoint.
+#[test]
+fn the_token_ttl_is_clamped_to_a_sane_window() {
+    assert_eq!(
+        token_ttl(&serde_json::json!({"expire": u64::MAX})),
+        MAX_TTL_SECS
+    );
+    assert_eq!(token_ttl(&serde_json::json!({"expire": 1})), MIN_TTL_SECS);
+    assert_eq!(token_ttl(&serde_json::json!({"expire": 7200})), 7200);
+    assert_eq!(token_ttl(&serde_json::json!({"expire": "3600"})), 3600);
+    assert_eq!(token_ttl(&serde_json::json!({})), DEFAULT_TTL_SECS);
+}
+
+/// The cut is by byte, so a multi-byte character at the limit is where a
+/// naive slice would panic or split a glyph.
+#[test]
+fn chunks_never_split_a_character() {
+    let cjk = "中".repeat(MSG_LIMIT);
+    let parts = chunk(&cjk);
+    assert_eq!(parts.concat(), cjk);
+    assert!(parts.iter().all(|p| p.len() <= MSG_LIMIT));
+    assert!(
+        parts.iter().all(|p| p.chars().all(|c| c == '中')),
+        "{parts:?}"
+    );
+
+    let crab = "🦀".repeat(MSG_LIMIT / 4 + 3);
+    let parts = chunk(&crab);
+    assert_eq!(parts.concat(), crab);
+    assert!(parts.iter().all(|p| p.len() <= MSG_LIMIT));
+    assert!(
+        parts.iter().all(|p| p.chars().all(|c| c == '🦀')),
+        "{parts:?}"
+    );
+}

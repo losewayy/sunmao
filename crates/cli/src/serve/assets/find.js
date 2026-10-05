@@ -8,7 +8,7 @@ function openFind() {
   if (findBar) { $('#find-in', findBar).focus(); $('#find-in', findBar).select(); return; }
   findBar = document.createElement('div');
   findBar.className = 'findbar glass';
-  findBar.innerHTML = `${ic('search')}<input id="find-in" placeholder="${t('在对话中查找')}" spellcheck="false" autocomplete="off"><span class="cnt" id="find-cnt"></span><button class="ib" data-tip="${t('上一个|Shift+Enter')}" aria-label="${t('上一个')}">${ic('chev-u')}</button><button class="ib" data-tip="${t('下一个|Enter')}" aria-label="${t('下一个')}">${ic('chev-d')}</button><button class="ib" data-tip="${t('关闭|Esc')}" aria-label="${t('关闭')}">${ic('x')}</button>`;
+  findBar.innerHTML = `${ic('search')}<input id="find-in" placeholder="${esc(t('在对话中查找'))}" spellcheck="false" autocomplete="off"><span class="cnt" id="find-cnt"></span><button class="ib" data-tip="${esc(t('上一个|Shift+Enter'))}" aria-label="${esc(t('上一个'))}">${ic('chev-u')}</button><button class="ib" data-tip="${esc(t('下一个|Enter'))}" aria-label="${esc(t('下一个'))}">${ic('chev-d')}</button><button class="ib" data-tip="${esc(t('关闭|Esc'))}" aria-label="${esc(t('关闭'))}">${ic('x')}</button>`;
   $('#v-session').appendChild(findBar);
   const inp = $('#find-in', findBar);
   const [up, down, close] = $$('.ib', findBar);

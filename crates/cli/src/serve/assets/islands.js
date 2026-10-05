@@ -244,7 +244,7 @@ async function refreshNotes(el, name) {
   $('span:last-child', pill).textContent = anns.length ? t('批注 +{n}', { n: anns.length }) : t('批注');
   el._anns = anns;
   list.innerHTML = anns.map(a => `<div class="note-r"><span>${a.sel ? `<b class="ns">${esc(selLabel(a.sel))}</b> ` : ''}${esc(a.note || '')}</span><time>${esc(a.at || '')}</time></div>`).join('')
-    + `<div class="note-add"><input data-name="${esc(name)}" placeholder="${esc(t('添加批注，写入 {file}', { file: name + '.state.json' }))}" aria-label="${t('批注')}"><button class="btn ghost sm" data-act="note-add" data-name="${esc(name)}">${t('添加')}</button></div>`;
+    + `<div class="note-add"><input data-name="${esc(name)}" placeholder="${esc(t('添加批注，写入 {file}', { file: name + '.state.json' }))}" aria-label="${esc(t('批注'))}"><button class="btn ghost sm" data-act="note-add" data-name="${esc(name)}">${t('添加')}</button></div>`;
   renderAnnPins();
 }
 
@@ -360,7 +360,7 @@ function annUp(e) {
 function annBox(sel, anchor) {
   const box = document.createElement('div');
   box.className = 'an-box';
-  box.innerHTML = `<input placeholder="${t('添加批注…')}" aria-label="${t('批注')}"><button class="btn allow sm" aria-label="${t('添加')}">${ic('check')}</button><button class="ib sm" aria-label="${t('取消')}">${ic('x')}</button>`;
+  box.innerHTML = `<input placeholder="${esc(t('添加批注…'))}" aria-label="${esc(t('批注'))}"><button class="btn allow sm" aria-label="${esc(t('添加'))}">${ic('check')}</button><button class="ib sm" aria-label="${esc(t('取消'))}">${ic('x')}</button>`;
   const vw = AN.veil.clientWidth, vh = AN.veil.clientHeight, bw = motion.px('--w-an-box', 300);
   box.style.left = Math.max(0, Math.min(anchor.left, vw - bw)) + 'px';
   const below = anchor.top + anchor.height + 8;

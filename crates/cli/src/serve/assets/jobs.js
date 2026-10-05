@@ -45,7 +45,7 @@ function renderJobs(jobs) {
     const st = j.running ? 'run' : j.exit === 0 ? 'done' : 'off';
     const tail = (j.preview || '').trim().split('\n').pop() || '';
     const moved = djDetached.has(j.id) ? `<span class="tag">${t('前台转后台')}</span>` : '';
-    return `<button class="rt" data-job="${esc(j.id)}" data-tip="${esc(j.id + ' · ' + t('点击查看输出'))}"><i class="sd ${st}"></i><span class="rt-id mono">${esc(j.id)}</span><span class="tag">${j.running ? t('运行中') : 'exit ' + j.exit}</span>${moved}<span class="rt-p">${esc(tail)}</span><span class="rt-when">${esc(jobWhen(j.mtime))}</span></button>`;
+    return `<button class="rt" data-job="${esc(j.id)}" data-tip="${esc(j.id + ' · ' + esc(t('点击查看输出')))}"><i class="sd ${st}"></i><span class="rt-id mono">${esc(j.id)}</span><span class="tag">${j.running ? t('运行中') : 'exit ' + j.exit}</span>${moved}<span class="rt-p">${esc(tail)}</span><span class="rt-when">${esc(jobWhen(j.mtime))}</span></button>`;
   }).join('') || `<div class="empty-row">${t('没有后台任务')}</div>`;
 }
 async function jobOutPop(anchor, id) {

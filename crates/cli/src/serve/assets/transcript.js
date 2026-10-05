@@ -17,7 +17,7 @@ function toolHTML([st, nm, sm, tm, out], o = {}) {
 // turnSeq mirrors the log's turn_boundaries scan — the Nth stamped
 // .msg.you is what `POST /rewind {turn:N}` trims to
 let turnSeq = 0;
-const rwBtn = `<button class="ib rw" data-act="rewind-turn" data-tip="${t('回退到这条之前 · 同时还原改过的文件')}" aria-label="${t('回退到这条之前')}">${ic('reset', 'i sm')}</button>`;
+const rwBtn = `<button class="ib rw" data-act="rewind-turn" data-tip="${esc(t('回退到这条之前 · 同时还原改过的文件'))}" aria-label="${esc(t('回退到这条之前'))}">${ic('reset', 'i sm')}</button>`;
 // turn: number → stamped + rewind button · 'pending' → awaits the kernel's
 // turn_boundary event (echoes of slash commands/vetoed prompts never get
 // one — no boundary, no rewind) · falsy → plain bubble
@@ -229,16 +229,16 @@ function islandHTML(ev) {
       ${ic('file-code', 'i fi')}
       <span class="nm">HtmlArtifact</span>
       <span class="fn">${esc(nm)}.html</span>
-      <button class="notes-pill" data-act="annotate" data-tip="${t('批注|点击页面元素或拖拽选区域')}">${ic('note', 'i xs')}<span>${t('批注')}</span></button>
+      <button class="notes-pill" data-act="annotate" data-tip="${esc(t('批注|点击页面元素或拖拽选区域'))}">${ic('note', 'i xs')}<span>${t('批注')}</span></button>
       <span class="revs" hidden>
-        <button class="ib" data-act="rev-prev" data-tip="${t('上一版本')}" aria-label="${t('上一版本')}">${ic('chev-l')}</button>
+        <button class="ib" data-act="rev-prev" data-tip="${esc(t('上一版本'))}" aria-label="${esc(t('上一版本'))}">${ic('chev-l')}</button>
         <span class="rev-n">v1/1</span>
-        <button class="ib" data-act="rev-next" data-tip="${t('下一版本')}" aria-label="${t('下一版本')}">${ic('chev-r')}</button>
+        <button class="ib" data-act="rev-next" data-tip="${esc(t('下一版本'))}" aria-label="${esc(t('下一版本'))}">${ic('chev-r')}</button>
       </span>
       <span class="sp"></span>
       <span class="meta">${fmtBytes(ev.bytes || 0)}</span>
-      <button class="ib" data-act="island-tall" data-tip="${t('展开')}" aria-label="${t('展开')}">${ic('expand')}</button>
-      <button class="ib" data-act="island-open" data-tip="${t('在浏览器中打开|沙箱内脚本禁用 · 禁网')}" aria-label="${t('在浏览器中打开')}">${ic('external')}</button>
+      <button class="ib" data-act="island-tall" data-tip="${esc(t('展开'))}" aria-label="${esc(t('展开'))}">${ic('expand')}</button>
+      <button class="ib" data-act="island-open" data-tip="${esc(t('在浏览器中打开|沙箱内脚本禁用 · 禁网'))}" aria-label="${esc(t('在浏览器中打开'))}">${ic('external')}</button>
     </div>
     <iframe title="${esc(nm)}" sandbox="allow-same-origin" loading="lazy" src="/artifacts/${encodeURIComponent(nm)}?sess=${encodeURIComponent(sessionId)}"></iframe>
     <div class="notes"></div>

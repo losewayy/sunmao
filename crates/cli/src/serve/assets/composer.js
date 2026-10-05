@@ -1,4 +1,5 @@
-/* composer — input, steer queue, @-mentions, slash menu */
+/* composer — input, @-mentions, slash menu, attachments, send (the send
+   queue above it lives in queue.js) */
 'use strict';
 
 /* ================= composer ================= */
@@ -115,55 +116,6 @@ function send() {
   updateHero();
   logEv('message', 'user · ' + text.slice(0, 60));
 }
-// two queues, one chip row — steer chips (⚡, injected at the running
-// turn's next request boundary) lead; queued prompts (FIFO, next turn)
-// follow. The kernel is the single source: chips render `input_queue` /
-// `steer_queue` broadcasts verbatim, controls only send ops back.
-let steerQ = [];
-let inputQ = [];
-function renderQueueChips() {
-  const box = $('#cmp-queue');
-  if (!steerQ.length && !inputQ.length) { box.hidden = true; box.innerHTML = ''; return; }
-  box.hidden = false;
-  const clip = s => esc(s.length > 40 ? s.slice(0, 40) + '…' : s);
-  box.innerHTML =
-    steerQ.map((s, i) =>
-      `<span class="chip q-steer" data-tip="${t('引导已入队 · 下个请求边界注入')}"><span>${ic('zap', 'i xs')} ${clip(s)}</span><button class="chip-x" data-si="${i}" aria-label="${t('撤回')}">×</button></span>`).join('') +
-    inputQ.map(q =>
-      `<span class="chip q-in" data-tip="${t('排队中 · 点击编辑')}"><button class="chip-btn" data-mv="${q.id},-1" aria-label="${t('前移')}">${ic('chev-l', 'i xs')}</button><button class="chip-btn" data-mv="${q.id},1" aria-label="${t('后移')}">${ic('chev-r', 'i xs')}</button><button class="chip-t" data-qedit="${q.id}">${clip(q.text)}</button><button class="chip-x" data-qx="${q.id}" aria-label="${t('移除')}">×</button></span>`).join('');
-}
-$('#cmp-queue').addEventListener('click', e => {
-  const b = e.target.closest('[data-si],[data-mv],[data-qx],[data-qedit]');
-  if (!b) return;
-  if (b.dataset.si !== undefined) return wsSend({ type: 'steer_cancel', idx: +b.dataset.si });
-  if (b.dataset.qx !== undefined) return wsSend({ type: 'input_remove', id: +b.dataset.qx });
-  if (b.dataset.mv !== undefined) {
-    const [id, dir] = b.dataset.mv.split(',');
-    return wsSend({ type: 'input_move', id: +id, dir: +dir });
-  }
-  // inline edit — swap the label for an input seeded with the FULL text
-  // (the chip shows a 40-char clip); Enter/blur commits, Esc discards
-  const q = inputQ.find(x => x.id === +b.dataset.qedit);
-  if (!q) return;
-  const chip = b.closest('.chip');
-  const inp = document.createElement('input');
-  inp.value = q.text; inp.spellcheck = false;
-  b.replaceWith(inp);
-  inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length);
-  let done = false;
-  const commit = save => {
-    if (done) return; done = true;
-    if (save && inp.value.trim() && inp.value !== q.text)
-      wsSend({ type: 'input_edit', id: q.id, text: inp.value.trim() });
-    else renderQueueChips();
-  };
-  inp.addEventListener('keydown', ev => {
-    ev.stopPropagation();
-    if (ev.key === 'Enter') { ev.preventDefault(); commit(true); }
-    if (ev.key === 'Escape') { ev.preventDefault(); commit(false); }
-  });
-  inp.addEventListener('blur', () => commit(true));
-});
 // Ctrl+Enter — explicit steer: the text rides the running turn's next
 // request boundary instead of queueing behind it. With a non-empty queue
 // it's ALSO the expedite: the driver drains steer before the FIFO, so a

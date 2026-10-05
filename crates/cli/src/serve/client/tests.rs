@@ -122,10 +122,6 @@ async fn connect_views_the_newest_adopted_session() {
 /// `turn_mode_change` out of the transcript is guessing on every reconnect.
 #[tokio::test]
 async fn hello_and_replay_carry_the_turn_mode() {
-    struct Silent;
-    impl sunmao_core::agent::Observer for Silent {
-        fn on_event(&self, _ev: &sunmao_core::agent::LiveEvent) {}
-    }
     struct StubLlm;
     #[async_trait::async_trait]
     impl sunmao_llm::ProviderAdapter for StubLlm {
@@ -178,7 +174,7 @@ async fn hello_and_replay_carry_the_turn_mode() {
     let host = s.host("s-fuse").unwrap();
 
     let (out, mut rx) = mpsc::unbounded_channel::<String>();
-    let client = Client::connect(s.clone(), out).await;
+    let mut client = Client::connect(s.clone(), out).await;
     let hello: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
     assert_eq!(hello["type"], "hello");
     assert_eq!(
@@ -186,11 +182,30 @@ async fn hello_and_replay_carry_the_turn_mode() {
         "a fresh session is standard"
     );
 
+    // the op the composer chip and the settings switch both emit. The
+    // frontend never moves its own state off this: the kernel answer is what
+    // the next frame carries, so both directions have to land.
+    client
+        .handle(serde_json::json!({"type":"mode","sel":"fusion"}))
+        .await;
+    assert_eq!(
+        host.agent.turn_mode(),
+        sunmao_core::agent::TurnMode::Fusion,
+        "the mode op flips the kernel's turn shape"
+    );
+    client
+        .handle(serde_json::json!({"type":"mode","sel":"standard"}))
+        .await;
+    assert_eq!(
+        host.agent.turn_mode(),
+        sunmao_core::agent::TurnMode::Standard,
+        "and back"
+    );
+    client
+        .handle(serde_json::json!({"type":"mode","sel":"fusion"}))
+        .await;
+
     // exactly what the frontend's switch sends — the frames have to follow
-    host.agent
-        .set_turn_mode(sunmao_core::agent::TurnMode::Fusion, &Silent)
-        .await
-        .unwrap();
     client.send_replay(&host).await;
     let mut replay = serde_json::Value::Null;
     for _ in 0..8 {

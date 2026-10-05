@@ -200,3 +200,83 @@ async fn effort_levels_read_the_catalog() {
     assert_eq!(agent.effort_levels().await, vec!["low", "high"]);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[tokio::test]
+async fn effort_default_carries_the_second_strongest_rung() {
+    // A session has a level from its first request, so the picker has no
+    // "default" row to offer: it is the second-strongest rung the active
+    // model advertises. The provenance marker is what lets a ladder change
+    // move a value nobody dialed — and keeps a dialed one.
+    let dir = crate::fresh_test_dir("effort-default");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut ctx_raw = Context::new(
+        Arc::new(EffortSpy {
+            seen: std::sync::Mutex::new(Vec::new()),
+        }),
+        SessionLog::ephemeral(),
+        builtin_registry(),
+        dir.clone(),
+    );
+    ctx_raw.models = Some(std::sync::Arc::new(crate::models::ModelResolver::load(
+        &dir,
+        crate::models::ProviderDef {
+            base_url: "http://unused".into(),
+            api_key_env: None,
+            api_key: None,
+            dialect: "openai".into(),
+            catalog: vec![
+                crate::models::CatalogEntry {
+                    id: "m-two".into(),
+                    thinking: vec!["high".into(), "max".into()],
+                    ..Default::default()
+                },
+                crate::models::CatalogEntry {
+                    id: "m-three".into(),
+                    thinking: vec!["low".into(), "medium".into(), "high".into()],
+                    ..Default::default()
+                },
+                crate::models::CatalogEntry {
+                    id: "m-plain".into(),
+                    ..Default::default()
+                },
+            ],
+        },
+        "default",
+    )));
+    let ctx = std::sync::Arc::new(ctx_raw);
+    {
+        let mut log = ctx.sessions.lock().await;
+        let _ = log
+            .append(&SessionEvent::Started {
+                model: "m-two".into(),
+                cwd: dir.display().to_string(),
+                driver: None,
+            })
+            .await;
+    }
+    let agent = AgentLoop::new(ctx.clone());
+    // [high, max] starts at high: the top of a ladder is a deliberate reach
+    agent.resolve_effort_default().await;
+    assert_eq!(agent.reasoning_effort().as_deref(), Some("high"));
+
+    // a ladder that moves under the session moves the default with it
+    *ctx.active_selector.write_or_recover() = Some("default/m-three".into());
+    agent.resolve_effort_default().await;
+    assert_eq!(agent.reasoning_effort().as_deref(), Some("medium"));
+
+    // a model that declares nothing clears the derived value, and getting a
+    // ladder back re-derives it
+    *ctx.active_selector.write_or_recover() = Some("default/m-plain".into());
+    agent.resolve_effort_default().await;
+    assert_eq!(agent.reasoning_effort(), None);
+    *ctx.active_selector.write_or_recover() = Some("default/m-three".into());
+    agent.resolve_effort_default().await;
+    assert_eq!(agent.reasoning_effort().as_deref(), Some("medium"));
+
+    // ...but a level the user dialed outlives the next ladder change
+    agent.set_reasoning_effort(Some("low"), &NullObserver).await;
+    *ctx.active_selector.write_or_recover() = Some("default/m-two".into());
+    agent.resolve_effort_default().await;
+    assert_eq!(agent.reasoning_effort().as_deref(), Some("low"));
+    std::fs::remove_dir_all(&dir).ok();
+}

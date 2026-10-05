@@ -113,6 +113,11 @@
 .pv-ck{display:flex;align-items:center;gap:var(--s-8);padding:var(--s-4) var(--s-6);border-radius:var(--r-sm);font-size:var(--fs-xs);color:var(--c-text);text-align:left;cursor:pointer}
 .pv-ck:hover{background:var(--c-fill-1)}
 .pv-ck .i,.pv-ck .tag{color:var(--c-text-3);flex:none}
+/* a ticked model has to read as ticked: the unchecked glyph sits at
+   --c-text-3, so the checked one takes the accent and tints its whole row */
+.pv-ck.on .i{color:var(--c-accent)}
+.pv-ck.on>span.mono{color:var(--c-text)}
+.pv-ckr.on{background:var(--c-accent-soft);box-shadow:var(--ring-1)}
 .pv-ck>span.mono{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pv-ckr{position:relative;display:flex;flex-direction:column;gap:var(--s-4);padding:var(--s-4) var(--s-6);border-radius:var(--r-sm);background:var(--c-fill-1)}
 .pv-ckr .pv-ck{flex:1;min-width:0}

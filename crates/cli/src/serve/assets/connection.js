@@ -365,9 +365,16 @@ function modelsBody(edit) {
   if (edit) {
     if (edit.del) delete providers[edit.name];
     else {
-      providers[edit.name] = { base_url: edit.base_url, dialect: edit.dialect, catalog: edit.setCatalog || (edit.keepCatalog ? (MODELS.providers[edit.name] || {}).catalog || [] : []) };
+      // a rename keeps the entry's key and catalog: the save that carries a
+      // new name also carries the source name it came from
+      const src = (edit.renameFrom && MODELS.providers[edit.renameFrom]) || MODELS.providers[edit.name] || {};
+      providers[edit.name] = { base_url: edit.base_url, dialect: edit.dialect, catalog: edit.setCatalog || (edit.keepCatalog ? src.catalog || [] : []) };
       if (edit.api_key) providers[edit.name].api_key = edit.api_key;
-      else if (edit.keepKey && MODELS.providers[edit.name] && MODELS.providers[edit.name].api_key_env) providers[edit.name].api_key_env = MODELS.providers[edit.name].api_key_env;
+      else if (edit.keepKey && (src.api_key_env || src.api_key)) {
+        if (src.api_key_env) providers[edit.name].api_key_env = src.api_key_env;
+        if (src.api_key && !edit.api_key) providers[edit.name].api_key = src.api_key;
+      }
+      if (edit.renameFrom) delete providers[edit.renameFrom];
     }
   }
   return { providers, routes: (MODELS && MODELS.routes) || {} };

@@ -21,18 +21,18 @@ function pop(anchor, html, o = {}) {
   requestAnimationFrame(() => p.classList.add('show'));
   return p;
 }
-/* Popover placement — `place:'top'` (or a cramped bottom) opens upward.
-   A popover opened from a composer chip is anchored to the whole composer,
-   not to the chip: level with the row it would cover the send button. */
+/* Popover placement — `place:'top'` (or a cramped bottom) opens upward from
+   the anchor itself, so a composer chip's menu grows out of that chip. The
+   scrolling body shrinks to the room above the anchor, which is what keeps a
+   tall list (the model picker) on screen. */
 function place(p, anchor, o) {
   const gap = 6, r = anchor.getBoundingClientRect();
-  const bar = anchor.closest && anchor.closest('.composer');
-  const upEdge = bar ? bar.getBoundingClientRect().top : r.top;
+  const upEdge = r.top;
   const w = p.offsetWidth, h = () => p.offsetHeight;
   const up = o.place === 'top' || (r.bottom + gap + h() > innerHeight - 8 && upEdge - gap - h() > 8);
   if (up) {
     // too tall for the room above? the scrolling body shrinks — the box
-    // never spills back onto the composer
+    // never spills past the window edge
     const room = upEdge - gap - 8, body = p.querySelector('.mp-list, .scroll');
     if (h() > room && body) body.style.maxHeight = Math.max(72, room - (h() - body.offsetHeight)) + 'px';
   }

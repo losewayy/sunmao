@@ -11,8 +11,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::broadcast;
 
-use super::channels::ChannelAdapter;
-use super::deliver::Delivery;
+use super::deliver::{self, Delivery};
 use super::messages;
 
 /// Draft refresh cadence — editMessageText is rate-limited (flood control
@@ -98,15 +97,16 @@ fn draft_text(st: &ProgressState) -> String {
         .replace("{last}", &last)
 }
 
-/// The subscriber loop — one per session the gateway owns (dmScope=main:
-/// exactly one). Runs until the bus closes (process shutdown).
-/// `sess` filters the shared live bus to this session's frames.
+/// The subscriber loop. ONE per session lane, not one per channel: a turn
+/// produces a single final text, so a single owner consumes it and then
+/// dispatches the reply to every channel with a chat waiting on the lane.
+/// Runs until the bus closes (process shutdown). `sess` filters the shared
+/// live bus to this session's frames.
 pub async fn run(
     sess: String,
     mut rx: broadcast::Receiver<serde_json::Value>,
     state: Shared,
-    adapter: Arc<dyn ChannelAdapter>,
-    delivery: Arc<Delivery>,
+    channels: Vec<Arc<Delivery>>,
 ) {
     loop {
         let frame = match rx.recv().await {
@@ -126,7 +126,9 @@ pub async fn run(
                 if !text.is_empty() {
                     let keys = pending_of(&state.lock().unwrap());
                     for key in keys {
-                        let _ = delivery.send_final(&key.chat_id, &text).await;
+                        if let Some(d) = deliver::for_channel(&channels, &key.channel) {
+                            let _ = d.send_final(&key.chat_id, &text).await;
+                        }
                     }
                 }
             }
@@ -134,8 +136,8 @@ pub async fn run(
         }
         // any event is a reason to maybe-refresh drafts — the throttle
         // inside tick() caps it
-        tick(&state, &adapter).await;
-        flush_on_turn_end(&frame, &state, &adapter, &delivery).await;
+        tick(&state, &channels).await;
+        flush_on_turn_end(&frame, &state, &channels).await;
     }
 }
 
@@ -175,8 +177,9 @@ async fn handle_live(ev: &serde_json::Value, state: &Shared) {
     }
 }
 
-/// Throttled draft maintenance + typing keep-alive for every pending chat.
-async fn tick(state: &Shared, adapter: &Arc<dyn ChannelAdapter>) {
+/// Throttled draft maintenance + typing keep-alive for every pending chat,
+/// each through its own channel's adapter.
+async fn tick(state: &Shared, channels: &[Arc<Delivery>]) {
     let (text, keys) = {
         let st = state.lock().unwrap();
         if !st.running || st.pending.is_empty() {
@@ -184,59 +187,59 @@ async fn tick(state: &Shared, adapter: &Arc<dyn ChannelAdapter>) {
         }
         (draft_text(&st), pending_of(&st))
     };
-    for key in keys {
-        // typing under every tick cadence — cheap and self-rearming
-        let needs_typing = {
-            let st = state.lock().unwrap();
-            st.drafts
-                .get(&key)
-                .and_then(|d| d.last_typing)
-                .is_none_or(|t| t.elapsed() >= TYPING_INTERVAL)
-        };
-        if needs_typing && key.channel == adapter.channel() {
-            adapter.send_typing(&key.chat_id).await;
-            if let Some(d) = state.lock().unwrap().drafts.get_mut(&key) {
-                d.last_typing = Some(Instant::now());
-            } else {
-                state
-                    .lock()
-                    .unwrap()
-                    .drafts
-                    .entry(key.clone())
-                    .or_default()
-                    .last_typing = Some(Instant::now());
-            }
-        }
-        if key.channel != adapter.channel() {
-            continue;
-        }
-        let (id, due) = {
-            let st = state.lock().unwrap();
-            let d = st.drafts.get(&key);
-            (
-                d.and_then(|d| d.message_id.clone()),
-                d.and_then(|d| d.last_edit)
-                    .is_none_or(|t| t.elapsed() >= EDIT_INTERVAL),
-            )
-        };
-        if !due {
-            continue;
-        }
-        match id {
-            // first frame → post the draft, keep the id for edits
-            None => {
-                if let Ok(Some(mid)) = adapter.send_text(&key.chat_id, &text).await {
-                    let mut st = state.lock().unwrap();
-                    let d = st.drafts.entry(key).or_default();
-                    d.message_id = Some(mid);
-                    d.last_edit = Some(Instant::now());
+    for delivery in channels {
+        let adapter = delivery.adapter();
+        for key in keys.iter().filter(|k| k.channel == delivery.channel()) {
+            // typing under every tick cadence — cheap and self-rearming
+            let needs_typing = {
+                let st = state.lock().unwrap();
+                st.drafts
+                    .get(key)
+                    .and_then(|d| d.last_typing)
+                    .is_none_or(|t| t.elapsed() >= TYPING_INTERVAL)
+            };
+            if needs_typing {
+                adapter.send_typing(&key.chat_id).await;
+                if let Some(d) = state.lock().unwrap().drafts.get_mut(key) {
+                    d.last_typing = Some(Instant::now());
+                } else {
+                    state
+                        .lock()
+                        .unwrap()
+                        .drafts
+                        .entry(key.clone())
+                        .or_default()
+                        .last_typing = Some(Instant::now());
                 }
             }
-            Some(mid) => {
-                if adapter.edit_text(&key.chat_id, &mid, &text).await.is_ok()
-                    && let Some(d) = state.lock().unwrap().drafts.get_mut(&key)
-                {
-                    d.last_edit = Some(Instant::now());
+            let (id, due) = {
+                let st = state.lock().unwrap();
+                let d = st.drafts.get(key);
+                (
+                    d.and_then(|d| d.message_id.clone()),
+                    d.and_then(|d| d.last_edit)
+                        .is_none_or(|t| t.elapsed() >= EDIT_INTERVAL),
+                )
+            };
+            if !due {
+                continue;
+            }
+            match id {
+                // first frame → post the draft, keep the id for edits
+                None => {
+                    if let Ok(Some(mid)) = adapter.send_text(&key.chat_id, &text).await {
+                        let mut st = state.lock().unwrap();
+                        let d = st.drafts.entry(key.clone()).or_default();
+                        d.message_id = Some(mid);
+                        d.last_edit = Some(Instant::now());
+                    }
+                }
+                Some(mid) => {
+                    if adapter.edit_text(&key.chat_id, &mid, &text).await.is_ok()
+                        && let Some(d) = state.lock().unwrap().drafts.get_mut(key)
+                    {
+                        d.last_edit = Some(Instant::now());
+                    }
                 }
             }
         }
@@ -244,13 +247,10 @@ async fn tick(state: &Shared, adapter: &Arc<dyn ChannelAdapter>) {
 }
 
 /// Turn ended → the draft freezes, `latest_text` goes out as the final
-/// reply through the ledger, and pending clears for the next turn.
-async fn flush_on_turn_end(
-    frame: &serde_json::Value,
-    state: &Shared,
-    adapter: &Arc<dyn ChannelAdapter>,
-    delivery: &Arc<Delivery>,
-) {
+/// reply through the ledger, and pending clears for the next turn. The
+/// text is consumed exactly once (this is the lane's only consumer) and
+/// then fanned out per channel, so a second channel cannot starve.
+async fn flush_on_turn_end(frame: &serde_json::Value, state: &Shared, channels: &[Arc<Delivery>]) {
     let is_end = frame["type"] == "live" && frame["event"]["type"] == "turn_end";
     if !is_end {
         return;
@@ -279,13 +279,14 @@ async fn flush_on_turn_end(
         "cancelled" if text.trim().is_empty() => messages::get("stopped"),
         _ => text,
     };
+    if final_text.trim().is_empty() {
+        return;
+    }
     for key in keys {
-        if key.channel != adapter.channel() {
+        let Some(delivery) = deliver::for_channel(channels, &key.channel) else {
             continue;
-        }
-        if !final_text.trim().is_empty()
-            && let Err(e) = delivery.send_final(&key.chat_id, &final_text).await
-        {
+        };
+        if let Err(e) = delivery.send_final(&key.chat_id, &final_text).await {
             tracing::warn!("im final → {}: {e:#}", key.chat_id);
         }
     }
@@ -294,6 +295,8 @@ async fn flush_on_turn_end(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::im::channels::ChannelAdapter;
+    use crate::im::store::Store;
 
     #[test]
     fn draft_line_has_elapsed() {
@@ -304,5 +307,134 @@ mod tests {
         };
         let t = draft_text(&st);
         assert!(t.contains("Bash") && t.contains('s'));
+    }
+
+    /// Scripted adapter — records (chat_id, text) pairs, one per channel.
+    struct FakeAdapter {
+        name: &'static str,
+        sends: std::sync::Mutex<Vec<(String, String)>>,
+    }
+
+    impl FakeAdapter {
+        fn new(name: &'static str) -> Self {
+            Self {
+                name,
+                sends: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn sent(&self, chat_id: &str, text: &str) -> bool {
+            self.sends
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(c, t)| c == chat_id && t == text)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChannelAdapter for FakeAdapter {
+        fn channel(&self) -> &'static str {
+            self.name
+        }
+        async fn poll(&self, _tx: tokio::sync::mpsc::Sender<crate::im::channels::InboundMsg>) {}
+        async fn send_text(&self, chat_id: &str, text: &str) -> anyhow::Result<Option<String>> {
+            self.sends
+                .lock()
+                .unwrap()
+                .push((chat_id.to_string(), text.to_string()));
+            Ok(Some("1".into()))
+        }
+        async fn edit_text(
+            &self,
+            _chat_id: &str,
+            _message_id: &str,
+            _text: &str,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn store() -> (Arc<Store>, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "sunmao-im-prog-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        (Arc::new(Store::open(&dir).unwrap()), dir)
+    }
+
+    async fn wait_for(mut f: impl FnMut() -> bool) -> bool {
+        for _ in 0..300 {
+            if f() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        false
+    }
+
+    /// Discriminator: two adapters on one lane must BOTH receive the
+    /// turn_end final. The lane builds ONE shared state and ONE progress
+    /// subscriber for all its channels; whichever channel's chat sits
+    /// first must not consume the text out from under the other.
+    #[tokio::test]
+    async fn both_channels_get_turn_end_final() {
+        let (s, dir) = store();
+        let alpha = Arc::new(FakeAdapter::new("alpha"));
+        let beta = Arc::new(FakeAdapter::new("beta"));
+        let state = new_shared();
+        expect_reply(
+            &state,
+            ChatKey {
+                channel: "alpha".into(),
+                chat_id: "1".into(),
+            },
+            false,
+        );
+        expect_reply(
+            &state,
+            ChatKey {
+                channel: "beta".into(),
+                chat_id: "2".into(),
+            },
+            false,
+        );
+        let (tx, _) = broadcast::channel(16);
+        tokio::spawn(run(
+            "s1".into(),
+            tx.subscribe(),
+            state.clone(),
+            vec![
+                Arc::new(Delivery::new(s.clone(), alpha.clone())),
+                Arc::new(Delivery::new(s.clone(), beta.clone())),
+            ],
+        ));
+        tx.send(serde_json::json!({
+            "sess": "s1", "type": "live",
+            "event": {"type": "content", "text": "hello"},
+        }))
+        .unwrap();
+        tx.send(serde_json::json!({
+            "sess": "s1", "type": "live",
+            "event": {"type": "turn_end", "outcome": "ok"},
+        }))
+        .unwrap();
+        wait_for(|| alpha.sent("1", "hello") && beta.sent("2", "hello")).await;
+        assert!(
+            alpha.sent("1", "hello"),
+            "alpha never got the turn_end final: {:?}",
+            alpha.sends.lock().unwrap()
+        );
+        assert!(
+            beta.sent("2", "hello"),
+            "beta never got the turn_end final: {:?}",
+            beta.sends.lock().unwrap()
+        );
+        std::fs::remove_dir_all(dir).ok();
     }
 }

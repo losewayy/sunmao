@@ -70,6 +70,11 @@ pub enum UnauthorizedBehavior {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChannelSpec {
     Telegram(TelegramSpec),
+    /// Test-only kind — drives the kind-agnostic `enabled()`/`scoped()`
+    /// path a new adapter (feishu/wechat/qq) takes without shipping a
+    /// stub adapter for it. Compiled into test builds only.
+    #[cfg(test)]
+    Test(TestSpec),
     /// A kind this binary doesn't know — the doc comment promises
     /// warn-and-skip, so it must survive parse or one newer config entry
     /// would take down the whole daemon.
@@ -77,14 +82,69 @@ pub enum ChannelSpec {
     Unknown,
 }
 
+/// A channel block's scoped policy overrides — the kind-agnostic shape
+/// authz consumes, so admission never has to match on which adapter kind
+/// produced the block.
+#[derive(Debug, Clone, Copy)]
+pub struct ChannelScoped<'a> {
+    pub dm_policy: Option<DmPolicy>,
+    pub allowlist: &'a [String],
+}
+
 impl ChannelSpec {
     /// The channel id for authz/policy lookups — matches `im:{channel}`.
     pub fn kind_name(&self) -> &'static str {
         match self {
             Self::Telegram(_) => "telegram",
+            #[cfg(test)]
+            Self::Test(_) => "test",
             Self::Unknown => "unknown",
         }
     }
+
+    /// Is this block switched on? An unknown kind never is — a config
+    /// written for a newer binary is skipped, not guessed at.
+    pub fn enabled(&self) -> bool {
+        match self {
+            Self::Telegram(t) => t.enabled,
+            #[cfg(test)]
+            Self::Test(t) => t.enabled,
+            Self::Unknown => false,
+        }
+    }
+
+    /// The block's channel-scoped overrides. `None` when the kind has no
+    /// policy surface (Unknown) — authz then keeps the top-level values.
+    pub fn scoped(&self) -> Option<ChannelScoped<'_>> {
+        match self {
+            Self::Telegram(t) => Some(ChannelScoped {
+                dm_policy: t.dm_policy,
+                allowlist: &t.allowlist,
+            }),
+            #[cfg(test)]
+            Self::Test(t) => Some(ChannelScoped {
+                dm_policy: t.dm_policy,
+                allowlist: &t.allowlist,
+            }),
+            Self::Unknown => None,
+        }
+    }
+}
+
+/// The test-only channel block — carries the same policy surface a real
+/// adapter block does (`enabled`, `dm_policy`, `allowlist`). A production
+/// kind gets its own spec struct next to this one; `TelegramSpec` is the
+/// model.
+#[cfg(test)]
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct TestSpec {
+    #[serde(default)]
+    pub dm_policy: Option<DmPolicy>,
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -155,11 +215,15 @@ impl ChannelsConfig {
         Ok(Some(cfg))
     }
 
-    pub fn telegram(&self) -> Option<&TelegramSpec> {
-        self.channels.iter().find_map(|c| match c {
-            ChannelSpec::Telegram(t) if t.enabled => Some(t),
-            _ => None,
-        })
+    /// Every declared channel block, in config order — the one
+    /// enumeration point for adapter construction and policy lookups.
+    pub fn specs(&self) -> impl Iterator<Item = &ChannelSpec> {
+        self.channels.iter()
+    }
+
+    /// The blocks the daemon actually runs.
+    pub fn enabled_specs(&self) -> impl Iterator<Item = &ChannelSpec> {
+        self.specs().filter(|c| c.enabled())
     }
 }
 
@@ -199,7 +263,7 @@ mod tests {
         .unwrap();
         assert_eq!(cfg.dm_policy, DmPolicy::Pairing);
         assert_eq!(cfg.dm_scope, DmScope::Main);
-        assert!(cfg.telegram().is_some());
+        assert_eq!(cfg.enabled_specs().count(), 1);
     }
 
     #[test]
@@ -208,7 +272,7 @@ mod tests {
             r#"{"channels":[{"kind":"telegram","enabled":false,"token_env":"T"}]}"#,
         )
         .unwrap();
-        assert!(cfg.telegram().is_none());
+        assert_eq!(cfg.enabled_specs().count(), 0);
     }
 
     #[test]
@@ -218,5 +282,39 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    /// A kind that is not telegram lands on its own variant and keeps its
+    /// scoped policy — the generic path every new adapter rides.
+    #[test]
+    fn new_kind_parses_with_its_own_scope() {
+        let cfg = serde_json::from_str::<ChannelsConfig>(
+            r#"{"channels":[{"kind":"test","enabled":true,
+                "dm_policy":"open","allowlist":["test:7"]}]}"#,
+        )
+        .unwrap();
+        let spec = cfg.specs().next().unwrap();
+        assert_eq!(spec.kind_name(), "test");
+        assert!(spec.enabled());
+        let scoped = spec.scoped().unwrap();
+        assert_eq!(scoped.dm_policy, Some(DmPolicy::Open));
+        assert_eq!(scoped.allowlist, ["test:7"]);
+        assert_eq!(cfg.enabled_specs().count(), 1);
+    }
+
+    /// A config written for a newer binary must parse and be skipped —
+    /// never an error, never an enabled channel.
+    #[test]
+    fn unknown_kind_parses_and_skips() {
+        let cfg = serde_json::from_str::<ChannelsConfig>(
+            r#"{"channels":[{"kind":"future_channel","enabled":true,"whatever":1}]}"#,
+        )
+        .unwrap();
+        let spec = cfg.specs().next().unwrap();
+        assert!(matches!(spec, ChannelSpec::Unknown));
+        assert_eq!(spec.kind_name(), "unknown");
+        assert!(!spec.enabled());
+        assert!(spec.scoped().is_none());
+        assert_eq!(cfg.enabled_specs().count(), 0);
     }
 }

@@ -34,6 +34,12 @@ impl Delivery {
         self.adapter.channel()
     }
 
+    /// The adapter this ledger sends through. A live channel is one value
+    /// (adapter + ledger), so a lane never zips two positional vectors.
+    pub fn adapter(&self) -> &Arc<dyn ChannelAdapter> {
+        &self.adapter
+    }
+
     /// Send a final reply through the ledger. Errors surface to the
     /// caller (progress lane logs them); the row stays outstanding and a
     /// later `resend_outstanding` picks it up.
@@ -94,6 +100,16 @@ impl Delivery {
             }
         }
     }
+}
+
+/// The live endpoint for a channel id — the delivery list is the single
+/// source of truth, so the lookup never depends on two vectors staying
+/// index-aligned.
+pub(crate) fn for_channel<'a>(
+    list: &'a [Arc<Delivery>],
+    channel: &str,
+) -> Option<&'a Arc<Delivery>> {
+    list.iter().find(|d| d.channel() == channel)
 }
 
 #[cfg(test)]

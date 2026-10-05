@@ -128,6 +128,11 @@ pub struct Context {
     /// durable as a `Hook{event:"effort.change"}` fact (detail = level,
     /// or "default" for back-to-provider-default), seeded on open/resume.
     pub reasoning_effort: std::sync::Arc<std::sync::RwLock<Option<String>>>,
+    /// The level the catalog's ladder made this session's default — the
+    /// provenance marker for `reasoning_effort`. Equal to it means nobody
+    /// dialed since, so a catalog edit is free to move the default; a
+    /// different value means the user picked, and the pick stands.
+    pub effort_default: std::sync::Arc<std::sync::RwLock<Option<String>>>,
     /// Bash verbs `read_only` mode still permits — builtin list extended by
     /// `.sunmao/readonly-verbs.txt` and plugin dirs at context build.
     pub readonly_verbs: std::sync::Arc<std::collections::HashSet<String>>,
@@ -444,6 +449,7 @@ impl Context {
             ),
             fusion: std::sync::Mutex::new(crate::agent::fusion::FusionState::default()),
             reasoning_effort: std::sync::Arc::new(std::sync::RwLock::new(effort)),
+            effort_default: std::sync::Arc::new(std::sync::RwLock::new(None)),
             readonly_verbs: std::sync::Arc::new(readonly_verbs),
             live_sink: std::sync::OnceLock::new(),
             models: None,

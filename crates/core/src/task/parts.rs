@@ -218,6 +218,7 @@ pub(crate) async fn build_sub_ctx(
         // same sharing rule as approval_mode — /effort applies to the
         // whole session, children included
         reasoning_effort: ctx.reasoning_effort.clone(),
+        effort_default: ctx.effort_default.clone(),
         readonly_verbs: ctx.readonly_verbs.clone(),
         live_sink: std::sync::OnceLock::new(),
         models: ctx.models.clone(),

@@ -49,6 +49,40 @@ impl AgentLoop {
     /// reasoning support at all (otherwise empty — a non-thinking model
     /// earns no picker).
     pub async fn effort_levels(&self) -> Vec<String> {
+        self.advertised_levels().await
+    }
+
+    /// Fix the session's default effort from the catalog's ladder, and
+    /// re-fix it when a catalog edit moves the ladder under a session that
+    /// never chose for itself.
+    ///
+    /// There is no "provider default" rung in the UI: a session has a level
+    /// from the start, and that level is the second-strongest the active
+    /// model advertises (`[high, max]` starts at `high`). The top of a
+    /// ladder is a deliberate reach — cost, latency — rather than a place
+    /// to begin, and the bottom throws away a thinking model. `effort_default`
+    /// is the provenance marker that keeps a catalog edit from overwriting a
+    /// level the user actually picked; a model with no ladder leaves both
+    /// fields alone (nothing to pick from).
+    pub async fn resolve_effort_default(&self) {
+        let levels = self.advertised_levels().await;
+        let next = default_effort_level(&levels);
+        let mut marker = self.ctx.effort_default.write_or_recover();
+        if *marker == next {
+            return;
+        }
+        {
+            let mut cur = self.ctx.reasoning_effort.write_or_recover();
+            if *cur == *marker {
+                *cur = next.clone();
+            }
+        }
+        *marker = next;
+    }
+
+    /// The ladder for the session's current model — the body behind both
+    /// `effort_levels` and `resolve_effort_default`.
+    async fn advertised_levels(&self) -> Vec<String> {
         let Some(models) = self.ctx.models.as_ref() else {
             return Vec::new();
         };
@@ -77,4 +111,11 @@ impl AgentLoop {
             .map(|sel| models.thinking_levels(&sel))
             .unwrap_or_default()
     }
+}
+
+/// The default rung of a ladder: the catalog lists levels weakest→strongest,
+/// so one below the top (`len - 2`). A single-rung ladder is its own
+/// default; an empty one has none.
+fn default_effort_level(levels: &[String]) -> Option<String> {
+    levels.get(levels.len().saturating_sub(2)).cloned()
 }

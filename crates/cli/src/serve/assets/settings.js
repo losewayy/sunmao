@@ -152,17 +152,18 @@ function modelPop(el) {
   } });
 }
 
-/* effort picker — the session-scoped override for the ACTIVE session.
-   Rows: 默认 (clears) + whatever levels the model's catalog advertises;
-   an empty vocabulary still offers 默认 — freeform stays a slash affair
-   (`/effort <anything>` passes through verbatim). */
+/* effort picker — the level the ACTIVE session runs at. Rows are exactly
+   what the model's catalog advertises, and the checked one is the level in
+   force: there is no "default" row, because a session always has one (the
+   kernel starts a model at the second-strongest rung it declares). A
+   catalog that declares nothing gets a hint instead of a choice; freeform
+   stays a slash affair (`/effort <anything>` passes through verbatim). */
 function effortPop(el) {
   const items = [
     { label: '思考强度' },
-    { v: 'default', t: '默认', d: '跟随模型/provider 自己的设置', on: !effortLevel },
     ...effortLevels.map(l => ({ v: l, t: l, mono: true, on: l === effortLevel })),
   ];
-  if (!effortLevels.length) items.push({ v: 'default', t: 'catalog 未声明思考档位', d: '仍可用 /effort <level> 直接设置' });
+  if (!effortLevels.length) items.push({ label: 'catalog 未声明思考档位 — 可用 /effort <level> 直接设置' });
   menuPop(el, items, v => wsSend({ type: 'effort', level: v }), { place: 'top', align: 'end' });
 }
 

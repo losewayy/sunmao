@@ -1,10 +1,12 @@
-//! Credential redaction for transport error text. This is not a security
-//! boundary — the credentials never leave the process any other way — it
-//! exists so an error can be logged, or written into the delivery ledger,
-//! without carrying a token, a one-shot ticket, or the URL that holds one.
+//! Redaction of credential- and peer-bearing text on the transport error
+//! paths. This is not a security boundary — the values never leave the
+//! process any other way — it exists so an error can be logged, or written
+//! into the delivery ledger, without carrying a token, a one-shot ticket, a
+//! peer identifier, or the URL that holds one.
 
-/// What a masked secret is replaced with.
-const MASK: &str = "[redacted]";
+/// What a masked value is replaced with. Call sites that build their own
+/// message (instead of masking a whole string) use it directly.
+pub(crate) const MASK: &str = "[redacted]";
 
 /// Replace every occurrence of every secret in `text`. An empty secret is
 /// skipped: masking it would rewrite the whole string.
@@ -26,9 +28,10 @@ pub(crate) fn masked_error(err: anyhow::Error, secrets: &[&str]) -> anyhow::Erro
 }
 
 /// Strip the request URL off a transport error. `reqwest`'s `Display`
-/// appends ` for url (…)`, and the Telegram base URL carries the bot token
-/// in its path, so an error that keeps its URL hands the token to every log
-/// line and every delivery-ledger row built from it.
+/// appends ` for url (…)`, and a request URL can carry a credential in its
+/// path (Telegram's bot token) or a peer identifier (QQ's `openid`, Feishu's
+/// `message_id`), so an error that keeps its URL hands that value to every
+/// log line and every delivery-ledger row built from it.
 pub(crate) fn transport(err: reqwest::Error) -> reqwest::Error {
     err.without_url()
 }

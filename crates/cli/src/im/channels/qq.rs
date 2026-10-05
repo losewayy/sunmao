@@ -19,6 +19,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::{ChannelAdapter, InboundMsg, SendFailure, SendResult};
 use crate::im::config::QqSpec;
+use crate::im::redact;
 use crate::im::store::Store;
 use protocol::{
     ChatTarget, chunk, extract_event, heartbeat_frame, identify_frame, op, resume_frame, send_body,
@@ -89,6 +90,10 @@ pub struct QqAdapter {
     /// held across an await.
     token: std::sync::Mutex<Option<(String, Instant)>>,
     store: Arc<Store>,
+    /// Test seam: overrides the API host so the transport-error path can run
+    /// against a closed loopback port instead of the network.
+    #[cfg(test)]
+    api_base: Option<String>,
 }
 
 impl QqAdapter {
@@ -102,7 +107,25 @@ impl QqAdapter {
             app_secret: spec.app_secret()?,
             token: std::sync::Mutex::new(None),
             store,
+            #[cfg(test)]
+            api_base: None,
         })
+    }
+
+    /// Test seam: point the REST calls at a host a test controls.
+    #[cfg(test)]
+    fn with_api_base(mut self, api_base: String) -> Self {
+        self.api_base = Some(api_base);
+        self
+    }
+
+    /// The API host — the test seam wins when one is set.
+    fn api_base(&self) -> &str {
+        #[cfg(test)]
+        if let Some(base) = &self.api_base {
+            return base;
+        }
+        API_BASE
     }
 
     /// The cached token, if it is still good for `TOKEN_MARGIN_SECS`.
@@ -126,8 +149,13 @@ impl QqAdapter {
             .json(&body)
             .send()
             .await
+            .map_err(redact::transport)
             .context("qq token")?;
-        let v: serde_json::Value = resp.json().await.context("qq token decode")?;
+        let v: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(redact::transport)
+            .context("qq token decode")?;
         let token = v["access_token"]
             .as_str()
             .filter(|t| !t.is_empty())
@@ -158,7 +186,7 @@ impl QqAdapter {
         token: &str,
         stage: &str,
     ) -> Result<serde_json::Value> {
-        let url = format!("{API_BASE}{path}");
+        let url = format!("{}{path}", self.api_base());
         let mut req = self
             .http
             .request(method, &url)
@@ -166,11 +194,19 @@ impl QqAdapter {
         if let Some(body) = body {
             req = req.json(body);
         }
-        let resp = req.send().await.with_context(|| format!("qq {stage}"))?;
+        // The path carries the chat's openid, and reqwest prints the URL of a
+        // failed request in its `Display` — an un-scrubbed error would put a
+        // peer identifier into every log line and ledger row.
+        let resp = req
+            .send()
+            .await
+            .map_err(redact::transport)
+            .with_context(|| format!("qq {stage}"))?;
         let status = resp.status();
         let text = resp
             .text()
             .await
+            .map_err(redact::transport)
             .with_context(|| format!("qq {stage} body"))?;
         if !status.is_success() {
             let v: serde_json::Value =

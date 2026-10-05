@@ -236,6 +236,22 @@ fn cursors_are_scoped_to_the_bot_token() {
     assert!(!cursor_key("secret-token").contains("secret-token"));
 }
 
+/// The unscoped `wx:cursor` a pre-scoping build wrote is not adopted either:
+/// it cannot be attributed to a credential (see `cursor_key`).
+#[test]
+fn the_unscoped_legacy_cursor_is_not_adopted() {
+    let (store, dir) = store();
+    store.kv_set("wx:cursor", "legacy_buf").unwrap();
+    let a = adapter(store.clone());
+    assert_eq!(a.load_cursor(), "", "the legacy cursor must not be read");
+    assert_eq!(
+        store.kv_get("wx:cursor").as_deref(),
+        Some("legacy_buf"),
+        "and it is left where the older build put it"
+    );
+    std::fs::remove_dir_all(dir).ok();
+}
+
 #[test]
 fn a_reply_window_is_cached_and_expires() {
     let (store, dir) = store();
@@ -301,7 +317,11 @@ async fn sending_without_a_reply_window_is_an_error() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(err.contains("reply window") && err.contains("u_1"), "{err}");
+    assert!(err.contains("reply window"), "{err}");
+    // the peer id is a person, and this string travels further than the log
+    // line that already names the chat
+    assert!(!err.contains("u_1"), "the peer id rode the error: {err}");
+    assert!(err.contains(crate::im::redact::MASK), "{err}");
 
     a.remember_context("u_1", "ctx_1");
     let stale = encode_context("ctx_1", crate::im::store::now() - 25 * 60 * 60);
@@ -369,6 +389,40 @@ fn a_string_ret_reads_the_same_as_a_number() {
     // errcode may be spelled as a string too
     let by_errcode =
         business_error("ep", &serde_json::json!({"ret": 1, "errcode": "-14"})).unwrap();
+    assert_eq!(by_errcode.errcode, Some(-14));
+    assert!(by_errcode.is_session_expired());
+}
+
+/// The remaining spellings a real envelope uses: a boolean, a float, and a
+/// float written as a string. All three used to be read as "no `ret`" and
+/// therefore as success.
+#[test]
+fn a_boolean_or_float_ret_is_read_too() {
+    // JSON booleans are 0/1 in these envelopes
+    let flagged = business_error("ep", &serde_json::json!({"ret": true})).unwrap();
+    assert_eq!(flagged.ret, 1);
+    assert!(business_error("ep", &serde_json::json!({"ret": false})).is_none());
+
+    // a float keeps its integer part
+    assert_eq!(
+        business_error("ep", &serde_json::json!({"ret": 1.0}))
+            .unwrap()
+            .ret,
+        1
+    );
+    assert!(business_error("ep", &serde_json::json!({"ret": 0.0})).is_none());
+
+    // and the string spelling of the session-gone code still trips the stop
+    let expired = business_error("ep", &serde_json::json!({"ret": "-14.0"})).unwrap();
+    assert_eq!(expired.ret, -14);
+    assert!(expired.is_session_expired());
+
+    // a present but non-numeric ret has no integer to compare
+    assert!(business_error("ep", &serde_json::json!({"ret": "nope"})).is_none());
+
+    // errcode takes the same shapes
+    let by_errcode =
+        business_error("ep", &serde_json::json!({"ret": 1, "errcode": -14.0})).unwrap();
     assert_eq!(by_errcode.errcode, Some(-14));
     assert!(by_errcode.is_session_expired());
 }

@@ -25,8 +25,15 @@ pub const LONG_POLL_SECS: u64 = 40;
 /// A `context_token` is the reply window for one peer: 24 hours.
 pub const CONTEXT_TTL_SECS: i64 = 24 * 60 * 60;
 /// The `get_updates_buf` cursor prefix — persisted, because losing it
-/// replays or drops the peer's messages after a restart. Namespaced per bot
-/// token by `cursor_key`: a cursor is a position in one bot's update stream.
+/// drops the peer's messages after a restart. Namespaced per bot token by
+/// `cursor_key`: a cursor is a position in one bot's update stream. The
+/// unscoped `wx:cursor` a pre-scoping build wrote is deliberately not
+/// adopted, for the same reason `cursor_key` exists at all — it cannot be
+/// attributed to a credential, so handing it to another bot either moves
+/// that bot to a foreign position or gets the cursor rejected outright. The
+/// price of the decision is one reset: an empty cursor asks the platform for
+/// the current tail, so only messages that arrived while the daemon was down
+/// are at risk.
 pub const CURSOR_PREFIX: &str = "wx:cursor";
 /// One reply window per peer, keyed under this prefix (and per bot token by
 /// `context_key`).
@@ -288,11 +295,12 @@ impl fmt::Display for IlinkError {
 
 impl std::error::Error for IlinkError {}
 
-/// The business error of a response body, if it carries one. An absent `ret`
-/// is not an error (only the endpoints that define it use it). iLink spells
-/// `ret`/`errcode` as a number *or* a string, so reading only the numeric
-/// form silently turns a dead session (`"ret": "-14"`) into a success and the
-/// expired-session path never fires.
+/// The business error of a response body, if it carries one. Any *present*
+/// `ret` whose integral value is non-zero is a failure: iLink spells it as an
+/// integer, a float, a string, or a JSON boolean, and reading only the
+/// integer form silently turns a dead session (`"ret": "-14.0"`) into a
+/// success, so the expired-session path never fires. An absent `ret` is not
+/// an error (only the endpoints that define it use it).
 pub fn business_error(endpoint: &str, v: &serde_json::Value) -> Option<IlinkError> {
     let ret = ret_of(&v["ret"])?;
     if ret == 0 {
@@ -306,9 +314,28 @@ pub fn business_error(endpoint: &str, v: &serde_json::Value) -> Option<IlinkErro
     })
 }
 
-/// A `ret`/`errcode` as an integer, from either spelling. A value that is
-/// neither a number nor a numeric string is no value at all.
+/// A `ret`/`errcode` as an integer, from every spelling iLink uses: a number
+/// (integer or float), a JSON boolean, or a string of either. The fractional
+/// part is dropped (`1.0` is 1, `"-14.0"` is -14, which is the "session
+/// gone" code). A value in none of those shapes carries no integer at all,
+/// so it stays "no value" rather than inventing an error code.
 fn ret_of(v: &serde_json::Value) -> Option<i64> {
-    v.as_i64()
-        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+    if let Some(i) = v.as_i64() {
+        return Some(i);
+    }
+    if let Some(f) = v.as_f64() {
+        // a non-finite float cannot come out of JSON; the cast saturates
+        return Some(f.trunc() as i64);
+    }
+    match v {
+        serde_json::Value::Bool(b) => Some(i64::from(*b)),
+        serde_json::Value::String(s) => {
+            let s = s.trim();
+            if let Ok(i) = s.parse::<i64>() {
+                return Some(i);
+            }
+            s.parse::<f64>().ok().map(|f| f.trunc() as i64)
+        }
+        _ => None,
+    }
 }

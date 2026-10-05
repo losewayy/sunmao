@@ -19,6 +19,7 @@ use tokio::sync::mpsc;
 
 use super::{ChannelAdapter, InboundMsg, SendFailure, SendResult};
 use crate::im::config::WechatSpec;
+use crate::im::redact;
 use crate::im::store::Store;
 
 mod protocol;
@@ -63,7 +64,9 @@ impl WechatAdapter {
 
     /// One iLink call. Both the HTTP status and the business `ret` are error
     /// surfaces; the business failure travels as `IlinkError` so the poll
-    /// loop can tell a revoked session from a transient one.
+    /// loop can tell a revoked session from a transient one. The URL is
+    /// stripped off every transport error, so the same discipline holds here
+    /// as on the channels that do put identifiers in a path.
     async fn api_post(
         &self,
         endpoint: &str,
@@ -79,11 +82,13 @@ impl WechatAdapter {
             .json(body)
             .send()
             .await
+            .map_err(redact::transport)
             .with_context(|| format!("wechat {endpoint}"))?;
         let status = resp.status();
         let text = resp
             .text()
             .await
+            .map_err(redact::transport)
             .with_context(|| format!("wechat {endpoint} body"))?;
         if !status.is_success() {
             anyhow::bail!("wechat {endpoint}: http={status} {}", brief(&text));
@@ -162,9 +167,13 @@ impl WechatAdapter {
 
     async fn send_message(&self, chat_id: &str, text: &str) -> SendResult {
         let Some(context_token) = self.context_of(chat_id) else {
+            // The peer id is a person, and this string travels (log lines, the
+            // delivery ledger, a copy-pasted bug report); the caller's log line
+            // already names the chat, so the error itself does not have to.
             return Err(SendFailure::before_send(anyhow::anyhow!(
-                "wechat: no reply window for {chat_id}; the peer has to message \
-                 first, and a window older than 24h is closed"
+                "wechat: no reply window for {}; the peer has to message \
+                 first, and a window older than 24h is closed",
+                redact::MASK
             )));
         };
         let pieces = protocol::chunk(text);

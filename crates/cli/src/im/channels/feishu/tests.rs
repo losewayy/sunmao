@@ -234,18 +234,28 @@ fn chunks_prefer_paragraph_breaks() {
 #[test]
 fn chunked_events_assemble_in_seq_order() {
     let mut bufs = HashMap::new();
-    assert_eq!(
-        merge_chunk(&mut bufs, "om_1", 1, 0, b"whole").unwrap(),
-        b"whole"
-    );
+    assert!(matches!(
+        merge_chunk(&mut bufs, "om_1", 1, 0, b"whole"),
+        ChunkOutcome::Complete(p) if p == b"whole"
+    ));
     // first half arrives → nothing yet, and the slot is held
-    assert!(merge_chunk(&mut bufs, "om_2", 2, 0, b"A").is_none());
+    assert!(matches!(
+        merge_chunk(&mut bufs, "om_2", 2, 0, b"A"),
+        ChunkOutcome::Pending
+    ));
     assert!(bufs.contains_key("om_2"), "half an event is not an event");
     // arrival order does not matter, seq order does
-    assert_eq!(merge_chunk(&mut bufs, "om_2", 2, 1, b"B").unwrap(), b"AB");
+    assert!(matches!(
+        merge_chunk(&mut bufs, "om_2", 2, 1, b"B"),
+        ChunkOutcome::Complete(p) if p == b"AB"
+    ));
     assert!(!bufs.contains_key("om_2"), "a completed event is released");
-    // out-of-range seq is dropped rather than trusted as a payload
-    assert!(merge_chunk(&mut bufs, "om_4", 2, 5, b"X").is_none());
+    // an out-of-range seq can never assemble: refused, not held
+    assert!(matches!(
+        merge_chunk(&mut bufs, "om_4", 2, 5, b"X"),
+        ChunkOutcome::Refused
+    ));
+    assert!(!bufs.contains_key("om_4"));
 }
 
 #[test]
@@ -256,23 +266,54 @@ fn stale_chunks_are_abandoned() {
         (Instant::now() - CHUNK_TTL, vec![Some(b"A".to_vec()), None]),
     );
     assert!(
-        merge_chunk(&mut bufs, "om_old", 2, 1, b"B").is_none(),
+        matches!(
+            merge_chunk(&mut bufs, "om_old", 2, 1, b"B"),
+            ChunkOutcome::Pending
+        ),
         "the stale slot must not complete the event"
     );
 }
 
 /// The `sum` header sizes an allocation before any payload arrives, so an
-/// absurd value has to be refused rather than trusted.
+/// absurd value has to be refused rather than trusted — and refused is not
+/// "still waiting", because the caller has to act on the difference (an
+/// unacked frame is redelivered forever).
 #[test]
 fn an_absurd_chunk_count_is_refused_not_allocated() {
     let mut bufs = HashMap::new();
-    assert!(merge_chunk(&mut bufs, "om_big", usize::MAX, 0, b"A").is_none());
+    assert!(matches!(
+        merge_chunk(&mut bufs, "om_big", usize::MAX, 0, b"A"),
+        ChunkOutcome::Refused
+    ));
     assert!(bufs.is_empty(), "no slot vector may be allocated for it");
-    assert!(merge_chunk(&mut bufs, "om_big", MAX_CHUNK_SUM + 1, 0, b"A").is_none());
+    assert!(matches!(
+        merge_chunk(&mut bufs, "om_big", MAX_CHUNK_SUM + 1, 0, b"A"),
+        ChunkOutcome::Refused
+    ));
     assert!(bufs.is_empty());
-    // a legal multi-chunk event still assembles
-    assert!(merge_chunk(&mut bufs, "om_ok", 2, 0, b"A").is_none());
-    assert_eq!(merge_chunk(&mut bufs, "om_ok", 2, 1, b"B").unwrap(), b"AB");
+    // the other headers that can never assemble are refused the same way,
+    // and none of them leaves state behind for the next frame
+    assert!(matches!(
+        merge_chunk(&mut bufs, "", 2, 0, b"A"),
+        ChunkOutcome::Refused
+    ));
+    assert!(matches!(
+        merge_chunk(&mut bufs, "om_big", 2, 9, b"A"),
+        ChunkOutcome::Refused
+    ));
+    assert!(bufs.is_empty(), "a refused frame must not park a slot");
+
+    // a refused frame does not stick the state machine: a legal event for
+    // the same id after it still assembles
+    assert!(matches!(
+        merge_chunk(&mut bufs, "om_big", 2, 0, b"A"),
+        ChunkOutcome::Pending
+    ));
+    assert!(matches!(
+        merge_chunk(&mut bufs, "om_big", 2, 1, b"B"),
+        ChunkOutcome::Complete(p) if p == b"AB"
+    ));
+    assert!(bufs.is_empty());
 }
 
 /// `Instant + Duration` panics on an absurd TTL, and a sub-minute one spins
@@ -310,4 +351,52 @@ fn chunks_never_split_a_character() {
         parts.iter().all(|p| p.chars().all(|c| c == '🦀')),
         "{parts:?}"
     );
+}
+
+/// The message-edit path is `/open-apis/im/v1/messages/{message_id}`, and
+/// reqwest prints the URL of a failed request in its `Display`.
+#[tokio::test]
+async fn a_transport_error_never_carries_the_message_id() {
+    let dir = crate::im::test_dir("feishu-transport");
+    std::fs::create_dir_all(&dir).unwrap();
+    let secret = dir.join("secret.txt");
+    std::fs::write(&secret, "shh").unwrap();
+    let adapter = FeishuAdapter::new(&FeishuSpec {
+        enabled: true,
+        app_id: "cli_x".into(),
+        app_secret_env: None,
+        app_secret_file: Some(secret),
+        region: FeishuRegion::default(),
+        owner: None,
+        dm_policy: None,
+        allowlist: Vec::new(),
+    })
+    .unwrap();
+    // skip the token exchange: the failure under test is the transport one
+    *adapter.token.lock().unwrap() =
+        Some(("tok".into(), Instant::now() + Duration::from_secs(600)));
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let message_id = "om_1f2e3d4c5b6a";
+    let url = format!("http://127.0.0.1:{port}/open-apis/im/v1/messages/{message_id}");
+    let err = adapter
+        .api_call(reqwest::Method::PATCH, &url, None, "message update")
+        .await
+        .unwrap_err();
+    let text = format!("{err:#}");
+    assert!(
+        !text.contains(message_id),
+        "the message id reached the error: {text}"
+    );
+    assert!(
+        !text.contains("http://"),
+        "the URL reached the error: {text}"
+    );
+    assert!(
+        text.contains("message update"),
+        "the diagnosis is gone: {text}"
+    );
+    std::fs::remove_dir_all(dir).ok();
 }

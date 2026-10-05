@@ -15,6 +15,11 @@
 //! happens only while the adapter reports that nothing was delivered; once a
 //! chunk is out, the row is dead-lettered instead of resent, which also
 //! keeps the next startup from replaying the whole text.
+//!
+//! A dead row is never replayed, so its `note` (`partial: 1/3 chunks
+//! delivered`) plus the warn line `resend_outstanding` prints at the next
+//! start are the only record that an answer was truncated rather than lost;
+//! [`Delivery::dead_letters`] is the programmatic side of that read-back.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -99,10 +104,33 @@ impl Delivery {
         Err(last_err.unwrap_or_else(|| anyhow::anyhow!("send failed")))
     }
 
+    /// The dead letters of this channel, oldest first — the read-back side of
+    /// the dead-letter note. `resend_outstanding` reports them at every start,
+    /// which is the only moment they can still be surfaced: a dead row is
+    /// never replayed again, and without the note "the answer was truncated
+    /// after 1 of 3 chunks" would be indistinguishable from "it never went
+    /// out" once the log line scrolled away.
+    pub fn dead_letters(&self) -> Vec<super::store::DeliveryRow> {
+        self.store.deliver_dead_rows(self.adapter.channel())
+    }
+
     /// Startup replay — every outstanding row goes again. `attempting`
     /// rows get the ♻️ prefix: their send was in flight when the process
-    /// died, so the message may already have arrived once.
+    /// died, so the message may already have arrived once. Dead rows are not
+    /// replayed; they are reported instead.
     pub async fn resend_outstanding(&self) {
+        for row in self.dead_letters() {
+            let note = if row.note.is_empty() {
+                "no reason recorded"
+            } else {
+                &row.note
+            };
+            tracing::warn!(
+                "im delivery {} is a dead letter ({}): not replayed",
+                row.id,
+                note
+            );
+        }
         for row in self.store.deliver_outstanding() {
             if row.channel != self.adapter.channel() {
                 continue;
@@ -280,10 +308,9 @@ mod tests {
             i64::from(SEND_RETRIES),
             "the whole retry budget was spent"
         );
-        assert_eq!(
-            s.delivery_state_note(rows[0].id).unwrap().1,
-            "",
-            "no dead-letter note: it never became a dead letter"
+        assert!(
+            s.deliver_dead_rows("test").is_empty(),
+            "no dead letter: it never gave up"
         );
         std::fs::remove_dir_all(dir).ok();
     }
@@ -309,12 +336,15 @@ mod tests {
             "chunk 0 must reach the platform exactly once"
         );
         assert!(outcome.is_err());
-        let (state, note) = s.delivery_state_note(id).unwrap();
-        assert_eq!(state, "dead");
+        let dead = s.deliver_dead_rows("test");
+        assert_eq!(dead.len(), 1);
+        assert_eq!(dead[0].state, "dead");
         assert_eq!(
-            note, "partial: 1/3 chunks delivered",
+            dead[0].note, "partial: 1/3 chunks delivered",
             "an operator has to tell a truncated answer from one that never went out"
         );
+        // and the read-back the delivery lane prints at every start
+        assert_eq!(d.dead_letters()[0].note, "partial: 1/3 chunks delivered");
         assert!(
             s.deliver_outstanding().is_empty(),
             "a partially delivered row must not be replayed"
@@ -326,7 +356,7 @@ mod tests {
     }
 
     /// Case 3: every chunk lands — one clean send, nothing outstanding and no
-    /// dead-letter note.
+    /// dead letter to report at the next start.
     #[tokio::test]
     async fn a_complete_chunked_send_lands_delivered() {
         let (s, dir) = store();
@@ -335,11 +365,9 @@ mod tests {
         let id = s.deliver_pending("test", "42", "three chunks").unwrap();
         d.attempt(id, "42", "three chunks").await.unwrap();
         assert_eq!(*a.delivered.lock().await, vec![0, 1, 2]);
-        assert_eq!(
-            s.delivery_state_note(id).unwrap(),
-            ("delivered".to_string(), String::new())
-        );
         assert!(s.deliver_outstanding().is_empty());
+        assert!(s.deliver_dead_rows("test").is_empty());
+        assert!(d.dead_letters().is_empty());
         std::fs::remove_dir_all(dir).ok();
     }
 

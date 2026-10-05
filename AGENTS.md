@@ -156,6 +156,6 @@ live in [`docs/CODE-ARCHITECTURE.md`](docs/CODE-ARCHITECTURE.md). Follow them.
 | session-log helpers (`recent_sessions`, `/resume` path, fork copy) | `crates/cli/src/sessions.rs` |
 | `/rewind` execution (local frontends) | `crates/cli/src/rewind.rs`; serve variant: `serve/host.rs::rewind_session` |
 | ACP server | `crates/cli/src/acp/` — `mod` wire + `observer` outbound adapters |
-| IM gateway (`sunmao im`, `sunmao pairing`) | `crates/cli/src/im/` — channels/telegram.rs adapter; route/authz/store/progress/deliver lanes; `docs/IM.md` is the contract |
+| IM gateway (`sunmao im`, `sunmao pairing`) | `crates/cli/src/im/` — channels/*.rs adapter (telegram, feishu, qq, dingtalk, wechat); route/authz/store/progress/deliver lanes; `docs/IM.md` is the contract |
 | dataflow report | `crates/cli/src/dataflow.rs` |
 | env self-check | `crates/cli/src/doctor.rs` |

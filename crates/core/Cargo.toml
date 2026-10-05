@@ -11,6 +11,9 @@ anyhow.workspace = true
 async-trait.workspace = true
 base64 = "0.22"
 deno_task_shell.workspace = true
+# Declared explicitly rather than reached through reqwest's `charset` feature:
+# WebFetch decodes its own byte-capped body, so it names the codec directly.
+encoding_rs = "0.8"
 futures-util.workspace = true
 glob = "0.3"
 reqwest = { workspace = true, features = ["rustls"] }

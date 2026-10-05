@@ -22,7 +22,7 @@ clap = { version = "4", features = ["derive", "env"] }
 deno_task_shell = "0.33"
 eventsource-stream = "0.2"
 futures-util = "0.3"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json", "charset"] }
 regex = "1"
 # at-least-once delivery ledger + pairing/routing index need real
 # transactions and SQL lookups — a JSONL append log can neither update a

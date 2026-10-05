@@ -178,10 +178,9 @@ async fn run_case_inner(
         &case_cwd,
         sunmao_core::models::ProviderDef {
             base_url: cli.base_url.clone(),
-            api_key_env: None,
             api_key: Some(cli.api_key.clone()),
             dialect: cli.provider.clone(),
-            catalog: Vec::new(),
+            ..Default::default()
         },
         "default",
     )));

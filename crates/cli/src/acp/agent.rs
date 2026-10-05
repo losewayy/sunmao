@@ -64,10 +64,9 @@ impl SunmaoAgent {
             cwd,
             sunmao_core::models::ProviderDef {
                 base_url: self.base_url.clone(),
-                api_key_env: None,
                 api_key: Some(self.api_key.clone()),
                 dialect: self.provider.clone(),
-                catalog: Vec::new(),
+                ..Default::default()
             },
             "default",
         ))

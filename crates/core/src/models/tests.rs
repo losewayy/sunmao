@@ -9,6 +9,7 @@ fn resolver() -> ModelResolver {
             api_key: None,
             dialect: "openai".into(),
             catalog: Vec::new(),
+            extra: Default::default(),
         },
         "default",
     );
@@ -21,6 +22,7 @@ fn resolver() -> ModelResolver {
             api_key: None,
             dialect: "anthropic".into(),
             catalog: Vec::new(),
+            extra: Default::default(),
         },
     );
     file.routes.insert(
@@ -96,6 +98,7 @@ fn adapter_cache_key_carries_provider_identity() {
             api_key: None,
             dialect: "openai".into(),
             catalog: Vec::new(),
+            extra: Default::default(),
         },
         "default",
     );
@@ -110,6 +113,7 @@ fn adapter_cache_key_carries_provider_identity() {
                     api_key: None,
                     dialect: dialect.into(),
                     catalog: Vec::new(),
+                    extra: Default::default(),
                 },
             );
         }
@@ -165,8 +169,8 @@ fn default_model_parses_and_blanks_are_unpinned() {
 }
 
 /// The GUI's save body is built from the REDACTED GET view: no literal key,
-/// no unknown top-level key. `merge_save` folds it onto the file so neither
-/// dies on save. (The route-level GET→PUT trip is
+/// no unknown top-level key, no provider-level key. `merge_save` folds it onto
+/// the file so none dies on save. (The route-level GET→PUT trip is
 /// `crates/cli/src/serve/request/models.rs::tests`, which core can't reach —
 /// the old version of this test only round-tripped the struct through serde
 /// and stayed green while every real save erased the key.)
@@ -174,7 +178,7 @@ fn default_model_parses_and_blanks_are_unpinned() {
 fn merge_save_keeps_what_the_redacted_view_cannot_carry() {
     let existing: ModelsFile = serde_json::from_str(
         r#"{"providers":{
-             "local":{"base_url":"http://local/v1","api_key":"sk-x","catalog":[{"id":"m1"}]},
+             "local":{"base_url":"http://local/v1","api_key":"sk-x","headers":{"X-Trace":"on"},"catalog":[{"id":"m1"}]},
              "plain":{"base_url":"http://plain/v1"}},
            "routes":{"fast":"local/m1"},"default_model":"local/m1","something_new":{"a":1}}"#,
     )
@@ -189,6 +193,7 @@ fn merge_save_keeps_what_the_redacted_view_cannot_carry() {
     .unwrap();
     let merged = ModelsFile::merge_save(&existing, &body, &HashMap::new());
     assert_eq!(merged.providers["local"].api_key.as_deref(), Some("sk-x"));
+    assert_eq!(merged.providers["local"].extra["headers"]["X-Trace"], "on");
     assert_eq!(merged.extra["something_new"]["a"], 1);
     assert_eq!(
         merged.extra.len(),
@@ -197,7 +202,8 @@ fn merge_save_keeps_what_the_redacted_view_cannot_carry() {
     );
     assert_eq!(merged.default_model.as_deref(), Some("plain/m2"));
 
-    // a rename declares the hop, and the key moves with it
+    // a rename declares the hop, and the key plus the provider-level unknowns
+    // move with it
     let renamed: ModelsFile = serde_json::from_str(
         r#"{"providers":{"renamed":{"base_url":"http://local/v1","catalog":[{"id":"m1"}]}},"routes":{}}"#,
     )
@@ -206,6 +212,10 @@ fn merge_save_keeps_what_the_redacted_view_cannot_carry() {
     let merged = ModelsFile::merge_save(&existing, &renamed, &hop);
     assert!(!merged.providers.contains_key("local"), "the source goes");
     assert_eq!(merged.providers["renamed"].api_key.as_deref(), Some("sk-x"));
+    assert_eq!(
+        merged.providers["renamed"].extra["headers"]["X-Trace"],
+        "on"
+    );
     assert_eq!(
         merged.extra.len(),
         1,

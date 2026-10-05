@@ -18,7 +18,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use sunmao_llm::ProviderAdapter;
 
-#[derive(Debug, Clone, serde::Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, serde::Serialize, Deserialize)]
 pub struct ProviderDef {
     pub base_url: String,
     /// env var holding the API key — absent means keyless (local servers).
@@ -35,6 +35,11 @@ pub struct ProviderDef {
     /// hand; entries become concrete `provider/id` selectors.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub catalog: Vec<CatalogEntry>,
+    /// provider-level keys this build doesn't know. A GUI save merges the
+    /// posted body onto the file (`merge_save`), so a key a newer build or a
+    /// hand edit wrote survives instead of dying with the redacted GET view.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 fn default_dialect() -> String {
@@ -99,6 +104,12 @@ impl ModelsFile {
                 dst.api_key = src.api_key.clone();
                 dst.api_key_env = src.api_key_env.clone();
             }
+            // provider-level unknowns are the same "blank means keep" bargain:
+            // the view cannot carry them, so a body that doesn't restate one
+            // inherits it (a body that does wins)
+            for (k, v) in &src.extra {
+                dst.extra.entry(k.clone()).or_insert_with(|| v.clone());
+            }
         };
         for (new, old) in rename_from {
             let (Some(src), Some(dst)) = (existing.providers.get(old), out.providers.get_mut(new))
@@ -148,6 +159,16 @@ impl ModelsFile {
 /// the capability fill: the caller wants one key, not the whole catalog.
 pub fn default_selector(cwd: &Path) -> Option<String> {
     read_models_raw(cwd).default_selector().map(str::to_string)
+}
+
+/// The merged routing table for `cwd` (the same `.sunmao` → `.claude` layering
+/// the resolver uses, without the capability fill). `PUT /models` merges
+/// against this, not against `.sunmao/models.json` alone: a provider that
+/// lives only in the compat layer would otherwise be materialized into
+/// `.sunmao` as a keyless copy, because the redacted GET view can't carry its
+/// credential.
+pub fn read_models(cwd: &Path) -> ModelsFile {
+    read_models_raw(cwd)
 }
 
 /// Which files feed a resolver — `.sunmao/models.json` then `.claude/` for

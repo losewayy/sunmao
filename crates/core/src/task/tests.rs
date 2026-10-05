@@ -260,6 +260,7 @@ async fn call_site_model_routes_and_unknown_selector_fails() {
             api_key: None,
             dialect: "openai".into(),
             catalog: Vec::new(),
+            extra: Default::default(),
         },
         "default",
     )

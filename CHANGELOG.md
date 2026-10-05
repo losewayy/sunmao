@@ -10,6 +10,15 @@ ACP v2 server, event-sourced sessions with resume/fork/dataflow, CJK-native
 TUI.
 
 **post-0.2 additions**
+- **im**: five channels. Telegram, feishu, QQ, dingtalk and wechat are all outbound-initiated (websocket or long poll), so no public ingress, no callback URL and no signature verification is needed. Each platform is a spec in `channels.json` plus an adapter and a pure protocol module, and a credential is always a source (`<field>_env` or `<field>_file`), never plaintext. Groups are dropped on every platform: answering an unpaired sender with a pairing code in a room is the one thing a pairing flow must never do. WeChat's QR login and media, and message editing on dingtalk and wechat, are not shipped.
+- **cli**: the IM channels page lists every platform as a fixed card in a row (wechat, QQ, feishu, dingtalk, telegram) with no kind picker, no add and no delete, because a second channel of one kind cannot run anyway: routing keys on the kind name and the cursor is shared.
+- **cli**: quoting a passage is a card above the composer now (quote icon, first-line summary, remove, hover for the whole passage) instead of the passage pasted into the textarea. The message still leaves with the quote block ahead of whatever was typed.
+- **cli**: queued prompts are a column above the composer, one row each, with a drag grip at the left of every row wired to the existing relative `input_move` step, and Alt+Up/Down on the grip for the keyboard.
+- **models**: `default_model` in `.sunmao/models.json` pins the model a new conversation starts on. An explicit `--model` wins, and a session already under way keeps the model from its own log.
+- **agent**: stopping is remembered. `Notify::notify_waiters()` stores no permit, so a cancel whose waiter had not registered yet was lost and a running command ignored it; `CancelSignal` is a flag plus a wake, a summary stream in flight is cancelled instead of waited out, the stop button acknowledges on the same frame, and a turn that ignores a cancel is force-ended after ten seconds with a `force_stop` event.
+- **llm**: a pasted full endpoint is stripped before the dialect's path is appended (`/v1/chat/completions` no longer becomes `/v1/chat/completions/chat/completions`). The version segment and any gateway prefix stay exactly as written.
+- **tools**: `Bash`'s `timeout_secs` clamps to 1..600 seconds instead of trusting the request.
+- **cli**: the reasoning fold closes again. It looked for its body inside the button while the stylesheet keys on the next sibling, so it opened and could never close.
 - **security change**: trust pinning extends to spawn surfaces — plugin
   `extensions` children and MCP `command:` stdio servers join hook
   commands under the same `.sunmao/trusted-hooks.json` ledger (digest =

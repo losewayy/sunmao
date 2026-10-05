@@ -7,7 +7,7 @@ const stIcon = st => `<span class="st ${st}">${ic(st === 'ok' ? 'check' : st ===
 // `o.body` is pre-rendered HTML (Edit/Write diff preview from diff.js) —
 // unlike `out` it lands unescaped; only ever pass what editPreviewHTML built.
 function toolHTML([st, nm, sm, tm, out], o = {}) {
-  const time = st === 'run' ? `<span class="tm live" data-start="${o.start ?? performance.now()}">0.0s</span>` : st === 'wait' ? '<span class="tm w">等待批准</span>' : `<span class="tm${st === 'err' && tm && !/\d/.test(tm) ? ' e' : ''}">${tm || ''}</span>`;
+  const time = st === 'run' ? `<span class="tm live" data-start="${o.start ?? performance.now()}">0.0s</span>` : st === 'wait' ? `<span class="tm w">${t('等待批准')}</span>` : `<span class="tm${st === 'err' && tm && !/\d/.test(tm) ? ' e' : ''}">${tm || ''}</span>`;
   const body = o.body || '';
   const chev = (out || body) ? ic('chev-r', 'i xs chev') : '';
   return `<div class="tool${st === 'err' ? ' bad' : ''}${o.cls ? ' ' + o.cls : ''}"><button class="tool-h">${stIcon(st)}<span class="nm">${esc(nm)}</span><span class="sum">${esc(sm)}</span>${time}${chev}</button>${body || out ? `<div class="tool-o">${body}${out ? `<pre>${esc(out)}</pre>` : ''}</div>` : ''}</div>`;
@@ -17,11 +17,11 @@ function toolHTML([st, nm, sm, tm, out], o = {}) {
 // turnSeq mirrors the log's turn_boundaries scan — the Nth stamped
 // .msg.you is what `POST /rewind {turn:N}` trims to
 let turnSeq = 0;
-const rwBtn = `<button class="ib rw" data-act="rewind-turn" data-tip="回退到这条之前 · 同时还原改过的文件" aria-label="回退到这条之前">${ic('reset', 'i sm')}</button>`;
+const rwBtn = `<button class="ib rw" data-act="rewind-turn" data-tip="${t('回退到这条之前 · 同时还原改过的文件')}" aria-label="${t('回退到这条之前')}">${ic('reset', 'i sm')}</button>`;
 // turn: number → stamped + rewind button · 'pending' → awaits the kernel's
 // turn_boundary event (echoes of slash commands/vetoed prompts never get
 // one — no boundary, no rewind) · falsy → plain bubble
-const youHTML = (text, anim, at, turn) => `<div class="msg you"${turn === 'pending' ? ' data-pending' : turn ? ` data-turn="${turn}"` : ''}><div class="msg-h${anim ? ' enter' : ''}"><i class="dot"></i><span>你</span>${at ? `<time>${at}</time>` : ''}${turn && turn !== 'pending' ? rwBtn : ''}</div><div class="bubble glass${anim ? ' enter' : ''}">${esc(text)}</div></div>`;
+const youHTML = (text, anim, at, turn) => `<div class="msg you"${turn === 'pending' ? ' data-pending' : turn ? ` data-turn="${turn}"` : ''}><div class="msg-h${anim ? ' enter' : ''}"><i class="dot"></i><span>${t('你')}</span>${at ? `<time>${at}</time>` : ''}${turn && turn !== 'pending' ? rwBtn : ''}</div><div class="bubble glass${anim ? ' enter' : ''}">${esc(text)}</div></div>`;
 // the kernel committed a user-message boundary: stamp the oldest pending
 // you-bubble with its ordinal (and mount the rewind control), else the
 // ordinal is bookkeeping only — turnSeq still tracks for the replay path
@@ -49,7 +49,7 @@ function msgText(m) { return msgParts(m).map(b => b.type === 'text' ? b.text : `
 function attURL(p) { return '/attachments/' + encodeURIComponent(attBase(p)) + '?sess=' + encodeURIComponent(sessionId); }
 const attImgs = m => msgParts(m).filter(b => b.type === 'image')
   .map(b => `<img class="att" src="${attURL(b.path)}" alt="${esc(attBase(b.path))}" title="${esc(b.path)}">`).join('');
-const botHead = anim => `<div class="msg-h${anim ? ' enter' : ''}"><i class="dot"></i><span>sunmao</span>${modelLabel ? `<span class="model">${esc(modelLabel.replace(/^global:/, ''))}</span>` : ''}</div>`;
+const botHead = anim => `<div class="msg-h${anim ? ' enter' : ''}"><i class="dot"></i><span>${brand()}</span>${modelLabel ? `<span class="model">${esc(modelLabel.replace(/^global:/, ''))}</span>` : ''}</div>`;
 const TX = $('#tx');
 // force=false by default — streamed output must not yank the scroller
 // while the user reads earlier output; only own bubbles/settle force it
@@ -65,14 +65,14 @@ function toolGroup(host) {
   return append(host, `<div class="tools glass"><button class="tg-h" data-act="tg" aria-expanded="true">${ic('chev-r', 'i xs chev')}<span class="tg-s"></span><span class="tg-bad"></span><span class="tg-n"></span></button></div>`);
 }
 const TG_VERBS = [
-  [/^(Read)$/, n => `读取 ${n} 个文件`],
-  [/^(Grep|Glob)$/, n => `搜索 ${n} 次`],
-  [/^(Bash|shell|!)$/, n => `运行 ${n} 条命令`],
-  [/^(Edit|Write)$/, n => `修改 ${n} 个文件`],
-  [/^(WebFetch)$/, n => `抓取 ${n} 个网页`],
-  [/^(Task)$/, n => `派出 ${n} 个子代理`],
-  [/^(TodoWrite)$/, () => '更新待办'],
-  [/^(HtmlArtifact)$/, n => `生成 ${n} 个工件`],
+  [/^(Read)$/, n => t('读取 {n} 个文件', { n })],
+  [/^(Grep|Glob)$/, n => t('搜索 {n} 次', { n })],
+  [/^(Bash|shell|!)$/, n => t('运行 {n} 条命令', { n })],
+  [/^(Edit|Write)$/, n => t('修改 {n} 个文件', { n })],
+  [/^(WebFetch)$/, n => t('抓取 {n} 个网页', { n })],
+  [/^(Task)$/, n => t('派出 {n} 个子代理', { n })],
+  [/^(TodoWrite)$/, () => t('更新待办')],
+  [/^(HtmlArtifact)$/, n => t('生成 {n} 个工件', { n })],
 ];
 // A short assistant line sitting right before a tool call is narration
 // ("I'll read both files.") — pull it into the card as a step so the run
@@ -108,8 +108,8 @@ function refreshGroup(g) {
   fails.forEach((t, i) => t.classList.toggle('xs', i < fails.length - TG_MANY));
   if (!many) return;
   $('.tg-s', g).textContent = [...counts.values()].map(c => c.fmt(c.n)).join(' · ');
-  $('.tg-bad', g).textContent = bad ? `${bad} 失败` : '';
-  $('.tg-n', g).textContent = live ? '进行中' : `${tools.length} 步`;
+  $('.tg-bad', g).textContent = bad ? t('{n} 失败', { n: bad }) : '';
+  $('.tg-n', g).textContent = live ? t('进行中') : t('{n} 步', { n: tools.length });
 }
 function foldGroup(g, on) {
   if (g.classList.contains('fold') === on) return;
@@ -179,11 +179,11 @@ function contentDelta(t) {
   b.innerHTML = mdRender(curText);
   keepBottom();
 }
-function reasoningDelta(t) {
-  if (!t) return;
+function reasoningDelta(txt) {
+  if (!txt) return;
   const host = msgHost();
-  if (!curThink) curThink = append(host, `<button class="think glass live enter" data-act="think">${ic('chev-r', 'i xs')}思考</button><div class="think-o glass"></div>`).nextElementSibling, curThinkText = '';
-  curThinkText += t;
+  if (!curThink) curThink = append(host, `<button class="think glass live enter" data-act="think">${ic('chev-r', 'i xs')}${t('思考')}</button><div class="think-o glass"></div>`).nextElementSibling, curThinkText = '';
+  curThinkText += txt;
   curThink.textContent = curThinkText;
   keepBottom();
 }
@@ -229,16 +229,16 @@ function islandHTML(ev) {
       ${ic('file-code', 'i fi')}
       <span class="nm">HtmlArtifact</span>
       <span class="fn">${esc(nm)}.html</span>
-      <button class="notes-pill" data-act="annotate" data-tip="批注|点击页面元素或拖拽选区域">${ic('note', 'i xs')}<span>批注</span></button>
+      <button class="notes-pill" data-act="annotate" data-tip="${t('批注|点击页面元素或拖拽选区域')}">${ic('note', 'i xs')}<span>${t('批注')}</span></button>
       <span class="revs" hidden>
-        <button class="ib" data-act="rev-prev" data-tip="上一版本" aria-label="上一版本">${ic('chev-l')}</button>
+        <button class="ib" data-act="rev-prev" data-tip="${t('上一版本')}" aria-label="${t('上一版本')}">${ic('chev-l')}</button>
         <span class="rev-n">v1/1</span>
-        <button class="ib" data-act="rev-next" data-tip="下一版本" aria-label="下一版本">${ic('chev-r')}</button>
+        <button class="ib" data-act="rev-next" data-tip="${t('下一版本')}" aria-label="${t('下一版本')}">${ic('chev-r')}</button>
       </span>
       <span class="sp"></span>
       <span class="meta">${fmtBytes(ev.bytes || 0)}</span>
-      <button class="ib" data-act="island-tall" data-tip="展开" aria-label="展开">${ic('expand')}</button>
-      <button class="ib" data-act="island-open" data-tip="在浏览器中打开|沙箱内脚本禁用 · 禁网" aria-label="在浏览器中打开">${ic('external')}</button>
+      <button class="ib" data-act="island-tall" data-tip="${t('展开')}" aria-label="${t('展开')}">${ic('expand')}</button>
+      <button class="ib" data-act="island-open" data-tip="${t('在浏览器中打开|沙箱内脚本禁用 · 禁网')}" aria-label="${t('在浏览器中打开')}">${ic('external')}</button>
     </div>
     <iframe title="${esc(nm)}" sandbox="allow-same-origin" loading="lazy" src="/artifacts/${encodeURIComponent(nm)}?sess=${encodeURIComponent(sessionId)}"></iframe>
     <div class="notes"></div>
@@ -267,8 +267,8 @@ function setBusy(on) {
   const btn = $('#send-btn');
   btn.dataset.act = busy ? 'stop' : 'send';
   btn.classList.toggle('stop', busy);
-  btn.setAttribute('data-tip', busy ? '停止生成 · 引导仍可用 Ctrl+Enter' : '发送|Enter · 引导|Ctrl+Enter');
-  btn.setAttribute('aria-label', busy ? '停止生成' : '发送');
+  btn.setAttribute('data-tip', busy ? t('停止生成 · 引导仍可用 Ctrl+Enter') : t('发送|Enter · 引导|Ctrl+Enter'));
+  btn.setAttribute('aria-label', busy ? t('停止生成') : t('发送'));
   $('use', btn).setAttribute('href', busy ? '#i-square' : '#i-arrow-up');
   renderRail();
 }
@@ -276,13 +276,13 @@ function setBusy(on) {
 /* ---- goal chip — mirrors the TUI footer chip: objective (truncated),
    status, round counter. `complete`/`abandoned` still pin it until a
    later event clears curGoal. */
-const GOAL_STATUS = { in_progress: '进行中', complete: '已完成', blocked: '受阻', abandoned: '已放弃' };
+const GOAL_STATUS = { in_progress: t('进行中'), complete: t('已完成'), blocked: t('受阻'), abandoned: t('已放弃') };
 function renderGoalChip() {
   const el = $('#cmp-goal');
   if (!curGoal) { el.hidden = true; el.textContent = ''; return; }
   const obj = curGoal.objective || '';
   const cut = [...obj].slice(0, 18).join('') + ([...obj].length > 18 ? '…' : '');
-  el.innerHTML = `<b>◎</b>${esc(cut)} · ${GOAL_STATUS[curGoal.status] || curGoal.status} · 轮 ${curGoal.rounds}/${curGoal.max_rounds}`;
+  el.innerHTML = `<b>◎</b>${esc(cut)} · ${GOAL_STATUS[curGoal.status] || curGoal.status} · ${t('轮 {n}/{m}', { n: curGoal.rounds, m: curGoal.max_rounds })}`;
   el.hidden = false;
 }
 // one fold for both surfaces — a live `goal` event and a `goal` session
@@ -292,7 +292,7 @@ function applyGoalEvent(g, log) {
   curGoal = g;
   renderGoalChip();
   $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy && !curGoal;
-  if (log) logEv('goal', `${g.status} · 轮 ${g.rounds}/${g.max_rounds}`);
+  if (log) logEv('goal', `${g.status} · ${t('轮 {n}/{m}', { n: g.rounds, m: g.max_rounds })}`);
   return !prev || prev.status !== g.status || prev.objective !== g.objective;
 }
 
@@ -302,9 +302,9 @@ function logEv(type, detail) {
   if (EVLOG.length > 500) EVLOG.splice(0, EVLOG.length - 500);
   if (popEl && popEl.classList.contains('events')) popEl.innerHTML = eventsHTML();
 }
-const EV_LABELS = { started: '开始', message: '对话', tool_call: '工具调用', tool_result: '工具结果', approval: '审批', artifact: '生成内容', usage: '用量', hook: '状态', note: '记录', goal: '目标' };
+const EV_LABELS = { started: t('开始'), message: t('对话'), tool_call: t('工具调用'), tool_result: t('工具结果'), approval: t('审批'), artifact: t('生成内容'), usage: t('用量'), hook: t('状态'), note: t('记录'), goal: t('目标') };
 function eventsHTML() {
-  return `<div class="ev-h">执行记录<span>${EVLOG.length} 条</span></div><div class="ev-list scroll">${EVLOG.map(e => `<div class="ev-l"><span class="t">${e[0]}</span><span class="e ${e[1]}">${esc(EV_LABELS[e[1]] || e[1])}</span><span class="d">${esc(e[2])}</span></div>`).join('') || '<div class="empty-row">暂无记录</div>'}</div>`;
+  return `<div class="ev-h">${t('执行记录')}<span>${t('{n} 条', { n: EVLOG.length })}</span></div><div class="ev-list scroll">${EVLOG.map(e => `<div class="ev-l"><span class="t">${e[0]}</span><span class="e ${e[1]}">${esc(EV_LABELS[e[1]] || e[1])}</span><span class="d">${esc(e[2])}</span></div>`).join('') || '<div class="empty-row">' + t('暂无记录') + '</div>'}</div>`;
 }
 
 /* ================= replay ================= */
@@ -334,14 +334,14 @@ function renderReplay(events, anim) {
   curGoal = null; renderGoalChip();
   const pendingCalls = new Map(); // call_id -> tool element
   for (const ev of events || []) {
-    const t = ev.type;
-    if (t === 'started') {
+    const ty = ev.type;
+    if (ty === 'started') {
       modelLabel = ev.model || modelLabel;
       $('#cmp-model').textContent = modelLabel || '…';
       // chrome, not transcript — model + cwd already live in the composer;
       // the event log keeps the fact. An empty session shows the hero.
-      logEv('started', '会话已开始');
-    } else if (t === 'message') {
+      logEv('started', t('会话已开始'));
+    } else if (ty === 'message') {
       const m = ev.message || {};
       if (m.role === 'system') continue;
       if (m.role === 'user') {
@@ -361,15 +361,15 @@ function renderReplay(events, anim) {
         append(TX, youHTML(c, anim, undefined, c ? ++turnSeq : 0), true);
         const imgs = attImgs(m);
         if (imgs) append(TX, `<div class="msg you enter"><div class="att-row">${imgs}</div></div>`);
-        logEv('message', '你：' + c.slice(0, 60));
+        logEv('message', t('你：') + c.slice(0, 60));
       } else if (m.role === 'assistant') {
         const c = msgText(m);
         if (c) { const h = msgHost(); append(h, `<div class="bubble glass">${mdRender(c)}</div>`); }
-        logEv('message', 'sunmao：' + c.slice(0, 60) + (m.tool_calls ? ` (+${m.tool_calls.length} calls)` : ''));
+        logEv('message', t('{b}：', { b: brand() }) + c.slice(0, 60) + (m.tool_calls ? ` (+${m.tool_calls.length} calls)` : ''));
       } else if (m.role === 'tool') {
         continue; // paired tool_result covers it
       }
-    } else if (t === 'tool_call') {
+    } else if (ty === 'tool_call') {
       const c = ev.call || {};
       const fn = (c.function || {});
       let sum = '', a = null;
@@ -383,7 +383,7 @@ function renderReplay(events, anim) {
       pendingCalls.set(c.id ? `${ev.depth || 0}:${ev.lane || 0}:${c.id}` : Symbol(),
         { el, name: fn.name || '?', depth: ev.depth || 0, lane: ev.lane || 0 });
       logEv('tool_call', `${fn.name || '?'} ${sum}`.slice(0, 140));
-    } else if (t === 'tool_result') {
+    } else if (ty === 'tool_result') {
       const key = `${ev.depth || 0}:${ev.lane || 0}:${ev.call_id}`;
       let hit = pendingCalls.get(key);
       if (hit) pendingCalls.delete(key);
@@ -400,26 +400,26 @@ function renderReplay(events, anim) {
       if (hit) setTool(hit.el, ev.ok ? 'ok' : 'err', '', capOut(ev.output || ''));
       else addNote(`${ev.ok ? '✓' : '✗'} ${ev.name || '?'}`); // result without a call — surface, don't fabricate a row
       logEv('tool_result', `${ev.name || '?'} ${ev.ok ? 'ok' : 'err'}`);
-    } else if (t === 'compacted') {
+    } else if (ty === 'compacted') {
       // compaction boundary — earlier history was summarized away, so the
       // transcript clears exactly like the TUI's blocks.clear()
       TX.innerHTML = ''; closeMsg(); runningTools.length = 0; pendingCalls.clear();
       addNote(`[context compacted]${ev.summary ? '\n' + ev.summary : ''}`);
       logEv('note', 'compacted');
-    } else if (t === 'artifact') {
+    } else if (ty === 'artifact') {
       addArtifact(ev);
       logEv('artifact', `${ev.name} · ${fmtBytes(ev.bytes || 0)}`);
-    } else if (t === 'usage') {
+    } else if (ty === 'usage') {
       const u = ev.usage || ev;
       logEv('usage', `prompt ${nf(u.prompt_tokens || 0)} · cache_read ${nf(u.cache_read_input_tokens || 0)}`);
-    } else if (t === 'hook') {
+    } else if (ty === 'hook') {
       logEv('hook', `${ev.event} · ${ev.detail}`);
-    } else if (t === 'local_shell') {
+    } else if (ty === 'local_shell') {
       const host = msgHost();
       let g = toolGroup(host);
       append(g, toolHTML([ev.exit_code === 0 ? 'ok' : 'err', 'shell', '$ ' + (ev.command || ''), 'exit ' + ev.exit_code, capOut(ev.output || '')]));
       logEv('tool_call', '! ' + (ev.command || ''));
-    } else if (t === 'ptc_call') {
+    } else if (ty === 'ptc_call') {
       // a RunCode script's nested call — durable start+done in one fact;
       // renders as a done-state row one ↳ depth in from the RunCode card
       const host = msgHost();
@@ -428,41 +428,41 @@ function renderReplay(events, anim) {
       try { a = JSON.parse(ev.args || '{}'); sum = a.command || a.path || a.pattern || a.name || a.prompt || String(ev.args).slice(0, 120); } catch { sum = String(ev.args || '').slice(0, 120); }
       append(g, toolHTML([ev.ok ? 'ok' : 'err', '↳ ' + (ev.name || '?'), sum, '', capOut(ev.output || '')], { body: editPreviewHTML(ev.name, a) }));
       logEv('tool_result', `↳ ${ev.name || '?'} ${ev.ok ? 'ok' : 'err'}`);
-    } else if (t === 'session_meta') {
+    } else if (ty === 'session_meta') {
       // rename fact — rail title override; audit-visible like mode_change,
       // no transcript row
       logEv('hook', `session.rename · ${ev.title || ''}`);
-    } else if (t === 'mode_change') {
+    } else if (ty === 'mode_change') {
       // audit row in the TUI — on this side the event log is the audit
       // surface, so the fold only re-syncs the chip + logs the fact
       setApprovalMode(ev.mode);
       logEv('hook', `approval.mode · ${ev.mode}`);
-    } else if (t === 'turn_mode_change') {
+    } else if (ty === 'turn_mode_change') {
       // standard ↔ fusion — audit row, same posture as mode_change
       logEv('hook', `turn.mode · ${ev.mode}`);
-    } else if (t === 'fusion_spec') {
+    } else if (ty === 'fusion_spec') {
       // the delegation spec is the audit spine — surface it as a note so
       // "what the Lead asked" is readable without expanding the evlog
       const goal = (ev.spec && (ev.spec.goal || ev.spec.objective)) || '(delegation)';
       addNote(`fusion spec #${ev.seq} → ${ev.sidekick || '?'}\n${goal}`);
       logEv('hook', `fusion.spec #${ev.seq} · ${ev.sidekick || ''}`);
-    } else if (t === 'fusion_accepted') {
+    } else if (ty === 'fusion_accepted') {
       logEv('hook', `fusion.accepted #${ev.spec_seq} · ${ev.sidekick || ''}`);
-    } else if (t === 'fusion_escalated') {
+    } else if (ty === 'fusion_escalated') {
       addNote(`fusion escalated #${ev.spec_seq} — ${ev.reason || ''}`);
       logEv('hook', `fusion.escalated #${ev.spec_seq} · ${ev.reason || ''}`);
-    } else if (t === 'task_done') {
+    } else if (ty === 'task_done') {
       const host = msgHost();
-      append(host, `<div class="notice glass enter">${ic(ev.ok ? 'check' : 'x', 'i sm')}<span>子代理 <code>${esc(ev.id)}</code> ${ev.ok ? '完成' : '失败'}</span></div>`);
+      append(host, `<div class="notice glass enter">${ic(ev.ok ? 'check' : 'x', 'i sm')}<span>${t(ev.ok ? '子代理 {id} 完成' : '子代理 {id} 失败', { id: `<code>${esc(ev.id)}</code>` })}</span></div>`);
       logEv('tool_result', `task ${ev.id} ${ev.ok ? 'ok' : 'err'}`);
-    } else if (t === 'todos') {
+    } else if (ty === 'todos') {
       // durable state, not transcript — a replay shows it once, as a note
       const items = ev.items || [];
       if (items.length) {
         const mark = { done: 'x', in_progress: '>', pending: ' ' };
         addNote('task list:\n' + items.map(i => `- [${mark[i.status] || ' '}] ${i.content}`).join('\n'));
       }
-    } else if (t === 'goal' && ev.goal) {
+    } else if (ty === 'goal' && ev.goal) {
       // status/objective flips are transcript-worthy; round bumps just
       // re-render the chip — otherwise a long run's replay is all noise
       if (applyGoalEvent(ev.goal, true)) {
@@ -473,7 +473,7 @@ function renderReplay(events, anim) {
     // other event types have no transcript footprint
   }
   // orphans: tool calls with no result = interrupted
-  for (const p of pendingCalls.values()) setTool(p.el, 'err', '已中断');
+  for (const p of pendingCalls.values()) setTool(p.el, 'err', t('已中断'));
   foldSettled(TX);
   updateHero();
   refreshDataflow();
@@ -499,33 +499,33 @@ function liveEvent(raw) {
   let ev = raw;
   if (typeof ev === 'string') ev = { type: 'content', text: ev };
   if (!ev || typeof ev !== 'object') return;
-  const t = ev.type;
-  if (!t) return; // {} — unserializable tuple variant placeholder
+  const ty = ev.type;
+  if (!ty) return; // {} — unserializable tuple variant placeholder
   const text = ev.text ?? ev.content ?? ev.delta ?? (typeof ev[0] === 'string' ? ev[0] : null);
-  if (t === 'content') { if (text == null) return; if (!curText) logEv('message', 'sunmao：…'); contentDelta(text); }
-  else if (t === 'reasoning') { if (text == null) return; reasoningDelta(text); }
-  else if (t === 'tool_start') { toolStart(ev); logEv('tool_call', `${ev.name} ${ev.summary || ''}`.slice(0, 140)); }
-  else if (t === 'tool_done') { toolDone(ev); logEv('tool_result', `${ev.name} ${ev.ok ? 'ok' : 'err'}`); refreshDataflowSoon(); }
-  else if (t === 'artifact') { addArtifact(ev); logEv('artifact', `${ev.name} · ${fmtBytes(ev.bytes || 0)}`); }
+  if (ty === 'content') { if (text == null) return; if (!curText) logEv('message', t('{b}：…', { b: brand() })); contentDelta(text); }
+  else if (ty === 'reasoning') { if (text == null) return; reasoningDelta(text); }
+  else if (ty === 'tool_start') { toolStart(ev); logEv('tool_call', `${ev.name} ${ev.summary || ''}`.slice(0, 140)); }
+  else if (ty === 'tool_done') { toolDone(ev); logEv('tool_result', `${ev.name} ${ev.ok ? 'ok' : 'err'}`); refreshDataflowSoon(); }
+  else if (ty === 'artifact') { addArtifact(ev); logEv('artifact', `${ev.name} · ${fmtBytes(ev.bytes || 0)}`); }
   // the durable-fact mirrors — liveEvent must render the same row a replay
   // of this exact log would (audit-gui #11): compacted clears, todos and
   // task_done land as their note/notice rows
-  else if (t === 'compacted') {
+  else if (ty === 'compacted') {
     TX.innerHTML = ''; pendingApprovals.clear(); runningTools.length = 0;
     closeMsg(); syncWait();
     addNote(`[context compacted]${ev.summary ? '\n' + ev.summary : ''}`);
     logEv('note', 'compacted');
   }
-  else if (t === 'task_done') {
+  else if (ty === 'task_done') {
     const host = msgHost();
-    sealThink(); append(host, `<div class="notice glass enter">${ic(ev.ok ? 'check' : 'x', 'i sm')}<span>子代理 <code>${esc(ev.id)}</code> ${ev.ok ? '完成' : '失败'}</span></div>`);
+    sealThink(); append(host, `<div class="notice glass enter">${ic(ev.ok ? 'check' : 'x', 'i sm')}<span>${t(ev.ok ? '子代理 {id} 完成' : '子代理 {id} 失败', { id: `<code>${esc(ev.id)}</code>` })}</span></div>`);
     logEv('tool_result', `task ${ev.id} ${ev.ok ? 'ok' : 'err'}`);
   }
   // the kernel's live mirror of the durable user message — emitted when a
   // prompt is accepted as a queued/started turn. The composer no longer
   // optimistically appends, so THIS row is the only bubble a fresh turn
   // gets; a busy kernel still lands it via hook:steer.
-  else if (t === 'user_message') {
+  else if (ty === 'user_message') {
     // same fold order as replay's `message` arm — text bubble first,
     // thumbs row after
     const m = { role: 'user', content: ev.content || [] };
@@ -533,34 +533,34 @@ function liveEvent(raw) {
     if (c) { closeMsg(); append(TX, youHTML(c, true, clock(), 'pending'), true); }
     const imgs = attImgs(m);
     if (imgs) append(TX, `<div class="msg you enter"><div class="att-row">${imgs}</div></div>`);
-    logEv('message', '你：' + c.slice(0, 60));
+    logEv('message', t('你：') + c.slice(0, 60));
   }
-  else if (t === 'turn_boundary') { stampBoundary(ev.ordinal || 0); }
-  else if (t === 'todos') {
+  else if (ty === 'turn_boundary') { stampBoundary(ev.ordinal || 0); }
+  else if (ty === 'todos') {
     const items = ev.items || [];
     if (items.length) {
       const mark = { done: 'x', in_progress: '>', pending: ' ' };
       addNote('task list:\n' + items.map(i => `- [${mark[i.status] || ' '}] ${i.content}`).join('\n'));
     }
   }
-  else if (t === 'goal' && ev.goal) {
+  else if (ty === 'goal' && ev.goal) {
     if (applyGoalEvent(ev.goal, true)) {
       addNote(`goal · ${GOAL_STATUS[ev.goal.status] || ev.goal.status}: ${ev.goal.objective || ''}` +
         (ev.goal.status === 'blocked' && ev.goal.blocker ? ` — ${ev.goal.blocker}` : ''));
     }
   }
-  else if (t === 'usage') { logEv('usage', `prompt ${nf(ev.prompt_tokens || 0)} · cache_read ${nf(ev.cache_read_input_tokens || 0)}`); refreshDataflowSoon(); }
-  else if (t === 'hook') {
+  else if (ty === 'usage') { logEv('usage', `prompt ${nf(ev.prompt_tokens || 0)} · cache_read ${nf(ev.cache_read_input_tokens || 0)}`); refreshDataflowSoon(); }
+  else if (ty === 'hook') {
     if (ev.event === 'steer') {
       // a queued message just folded into the turn — its durable Message
       // renders this same user bubble on replay
       closeMsg();
       append(TX, youHTML(ev.detail || '', true, clock(), ev.detail ? 'pending' : 0), true);
       steerQ.shift(); renderQueueChips();
-      logEv('message', '你：' + String(ev.detail || '').slice(0, 60));
+      logEv('message', t('你：') + String(ev.detail || '').slice(0, 60));
     } else logEv('hook', `${ev.event} · ${ev.detail}`);
   }
-  else if (t === 'turn_end') {
+  else if (ty === 'turn_end') {
     abortTurn();
     foldSettled(TX);
     $$('.think.live').forEach(t => t.classList.remove('live'));

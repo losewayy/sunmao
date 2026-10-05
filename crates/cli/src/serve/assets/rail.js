@@ -23,12 +23,12 @@ async function pickDirNative() {
 function newChatPop(el) {
   if (popAnchor === el) return closePop();
   const list = (PROJECTS || [cwd]).filter(Boolean);
-  pop(el, `<div class="lbl">在其他项目中新建</div><div class="np-modes"><span class="np-ml">执行模式</span>` +
-    [['', '自动', '项目清单或启动参数决定'], ['full', '标准', '工具逐个声明给模型'], ['ptc', 'PTC', '代码模式 — 模型只拿 RunCode/SearchTools，脚本内调工具']].map(([v, t, d]) => `<button class="seg${S.loopDriver === v ? ' on' : ''}" data-drv="${v}" data-tip="${d}">${t}</button>`).join('') +
+  pop(el, `<div class="lbl">${t('在其他项目中新建')}</div><div class="np-modes"><span class="np-ml">${t('执行模式')}</span>` +
+    [['', t('自动'), t('项目清单或启动参数决定')], ['full', t('标准'), t('工具逐个声明给模型')], ['ptc', 'PTC', t('代码模式 — 模型只拿 RunCode/SearchTools，脚本内调工具')]].map(([v, lbl, d]) => `<button class="seg${S.loopDriver === v ? ' on' : ''}" data-drv="${v}" data-tip="${d}">${lbl}</button>`).join('') +
     `</div><div class="mp-list scroll" id="np-list">` +
-    `<button class="mi" data-browse="1">${ic('folder')}<span class="mt"><span>浏览文件夹…</span><small>系统目录选择器</small></span></button>` +
+    `<button class="mi" data-browse="1">${ic('folder')}<span class="mt"><span>${t('浏览文件夹…')}</span><small>${t('系统目录选择器')}</small></span></button>` +
     list.map(p => `<button class="mi" data-v="${esc(p)}">${ic('folder')}<span class="mt mono"><span>${esc(projectName(p) || p)}</span><small>${esc(p)}</small></span>${p === cwd ? ic('check', 'i sm ck') : ''}</button>`).join('') +
-    `</div><div class="field"><input id="np-in" placeholder="或直接输入路径，回车创建" spellcheck="false" autocomplete="off"></div>`,
+    `</div><div class="field"><input id="np-in" placeholder="${t('或直接输入路径，回车创建')}" spellcheck="false" autocomplete="off"></div>`,
     { place: 'bottom', cls: 'models', onMount(p) {
       const inp = $('#np-in', p);
       inp.addEventListener('keydown', e => {
@@ -44,7 +44,7 @@ function newChatPop(el) {
           closePop();
           return pickDirNative()
             .then(path => { if (path) newChat(path); })
-            .catch(er => toast(`目录选择失败：${er.message || er}`, 'alert', 'warn'));
+            .catch(er => toast(t('目录选择失败：{msg}', { msg: er.message || er }), 'alert', 'warn'));
         }
         const sel = e.target.closest('[data-v]');
         if (!sel) return;
@@ -87,15 +87,15 @@ function sessWhen(ms) {
   if (!ms) return '';
   const d = new Date(ms), today = dayStart(Date.now());
   if (ms >= today) return pad(d.getHours()) + ':' + pad(d.getMinutes());
-  if (ms >= today - 6 * 864e5) return '周' + '日一二三四五六'[d.getDay()];
+  if (ms >= today - 6 * 864e5) return [t('周日'), t('周一'), t('周二'), t('周三'), t('周四'), t('周五'), t('周六')][d.getDay()];
   return (d.getMonth() + 1) + '/' + d.getDate();
 }
 function sessBucket(ms) {
   const today = dayStart(Date.now());
-  if (!ms || ms >= today) return '今天';
-  if (ms >= today - 864e5) return '昨天';
-  if (ms >= today - 6 * 864e5) return '近 7 天';
-  return '更早';
+  if (!ms || ms >= today) return t('今天');
+  if (ms >= today - 864e5) return t('昨天');
+  if (ms >= today - 6 * 864e5) return t('近 7 天');
+  return t('更早');
 }
 const sessRow = (id, showProj = true) => {
   const on = id === sessionId, run = busySessions.has(id) || (on && busy), wait = waitingSessions.has(id);
@@ -105,8 +105,8 @@ const sessRow = (id, showProj = true) => {
   // same-project majority stays clean; grouped mode suppresses the tag
   // entirely (the group header already names it)
   const foreign = showProj && proj && cwd && proj !== cwd ? `<span class="tag">${esc(proj.split(/[\\/]/).filter(Boolean).pop() || proj)}</span>` : '';
-  const state = wait ? '<i class="sd wait" aria-label="等待批准"></i>' : run ? '<i class="sd run" aria-label="运行中"></i>' : `<span class="when">${sessWhen(m.mtime)}</span>`;
-  return `<button class="row sess${on ? ' on' : ''}" data-sess="${esc(id)}" data-tip="${esc((proj ? proj + ' · ' : '') + (title ? title + '|' + id : id))}" data-tip-side="right"><span class="t${title ? '' : ' untitled'}">${esc(title || '新对话')}</span>${foreign}${state}</button>`;
+  const state = wait ? `<i class="sd wait" aria-label="${t('等待批准')}"></i>` : run ? `<i class="sd run" aria-label="${t('运行中')}"></i>` : `<span class="when">${sessWhen(m.mtime)}</span>`;
+  return `<button class="row sess${on ? ' on' : ''}" data-sess="${esc(id)}" data-tip="${esc((proj ? proj + ' · ' : '') + (title ? title + '|' + id : id))}" data-tip-side="right"><span class="t${title ? '' : ' untitled'}">${esc(title || t('新对话'))}</span>${foreign}${state}</button>`;
 };
 
 /* ---- rail search — ≥2 chars greps every session log's message content
@@ -140,7 +140,7 @@ function renderRail() {
   const q = ($('#rail-q') && $('#rail-q').value || '').trim().toLowerCase();
   if (railHits) {
     $('#sessions').innerHTML = railHits.map(railRowWithHits).join('') ||
-      `<div class="empty-hint">没有匹配 “${esc(q)}” 的会话</div>`;
+      `<div class="empty-hint">${t('没有匹配 “{q}” 的会话', { q: esc(q) })}</div>`;
     $$('.nav-i[data-go]').forEach(b => b.classList.toggle('on', b.dataset.go === view));
     return;
   }
@@ -161,7 +161,7 @@ function renderRail() {
     const ordered = [...groups].sort((a, b) =>
       a[0] === cwd ? -1 : b[0] === cwd ? 1 : recent(b[1]) - recent(a[1]));
     for (const [p, ids] of ordered) {
-      html += `<button class="grp proj${fold[p] ? ' fold' : ''}" data-fold="${esc(p)}" data-tip="${esc(p)}" data-tip-side="right">${ic('chev-d', 'i sm')}<span class="gn">${esc(projectName(p) || p || '未分组')}</span><b>${ids.length}</b></button>`;
+      html += `<button class="grp proj${fold[p] ? ' fold' : ''}" data-fold="${esc(p)}" data-tip="${esc(p)}" data-tip-side="right">${ic('chev-d', 'i sm')}<span class="gn">${esc(projectName(p) || p || t('未分组'))}</span><b>${ids.length}</b></button>`;
       if (!fold[p]) html += ids.map(id => sessRow(id, false)).join('');
     }
   } else {
@@ -171,7 +171,7 @@ function renderRail() {
       html += sessRow(id);
     }
   }
-  $('#sessions').innerHTML = html || '<div class="empty-hint">暂无会话记录</div>';
+  $('#sessions').innerHTML = html || `<div class="empty-hint">${t('暂无会话记录')}</div>`;
   $$('.nav-i[data-go]').forEach(b => b.classList.toggle('on', b.dataset.go === view));
   syncRailMode();
 }
@@ -182,7 +182,7 @@ function syncRailMode() {
   if (!b) return;
   const proj = S.railGroup === 'project';
   b.innerHTML = ic(proj ? 'clock' : 'blocks');
-  b.dataset.tip = proj ? '按时间排列' : '按项目分组';
+  b.dataset.tip = proj ? t('按时间排列') : t('按项目分组');
   b.classList.toggle('on', proj);
 }
 

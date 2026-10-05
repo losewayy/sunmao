@@ -116,23 +116,23 @@ function openPalette() { closePop(); const p = $('#palette'); p.classList.remove
 function closePalette() { const p = $('#palette'); if (p.hidden) return; p.classList.add('out'); setTimeout(() => { if (p.classList.contains('out')) { p.hidden = true; p.classList.remove('out'); } }, motion.dur('fast')); brOverlay(null); }
 function palSource() {
   return [
-    { g: '操作', t: '新对话', i: 'pen', k: 'Ctrl N', run: newChat },
-    ...(TAURI && TAURI.win ? [{ g: '操作', t: '新窗口', i: 'monitor', run: () => TAURI.win('new') }] : []),
-    { g: '操作', t: '打开设置', i: 'settings', k: 'Ctrl ,', run: () => go('settings') },
-    { g: '操作', t: '定时任务', i: 'clock', run: () => go('schedules') },
-    { g: '操作', t: railOn ? '隐藏会话侧栏' : '显示会话侧栏', i: 'panel-l', k: 'Ctrl B', run: toggleRail },
-    { g: '操作', t: dockOn ? '隐藏数据面板' : '显示数据面板', i: 'panel-r', k: 'Ctrl \\', run: toggleDock },
-    { g: '操作', t: '执行记录', i: 'history', run: () => pop($('[data-act="events"]'), eventsHTML(), { align: 'end', cls: 'events' }) },
-    { g: '操作', t: '在对话中查找', i: 'search', k: 'Ctrl F', run: openFind },
-    { g: '操作', t: '导出当前会话', i: 'download', run: () => exportSession(sessionId) },
-    { g: '操作', t: '刷新会话列表', i: 'reset', run: refreshSessions },
-    { g: '操作', t: S.railGroup === 'project' ? '会话列表：按时间排列' : '会话列表：按项目分组', i: 'blocks', run: () => { S.railGroup = S.railGroup === 'project' ? 'time' : 'project'; save(); renderRail(); } },
-    { g: '外观', t: '主题：深色', i: 'moon', run: () => { S.mode = 'dark'; commit(); } },
-    { g: '外观', t: '主题：浅色', i: 'sun', run: () => { S.mode = 'light'; commit(); } },
-    { g: '外观', t: '主题：跟随系统', i: 'monitor', run: () => { S.mode = 'system'; commit(); } },
-    ...WALLS.map(w => ({ g: '外观', t: '壁纸：' + w.name, i: 'image', run: () => { S.wallpaper = w.id; commit(); } })),
-    ...slashList.map(c => ({ g: '命令', t: '/' + c.name, sub: c.desc || '', i: 'terminal', run: () => { show('session'); $('#input').value = '/' + c.name + ' '; autoGrow(); $('#input').focus(); } })),
-    ...SESSION_IDS.map(id => ({ g: '会话', t: sessTitle(id) || '新对话', d: id, i: 'note', run: () => { show('session'); resumeSession(id); } })),
+    { g: t('操作'), t: t('新对话'), i: 'pen', k: 'Ctrl N', run: newChat },
+    ...(TAURI && TAURI.win ? [{ g: t('操作'), t: t('新窗口'), i: 'monitor', run: () => TAURI.win('new') }] : []),
+    { g: t('操作'), t: t('打开设置'), i: 'settings', k: 'Ctrl ,', run: () => go('settings') },
+    { g: t('操作'), t: t('定时任务'), i: 'clock', run: () => go('schedules') },
+    { g: t('操作'), t: railOn ? t('隐藏会话侧栏') : t('显示会话侧栏'), i: 'panel-l', k: 'Ctrl B', run: toggleRail },
+    { g: t('操作'), t: dockOn ? t('隐藏数据面板') : t('显示数据面板'), i: 'panel-r', k: 'Ctrl \\', run: toggleDock },
+    { g: t('操作'), t: t('执行记录'), i: 'history', run: () => pop($('[data-act="events"]'), eventsHTML(), { align: 'end', cls: 'events' }) },
+    { g: t('操作'), t: t('在对话中查找'), i: 'search', k: 'Ctrl F', run: openFind },
+    { g: t('操作'), t: t('导出当前会话'), i: 'download', run: () => exportSession(sessionId) },
+    { g: t('操作'), t: t('刷新会话列表'), i: 'reset', run: refreshSessions },
+    { g: t('操作'), t: S.railGroup === 'project' ? t('会话列表：按时间排列') : t('会话列表：按项目分组'), i: 'blocks', run: () => { S.railGroup = S.railGroup === 'project' ? 'time' : 'project'; save(); renderRail(); } },
+    { g: t('外观'), t: t('主题：深色'), i: 'moon', run: () => { S.mode = 'dark'; commit(); } },
+    { g: t('外观'), t: t('主题：浅色'), i: 'sun', run: () => { S.mode = 'light'; commit(); } },
+    { g: t('外观'), t: t('主题：跟随系统'), i: 'monitor', run: () => { S.mode = 'system'; commit(); } },
+    ...WALLS.map(w => ({ g: t('外观'), t: t('壁纸：{name}', { name: w.name }), i: 'image', run: () => { S.wallpaper = w.id; commit(); } })),
+    ...slashList.map(c => ({ g: t('命令'), t: '/' + c.name, sub: c.desc || '', i: 'terminal', run: () => { show('session'); $('#input').value = '/' + c.name + ' '; autoGrow(); $('#input').focus(); } })),
+    ...SESSION_IDS.map(id => ({ g: t('会话'), t: sessTitle(id) || t('新对话'), d: id, i: 'note', run: () => { show('session'); resumeSession(id); } })),
   ];
 }
 function renderPal() {
@@ -141,7 +141,7 @@ function renderPal() {
   palIdx = Math.max(0, Math.min(palIdx, palItems.length - 1));
   let g = '', h = '';
   palItems.forEach((x, i) => { if (x.g !== g) { g = x.g; h += `<div class="pg">${g}</div>`; } h += `<button class="mi${i === palIdx ? ' hl' : ''}" data-pi="${i}">${ic(x.i)}<span class="mt"><span>${esc(x.t)}</span>${x.sub ? `<small>${esc(x.sub)}</small>` : ''}</span>${x.d ? `<kbd>${esc(x.d)}</kbd>` : ''}${x.k ? `<kbd>${esc(x.k)}</kbd>` : ''}</button>`; });
-  $('#pal-list').innerHTML = h || '<div class="none">没有匹配的命令</div>';
+  $('#pal-list').innerHTML = h || '<div class="none">' + t('没有匹配的命令') + '</div>';
   const hl = $('#pal-list .mi.hl'), L = $('#pal-list');
   if (hl) { const t = hl.offsetTop, b = t + hl.offsetHeight; if (t < L.scrollTop) L.scrollTop = t - 6; else if (b > L.scrollTop + L.clientHeight) L.scrollTop = b - L.clientHeight + 6; }
 }

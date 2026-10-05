@@ -9,7 +9,13 @@
    own CSS and CSP, and none of ours. */
 (function () {
   'use strict';
-  const KEY = '__smAnn', ACCENT = '#339CFF', HINT = '点击元素批注 · 拖动选区域 · Esc 取消';
+  /* This document is the site's own page, not the shell: t()/brand() from the
+     shell are not defined here. Use the host translator when the shell injects
+     one (i18n.js lands in this realm before this script), otherwise fall back
+     to the Chinese source — the same text an unmapped key renders as — so a
+     missing translator can never throw inside the picker. */
+  const t = (zh, vars) => (typeof window.t === 'function' && typeof window.brand === 'function' ? window.t(zh, vars) : zh);
+  const KEY = '__smAnn', ACCENT = '#339CFF', HINT = t('点击元素批注 · 拖动选区域 · Esc 取消');
   if (window.__smAnnPick) { window.__smAnnPick.start(); return; }
 
   let root = null, hi = null, box = null, hover = null, down = null, chosen = null;
@@ -61,9 +67,9 @@
     box.style.top = px(below + 46 > innerHeight ? Math.max(8, anchor.y - 52) : below);
     const input = mk('input', 'flex:1;min-width:0;height:30px;padding:0 10px;border:0;outline:0;border-radius:8px;' +
       'background:rgba(255,255,255,.10);color:inherit;font:inherit');
-    input.placeholder = '批注这条 ' + (chosen.kind === 'region' ? '区域' : chosen.css || chosen.tag) + '…';
+    input.placeholder = chosen.kind === 'region' ? t('批注这条区域…') : t('批注这条 {what}…', { what: chosen.css || chosen.tag });
     const ok = mk('button', 'flex:none;height:30px;padding:0 10px;border:0;border-radius:8px;background:' + ACCENT + ';color:#fff;font:inherit;cursor:pointer');
-    ok.textContent = '批注';
+    ok.textContent = t('批注');
     const no = mk('button', 'flex:none;height:30px;width:30px;border:0;border-radius:8px;background:rgba(255,255,255,.10);color:inherit;font:inherit;cursor:pointer');
     no.textContent = '×';
     box.append(input, ok, no);

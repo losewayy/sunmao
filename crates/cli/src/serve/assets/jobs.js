@@ -27,17 +27,17 @@ function renderJobs(jobs) {
   box.innerHTML = jobs.map(j => {
     const st = j.running ? 'run' : j.exit === 0 ? 'done' : 'off';
     const tail = (j.preview || '').trim().split('\n').pop() || '';
-    return `<button class="rt" data-job="${esc(j.id)}" data-tip="${esc(j.id + ' · 点击查看输出')}"><i class="sd ${st}"></i><span class="rt-id mono">${esc(j.id)}</span><span class="tag">${j.running ? '运行中' : 'exit ' + j.exit}</span><span class="rt-p">${esc(tail)}</span><span class="rt-when">${esc(jobWhen(j.mtime))}</span></button>`;
-  }).join('') || '<div class="empty-row">没有后台任务</div>';
+    return `<button class="rt" data-job="${esc(j.id)}" data-tip="${esc(j.id + ' · ' + t('点击查看输出'))}"><i class="sd ${st}"></i><span class="rt-id mono">${esc(j.id)}</span><span class="tag">${j.running ? t('运行中') : 'exit ' + j.exit}</span><span class="rt-p">${esc(tail)}</span><span class="rt-when">${esc(jobWhen(j.mtime))}</span></button>`;
+  }).join('') || `<div class="empty-row">${t('没有后台任务')}</div>`;
 }
 async function jobOutPop(anchor, id) {
   if (popAnchor === anchor) return closePop();
   let v;
   try { v = await api('/jobs/' + encodeURIComponent(id) + '/output?sess=' + encodeURIComponent(sessionId)); }
-  catch (e) { return toast(`读取失败：${e.message}`, 'alert', 'warn'); }
+  catch (e) { return toast(t('读取失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
   const tail = String(v.chunk || '');
-  const head = `${esc(id)} · ${v.exit === null || v.exit === undefined ? '运行中' : 'exit ' + v.exit} · ${fmtBytes(v.total || 0)}`;
-  pop(anchor, `<div class="lbl">${head}</div><pre class="jobview scroll">${esc(tail) || '（暂无输出）'}</pre>`, { align: 'end', cls: 'jobview-pop' });
+  const head = `${esc(id)} · ${v.exit === null || v.exit === undefined ? t('运行中') : 'exit ' + v.exit} · ${fmtBytes(v.total || 0)}`;
+  pop(anchor, `<div class="lbl">${head}</div><pre class="jobview scroll">${esc(tail) || t('（暂无输出）')}</pre>`, { align: 'end', cls: 'jobview-pop' });
 }
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-job]');

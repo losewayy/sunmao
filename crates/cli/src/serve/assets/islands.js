@@ -241,10 +241,10 @@ async function refreshNotes(el, name) {
     anns = v && Array.isArray(v.annotations) ? v.annotations : [];
   } catch {}
   const pill = $('.notes-pill', el), list = $('.notes', el);
-  $('span:last-child', pill).textContent = anns.length ? `批注 +${anns.length}` : '批注';
+  $('span:last-child', pill).textContent = anns.length ? t('批注 +{n}', { n: anns.length }) : t('批注');
   el._anns = anns;
   list.innerHTML = anns.map(a => `<div class="note-r"><span>${a.sel ? `<b class="ns">${esc(selLabel(a.sel))}</b> ` : ''}${esc(a.note || '')}</span><time>${esc(a.at || '')}</time></div>`).join('')
-    + `<div class="note-add"><input data-name="${esc(name)}" placeholder="添加批注，写入 ${esc(name)}.state.json" aria-label="批注"><button class="btn ghost sm" data-act="note-add" data-name="${esc(name)}">添加</button></div>`;
+    + `<div class="note-add"><input data-name="${esc(name)}" placeholder="${esc(t('添加批注，写入 {file}', { file: name + '.state.json' }))}" aria-label="${t('批注')}"><button class="btn ghost sm" data-act="note-add" data-name="${esc(name)}">${t('添加')}</button></div>`;
   renderAnnPins();
 }
 
@@ -258,8 +258,8 @@ async function refreshNotes(el, name) {
 let AN = null; // { isl, fr, veil, hl, box, hover, drag, ro }
 
 function selLabel(sel) {
-  if (!sel || sel.kind === 'region') return '区域';
-  if (sel.kind === 'point') return '位置';
+  if (!sel || sel.kind === 'region') return t('区域');
+  if (sel.kind === 'point') return t('位置');
   return `<${sel.tag}${sel.id ? '#' + sel.id : ''}${sel.cls ? '.' + sel.cls.split(' ').filter(Boolean).join('.') : ''}>`;
 }
 function cssPath(el) {
@@ -290,7 +290,7 @@ function annToggle(isl) {
   isl.classList.add('annotating', 'show-notes');
   const veil = document.createElement('div');
   veil.className = 'an-veil';
-  veil.innerHTML = '<div class="an-hint">点击元素批注 · 拖动选取区域 · Esc 退出</div><div class="an-hl" hidden></div>';
+  veil.innerHTML = '<div class="an-hint">' + t('点击元素批注 · 拖动选取区域 · Esc 退出') + '</div><div class="an-hl" hidden></div>';
   veil.addEventListener('pointerdown', annDown);
   veil.addEventListener('pointermove', annMove);
   veil.addEventListener('pointerup', annUp);
@@ -360,7 +360,7 @@ function annUp(e) {
 function annBox(sel, anchor) {
   const box = document.createElement('div');
   box.className = 'an-box';
-  box.innerHTML = `<input placeholder="添加批注…" aria-label="批注"><button class="btn allow sm" aria-label="添加">${ic('check')}</button><button class="ib sm" aria-label="取消">${ic('x')}</button>`;
+  box.innerHTML = `<input placeholder="${t('添加批注…')}" aria-label="${t('批注')}"><button class="btn allow sm" aria-label="${t('添加')}">${ic('check')}</button><button class="ib sm" aria-label="${t('取消')}">${ic('x')}</button>`;
   const vw = AN.veil.clientWidth, vh = AN.veil.clientHeight, bw = motion.px('--w-an-box', 300);
   box.style.left = Math.max(0, Math.min(anchor.left, vw - bw)) + 'px';
   const below = anchor.top + anchor.height + 8;
@@ -384,20 +384,20 @@ function annBox(sel, anchor) {
     const ta = $('#input');
     // 元素标签进 Composer —— artifact 另落 state.json 的结构化 sel；
     // 浏览器标签页没有 state.json，锚点直接随提示词走
-    const label = name ? `${name}.html` : (AN.isl.dataset.annLabel || '页面');
+    const label = name ? `${name}.html` : (AN.isl.dataset.annLabel || t('页面'));
     if (name) {
       try {
         await api(`/artifacts/${encodeURIComponent(name)}/annotate?sess=${encodeURIComponent(sessionId)}`,
           { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ note, sel }) });
-        ta.value = (ta.value.trim() ? ta.value.trimEnd() + '\n' : '') + `批注 ${label} ${selLabel(sel)}：${note}`;
+        ta.value = (ta.value.trim() ? ta.value.trimEnd() + '\n' : '') + t('批注 {label} {sel}：{note}', { label, sel: selLabel(sel), note });
         autoGrow(); ta.focus();
         refreshNotes(AN.isl, name);
         close();
-        toast('批注已写入 state.json', 'note');
-      } catch (err) { toast(`批注失败：${err.message || err}`, 'alert', 'warn'); }
+        toast(t('批注已写入 state.json'), 'note');
+      } catch (err) { toast(t('批注失败：{e}', { e: err.message || err }), 'alert', 'warn'); }
       return;
     }
-    ta.value = (ta.value.trim() ? ta.value.trimEnd() + '\n' : '') + `批注 ${label} ${selLabel(sel)}：${note}`;
+    ta.value = (ta.value.trim() ? ta.value.trimEnd() + '\n' : '') + t('批注 {label} {sel}：{note}', { label, sel: selLabel(sel), note });
     autoGrow(); ta.focus(); close();
   }
 }

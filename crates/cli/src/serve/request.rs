@@ -314,6 +314,8 @@ fn css_asset(name: &str) -> Option<&'static str> {
 /// both the include_str! const in serve.rs and an arm here.
 fn js_asset(name: &str) -> Option<&'static str> {
     Some(match name {
+        "i18n.en.js" => super::I18N_EN_JS,
+        "i18n.js" => super::I18N_JS,
         "state.js" => super::STATE_JS,
         "wallpaper.js" => super::WALLPAPER_JS,
         "settings.js" => super::SETTINGS_JS,

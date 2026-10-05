@@ -86,44 +86,44 @@
 <div id="app" data-dock="on" data-rail="on" data-view="session">
   <div class="titlebar">
     <button class="crumb glass" id="crumb" data-act="crumb"></button>
-    <div class="capsule glass" role="toolbar" aria-label="全局">
-      <button class="ib" data-act="palette" data-tip="命令面板|Ctrl K" aria-label="命令面板"><svg class="i"><use href="#i-search"/></svg></button>
-      <button class="ib" data-act="events" data-tip="执行记录" aria-label="执行记录"><svg class="i"><use href="#i-history"/></svg></button>
-      <button class="ib on" data-act="dock" id="dock-btn" data-tip="数据面板|Ctrl \" aria-label="数据面板"><svg class="i"><use href="#i-panel-r"/></svg></button>
+    <div class="capsule glass" role="toolbar" aria-label="全局" data-i18n-al="全局">
+      <button class="ib" data-act="palette" data-tip="命令面板|Ctrl K" data-i18n-tip="命令面板|Ctrl K" aria-label="命令面板" data-i18n-al="命令面板"><svg class="i"><use href="#i-search"/></svg></button>
+      <button class="ib" data-act="events" data-tip="执行记录" data-i18n-tip="执行记录" aria-label="执行记录" data-i18n-al="执行记录"><svg class="i"><use href="#i-history"/></svg></button>
+      <button class="ib on" data-act="dock" id="dock-btn" data-tip="数据面板|Ctrl \" data-i18n-tip="数据面板|Ctrl \" aria-label="数据面板" data-i18n-al="数据面板"><svg class="i"><use href="#i-panel-r"/></svg></button>
     </div>
     <div class="caption">
-      <button class="cap" data-act="win-min" data-tip="最小化" aria-label="最小化"><svg><use href="#c-min"/></svg></button>
-      <button class="cap" data-act="win-max" id="cap-max" data-tip="最大化" aria-label="最大化"><svg><use href="#c-max"/></svg></button>
-      <button class="cap close" data-act="win-close" data-tip="关闭" aria-label="关闭"><svg><use href="#c-close"/></svg></button>
+      <button class="cap" data-act="win-min" data-tip="最小化" data-i18n-tip="最小化" aria-label="最小化" data-i18n-al="最小化"><svg><use href="#c-min"/></svg></button>
+      <button class="cap" data-act="win-max" id="cap-max" data-tip="最大化" data-i18n-tip="最大化" aria-label="最大化" data-i18n-al="最大化"><svg><use href="#c-max"/></svg></button>
+      <button class="cap close" data-act="win-close" data-tip="关闭" data-i18n-tip="关闭" aria-label="关闭" data-i18n-al="关闭"><svg><use href="#c-close"/></svg></button>
     </div>
   </div>
 
   <div class="drag-l" aria-hidden="true"></div>
   <div class="capsule glass capsule-l">
-    <button class="ib on" data-act="rail" id="rail-btn" data-tip="会话侧栏|Ctrl B" aria-label="会话侧栏"><svg class="i"><use href="#i-panel-l"/></svg></button>
+    <button class="ib on" data-act="rail" id="rail-btn" data-tip="会话侧栏|Ctrl B" data-i18n-tip="会话侧栏|Ctrl B" aria-label="会话侧栏" data-i18n-al="会话侧栏"><svg class="i"><use href="#i-panel-l"/></svg></button>
   </div>
   <aside class="rail glass" id="rail">
-    <div class="rail-edge" id="rail-edge" data-tip="拖动调整宽度"></div>
+    <div class="rail-edge" id="rail-edge" data-tip="拖动调整宽度" data-i18n-tip="拖动调整宽度"></div>
     <div class="rail-pane" id="rail-main">
       <nav class="nav">
         <div class="nav-pair">
-          <button class="nav-i" data-act="new-chat"><svg class="i"><use href="#i-pen"/></svg><span>新对话</span><kbd>Ctrl N</kbd></button>
-          <button class="nav-sub" data-act="new-chat-pop" data-tip="在其他项目中新建" aria-label="选择项目目录"><svg class="i"><use href="#i-chev-d"/></svg></button>
+          <button class="nav-i" data-act="new-chat"><svg class="i"><use href="#i-pen"/></svg><span data-i18n="新对话">新对话</span><kbd>Ctrl N</kbd></button>
+          <button class="nav-sub" data-act="new-chat-pop" data-tip="在其他项目中新建" data-i18n-tip="在其他项目中新建" aria-label="选择项目目录" data-i18n-al="选择项目目录"><svg class="i"><use href="#i-chev-d"/></svg></button>
         </div>
-        <button class="nav-i" data-go="schedules"><svg class="i"><use href="#i-clock"/></svg><span>定时任务</span></button>
+        <button class="nav-i" data-go="schedules"><svg class="i"><use href="#i-clock"/></svg><span data-i18n="定时任务">定时任务</span></button>
       </nav>
-      <div class="rail-search"><svg class="i"><use href="#i-search"/></svg><input id="rail-q" placeholder="搜索会话" spellcheck="false" autocomplete="off"><button class="rail-mode" id="rail-mode" data-act="rail-mode" data-tip="按项目分组" aria-label="切换会话分组"><svg class="i"><use href="#i-blocks"/></svg></button></div>
+      <div class="rail-search"><svg class="i"><use href="#i-search"/></svg><input id="rail-q" placeholder="搜索会话" data-i18n-ph="搜索会话" spellcheck="false" autocomplete="off"><button class="rail-mode" id="rail-mode" data-act="rail-mode" data-tip="按项目分组" data-i18n-tip="按项目分组" aria-label="切换会话分组" data-i18n-al="切换会话分组"><svg class="i"><use href="#i-blocks"/></svg></button></div>
       <div class="lists scroll">
         <div id="sessions"></div>
       </div>
-      <button class="rail-foot" data-go="settings" data-tip="设置|Ctrl ," aria-label="设置">
+      <button class="rail-foot" data-go="settings" data-tip="设置|Ctrl ," data-i18n-tip="设置|Ctrl ," aria-label="设置" data-i18n-al="设置">
         <svg class="i"><use href="#i-settings"/></svg>
-        <span class="sd off" id="conn-dot" data-tip="未连接"></span>
+        <span class="sd off" id="conn-dot" data-tip="未连接" data-i18n-tip="未连接"></span>
         <span class="ver">serve</span>
       </button>
     </div>
     <div class="rail-pane" id="rail-settings" hidden>
-      <button class="back" data-go="back"><svg class="i"><use href="#i-arrow-l"/></svg>返回应用</button>
+      <button class="back" data-go="back" data-i18n-tail="返回应用"><svg class="i"><use href="#i-arrow-l"/></svg>返回应用</button>
       <nav class="snav" id="snav"></nav>
     </div>
   </aside>
@@ -135,13 +135,8 @@
           <path class="mk-a" d="M6 8H22V19L31 15V33L22 29V40H6Z" stroke="var(--c-text)" fill="color-mix(in srgb,var(--c-text) 8%,transparent)" opacity=".94"/>
           <path class="mk-b" d="M24.5 8H42V40H24.5V29L33.5 33V15L24.5 19Z" stroke="var(--c-accent)" fill="color-mix(in srgb,var(--c-accent) 16%,transparent)"/>
         </svg>
-        <h1 class="hero-title">开始一个任务</h1>
+        <h1 class="hero-title" data-i18n="开始一个任务">开始一个任务</h1>
         <p class="hero-sub" id="hero-sub"></p>
-        <div class="hero-actions">
-          <button class="btn ghost sm" data-act="starter" data-prompt="请概述这个项目的主要结构和入口。"><svg class="i"><use href="#i-blocks"/></svg>梳理项目</button>
-          <button class="btn ghost sm" data-act="starter" data-prompt="请检查当前 Git 改动，重点指出可能的问题。"><svg class="i"><use href="#i-search"/></svg>检查改动</button>
-          <button class="btn ghost sm" data-act="starter" data-prompt="请运行与当前任务相关的测试，并总结结果。"><svg class="i"><use href="#i-terminal"/></svg>运行测试</button>
-        </div>
       </div>
       <div class="scroller scroll" id="scroller">
         <div class="tx" id="tx"></div>
@@ -151,13 +146,13 @@
     <section class="view" id="v-schedules" hidden>
       <div class="set scroll" id="sch-scroll">
         <div class="set-col">
-          <h1>定时任务</h1>
-          <p class="lead">按计划自动在项目中发起一条新会话——产物是普通会话，出现在侧边栏里，可打开可续聊。</p>
+          <h1 data-i18n="定时任务">定时任务</h1>
+          <p class="lead" data-i18n="按计划自动在项目中发起一条新会话——产物是普通会话，出现在侧边栏里，可打开可续聊。">按计划自动在项目中发起一条新会话——产物是普通会话，出现在侧边栏里，可打开可续聊。</p>
           <div class="card glass cfg" id="sch-form" hidden></div>
           <div class="sec">
             <div class="card glass cfg" id="sch-list"></div>
           </div>
-          <div class="set-foot"><button class="btn ghost sm" data-act="sched-new"><svg class="i"><use href="#i-plus"/></svg>新建任务</button></div>
+          <div class="set-foot"><button class="btn ghost sm" data-act="sched-new" data-i18n-tail="新建任务"><svg class="i"><use href="#i-plus"/></svg>新建任务</button></div>
         </div>
       </div>
     </section>
@@ -165,23 +160,23 @@
     <section class="view" id="v-settings" hidden>
       <div class="set scroll" id="set-scroll">
         <div class="set-col" id="set-appearance">
-          <h1>外观</h1>
-          <p class="lead">壁纸、玻璃质感与配色。修改立即生效。</p>
+          <h1 data-i18n="外观">外观</h1>
+          <p class="lead" data-i18n="壁纸、玻璃质感与配色。修改立即生效。">壁纸、玻璃质感与配色。修改立即生效。</p>
 
           <div class="sec">
-            <div class="sec-h"><h2>壁纸</h2></div>
+            <div class="sec-h"><h2 data-i18n="壁纸">壁纸</h2></div>
             <div class="card glass">
               <div class="wgrid" id="wgrid"></div>
               <div class="sliders">
-                <div class="sl"><label for="rg-op">面板不透明度<output>56%</output></label><input type="range" id="rg-op" min="30" max="90" step="1"></div>
-                <div class="sl"><label for="rg-blur">背景模糊<output>24px</output></label><input type="range" id="rg-blur" min="0" max="40" step="1"></div>
-                <div class="sl"><label for="rg-dim">壁纸暗化<output>16%</output></label><input type="range" id="rg-dim" min="0" max="60" step="1"></div>
+                <div class="sl"><label for="rg-op" data-i18n-tail="面板不透明度">面板不透明度<output>56%</output></label><input type="range" id="rg-op" min="30" max="90" step="1"></div>
+                <div class="sl"><label for="rg-blur" data-i18n-tail="背景模糊">背景模糊<output>24px</output></label><input type="range" id="rg-blur" min="0" max="40" step="1"></div>
+                <div class="sl"><label for="rg-dim" data-i18n-tail="壁纸暗化">壁纸暗化<output>16%</output></label><input type="range" id="rg-dim" min="0" max="60" step="1"></div>
               </div>
             </div>
           </div>
 
           <div class="sec">
-            <div class="sec-h"><h2>主题</h2><p>跟随系统时按系统的明暗设置切换</p></div>
+            <div class="sec-h"><h2 data-i18n="主题">主题</h2><p data-i18n="跟随系统时按系统的明暗设置切换">跟随系统时按系统的明暗设置切换</p></div>
             <div class="card glass">
               <div class="themes">
                 <button class="tc" data-mode="system">
@@ -189,34 +184,35 @@
                     <span class="half dk"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln line-1"></span><span class="m-ln line-2"></span><span class="m-ln line-3"></span><span class="m-cp"></span></span>
                     <span class="half b lt"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln line-1"></span><span class="m-ln line-2"></span><span class="m-ln line-3"></span><span class="m-cp"></span></span>
                   </span>
-                  <span class="lab"><i class="radio"></i>系统<small id="sys-now"></small></span>
+                  <span class="lab" data-i18n-tail="系统"><i class="radio"></i>系统<small id="sys-now"></small></span>
                 </button>
                 <button class="tc" data-mode="light">
                   <span class="mini"><span class="half lt"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln line-1"></span><span class="m-ln line-2"></span><span class="m-ln line-3"></span><span class="m-cp"></span></span></span>
-                  <span class="lab"><i class="radio"></i>浅色</span>
+                  <span class="lab" data-i18n-tail="浅色"><i class="radio"></i>浅色</span>
                 </button>
                 <button class="tc" data-mode="dark">
                   <span class="mini"><span class="half dk"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln line-1"></span><span class="m-ln line-2"></span><span class="m-ln line-3"></span><span class="m-cp"></span></span></span>
-                  <span class="lab"><i class="radio"></i>深色</span>
+                  <span class="lab" data-i18n-tail="深色"><i class="radio"></i>深色</span>
                 </button>
               </div>
             </div>
           </div>
 
           <div class="sec">
-            <div class="sec-h"><h2>颜色与字体</h2></div>
+            <div class="sec-h"><h2 data-i18n="颜色与字体">颜色与字体</h2></div>
             <div class="card glass cfg">
-              <div class="cr"><div class="l"><b>强调色</b><span>按钮、选中态、进度与链接</span></div><button class="pill" data-act="color" data-key="accent" id="pv-accent"></button></div>
-              <div class="cr"><div class="l"><b>背景</b><span>深色模式下玻璃面板的底色</span></div><button class="pill" data-act="color" data-key="background" id="pv-background"></button></div>
-              <div class="cr"><div class="l"><b>前景</b><span>正文文字颜色</span></div><button class="pill" data-act="color" data-key="foreground" id="pv-foreground"></button></div>
-              <div class="cr"><div class="l"><b>UI 字体</b><span>界面与对话正文</span></div><button class="pill font" data-act="font" data-key="ui" id="pv-uif"></button></div>
-              <div class="cr"><div class="l"><b>代码字体</b><span>工具名、命令、数字与代码块</span></div><button class="pill font" data-act="font" data-key="code" id="pv-codef"></button></div>
-              <div class="cr"><div class="l"><b>半透明侧边栏</b><span>关闭后侧边栏更不透明，长列表更易读</span></div><button class="sw" role="switch" id="sw-side" data-act="side" aria-label="半透明侧边栏"></button></div>
-              <div class="cr"><div class="l"><b>对比度</b><span>次级文字与描边的明暗</span></div><div class="rg"><input type="range" id="rg-con" min="0" max="100" step="1" aria-label="对比度"><output>50</output></div></div>
-              <div class="cr"><div class="l"><b>动效</b><span>跟随系统时按系统的减少动效设置</span></div><button class="pill plain" data-act="motion" id="pv-motion"></button></div>
+              <div class="cr"><div class="l"><b data-i18n="强调色">强调色</b><span data-i18n="按钮、选中态、进度与链接">按钮、选中态、进度与链接</span></div><button class="pill" data-act="color" data-key="accent" id="pv-accent"></button></div>
+              <div class="cr"><div class="l"><b data-i18n="背景">背景</b><span data-i18n="深色模式下玻璃面板的底色">深色模式下玻璃面板的底色</span></div><button class="pill" data-act="color" data-key="background" id="pv-background"></button></div>
+              <div class="cr"><div class="l"><b data-i18n="前景">前景</b><span data-i18n="正文文字颜色">正文文字颜色</span></div><button class="pill" data-act="color" data-key="foreground" id="pv-foreground"></button></div>
+              <div class="cr"><div class="l"><b data-i18n="UI 字体">UI 字体</b><span data-i18n="界面与对话正文">界面与对话正文</span></div><button class="pill font" data-act="font" data-key="ui" id="pv-uif"></button></div>
+              <div class="cr"><div class="l"><b data-i18n="代码字体">代码字体</b><span data-i18n="工具名、命令、数字与代码块">工具名、命令、数字与代码块</span></div><button class="pill font" data-act="font" data-key="code" id="pv-codef"></button></div>
+              <div class="cr"><div class="l"><b data-i18n="半透明侧边栏">半透明侧边栏</b><span data-i18n="关闭后侧边栏更不透明，长列表更易读">关闭后侧边栏更不透明，长列表更易读</span></div><button class="sw" role="switch" id="sw-side" data-act="side" aria-label="半透明侧边栏" data-i18n-al="半透明侧边栏"></button></div>
+              <div class="cr"><div class="l"><b data-i18n="对比度">对比度</b><span data-i18n="次级文字与描边的明暗">次级文字与描边的明暗</span></div><div class="rg"><input type="range" id="rg-con" min="0" max="100" step="1" aria-label="对比度" data-i18n-al="对比度"><output>50</output></div></div>
+              <div class="cr"><div class="l"><b data-i18n="动效">动效</b><span data-i18n="跟随系统时按系统的减少动效设置">跟随系统时按系统的减少动效设置</span></div><button class="pill plain" data-act="motion" id="pv-motion"></button></div>
+              <div class="cr"><div class="l"><b data-i18n="界面语言">界面语言</b><span data-i18n="跟随系统即按系统语言自动选择">跟随系统即按系统语言自动选择</span></div><button class="pill plain" data-act="lang" id="pv-lang"></button></div>
             </div>
           </div>
-          <div class="set-foot"><button class="btn quiet sm" data-act="reset-ui"><svg class="i"><use href="#i-reset"/></svg>恢复默认</button></div>
+          <div class="set-foot"><button class="btn quiet sm" data-act="reset-ui" data-i18n-tail="恢复默认"><svg class="i"><use href="#i-reset"/></svg>恢复默认</button></div>
         </div>
         <div class="set-col" id="set-generic" hidden></div>
       </div>
@@ -229,21 +225,21 @@
       <div class="cmp-top" id="cmp-top" hidden>
         <span class="cmp-goal" id="cmp-goal" hidden></span>
         <span class="sp"></span>
-        <span class="cmp-busy" id="cmp-busy"><i class="sd run"></i>执行中</span>
-        <span class="cmp-wait" id="cmp-wait"><i class="sd wait"></i>等待批准 · Y / N / A</span>
+        <span class="cmp-busy" id="cmp-busy" data-i18n-tail="执行中"><i class="sd run"></i>执行中</span>
+        <span class="cmp-wait" id="cmp-wait" data-i18n-tail="等待批准 · Y / N / A"><i class="sd wait"></i>等待批准 · Y / N / A</span>
       </div>
       <div class="cmp-queue" id="cmp-queue" hidden></div>
       <div class="cmp-atts" id="cmp-atts" hidden></div>
       <div class="cmp-row">
-        <textarea id="input" rows="1" placeholder="描述任务，/ 调用命令" aria-label="消息"></textarea>
+        <textarea id="input" rows="1" placeholder="描述任务，/ 调用命令" data-i18n-ph="描述任务，/ 调用命令" aria-label="消息" data-i18n-al="消息"></textarea>
       </div>
       <div class="cmp-bar">
-        <button class="cb icon" data-act="cmp-attach" data-tip="添加图片附件" aria-label="添加附件"><svg class="i"><use href="#i-plus"/></svg></button>
-        <button class="cb mode" data-act="pick-mode" id="mode-btn" data-tip="审批模式"><svg class="i"><use href="#i-shield-check" id="mode-ic"/></svg><span id="cmp-mode">auto</span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
+        <button class="cb icon" data-act="cmp-attach" data-tip="添加图片附件" data-i18n-tip="添加图片附件" aria-label="添加附件" data-i18n-al="添加附件"><svg class="i"><use href="#i-plus"/></svg></button>
+        <button class="cb mode" data-act="pick-mode" id="mode-btn" data-tip="审批模式" data-i18n-tip="审批模式"><svg class="i"><use href="#i-shield-check" id="mode-ic"/></svg><span id="cmp-mode">auto</span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
         <span class="sp"></span>
-        <button class="cb effort" data-act="pick-effort" id="effort-btn" data-tip="思考强度"><svg class="i"><use href="#i-sparkles"/></svg><span id="cmp-effort">默认</span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
+        <button class="cb effort" data-act="pick-effort" id="effort-btn" data-tip="思考强度" data-i18n-tip="思考强度"><svg class="i"><use href="#i-sparkles"/></svg><span id="cmp-effort" data-i18n="默认">默认</span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
         <button class="cb model" data-act="pick-model" id="model-btn"><span id="cmp-model">…</span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
-        <button class="cb send" data-act="send" id="send-btn" data-tip="发送|Enter" aria-label="发送"><svg class="i"><use href="#i-arrow-up"/></svg></button>
+        <button class="cb send" data-act="send" id="send-btn" data-tip="发送|Enter" data-i18n-tip="发送|Enter" aria-label="发送" data-i18n-al="发送"><svg class="i"><use href="#i-arrow-up"/></svg></button>
       </div>
       <input type="file" id="att-file" accept="image/*" multiple hidden>
     </div>
@@ -253,49 +249,49 @@
   <!-- the dock's resize handle lives OUTSIDE the panel: a browser tab fills
        its pane with a native guest webview, and a child HWND paints over (and
        swallows the pointer of) everything inside the dock's rectangle -->
-  <div class="dock-edge" id="dock-edge" data-tip="拖动调整宽度"></div>
-  <aside class="dock glass" id="dock" aria-label="数据面板">
-    <nav class="dock-tabs" id="dock-tabs" role="tablist" aria-label="数据面板分页">
+  <div class="dock-edge" id="dock-edge" data-tip="拖动调整宽度" data-i18n-tip="拖动调整宽度"></div>
+  <aside class="dock glass" id="dock" aria-label="数据面板" data-i18n-al="数据面板">
+    <nav class="dock-tabs" id="dock-tabs" role="tablist" aria-label="数据面板分页" data-i18n-al="数据面板分页">
       <span id="dt-dyn"></span>
-      <button class="dock-add" data-act="dock-add" data-tip="新建标签页" aria-label="新建标签页"><svg class="i"><use href="#i-plus"/></svg></button>
+      <button class="dock-add" data-act="dock-add" data-tip="新建标签页" data-i18n-tip="新建标签页" aria-label="新建标签页" data-i18n-al="新建标签页"><svg class="i"><use href="#i-plus"/></svg></button>
     </nav>
     <div class="dock-empty" id="dock-empty" hidden>
       <div class="de-rows" id="de-rows"></div>
-      <small>把要用的视图放进来 — 每个会话各配各的</small>
+      <small data-i18n="把要用的视图放进来 — 每个会话各配各的">把要用的视图放进来 — 每个会话各配各的</small>
     </div>
 
     <div class="dock-pane" data-pane="overview">
       <section class="df">
-        <div class="df-h"><span>缓存命中</span><span class="live" id="df-live"><i></i>实时</span></div>
+        <div class="df-h"><span data-i18n="缓存命中">缓存命中</span><span class="live" id="df-live" data-i18n-tail="实时"><i></i>实时</span></div>
         <div class="df-big"><svg class="i"><use href="#i-zap"/></svg><span class="v" id="df-hit">–</span></div>
-        <div class="df-sub" id="df-sub">等待事件流…</div>
+        <div class="df-sub" id="df-sub" data-i18n="等待事件流…">等待事件流…</div>
         <div class="bar"><i id="df-bar" style="width:0%"></i></div>
         <dl class="kv">
-          <div><dt>输入 tokens</dt><dd id="df-prompt">0</dd></div>
-          <div><dt>输出 tokens</dt><dd id="df-comp">0</dd></div>
-          <div><dt>工具调用</dt><dd id="df-tools">0</dd></div>
-          <div><dt>工具失败</dt><dd id="df-fails">0</dd></div>
-          <div><dt>上下文压缩</dt><dd id="df-compact">0</dd></div>
+          <div><dt data-i18n="输入 tokens">输入 tokens</dt><dd id="df-prompt">0</dd></div>
+          <div><dt data-i18n="输出 tokens">输出 tokens</dt><dd id="df-comp">0</dd></div>
+          <div><dt data-i18n="工具调用">工具调用</dt><dd id="df-tools">0</dd></div>
+          <div><dt data-i18n="工具失败">工具失败</dt><dd id="df-fails">0</dd></div>
+          <div><dt data-i18n="上下文压缩">上下文压缩</dt><dd id="df-compact">0</dd></div>
         </dl>
       </section>
       <section class="df" id="df-proj">
-        <div class="df-h"><span>项目</span></div>
+        <div class="df-h"><span data-i18n="项目">项目</span></div>
         <dl class="kv">
-          <div><dt>项目文件夹</dt><dd class="ellipsis" id="df-cwd" data-tip="">—</dd></div>
+          <div><dt data-i18n="项目文件夹">项目文件夹</dt><dd class="ellipsis" id="df-cwd" data-tip="">—</dd></div>
         </dl>
       </section>
     </div>
 
     <div class="dock-pane" data-pane="agents" hidden>
       <section class="df" id="df-tasks">
-        <div class="df-h"><span>子代理</span></div>
+        <div class="df-h"><span data-i18n="子代理">子代理</span></div>
         <div class="rt-list" id="dt-list"></div>
       </section>
     </div>
 
     <div class="dock-pane" data-pane="jobs" hidden>
       <section class="df" id="df-jobs">
-        <div class="df-h"><span>后台任务</span></div>
+        <div class="df-h"><span data-i18n="后台任务">后台任务</span></div>
         <div class="rt-list" id="dj-list"></div>
       </section>
     </div>
@@ -308,21 +304,23 @@
 
 <div id="palette" hidden>
   <div class="scrim" data-act="palette-close"></div>
-  <div class="box glass" role="dialog" aria-label="命令面板">
-    <div class="in"><svg class="i"><use href="#i-search"/></svg><input id="pal-in" placeholder="输入命令，或搜索会话与设置" autocomplete="off" spellcheck="false"></div>
+  <div class="box glass" role="dialog" aria-label="命令面板" data-i18n-al="命令面板">
+    <div class="in"><svg class="i"><use href="#i-search"/></svg><input id="pal-in" placeholder="输入命令，或搜索会话与设置" data-i18n-ph="输入命令，或搜索会话与设置" autocomplete="off" spellcheck="false"></div>
     <div class="plist scroll" id="pal-list"></div>
-    <div class="pf2"><span><kbd>↑↓</kbd>选择</span><span><kbd>Enter</kbd>执行</span><span><kbd>Esc</kbd>关闭</span></div>
+    <div class="pf2"><span data-i18n-tail="选择"><kbd>↑↓</kbd>选择</span><span data-i18n-tail="执行"><kbd>Enter</kbd>执行</span><span data-i18n-tail="关闭"><kbd>Esc</kbd>关闭</span></div>
   </div>
 </div>
 <div id="imv" hidden>
   <div class="scrim" data-act="imv-close"></div>
-  <figure class="stage" role="dialog" aria-label="图片预览">
+  <figure class="stage" role="dialog" aria-label="图片预览" data-i18n-al="图片预览">
     <img id="imv-img" alt="" data-act="imv-close">
     <figcaption id="imv-cap"></figcaption>
   </figure>
 </div>
 <div id="tip" class="glass" role="tooltip"></div>
 <input type="file" id="file-wall" accept="image/*" hidden>
+<script src="i18n.en.js"></script>
+<script src="i18n.js"></script>
 <script src="state.js"></script>
 <script src="wallpaper.js"></script>
 <script src="settings.js"></script>

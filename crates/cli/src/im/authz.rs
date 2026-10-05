@@ -3,7 +3,7 @@
 //! OpenClaw's key names (`dmPolicy`, `unauthorized_dm_behavior`) so the
 //! docs read one dialect.
 
-use super::config::{ChannelsConfig, DmPolicy, UnauthorizedBehavior};
+use super::config::{ChannelScoped, ChannelsConfig, DmPolicy, UnauthorizedBehavior};
 use super::route::ImSource;
 use super::store::{PairingRow, Store};
 
@@ -41,17 +41,17 @@ pub fn admitted(cfg: &ChannelsConfig, store: &Store, src: &ImSource) -> bool {
     let in_list = |list: &[String]| list.iter().any(|e| e == "*" || e == &entry);
     let mut allowlist = in_list(&cfg.allowlist);
     let mut policy = cfg.dm_policy;
-    if let Some(super::config::ChannelSpec::Telegram(tg)) =
-        cfg.channels.iter().find(|c| c.kind_name() == src.channel)
-    {
-        if tg
+    // channel-scoped overrides win. The lookup is kind-agnostic, so a new
+    // adapter's block is honoured here without touching this file.
+    if let Some(scoped) = scoped_for(cfg, &src.channel) {
+        if scoped
             .allowlist
             .iter()
             .any(|e| e == &src.sender_id || e == &entry)
         {
             allowlist = true;
         }
-        if let Some(p) = tg.dm_policy {
+        if let Some(p) = scoped.dm_policy {
             policy = p;
         }
     }
@@ -76,18 +76,21 @@ pub fn is_owner(cfg: &ChannelsConfig, store: &Store, src: &ImSource) -> bool {
         || store.allow_role(&src.channel, &src.sender_id).as_deref() == Some("owner")
 }
 
+/// The channel block's scoped overrides for `channel`, if the kind has a
+/// policy surface at all. The lookup matches the kind name only — a
+/// disabled block still declares the policy its stored sessions read.
+fn scoped_for<'a>(cfg: &'a ChannelsConfig, channel: &str) -> Option<ChannelScoped<'a>> {
+    cfg.specs()
+        .find(|c| c.kind_name() == channel)
+        .and_then(|c| c.scoped())
+}
+
 /// The effective DM policy for a channel — the channel block's
 /// `dm_policy` wins over the top-level value.
 fn effective_policy(cfg: &ChannelsConfig, channel: &str) -> DmPolicy {
-    for c in &cfg.channels {
-        if c.kind_name() == channel
-            && let super::config::ChannelSpec::Telegram(tg) = c
-            && let Some(p) = tg.dm_policy
-        {
-            return p;
-        }
-    }
-    cfg.dm_policy
+    scoped_for(cfg, channel)
+        .and_then(|s| s.dm_policy)
+        .unwrap_or(cfg.dm_policy)
 }
 
 /// Issue a pairing code for a stranger — returns the reply text to send
@@ -188,12 +191,33 @@ mod tests {
     }
 
     fn src(sender: &str) -> ImSource {
+        src_on("telegram", sender)
+    }
+
+    fn src_on(channel: &str, sender: &str) -> ImSource {
         ImSource {
-            channel: "telegram".into(),
+            channel: channel.into(),
             chat_id: "42".into(),
             sender_id: sender.into(),
             sender_name: String::new(),
         }
+    }
+
+    /// Discriminator: a channel kind that is not telegram must still get
+    /// its own `dm_policy`/`allowlist` — otherwise a new adapter's
+    /// channel-scoped overrides are silently ignored and admission falls
+    /// back to the top-level policy.
+    #[test]
+    fn new_kind_channel_scope_applies() {
+        let (s, dir) = store();
+        let c: ChannelsConfig = serde_json::from_str(
+            r#"{"dm_policy":"disabled","channels":[
+                {"kind":"test","enabled":true,
+                 "dm_policy":"open","allowlist":["test:7"]}]}"#,
+        )
+        .unwrap();
+        assert_eq!(authorize(&c, &s, &src_on("test", "7")), Verdict::Allow);
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

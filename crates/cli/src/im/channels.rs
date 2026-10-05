@@ -3,10 +3,14 @@
 //! `InboundMsg`, and answer `send_text`/`edit_text`/`send_typing` for the
 //! delivery/progress lanes. Routing, authz, sessions — all upstream.
 
+use std::sync::Arc;
+
 use anyhow::Result;
 use tokio::sync::mpsc;
 
 use super::route::ImSource;
+use crate::im::config::ChannelSpec;
+use crate::im::store::Store;
 
 /// One inbound DM — what an adapter hands the gateway. Attachments are a
 /// future concern (MVP is text-only; photo/caption maps to caption text).
@@ -40,3 +44,18 @@ pub trait ChannelAdapter: Send + Sync {
 
 mod telegram;
 pub use telegram::TelegramAdapter;
+
+/// Build the adapter for one enabled channel block — the single wiring
+/// point for a new kind: add its `ChannelSpec` variant, its
+/// `ChannelSpec::scoped()` arm, and one arm here; nothing else moves.
+/// `Err` is per channel — the daemon logs it and keeps running the rest.
+pub fn build(spec: &ChannelSpec, store: Arc<Store>) -> Result<Arc<dyn ChannelAdapter>> {
+    match spec {
+        ChannelSpec::Telegram(tg) => Ok(Arc::new(TelegramAdapter::new(tg, store)?)),
+        // never built: `enabled_specs()` drops unknown kinds, and a
+        // config-only kind has no adapter in this binary
+        ChannelSpec::Unknown => anyhow::bail!("no adapter for channel kind {}", spec.kind_name()),
+        #[cfg(test)]
+        ChannelSpec::Test(_) => anyhow::bail!("no adapter for test channel"),
+    }
+}

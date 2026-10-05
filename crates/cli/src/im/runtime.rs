@@ -24,9 +24,9 @@ use crate::Cli;
 use crate::serve::host::Host;
 
 use super::authz::Verdict;
-use super::channels::{ChannelAdapter, InboundMsg, TelegramAdapter};
+use super::channels::{self, InboundMsg};
 use super::config::ChannelsConfig;
-use super::deliver::Delivery;
+use super::deliver::{self, Delivery};
 use super::progress::{self, ChatKey};
 use super::route::{self, ImSource};
 use super::store::Store;
@@ -64,11 +64,12 @@ pub(crate) fn pairing(op: &PairingOp) -> Result<()> {
             None => anyhow::bail!("no live pairing code {code:?}"),
         },
         PairingOp::Revoke { sender } => {
-            // `sender` may be "channel:id" or bare id — try both spellings
-            let (ch, id) = sender
-                .split_once(':')
-                .map(|(c, s)| (c.to_string(), s.to_string()))
-                .unwrap_or_else(|| ("telegram".to_string(), sender.clone()));
+            // `sender` may be "channel:id" or bare id — a bare id resolves
+            // only when exactly one channel is enabled
+            let (ch, id) = match sender.split_once(':') {
+                Some((c, s)) => (c.to_string(), s.to_string()),
+                None => (sole_channel()?, sender.clone()),
+            };
             anyhow::ensure!(
                 store.allow_remove(&ch, &id)?,
                 "no allowlist entry for {sender}"
@@ -77,6 +78,24 @@ pub(crate) fn pairing(op: &PairingOp) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The channel a bare `pairing revoke <id>` means — the sole enabled kind
+/// in channels.json. Zero or several kinds must be spelled `channel:id`;
+/// guessing would revoke the wrong channel's entry.
+fn sole_channel() -> Result<String> {
+    let mut kinds: Vec<&'static str> = Vec::new();
+    if let Some(cfg) = ChannelsConfig::load(&super::config::config_path())? {
+        for spec in cfg.enabled_specs() {
+            if !kinds.contains(&spec.kind_name()) {
+                kinds.push(spec.kind_name());
+            }
+        }
+    }
+    match kinds.as_slice() {
+        [only] => Ok((*only).to_string()),
+        _ => anyhow::bail!("sender id is ambiguous — write channel:id"),
+    }
 }
 
 /// The `sunmao pairing` subcommand's arg shape — defined next to the code
@@ -98,7 +117,8 @@ pub enum PairingOp {
     },
     /// Remove a sender from the allowlist (`channel:id` or bare id).
     Revoke {
-        /// Sender to remove — `telegram:12345` or `12345`.
+        /// Sender to remove — `telegram:12345`, or a bare `12345` when
+        /// exactly one channel is enabled.
         sender: String,
     },
 }
@@ -124,8 +144,10 @@ struct Gateway {
     /// session_key → live lane. Under main scope it only ever holds
     /// `im:main`; under per_channel_peer each first contact binds one.
     lanes: tokio::sync::Mutex<std::collections::HashMap<String, HostLane>>,
-    adapters: Vec<Arc<dyn ChannelAdapter>>,
-    deliveries: Vec<Arc<Delivery>>,
+    /// One entry per running channel — adapter and ledger are paired
+    /// inside `Delivery`, so a lane iterates endpoints instead of zipping
+    /// two positional vectors.
+    endpoints: Vec<Arc<Delivery>>,
 }
 
 /// A session_key's deterministic session id — `im:telegram:dm:123` →
@@ -191,7 +213,7 @@ pub(crate) async fn run(cli: &Cli) -> Result<()> {
     let cfg = ChannelsConfig::load(&super::config::config_path())?
         .context("no ~/.sunmao/channels.json — nothing to run")?;
     anyhow::ensure!(
-        cfg.telegram().is_some(),
+        cfg.enabled_specs().next().is_some(),
         "channels.json has no enabled channels"
     );
 
@@ -216,20 +238,41 @@ pub(crate) async fn run(cli: &Cli) -> Result<()> {
     // per-channel: adapter + delivery lane (progress lanes bind per
     // session lane — one under main, one per peer under per_channel_peer)
     let (tx, mut rx) = mpsc::channel::<InboundMsg>(256);
-    let mut deliveries: Vec<Arc<Delivery>> = Vec::new();
-    let mut adapters: Vec<Arc<dyn ChannelAdapter>> = Vec::new();
+    let mut endpoints: Vec<Arc<Delivery>> = Vec::new();
+    let mut names: Vec<&'static str> = Vec::new();
 
-    if let Some(tg) = cfg.telegram() {
-        let adapter: Arc<dyn ChannelAdapter> = Arc::new(TelegramAdapter::new(tg, store.clone())?);
+    for spec in cfg.enabled_specs() {
+        let kind = spec.kind_name();
+        // one adapter per channel id — routing, authz and the ledger all
+        // key on the kind name, so a second block of a kind already
+        // running would fight the first over the same channel
+        if names.contains(&kind) {
+            tracing::warn!("im channel {kind} declared twice — extra block skipped");
+            continue;
+        }
+        let adapter = match channels::build(spec, store.clone()) {
+            Ok(a) => a,
+            // one broken channel block must not take the daemon down —
+            // the rest keep polling and the failure lands in the log
+            Err(e) => {
+                tracing::warn!("im channel {kind} skipped: {e:#}");
+                continue;
+            }
+        };
         let delivery = Arc::new(Delivery::new(store.clone(), adapter.clone()));
         delivery.resend_outstanding().await;
         let a = adapter.clone();
+        let tx = tx.clone();
         tokio::spawn(async move { a.poll(tx).await });
-        deliveries.push(delivery);
-        adapters.push(adapter);
-        // connection liveness lands in the status file the serve page reads
-        write_status(&["telegram"]);
+        endpoints.push(delivery);
+        names.push(kind);
     }
+    anyhow::ensure!(!endpoints.is_empty(), "no channel adapter started");
+    // connection liveness lands in the status file the serve page reads
+    write_status(&names);
+    // the loop below ends when the last adapter drops its sender; without
+    // this the daemon's own handle would keep the inbound stream open
+    drop(tx);
 
     let gw = Gateway {
         cfg: cfg.clone(),
@@ -240,8 +283,7 @@ pub(crate) async fn run(cli: &Cli) -> Result<()> {
         roots: spec_roots.clone(),
         driver: spec_driver,
         lanes: tokio::sync::Mutex::new(std::collections::HashMap::new()),
-        adapters,
-        deliveries,
+        endpoints,
     };
     // dmScope=main eagerly binds the shared lane — same warm session the
     // daemon has always started with; per_channel_peer binds lazily on
@@ -250,7 +292,8 @@ pub(crate) async fn run(cli: &Cli) -> Result<()> {
         gw.lane_for("im:main").await?;
     }
     eprintln!(
-        "sunmao im — telegram polling, dmScope={:?}, full_access",
+        "sunmao im — {} polling, dmScope={:?}, full_access",
+        names.join("+"),
         gw.cfg.dm_scope
     );
     while let Some(msg) = rx.recv().await {
@@ -272,11 +315,6 @@ fn write_status(channels: &[&str]) {
         super::config::state_dir().join("status.json"),
         v.to_string(),
     );
-}
-
-/// `&deliveries[0]` lookup by channel name — multi-channel lands in v0.4.
-fn lane<'a>(deliveries: &'a [Arc<Delivery>], channel: &str) -> Option<&'a Arc<Delivery>> {
-    deliveries.iter().find(|d| d.channel() == channel)
 }
 
 impl Gateway {
@@ -307,17 +345,14 @@ impl Gateway {
             )
             .await;
         let progress = progress::new_shared();
-        // one progress subscriber per (lane, channel) — each filters the
-        // shared live bus to this session's frames
-        for (adapter, delivery) in self.adapters.iter().zip(self.deliveries.iter()) {
-            tokio::spawn(progress::run(
-                host.id.clone(),
-                self.shared.live.subscribe(),
-                progress.clone(),
-                adapter.clone(),
-                delivery.clone(),
-            ));
-        }
+        // ONE progress subscriber per lane — it owns the lane's final
+        // text and fans the reply out to every channel on the lane
+        tokio::spawn(progress::run(
+            host.id.clone(),
+            self.shared.live.subscribe(),
+            progress.clone(),
+            self.endpoints.clone(),
+        ));
         self.lanes.lock().await.insert(
             session_key.to_string(),
             HostLane {
@@ -443,7 +478,7 @@ impl Gateway {
             _ => super::messages::get("help"),
         };
         if !reply.is_empty()
-            && let Some(d) = lane(&self.deliveries, &src.channel)
+            && let Some(d) = deliver::for_channel(&self.endpoints, &src.channel)
         {
             let _ = d.send_final(&src.chat_id, &reply).await;
         }
@@ -454,7 +489,7 @@ impl Gateway {
     /// silence, per `unauthorized_dm_behavior`.
     async fn authz_reply(&self, src: &ImSource) -> Result<()> {
         if let Verdict::Reply(text) = super::authz::authorize(&self.cfg, &self.store, src)
-            && let Some(d) = lane(&self.deliveries, &src.channel)
+            && let Some(d) = deliver::for_channel(&self.endpoints, &src.channel)
         {
             let _ = d.send_final(&src.chat_id, &text).await;
         }

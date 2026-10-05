@@ -126,7 +126,14 @@ function act(name, el) {
       }
       return open('/artifacts/' + encodeURIComponent(isl.dataset.artifact) + q, '_blank');
     }
-    case 'think': return motion.fold(el, $('.think-o', el), !el.classList.contains('open'));
+    case 'think': {
+      // the body is the button's next sibling (`.think.open + .think-o`), not a
+      // child: a descendant lookup returns null, and the fold throws on null
+      // after the class was already added — which is exactly "opens, never
+      // closes"
+      const out = el.nextElementSibling;
+      return motion.fold(el, out && out.classList.contains('think-o') ? out : null, !el.classList.contains('open'));
+    }
     case 'tg': { const g = el.closest('.tools'); g.dataset.user = '1'; return foldGroup(g, !g.classList.contains('fold')); }
     case 'rewind-turn': return rewindMsg(el);
     case 'pick-mode': {

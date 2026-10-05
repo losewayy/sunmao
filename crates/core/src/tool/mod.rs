@@ -235,6 +235,7 @@ mod pwsh;
 mod search;
 mod sendmsg;
 mod shell;
+mod timeout;
 mod todo;
 mod webmod;
 

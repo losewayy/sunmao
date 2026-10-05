@@ -190,3 +190,8 @@
 .hero.play .hero-title{animation:k-rise var(--dur-scene) calc(var(--stagger) * 1) var(--ease-out) both}
 .hero.play .hero-sub{animation:k-rise var(--dur-scene) calc(var(--stagger) * 2) var(--ease-out) both}
 .hero.play .hero-actions{animation:k-rise var(--dur-scene) calc(var(--stagger) * 3) var(--ease-out) both}
+
+/* the selection quote button — floats over the transcript, at the selection */
+.quote-pop{position:fixed;z-index:var(--z-tip);display:flex;align-items:center;gap:var(--s-4);height:var(--h-lg);padding:0 var(--s-12);border:0;border-radius:var(--r-full);color:var(--c-text);font-size:var(--fs-xs);cursor:pointer;box-shadow:var(--ring-1)}
+.quote-pop:hover{color:var(--c-accent)}
+.quote-pop .i{color:var(--c-accent)}

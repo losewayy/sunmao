@@ -1,5 +1,5 @@
 //! xtask arch — the architecture gate. `CODE-ARCHITECTURE.md` is prose; this
-//! binary is what actually stops a violation from landing. Four checks:
+//! binary is what actually stops a violation from landing. Checks:
 //!
 //!   god files   — a source file past the line budget gets split; the
 //!                 serve/assets frontend files it embeds share the budget
@@ -9,6 +9,8 @@
 //!   tokens      — serve/assets consumes design tokens; raw
 //!                 colors/durations/radii live in tokens.css only
 //!   js syntax   — every serve/assets/*.js parses under `node --check`
+//!   asset text  — translations stay plain text and every `t()` interpolated
+//!                 into an HTML attribute is escaped (see check_asset_escaping)
 //!
 //! `#[cfg(test)]` modules are exempt — tests carry fixtures and diagnostics
 //! that would trip every rule by design.
@@ -16,6 +18,8 @@
 //! Exit 1 prints every violation; `cargo xtask arch` is the CI hook.
 
 use std::path::{Path, PathBuf};
+
+mod asset_text;
 
 const GOD_FILE_BUDGET: usize = 600;
 /// A string literal this long with this many spaces reads like prose, not a
@@ -50,6 +54,7 @@ fn main() {
         check_god_file(file, &root, &mut violations);
     }
     check_js_syntax(&asset_files, &root, &mut violations);
+    check_asset_escaping(&asset_files, &root, &mut violations);
     check_mirrors(&root, &mut violations);
     check_design_tokens(&root, &mut violations);
 
@@ -615,6 +620,30 @@ fn check_design_tokens(root: &Path, violations: &mut Vec<String>) {
                 }
             }
         }
+    }
+}
+
+/// Rule: asset text stays plain — the four checks live in `asset_text.rs`;
+/// this walks the bundle and collects what they report, so a translation or a
+/// template literal that would break the page fails the gate instead of the
+/// browser.
+fn check_asset_escaping(asset_files: &[PathBuf], root: &Path, violations: &mut Vec<String>) {
+    for file in asset_files {
+        let name = file.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let Ok(text) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        let path = rel(file, root);
+        let found = match (ext, name) {
+            ("js", "i18n.en.js") | ("js", "i18n.en.panels.js") => {
+                asset_text::dictionary_violations(&path, &text)
+            }
+            ("js", _) => asset_text::site_violations(&path, &text),
+            ("html", _) => asset_text::backslash_tails(&path, &text),
+            _ => Vec::new(),
+        };
+        violations.extend(found);
     }
 }
 

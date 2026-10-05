@@ -229,6 +229,7 @@ pub fn builtin_registry() -> ToolRegistry {
 }
 
 mod artifact;
+mod foreground;
 mod fs;
 mod goal;
 pub(crate) mod jobs;
@@ -245,6 +246,7 @@ mod webmod;
 
 pub(crate) use artifact::archive_prev;
 pub use artifact::{HtmlArtifactTool, artifact_rev};
+pub use foreground::{LocalShell, run_local_shell};
 pub use fs::{EditTool, ReadTool, WriteTool};
 pub(crate) use goal::GOAL_LINE_PREFIX;
 #[cfg(test)]

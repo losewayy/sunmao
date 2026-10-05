@@ -109,6 +109,7 @@ fn fusion_ctx(
                 api_key: None,
                 dialect: "openai".into(),
                 catalog: Vec::new(),
+                extra: Default::default(),
             },
             "default",
         )

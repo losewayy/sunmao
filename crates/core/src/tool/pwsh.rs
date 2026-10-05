@@ -16,6 +16,7 @@
 use anyhow::Context as _;
 use base64::Engine as _;
 
+use super::foreground::LocalShell;
 use super::jobs;
 use super::shell::ShellRun;
 use crate::tool::ToolResult;
@@ -68,13 +69,32 @@ pub(crate) async fn bash(
     if background {
         return spawn_background(command, ctx).await;
     }
-    let paths = jobs::JobPaths::create(ctx, jobs::next_job_id())?;
+    let run = local_shell(command, &ctx.cwd, timeout_secs, ctx)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    Ok(ToolResult {
+        output: run.render(),
+        ok: run.ok(),
+    })
+}
+
+/// pwsh's half of the shared foreground run: registered in `ctx.jobs` from
+/// its first byte, so reaching the budget MOVES THE COMMAND TO THE BACKGROUND
+/// instead of killing it. The deno twin is `shell::foreground_run`; both feed
+/// the tool result and the frontends' `!` local shell.
+pub(crate) async fn local_shell(
+    command: &str,
+    cwd: &std::path::Path,
+    timeout_secs: u64,
+    ctx: &crate::context::Context,
+) -> Result<LocalShell, String> {
+    let paths = jobs::JobPaths::create(ctx, jobs::next_job_id()).map_err(|e| format!("{e:#}"))?;
     let notifier = jobs::JobNotifier::from_ctx(ctx).await;
-    let mut run = match spawn_run(command, &ctx.cwd, Some(&paths)) {
+    let mut run = match spawn_run(command, cwd, Some(&paths)) {
         Ok(r) => r,
         Err(e) => {
             paths.discard(); // a dir with no run reads as "still running"
-            return Err(e);
+            return Err(format!("{e:#}"));
         }
     };
     run.register(&ctx.jobs, command, true);
@@ -96,9 +116,11 @@ pub(crate) async fn bash(
             ctx.jobs.clone(),
             super::timeout::BACKGROUND_TIMEOUT_SECS,
         );
-        return Ok(ToolResult {
-            output: jobs::detached_result(&id, pid, &log_path, &output),
-            ok: true,
+        return Ok(LocalShell::Detached {
+            id,
+            pid,
+            log_path,
+            output,
         });
     }
 
@@ -114,11 +136,7 @@ pub(crate) async fn bash(
     jobs::conclude(&notifier, &ctx.jobs, &run.id, &run.dir, end.code, false).await;
     // same rule as the deno path: an inline run retires itself, dir and all
     jobs::retire(&ctx.jobs, &run.id, &run.dir);
-    let out = super::shell::render_run(&run_out);
-    Ok(ToolResult {
-        output: out,
-        ok: run_out.exit_code == 0,
-    })
+    Ok(LocalShell::Done(run_out))
 }
 
 /// Foreground pwsh run — same contract as the deno path: partial output is
@@ -369,6 +387,93 @@ mod tests {
         let out = std::fs::read_to_string(&log).unwrap_or_default();
         assert!(out.contains("pwsh-out-marker"), "stdout: {out}");
         assert!(out.contains("pwsh-err-marker"), "stderr must merge: {out}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A pwsh FOREGROUND command that overruns its budget is moved to the
+    /// background, not killed: the child keeps running and logging, and the
+    /// tool result hands over the job (id + log) instead of a corpse. This is
+    /// the pwsh half of the deno case in `jobs::tests`; the old kill-on-
+    /// timeout behaviour would show up here as a dead `Start-Sleep`.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn foreground_timeout_moves_a_pwsh_command_to_the_background() {
+        if std::process::Command::new("pwsh")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return; // no pwsh on this box — the path is untestable here
+        }
+        let dir = crate::fresh_test_dir("pwsh-fg-timeout");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ctx = std::sync::Arc::new(crate::context::Context::new(
+            std::sync::Arc::new(StubLlm),
+            crate::session::SessionLog::ephemeral(),
+            crate::tool::builtin_registry(),
+            dir.clone(),
+        ));
+
+        // two 4s sleeps, a 1s budget: the first pair must land in the log
+        // AFTER the tool has already returned
+        let res = bash(
+            "'pwsh-first'; Start-Sleep -Seconds 4; 'pwsh-second'; Start-Sleep -Seconds 4; 'pwsh-third'",
+            Some(1),
+            false,
+            &ctx,
+        )
+        .await
+        .unwrap();
+        assert!(
+            !res.output.contains("killed"),
+            "a pwsh timeout must not kill the command: {}",
+            res.output
+        );
+        assert!(
+            res.output.contains("moved to the background"),
+            "the tool result must hand over the job: {}",
+            res.output
+        );
+        assert!(res.output.contains("log:"), "{}", res.output);
+
+        let jobs = dir.join(".sunmao").join("jobs");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let log = loop {
+            let later = std::fs::read_dir(&jobs).ok().and_then(|rd| {
+                rd.flatten().map(|e| e.path().join("output.log")).find(|p| {
+                    std::fs::read_to_string(p)
+                        .unwrap_or_default()
+                        .contains("pwsh-second")
+                })
+            });
+            if let Some(l) = later {
+                break l;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the backgrounded pwsh command never produced its later output"
+            );
+            // async sleep — a blocking one would starve the drain and wait
+            // tasks on this single-threaded test runtime
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        };
+        // it is a background job now: the panel marker flipped, and it still
+        // settles its own exit.json
+        let meta = std::fs::read_to_string(log.with_file_name("job.json")).unwrap_or_default();
+        assert!(
+            meta.contains("\"foreground\":false"),
+            "a detached job must be visible to the jobs panel: {meta}"
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !log.with_file_name("exit.json").exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the detached pwsh command never settled its exit.json"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        let out = std::fs::read_to_string(&log).unwrap_or_default();
+        assert!(out.contains("pwsh-third"), "the run must finish: {out}");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -171,6 +171,7 @@ async fn effort_levels_read_the_catalog() {
                     ..Default::default()
                 },
             ],
+            extra: Default::default(),
         },
         "default",
     );
@@ -240,6 +241,7 @@ async fn effort_default_carries_the_second_strongest_rung() {
                     ..Default::default()
                 },
             ],
+            extra: Default::default(),
         },
         "default",
     )));

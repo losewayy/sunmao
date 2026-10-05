@@ -65,6 +65,7 @@ async fn agent_def_model_selector_routes_the_spawn() {
                 api_key: None,
                 dialect: "openai".into(),
                 catalog: Vec::new(),
+                extra: Default::default(),
             },
             "default",
         )
@@ -113,6 +114,7 @@ async fn swap_model_installs_override_adapter() {
                 api_key: None,
                 dialect: "openai".into(),
                 catalog: Vec::new(),
+                extra: Default::default(),
             },
             "default",
         )

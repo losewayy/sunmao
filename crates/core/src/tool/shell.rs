@@ -92,9 +92,8 @@ impl ToolImpl for BashTool {
     }
 }
 
-/// One foreground run, registered as a job from its first byte. The only
-/// difference from `background: true` is that this caller waits — and that
-/// it stops waiting, rather than killing, when the budget lapses.
+/// The `Bash` tool's foreground call: [`super::foreground::job_run`] plus the
+/// model-facing rendering of whichever way it ended.
 async fn foreground(
     list: deno_task_shell::parser::SequentialList,
     command: &str,
@@ -102,60 +101,11 @@ async fn foreground(
     notes: Vec<String>,
     ctx: &Arc<crate::context::Context>,
 ) -> anyhow::Result<ToolResult> {
-    let paths = jobs::JobPaths::create(ctx, jobs::next_job_id())?;
-    let notifier = jobs::JobNotifier::from_ctx(ctx).await;
-    let mut run = match spawn_run(list, ctx.cwd.clone(), Some(&paths)) {
-        Ok(r) => r,
-        Err(e) => {
-            paths.discard(); // a dir with no run reads as "still running"
-            return Err(e);
-        }
-    };
-    run.register(&ctx.jobs, command, true);
-
-    let fg = jobs::wait_foreground(
-        &mut run,
-        timeout_secs,
-        super::timeout::AUTO_BACKGROUND_ON_TIMEOUT,
-        Some(ctx.cancel_signal()),
-    )
-    .await;
-
-    if matches!(fg, jobs::Foreground::Detached) {
-        // The log already holds everything the command produced; the job
-        // keeps writing it, and completion arrives as a pushed fact.
-        let output = run.out.text();
-        let (id, log_path, pid) = (run.id.clone(), run.log_path.clone(), run.pid);
-        jobs::hand_off(
-            run,
-            notifier,
-            ctx.jobs.clone(),
-            super::timeout::BACKGROUND_TIMEOUT_SECS,
-        );
-        return Ok(ToolResult {
-            output: jobs::detached_result(&id, pid, &log_path, &output),
-            ok: true,
-        });
-    }
-
-    let label = fg.label(timeout_secs);
-    let end = fg.end().unwrap_or_else(jobs::RunEnd::lost);
-    let run_out = ShellRun {
-        exit_code: end.code,
-        stdout: run.out.text(),
-        stderr: run.err.text(),
-        preflight: notes.join("\n"),
-        ended: jobs::ended_note(end.ended, label),
-    };
-    jobs::conclude(&notifier, &ctx.jobs, &run.id, &run.dir, end.code, false).await;
-    // an inline run leaves nothing behind: its result is the tool result, and
-    // both the jobs panel and the session roster read the disk — a plain `ls`
-    // must not become a row in either
-    jobs::retire(&ctx.jobs, &run.id, &run.dir);
-    let out = render_run(&run_out);
+    let run = super::foreground::job_run(list, command, ctx.cwd.clone(), timeout_secs, notes, ctx)
+        .await?;
     Ok(ToolResult {
-        output: out,
-        ok: run_out.exit_code == 0,
+        output: run.render(),
+        ok: run.ok(),
     })
 }
 
@@ -173,12 +123,11 @@ pub struct ShellRun {
     pub ended: Option<String>,
 }
 
-/// Parse + preflight + execute `command` in `cwd`. `Err(String)` is a
-/// legible failure (parse error, spawn panic), not an anyhow — callers
-/// render it as output, same contract as `ToolResult{ok:false}`.
-/// `cancel` wakes the run's kill path (the turn loop's cancel signal).
-/// This path has no job identity, so it keeps the plain kill-on-timeout
-/// contract: only the `Bash` tool registers jobs and backgrounds on timeout.
+/// A forced foreground shell run with no job identity: it keeps the plain
+/// kill-on-timeout contract. This is for callers that need a verdict *now* —
+/// the fusion verifier's own check, the cancel tests — not for a frontend the
+/// user is waiting at: [`super::foreground::run_local_shell`] is the `!` path,
+/// and it backgrounds on timeout like the `Bash` tool.
 pub async fn run_foreground(
     command: &str,
     cwd: std::path::PathBuf,
@@ -236,7 +185,7 @@ impl std::io::Write for TeeWrite {
 /// Start a POSIX run. The runner owns its blocking thread and reports
 /// through `release`, so nobody has to be waiting on it: the foreground
 /// caller waits only as long as its budget allows.
-fn spawn_run(
+pub(super) fn spawn_run(
     list: deno_task_shell::parser::SequentialList,
     cwd: std::path::PathBuf,
     job: Option<&jobs::JobPaths>,

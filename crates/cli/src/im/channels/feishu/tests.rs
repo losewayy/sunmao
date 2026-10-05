@@ -400,3 +400,43 @@ async fn a_transport_error_never_carries_the_message_id() {
     );
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// The tenant-token and long-connection endpoints carry no credential in
+/// their URL, so this is discipline rather than a leak: every reqwest error
+/// on this adapter's credential-bearing paths is stripped of its URL, the
+/// same way `api_call` does it for the calls whose URL does carry an id.
+#[tokio::test]
+async fn neither_the_token_nor_the_ws_endpoint_echoes_its_url() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener); // nothing listens there now
+
+    let dir = crate::im::test_dir("feishu-endpoints");
+    let secret = dir.join("secret.txt");
+    std::fs::write(&secret, "shh").unwrap();
+    let mut adapter = FeishuAdapter::new(&FeishuSpec {
+        enabled: true,
+        app_id: "cli_x".into(),
+        app_secret_env: None,
+        app_secret_file: Some(secret),
+        region: FeishuRegion::default(),
+        owner: None,
+        dm_policy: None,
+        allowlist: Vec::new(),
+    })
+    .unwrap();
+    adapter.base = Box::leak(format!("http://127.0.0.1:{port}").into_boxed_str());
+    let authority = format!("127.0.0.1:{port}");
+
+    let err = format!("{:#}", adapter.tenant_token().await.unwrap_err());
+    assert!(err.contains("feishu tenant_access_token"), "{err}");
+    assert!(!err.contains("http://"), "the URL survived: {err}");
+    assert!(!err.contains(&authority), "{err}");
+
+    let err = format!("{:#}", adapter.ws_endpoint().await.unwrap_err());
+    assert!(err.contains("feishu ws endpoint"), "{err}");
+    assert!(!err.contains("http://"), "the URL survived: {err}");
+    assert!(!err.contains(&authority), "{err}");
+
+    std::fs::remove_dir_all(dir).ok();
+}

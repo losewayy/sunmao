@@ -11,7 +11,7 @@
 
 let steerQ = [];
 let inputQ = [];
-let qDrag = null;   // {id, el} while a pointer drag is live
+let qDrag = null;   // {id, el, pointerId} while a pointer drag is live
 const qClip = s => esc(s.length > 40 ? s.slice(0, 40) + '…' : s);
 const qBox = () => $('#cmp-queue');
 /* FIFO rows in DOM order = queue order; the pinned steer rows are excluded */
@@ -77,9 +77,15 @@ function qMove(id, to) {
 /* drag to reorder — pointerdown on the grip arms it, window listeners carry
    the gesture (pointer capture would too, but a synthetic pointer has no
    capture target), pointerup drops. A row only trades places once the
-   pointer crosses another row's midline, so a plain click changes nothing. */
+   pointer crosses another row's midline, so a plain click changes nothing.
+   A release the page never sees (the pointer left the window) must not leave
+   the gesture armed: the next stray pointerup would then commit a position
+   the user never confirmed. So the button state on every move, a press
+   somewhere else, a lost focus and a hidden tab all end it with a redraw and
+   NO `input_move`. */
 function qDragMove(e) {
-  if (!qDrag) return;
+  if (!qDrag || e.pointerId !== qDrag.pointerId) return;
+  if (e.buttons === 0) return qDragAbort();   // released outside the window
   const others = qRows().filter(r => r !== qDrag.el);
   // the row's new index = how many of the other rows' midlines the pointer
   // has already passed
@@ -93,31 +99,60 @@ function qDragOff() {
   window.removeEventListener('pointermove', qDragMove);
   window.removeEventListener('pointerup', qDragEnd);
   window.removeEventListener('pointercancel', qDragCancel);
+  window.removeEventListener('pointerdown', qDragBail);
+  window.removeEventListener('blur', qDragBail);
+  document.removeEventListener('visibilitychange', qDragBail);
   const d = qDrag;
   qDrag = null;
   if (d) { d.el.classList.remove('drag'); qBox().classList.remove('dragging'); }
   return d;
 }
-function qDragEnd() {
+/* the gesture is over without a release we can trust — drop it and redraw the
+   kernel's order; this path must never send */
+function qDragAbort() { qDragOff(); renderQueueChips(); }
+function qDragEnd(e) {
+  if (!qDrag || e.pointerId !== qDrag.pointerId) return;
+  if (e.button) return qDragAbort();  // only the arming button's release commits
   const d = qDragOff();
   if (!d) return;
   const to = qRows().indexOf(d.el);   // -1 if a broadcast redrew the column mid-drag
   if (to >= 0) qMove(d.id, to);
 }
-function qDragCancel() {
-  qDragOff();
-  renderQueueChips();                 // back to the kernel's order, nothing sent
+function qDragCancel(e) {
+  if (!qDrag || e.pointerId !== qDrag.pointerId) return;
+  qDragAbort();
+}
+/* the release that ended this drag is already behind us: a press that is not
+   the grip's own, a lost focus, or a hidden tab */
+function qDragBail(e) {
+  if (!qDrag) return;
+  if (e.type === 'visibilitychange' && !document.hidden) return;
+  // the press that armed (or re-armed) the live gesture reaches window after
+  // the grip's own handler, so it is not the "press somewhere else" we act on
+  if (e.type === 'pointerdown' && e.target.closest && e.target.closest('.q-grip[data-grip]')) return;
+  qDragAbort();
 }
 qBox().addEventListener('pointerdown', e => {
   const g = e.target.closest('.q-grip[data-grip]');
   if (!g || e.button) return;
+  const id = +g.dataset.grip;
+  // a press landing while a gesture is still armed means the previous release
+  // was lost: drop that one first (it redraws), then start clean
+  if (qDrag) qDragAbort();
+  // resolve the row by id, not by the pressed node — the abort above may have
+  // redrawn the column inside this same dispatch
+  const el = qRows().find(r => +r.dataset.qid === id);
+  if (!el) return;
   e.preventDefault();
-  qDrag = { id: +g.dataset.grip, el: g.closest('.q-row') };
-  qDrag.el.classList.add('drag');
+  qDrag = { id, el, pointerId: e.pointerId };
+  el.classList.add('drag');
   qBox().classList.add('dragging');
   window.addEventListener('pointermove', qDragMove);
   window.addEventListener('pointerup', qDragEnd);
   window.addEventListener('pointercancel', qDragCancel);
+  window.addEventListener('pointerdown', qDragBail);
+  window.addEventListener('blur', qDragBail);
+  document.addEventListener('visibilitychange', qDragBail);
 });
 
 /* keyboard reorder — the grip is a real button, so Tab reaches it; Alt+↑/↓

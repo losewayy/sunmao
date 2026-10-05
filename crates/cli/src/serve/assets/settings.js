@@ -223,7 +223,7 @@ function renderProviders() {
   const names = Object.keys(MODELS.providers || {}).sort();
   let html = head(t('模型与提供商'), '');
   const def = (MODELS.default_model) || t('默认');
-  html += card([row(t('默认模型'), t('仅对新建的会话生效'),
+  html += card([row(t('默认模型'), t('新对话默认用它；已经在谈的会话不受影响'),
     `<button class="pill plain" data-pv="defmodel"><span class="mono">${esc(def)}</span>${ic('chev-d')}</button>`)]);
   for (const n of names) {
     const p = MODELS.providers[n], cat = p.catalog || [];

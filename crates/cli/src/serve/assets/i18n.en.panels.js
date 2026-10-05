@@ -135,6 +135,7 @@ const I18N_EN_PANELS = {
   "项目目录": "Project directory",
   "协议": "Protocol",
   "新对话": "New chat",
+  "新对话默认用它；已经在谈的会话不受影响": "A new conversation starts on this; one already under way keeps its model.",
   "新会话使用": "New sessions use",
   "信任": "Trust",
   "星期": "Weekday",

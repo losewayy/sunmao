@@ -371,6 +371,7 @@ async function providerAction(kind, el) {
     const dBtn = cardEl.querySelector('[data-pv="dialect"]');
     const edit = { name, base_url: base, dialect: (dBtn && dBtn.dataset.v) || 'openai', api_key: g('api_key') || null, keepKey: true, keepCatalog: false, setCatalog: catalog };
     if (pvEdit && pvEdit.name && pvEdit.name !== name) edit.renameFrom = pvEdit.name;
+    else if (pvEdit && !pvEdit.name) edit.add = true;
     pvEdit = null;
     return saveProviders(edit, t('已保存 provider {n}', { n: name }));
   }

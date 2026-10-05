@@ -101,6 +101,13 @@ function route(v) {
         break;
       }
       if (v.event && v.event.type === 'hook' && v.event.event === 'jobs.changed') {
+        if (sess === sessionId) noteJobFrame(v.event.detail);
+        break;
+      }
+      if (v.event && v.event.type === 'job_done') {
+        // a job finished. The durable job-result fact renders on replay; the
+        // live surface is the card, so flip it to its exit state (keeping
+        // the "moved to background" tag it may be carrying).
         if (sess === sessionId) refreshJobsSoon();
         break;
       }
@@ -382,9 +389,29 @@ function modelsBody(edit) {
   const body = { providers, routes: (MODELS && MODELS.routes) || {} };
   const dm = edit && 'default_model' in edit ? edit.default_model : MODELS && MODELS.default_model;
   if (dm) body.default_model = dm;
+  // A rename is a new name for an entry the view only reported redacted: the
+  // server needs the hop to move the credential it never saw, and to tell a
+  // rename from a collision with a different provider. `adding` is the same
+  // declaration for the create path — the body carries the whole provider map,
+  // so only the page knows which entry is a new one.
+  if (edit && edit.renameFrom) body.rename_from = { [edit.name]: edit.renameFrom };
+  if (edit && edit.add) body.adding = edit.name;
   return body;
 }
+// A save that reuses a name another provider already owns would overwrite it:
+// an add that collides, or a rename onto an existing entry. Neither is the
+// editor overwriting the entry it opened, so both are name collisions. The
+// server refuses them (409); this is the same check before the round trip, so
+// the form stays put and the reason reads in the UI language.
+function providerNameTaken(edit) {
+  if (!edit || !edit.name || edit.del) return false;
+  const fresh = !!edit.add || !!(edit.renameFrom && edit.renameFrom !== edit.name);
+  return fresh && !!((MODELS && MODELS.providers) || {})[edit.name];
+}
 async function saveProviders(edit, ok) {
+  if (providerNameTaken(edit)) {
+    return toast(t('名称已存在：{n}', { n: edit.name }), 'alert', 'warn');
+  }
   try {
     MODELS = await api('/models', jput(modelsBody(edit)));
     models = MODELS.selectors || [];

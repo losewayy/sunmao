@@ -22,7 +22,7 @@ rquickjs = { version = "0.14", features = ["futures"] }
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sunmao-llm = { path = "../llm", version = "0.1.6" }
+sunmao-llm = { path = "../llm", version = "0.1.7" }
 thiserror.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true

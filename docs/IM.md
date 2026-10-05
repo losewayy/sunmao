@@ -106,7 +106,7 @@ crates/cli/src/im/ —— gateway
 
 ## 各渠道要点
 
-- **telegram**：`token_env`/`token_file` 换 Bot API token； `poll_timeout_secs` 是 `getUpdates` 的 hold 时间（默认 30）。
+- **telegram**：`token_env`/`token_file` 换 Bot API token； `poll_timeout_secs` 是 `getUpdates` 的 hold 时间（默认 30，会被钳到 5..300）。
 - **feishu**：`region` 决定 API 域名（`feishu_cn` = open.feishu.cn， `lark_global` = open.larksuite.com），两边的应用不通用。
 - **qq**：`app_id` + `app_secret` 换 `access_token`；回复挂在用户那条消息的被动窗口（5 分钟内），窗口外的回复不带 `msg_id` 发出。
 - **dingtalk**：企业内部机器人走 **Stream 模式**——`POST /gateway/connections/open` 拿到一次性 `endpoint` + `ticket` 后拨反向 WebSocket，平台把回调推下来；**每条回调都要回 ACK**，不回会被重投。业务接口用 `x-acs-dingtalk-access-token`（`POST /oauth2/{corpId}/token` 换取，提前 60 秒过期），单聊发送走 `/robot/oToMessages/batchSend`。断线固定 5 秒重连。
@@ -141,10 +141,10 @@ crates/cli/src/im/ —— gateway
 
 `state.db` 的 `meta` 表按渠道前缀存游标，互不干扰：
 
-- `tg:offset` —— telegram `getUpdates` 偏移
+- `tg:offset:<tag>` —— telegram `getUpdates` 偏移（`<tag>` 是按 bot token 派生的短哈希，换 token 不会复用旧水位）
 - `qq:target:<chat>` / `qq:reply:<chat>` —— QQ 的回复目标类型与被动窗口
-- `wx:cursor` —— 微信 `get_updates_buf`（必须落盘，丢了就重放或漏消息）
-- `wx:ctx:<peer>` —— 微信每用户的 `context_token` 与时间戳（24h 过期）
+- `wx:cursor:<tag>` —— 微信 `get_updates_buf`（必须落盘，丢了就重放或漏消息）
+- `wx:ctx:<tag>:<peer>` —— 微信每用户的 `context_token` 与时间戳（24h 过期）
 
 ## 非目标（本版）
 

@@ -66,13 +66,16 @@ pub fn admitted(cfg: &ChannelsConfig, store: &Store, src: &ImSource) -> bool {
     }
 }
 
-/// Owner = config `owner:` or the store role. First approved sender lands
-/// here — `pairing approve` bootstraps it (Store::allow_add).
+/// Owner = config `owner:` (top-level or the channel block's own row) or
+/// the store role. First approved sender lands here — `pairing approve`
+/// bootstraps it (Store::allow_add).
 pub fn is_owner(cfg: &ChannelsConfig, store: &Store, src: &ImSource) -> bool {
-    cfg.owner
-        .as_deref()
-        .map(|o| o == src.sender_id || o == format!("{}:{}", src.channel, src.sender_id))
-        .unwrap_or(false)
+    let entry = format!("{}:{}", src.channel, src.sender_id);
+    let listed = |o: &str| o == src.sender_id || o == entry;
+    cfg.owner.as_deref().is_some_and(listed)
+        || scoped_for(cfg, &src.channel)
+            .and_then(|s| s.owner)
+            .is_some_and(listed)
         || store.allow_role(&src.channel, &src.sender_id).as_deref() == Some("owner")
 }
 

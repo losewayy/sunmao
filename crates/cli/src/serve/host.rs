@@ -14,6 +14,7 @@ use sunmao_core::agent::AgentLoop;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 mod approve;
+mod pick;
 mod projects;
 pub(crate) mod sched;
 
@@ -75,8 +76,11 @@ pub(crate) struct Shared {
     /// builds a fully-seeded Context for a log (the startup assembly,
     /// reusable per session)
     pub(crate) factory: super::SessionFactory,
-    /// model label recorded in a fresh session's Started event
+    /// model label recorded in a fresh session's Started event — the launch
+    /// model, i.e. the last tier of `Shared::start_model`
     pub(crate) model_label: String,
+    /// an explicitly given `--model`/`SUNMAO_MODEL` — see `pick`
+    pub(crate) model_override: Option<String>,
     /// The MCP Apps sandbox listener's port — the spec's double-iframe
     /// needs a second origin; hello carries it so islands can point at
     /// `http://127.0.0.1:{sandbox_port}/sandbox.html`. Under the Tauri
@@ -479,6 +483,8 @@ pub(crate) async fn new_session(
         .driver_override
         .or(loop_drv)
         .unwrap_or_else(|| sunmao_core::agent::LoopDriver::resolve(&cwd, &s.roots));
+    // precedence: --model flag > this project's `default_model` > launch model
+    let model = s.start_model(&cwd);
     let prompt = match &s.prompt_override {
         Some(p) => p.clone(),
         None => sunmao_core::prompt::PromptAssembler::new(&cwd)
@@ -491,7 +497,7 @@ pub(crate) async fn new_session(
     }
     let mut log = sunmao_core::SessionLog::open(&dir, &id).await?;
     log.append(&SessionEvent::Started {
-        model: s.model_label.clone(),
+        model: model.clone(),
         cwd: display_path(&cwd),
         driver: Some(driver.as_str().into()),
     })
@@ -501,6 +507,7 @@ pub(crate) async fn new_session(
     })
     .await?;
     let host = s.adopt(log, "startup").await?;
+    pick::bind(&host, &model, &s.model_label);
     Ok(serde_json::json!({"session": host.id}))
 }
 

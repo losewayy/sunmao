@@ -29,7 +29,15 @@ mod serve;
 mod sessions;
 mod tui;
 
-pub use serve::{ANNOTATE_JS, Client, HostHandle, HostResponse, I18N_EN_JS, I18N_JS, SANDBOX_PAGE};
+pub use serve::{
+    ANNOTATE_JS, Client, HostHandle, HostResponse, I18N_EN_JS, I18N_EN_PANELS_JS, I18N_JS,
+    SANDBOX_PAGE,
+};
+
+/// The compiled-in model — what `--model`/`SUNMAO_MODEL` fall back to. A
+/// project's `default_model` outranks it for a NEW session: a fallback is not
+/// a choice, while a model the flag/env actually named still wins.
+const DEFAULT_MODEL: &str = "global:deepseek-v4.1-flash";
 
 #[derive(Parser, Clone)]
 #[command(name = "sunmao", version, about = "agent harness kernel — 榫卯")]
@@ -48,11 +56,7 @@ pub struct Cli {
     #[arg(long, env = "SUNMAO_API_KEY", default_value = "your-api-key-here")]
     api_key: String,
     /// Model id.
-    #[arg(
-        long,
-        env = "SUNMAO_MODEL",
-        default_value = "global:deepseek-v4.1-flash"
-    )]
+    #[arg(long, env = "SUNMAO_MODEL", default_value = DEFAULT_MODEL)]
     model: String,
     /// Provider dialect: openai (default) or anthropic.
     #[arg(long, default_value = "openai", env = "SUNMAO_PROVIDER")]
@@ -506,6 +510,9 @@ async fn host_spec(cli: &Cli) -> anyhow::Result<serve::HostSpec> {
         catalog: Vec::new(),
     };
     let model_label = cli.model.clone();
+    // `--model`/`SUNMAO_MODEL` only outranks a project's `default_model` when
+    // it names a model of its own — the compiled fallback is not a choice
+    let model_override = (model_label != DEFAULT_MODEL).then(|| model_label.clone());
     let driver_override = cli.driver;
     let serve_roots = preset_roots.clone();
     let factory = serve::SessionFactory {
@@ -552,6 +559,7 @@ async fn host_spec(cli: &Cli) -> anyhow::Result<serve::HostSpec> {
         // dir assembles its own (AGENTS.md etc. follow the project)
         prompt_override: cli.system.as_ref().map(|_| system_prompt.clone()),
         model_label,
+        model_override,
         first_log,
         driver_override: cli.driver,
     })

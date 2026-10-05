@@ -355,7 +355,9 @@ async function refreshModels() {
 const provNames = () => Object.keys((MODELS && MODELS.providers) || {}).sort();
 // compose the PUT body: current file with `name` replaced/removed/added.
 // `api_key` is only written when the form actually collected one — a blank
-// field means "keep".
+// field means "keep". `default_model` is a top-level key like `routes`: an
+// edit that names one sets it (null clears), any other save carries the
+// current value through instead of dropping it.
 function modelsBody(edit) {
   const providers = {};
   for (const [n, p] of Object.entries((MODELS && MODELS.providers) || {})) {
@@ -364,7 +366,7 @@ function modelsBody(edit) {
   }
   if (edit) {
     if (edit.del) delete providers[edit.name];
-    else {
+    else if (edit.name) {
       // a rename keeps the entry's key and catalog: the save that carries a
       // new name also carries the source name it came from
       const src = (edit.renameFrom && MODELS.providers[edit.renameFrom]) || MODELS.providers[edit.name] || {};
@@ -377,7 +379,10 @@ function modelsBody(edit) {
       if (edit.renameFrom) delete providers[edit.renameFrom];
     }
   }
-  return { providers, routes: (MODELS && MODELS.routes) || {} };
+  const body = { providers, routes: (MODELS && MODELS.routes) || {} };
+  const dm = edit && 'default_model' in edit ? edit.default_model : MODELS && MODELS.default_model;
+  if (dm) body.default_model = dm;
+  return body;
 }
 async function saveProviders(edit, ok) {
   try {

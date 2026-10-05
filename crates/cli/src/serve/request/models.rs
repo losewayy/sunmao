@@ -50,6 +50,9 @@ pub(super) async fn view(s: &Arc<Shared>, sess: Option<String>) -> HostResponse 
     HostResponse::json(serde_json::json!({
         "providers": providers_view(&file),
         "routes": file.routes,
+        // the new-session pick — the settings page renders it and writes it
+        // back through the same PUT (null = nothing pinned)
+        "default_model": file.default_selector(),
         "selectors": resolver.as_ref().map(|m| m.selectors()).unwrap_or_default(),
         "default_provider": resolver.as_ref().map(|m| m.default_provider()).unwrap_or_else(|| "default".into()),
     }))

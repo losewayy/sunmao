@@ -72,6 +72,7 @@ fn shared_at(cwd: std::path::PathBuf) -> super::super::host::Shared {
             make: Box::new(|_, _, _| Box::pin(async { anyhow::bail!("test factory") })),
         },
         model_label: String::new(),
+        model_override: None,
         sandbox_port: 0,
         prompt_override: None,
         driver_override: None,

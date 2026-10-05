@@ -88,6 +88,7 @@ function dockClose(id) {
   if (t.kind === 'browser') {
     brPane(t)?.remove();
     if (nativeBr()) brSendId(t.id, { op: 'close', id: t.id });
+    brAnnStop(t.id); // an armed picker on a dead tab has nowhere to report
   }
   delete BR[t.id];
   save(); renderDockTabs();
@@ -348,6 +349,7 @@ function dockSessionSwap() {
   for (const id of Object.keys(BR)) {
     if (keep.has('br:' + id)) continue;
     if (nativeBr()) brSendId(+id, { op: 'close', id: +id });
+    brAnnStop(+id);
     if (BR[id]) BR[id].live = false;
   }
   $$('#dock .dock-pane[data-pane^="br:"]').forEach(p => { if (!keep.has(p.dataset.pane)) p.remove(); });

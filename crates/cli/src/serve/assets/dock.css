@@ -7,6 +7,15 @@
    every pane keeps its own scroll position and render state. */
 .dock{position:absolute;right:var(--s-gutter);top:var(--h-3xl);bottom:var(--s-gutter);width:var(--w-dock);display:flex;flex-direction:column;z-index:var(--z-dock);border-radius:var(--r-xl);overflow:hidden;transition:transform var(--dur-slow) var(--ease-in-out),visibility var(--dur-slow);container-type:inline-size;container-name:dock}
 #app:not([data-dock="on"]) .dock{transform:translateX(calc(100% + var(--s-16)));visibility:hidden}
+/* left-edge drag — the dock is right-anchored, so the handle straddles its
+   boundary from the OUTSIDE (see index.html): 12px of grab, a hairline on
+   the dock's edge as the only visual. It has to live outside the panel
+   because a dock browser tab's native guest webview covers the panel's own
+   left edge and eats the pointer there. */
+.dock-edge{position:absolute;right:calc(var(--s-gutter) + var(--w-dock));top:var(--h-3xl);bottom:var(--s-gutter);width:var(--s-12);cursor:ew-resize;z-index:var(--z-chrome)}
+.dock-edge::after{content:'';position:absolute;right:0;top:var(--s-16);bottom:var(--s-16);width:var(--bw-hairline);background:var(--c-stroke);opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
+.dock-edge:hover::after,.dock-edge:active::after{opacity:1}
+#app:not([data-dock="on"]) .dock-edge{visibility:hidden}
 /* every tab is dynamic now — compact pills left-aligned, × on hover,
    + always at the strip's end; the row scrolls sideways if it overflows */
 .dock-tabs{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-6) var(--s-8);padding-left:var(--s-16);border-bottom:var(--bw-hairline) solid var(--c-stroke);flex:none;overflow-x:auto;scrollbar-width:none}
@@ -32,13 +41,6 @@
 .dock-add{flex:none;display:inline-flex;align-items:center;justify-content:center;width:var(--h-md);height:var(--h-md);border-radius:var(--r-full);color:var(--c-text-3)}
 .dock-add:hover{background:var(--c-fill-1);color:var(--c-text)}
 
-/* left-edge drag — the dock is right-anchored so its width lives on the
-   left border; a transparent hit strip owns the resize cursor */
-.dock-edge{position:absolute;left:0;top:0;bottom:0;width:var(--s-8);cursor:ew-resize;z-index:var(--z-l2)}
-/* hover/drag affordance — a hairline spine so the resize gesture is
-   discoverable without a permanent visual */
-.dock-edge::after{content:'';position:absolute;left:0;top:var(--s-16);bottom:var(--s-16);width:var(--bw-hairline);background:var(--c-stroke);opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
-.dock-edge:hover::after,.dock-edge:active::after{opacity:1}
 /* empty panel IS the launcher — it must live in flow so the dock grows
    to fit it (absolute children give the card zero height) */
 .dock-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--s-10);padding:var(--s-16) var(--s-12);min-height:45vh}

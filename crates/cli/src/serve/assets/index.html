@@ -83,7 +83,7 @@
 </div>
 
 <div id="app" data-dock="on" data-rail="on" data-view="session">
-  <div class="titlebar" data-tauri-drag-region>
+  <div class="titlebar">
     <button class="crumb glass" id="crumb" data-act="crumb"></button>
     <div class="capsule glass" role="toolbar" aria-label="全局">
       <button class="ib" data-act="palette" data-tip="命令面板|Ctrl K" aria-label="命令面板"><svg class="i"><use href="#i-search"/></svg></button>
@@ -97,7 +97,7 @@
     </div>
   </div>
 
-  <div class="drag-l" data-tauri-drag-region aria-hidden="true"></div>
+  <div class="drag-l" aria-hidden="true"></div>
   <div class="capsule glass capsule-l">
     <button class="ib on" data-act="rail" id="rail-btn" data-tip="会话侧栏|Ctrl B" aria-label="会话侧栏"><svg class="i"><use href="#i-panel-l"/></svg></button>
   </div>
@@ -249,8 +249,11 @@
     <div id="toasts"></div>
   </main>
 
+  <!-- the dock's resize handle lives OUTSIDE the panel: a browser tab fills
+       its pane with a native guest webview, and a child HWND paints over (and
+       swallows the pointer of) everything inside the dock's rectangle -->
+  <div class="dock-edge" id="dock-edge" data-tip="拖动调整宽度"></div>
   <aside class="dock glass" id="dock" aria-label="数据面板">
-    <div class="dock-edge" id="dock-edge" data-tip="拖动调整宽度"></div>
     <nav class="dock-tabs" id="dock-tabs" role="tablist" aria-label="数据面板分页">
       <span id="dt-dyn"></span>
       <button class="dock-add" data-act="dock-add" data-tip="新建标签页" aria-label="新建标签页"><svg class="i"><use href="#i-plus"/></svg></button>

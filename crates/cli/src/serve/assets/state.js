@@ -69,16 +69,23 @@ const TAURI = window.__sunmaoShell || null;
 const shellWin = () => TAURI;
 if (TAURI) {
   document.body.classList.add('shell');
-  // frameless drag — the titlebar is the drag surface; interactive
+  // frameless drag — the whole 48px band is the drag surface; interactive
   // controls (buttons) opt out so clicks still reach them.
   // Double-press toggles maximize (the Windows caption convention) — it is
   // read off the second mousedown's `detail`, because the first press's
   // native drag loop swallows the dblclick event.
-  $('.titlebar').addEventListener('mousedown', e => {
+  // Two elements, one handler: `.titlebar` only spans the area right of the
+  // rail, so the gaps left of it belong to `.drag-l`. Tauri's own
+  // `data-tauri-drag-region` is dead here — it invokes
+  // `plugin:window|start_dragging`, and this app deliberately grants no
+  // core:window capability (the shell seam is the authority), so the page
+  // owns the gesture.
+  const bandDrag = e => {
     if (e.button !== 0 || e.target.closest('button,input,a,[contenteditable]')) return;
     e.preventDefault();
     if (e.detail === 2) TAURI.win('max'); else TAURI.drag();
-  });
+  };
+  $$('.titlebar, .drag-l').forEach(el => el.addEventListener('mousedown', bandDrag));
   // the titlebar now catches pointer input — hand wheel scrolls through
   // to whatever scroll surface sits under it
   $('.titlebar').addEventListener('wheel', e => {

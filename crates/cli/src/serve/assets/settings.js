@@ -193,12 +193,38 @@ const DIALECTS = [
   { v: 'openai-responses', t: 'Responses', d: '/responses + response_id chaining' },
   { v: 'anthropic', t: 'Anthropic Messages', d: '/messages + SSE' },
 ];
+/* 默认模型 — the model a NEW session starts on, `default_model` in
+   models.json. A session already under way keeps the model its own log names
+   (`Started`/`model.change`), so changing this never retargets one — which is
+   the scope line the 终端 page uses for its own new-session-only pick. The
+   clear row reuses the 默认 label: an unset key means the launch model
+   decides, not that a model called "default" is pinned. */
+function defaultModelPop(el) {
+  const cur = (MODELS && MODELS.default_model) || '';
+  const items = [
+    { label: t('默认模型') },
+    { v: '', t: t('默认'), on: !cur },
+    ...((MODELS && MODELS.selectors) || []).map(s => ({ v: s, t: s, mono: true, on: s === cur })),
+  ];
+  menuPop(el, items, v => saveDefaultModel(v), { place: 'top', align: 'end' });
+}
+async function saveDefaultModel(sel) {
+  try {
+    MODELS = await api('/models', jput(modelsBody({ default_model: sel || null })));
+    models = MODELS.selectors || [];
+    toast(t('设置已保存；新会话生效'), 'check');
+    renderProviders();
+  } catch (e) { toast(t('保存失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
+}
 function renderProviders() {
   if (view !== 'settings' || setPage !== 'providers') return;
   const host = $('#set-generic');
   if (!MODELS) { host.innerHTML = head(t('模型与提供商'), '') + '<div class="empty-hint">' + t('正在读取模型配置…') + '</div>'; refreshModels(); return; }
   const names = Object.keys(MODELS.providers || {}).sort();
   let html = head(t('模型与提供商'), '');
+  const def = (MODELS.default_model) || t('默认');
+  html += card([row(t('默认模型'), t('仅对新建的会话生效'),
+    `<button class="pill plain" data-pv="defmodel"><span class="mono">${esc(def)}</span>${ic('chev-d')}</button>`)]);
   for (const n of names) {
     const p = MODELS.providers[n], cat = p.catalog || [];
     let body;
@@ -315,6 +341,7 @@ function provForm(n, p) {
   </div>`;
 }
 async function providerAction(kind, el) {
+  if (kind === 'defmodel') return defaultModelPop(el);
   const cardEl = el.closest('.pv');
   const g = f => { const i = cardEl && cardEl.querySelector(`[data-f="${f}"]`); return i ? i.value.trim() : ''; };
   if (kind === 'add') { pvEdit = { name: null, sel: new Set(), cands: [] }; return renderProviders(); }

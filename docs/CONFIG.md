@@ -31,7 +31,7 @@ The roster's cancel control (`task_cancel` ws frame → `cancel_sub`) is the
 surgical version of `agent.cancel()`: it trips that ONE child's flag+notify
 and its own finish path records `done=false` — a cancelled child is a
 failure, not a clean exit (`TurnOutcome::Cancelled` discriminates it).
-| `models.json` | `{"providers": {"p": {"base_url","api_key_env","dialect"}}, "routes": {"r": "sel" \| ["sel",...]}}` | model routing — `model:` selectors resolve `provider/model`, bare `model` (session provider), or `@route` chains; unresolvable → inherit parent |
+| `models.json` | `{"providers": {"p": {"base_url","api_key_env","dialect"}}, "routes": {"r": "sel" \| ["sel",...]}, "default_model": "sel"}` | model routing — `model:` selectors resolve `provider/model`, bare `model` (session provider), or `@route` chains; unresolvable → inherit parent. `default_model` (optional) is the selector a **new** session starts on — `--model`/`SUNMAO_MODEL` still wins, and a session already under way keeps the model in its own log |
 | `plugin/` | same tree as a plugin root | "this project is a plugin" convention |
 | `plugins/<name>/` | plugin dir | contributes `commands/`, `skills/`, `agents/` **and** merges its `plugin.json` (`hooks` + `mcpServers`, `${CLAUDE_PLUGIN_ROOT}` → the plugin dir); `sunmao plugin install|list|remove` manages this dir — install takes a local dir, a git URL, or `owner/repo` (clones via `git`, depth 1) |
 | `presets/<name>/` | plugin dir | same bundle shape as `plugins/<name>/` (plus `permissions.json`), but only active while named via `--preset <name>` — see "Presets" below |

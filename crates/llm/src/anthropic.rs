@@ -48,7 +48,7 @@ impl AnthropicClient {
                 .tcp_keepalive(std::time::Duration::from_secs(60))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
-            base_url: base_url.into().trim_end_matches('/').to_string(),
+            base_url: crate::canonical_base(&base_url.into()),
             api_key: api_key.into(),
             model: model.into(),
             default_max_tokens: 8_192,

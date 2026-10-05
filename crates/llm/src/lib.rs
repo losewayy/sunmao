@@ -52,3 +52,65 @@ pub type DeltaStream = std::pin::Pin<Box<dyn Stream<Item = anyhow::Result<Stream
 pub trait ProviderAdapter: Send + Sync {
     async fn stream(&self, req: ChatRequest<'_>) -> anyhow::Result<DeltaStream>;
 }
+
+/// The base a dialect appends its own path to.
+///
+/// The configured `base_url` is a base — `https://api.example.com/v1` — but a
+/// pasted full endpoint is the same endpoint, and appending to it would ask
+/// for `/v1/chat/completions/chat/completions`. The path this dialect is about
+/// to add is stripped when it is already there, so both spellings work.
+pub(crate) const DIALECT_ENDPOINTS: [&str; 3] = ["/chat/completions", "/responses", "/messages"];
+
+/// The base every dialect and every catalog fetch should start from.
+///
+/// The configured `base_url` is used verbatim — a version segment (`/v1`,
+/// `/v2`), a gateway prefix (`/openai/v1`), or nothing at all are all the
+/// user's call, and guessing one would break the others. The only rewrite is
+/// removing an endpoint path the user already wrote out: pasting
+/// `https://host/v1/chat/completions` must not ask for
+/// `/v1/chat/completions/chat/completions`.
+pub fn canonical_base(base: &str) -> String {
+    let mut b = base.trim_end_matches('/');
+    for e in DIALECT_ENDPOINTS {
+        if let Some(stripped) = b.strip_suffix(e) {
+            b = stripped.trim_end_matches('/');
+        }
+    }
+    b.to_string()
+}
+
+#[cfg(test)]
+mod endpoint_base_tests {
+
+    #[test]
+    fn the_version_segment_is_the_users_call() {
+        use crate::canonical_base;
+        assert_eq!(
+            canonical_base("https://api.openai.com/v1"),
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(
+            canonical_base("https://host:4000/v2"),
+            "https://host:4000/v2"
+        );
+        assert_eq!(
+            canonical_base("https://api.deepseek.com"),
+            "https://api.deepseek.com"
+        );
+        assert_eq!(
+            canonical_base("http://host:4000/openai/v1/"),
+            "http://host:4000/openai/v1"
+        );
+    }
+
+    #[test]
+    fn any_pasted_endpoint_is_stripped_once() {
+        use crate::canonical_base;
+        assert_eq!(
+            canonical_base("https://x/v1/chat/completions"),
+            "https://x/v1"
+        );
+        assert_eq!(canonical_base("https://x/v1/responses/"), "https://x/v1");
+        assert_eq!(canonical_base("https://x/v1/messages"), "https://x/v1");
+    }
+}

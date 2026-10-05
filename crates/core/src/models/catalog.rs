@@ -14,7 +14,7 @@ use super::{CatalogEntry, ProviderDef};
 /// that omits them just yields bare ids — no field is mandatory.
 pub async fn fetch_catalog(provider: &ProviderDef) -> anyhow::Result<Vec<CatalogEntry>> {
     use anyhow::Context as _;
-    let url = format!("{}/models", provider.base_url.trim_end_matches('/'));
+    let url = format!("{}/models", sunmao_llm::canonical_base(&provider.base_url));
     let key = provider
         .api_key_env
         .as_deref()

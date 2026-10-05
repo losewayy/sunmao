@@ -493,15 +493,14 @@ pub(crate) async fn gate_ask(
         },
     );
     // the parked card must answer to cancel too — a `cancel_sub` on a
-    // child suspended here sets that Context's own notify; without the
-    // select the kill lands only at the next poll boundary
+    // child suspended here sets that Context's own signal; `wait` reads the
+    // flag before and after registering, so a cancel that landed before
+    // this select still answers the card as Cancelled
     let approval = {
-        let w = ctx.cancel_notify.notified();
-        tokio::pin!(w);
-        w.as_mut().enable();
+        let cancel = ctx.cancel_signal();
         tokio::select! {
             a = ctx.approval.approve(tool, specifier, why) => a,
-            _ = w => crate::approval::Approval::Cancelled,
+            () = cancel.wait() => crate::approval::Approval::Cancelled,
         }
     };
     match approval {

@@ -240,20 +240,13 @@ fn run_script(ctx: Arc<Context>, code: &str, timeout: Duration) -> Result<String
         let watchdog = {
             let stop = stop.clone();
             let reason = reason.clone();
-            let cancelled = ctx.cancelled.clone();
-            let cancel = ctx.cancel_notify.clone();
+            let cancel = ctx.cancel_signal();
             tokio::spawn(async move {
-                let n = cancel.notified();
-                tokio::pin!(n);
-                n.as_mut().enable();
-                if cancelled.load(Ordering::Relaxed) {
-                    stop.store(true, Ordering::Relaxed);
-                    reason.store(2, Ordering::Relaxed);
-                    return;
-                }
+                // `wait` carries the flag, so a cancel that landed before
+                // this task was scheduled still stops the script
                 tokio::select! {
                     () = tokio::time::sleep(timeout) => reason.store(1, Ordering::Relaxed),
-                    () = &mut n => reason.store(2, Ordering::Relaxed),
+                    () = cancel.wait() => reason.store(2, Ordering::Relaxed),
                 }
                 stop.store(true, Ordering::Relaxed);
             })
@@ -263,11 +256,9 @@ fn run_script(ctx: Arc<Context>, code: &str, timeout: Duration) -> Result<String
         let serve = serve_requests(&ctx, rx, &observer);
         tokio::pin!(serve);
         let code = code.to_string();
-        let cancel_wait = ctx.cancel_notify.notified();
-        tokio::pin!(cancel_wait);
-        cancel_wait.as_mut().enable();
-        let res = if ctx.cancelled.load(Ordering::Relaxed) {
-            // the cancel beat our waiter registration — the notified()
+        let cancel = ctx.cancel_signal();
+        let res = if cancel.is_cancelled() {
+            // the cancel beat our waiter registration — a bare notified()
             // would wait forever on a wake that already happened
             Err("cancelled by user".into())
         } else {
@@ -294,7 +285,7 @@ fn run_script(ctx: Arc<Context>, code: &str, timeout: Duration) -> Result<String
                 () = tokio::time::sleep(timeout) => {
                     Err(format!("script exceeded its {timeout:?} budget — killed"))
                 }
-                () = &mut cancel_wait => Err("cancelled by user".into()),
+                () = cancel.wait() => Err("cancelled by user".into()),
             }
         };
         // the script is over — a watchdog still parked on sleep(timeout)

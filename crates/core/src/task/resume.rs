@@ -27,7 +27,7 @@ fn roster_reopen(
     prompt: &str,
     agent: Option<&str>,
     steer: &crate::context::SteerQueue,
-    cancel: &crate::context::SubCancel,
+    cancel: &crate::context::CancelSignal,
 ) {
     let mut digest: String = prompt.chars().take(60).collect();
     if prompt.chars().count() > 60 {
@@ -106,7 +106,7 @@ pub(super) async fn resume_sub(
     }
     let agent_name = def.map(|d| d.name.as_str());
     let steer = sub_ctx.steer.clone();
-    let cancel = crate::context::SubCancel::new(&sub_ctx);
+    let cancel = sub_ctx.cancel_signal();
     roster_reopen(
         ctx,
         sub_id,

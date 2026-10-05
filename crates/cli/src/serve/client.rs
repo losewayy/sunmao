@@ -350,7 +350,7 @@ impl Client {
                             cwd,
                             120,
                             ctx.shell,
-                            Some(ctx.cancel_notify.clone()),
+                            Some(ctx.cancel_signal()),
                         )
                         .await
                         {

@@ -6,6 +6,15 @@
 use super::AgentLoop;
 use crate::context::MutexRecover;
 
+/// How long a cooperative cancel may take before the round force-ends
+/// itself (`turn::chain` races the driver against this deadline). It sits
+/// above the slowest *legitimate* cooperative exit — a SIGKILLed tool still
+/// reaps its pipes, bounded at `tool::PIPE_DRAIN_TIMEOUT` (5s) — so the
+/// backstop never preempts a stop that is already working, and far below
+/// the 120s default shell budget, so a tool that ignores the signal cannot
+/// park the turn for its whole allowance.
+pub(crate) const HARD_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+
 impl AgentLoop {
     /// Signal cooperative cancellation for the in-flight turn. Two hops:
     /// the flag (read at iteration boundaries) and `cancel_notify`
@@ -26,11 +35,10 @@ impl AgentLoop {
     /// Stopping the main agent is the only thing a channel can express;
     /// sub-agents keep running (their `TaskDone` write-backs land in the
     /// log as always). The pointed version for one child is `cancel_sub`.
+    /// Idempotent by construction: `CancelSignal::cancel` only sets a flag
+    /// and wakes waiters, so a second click is a no-op, not an error.
     pub fn cancel_main(&self) {
-        self.ctx
-            .cancelled
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        self.ctx.cancel_notify.notify_waiters();
+        self.ctx.cancel_signal().cancel();
         // a parked approval card is a suspended ask() — without this drain
         // the dispatcher hangs past the turn-end reset on the pending rx
         self.ctx.approval.cancel_pending();

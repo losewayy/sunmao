@@ -259,6 +259,7 @@ function addNote(text) {
 }
 function setBusy(on) {
   busy = !!on;
+  if (!busy) clearStopping();
   $('#cmp-busy').hidden = !busy;
   $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy && !curGoal;
   // one button morphs instead of swapping two: busy Enter queues the
@@ -267,6 +268,7 @@ function setBusy(on) {
   const btn = $('#send-btn');
   btn.dataset.act = busy ? 'stop' : 'send';
   btn.classList.toggle('stop', busy);
+  btn.disabled = false;
   btn.setAttribute('data-tip', busy ? t('停止生成 · 引导仍可用 Ctrl+Enter') : t('发送|Enter · 引导|Ctrl+Enter'));
   btn.setAttribute('aria-label', busy ? t('停止生成') : t('发送'));
   $('use', btn).setAttribute('href', busy ? '#i-square' : '#i-arrow-up');
@@ -558,6 +560,13 @@ function liveEvent(raw) {
       append(TX, youHTML(ev.detail || '', true, clock(), ev.detail ? 'pending' : 0), true);
       steerQ.shift(); renderQueueChips();
       logEv('message', t('你：') + String(ev.detail || '').slice(0, 60));
+    } else if (ev.event === 'force_stop') {
+      // the kernel gave up waiting for a cooperative exit and dropped the
+      // round — never let a hard stop read as an ordinary stop
+      closeMsg();
+      addNote('⛔ ' + t('已强制停止') + (ev.detail ? ` · ${ev.detail}` : ''));
+      toast(t('已强制停止'), 'alert', 'warn');
+      logEv('hook', `force_stop · ${ev.detail}`);
     } else logEv('hook', `${ev.event} · ${ev.detail}`);
   }
   else if (ty === 'turn_end') {

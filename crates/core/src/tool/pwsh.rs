@@ -9,8 +9,6 @@
 //!  - stdout/stderr are drained on their own tasks — a pipe buffer fills
 //!    (~64KB) and the child deadlocks if nobody reads while we wait().
 
-use std::sync::Arc;
-
 use anyhow::Context as _;
 use base64::Engine as _;
 
@@ -58,7 +56,7 @@ pub async fn run_foreground(
     command: &str,
     cwd: std::path::PathBuf,
     timeout_secs: u64,
-    cancel: Option<Arc<tokio::sync::Notify>>,
+    cancel: Option<crate::context::CancelSignal>,
 ) -> Result<ShellRun, String> {
     let mut child = pwsh_command(command)
         .current_dir(&cwd)
@@ -97,14 +95,17 @@ pub async fn run_foreground(
         })
     };
 
-    // arm before the select — `notified()` registers on first poll, so a
-    // notify fired in the gap between creation and the select's first
-    // poll would slip past and leave the run unabortable
-    let cancel_fut = cancel.as_ref().map(|n| n.notified());
+    // the kill waiter is a `CancelSignal`, not a bare `Notified`: a cancel
+    // that landed before the waiter registered (a stored `Notify` permit
+    // would have covered it, `notify_waiters` does not) is lost otherwise,
+    // and the run would sit until its own timeout
+    let cancel_fut = async move {
+        match cancel {
+            Some(c) => c.wait().await,
+            None => std::future::pending::<()>().await,
+        }
+    };
     tokio::pin!(cancel_fut);
-    if let Some(f) = cancel_fut.as_mut().as_pin_mut() {
-        f.enable();
-    }
 
     enum End {
         Natural(i32),
@@ -117,12 +118,7 @@ pub async fn run_foreground(
             Err(e) => return Err(format!("pwsh wait failed: {e}")),
         },
         () = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs)) => End::Timeout,
-        _ = async {
-            match cancel_fut.as_mut().as_pin_mut() {
-                Some(f) => f.await,
-                None => std::future::pending::<()>().await,
-            }
-        } => End::Cancelled,
+        () = &mut cancel_fut => End::Cancelled,
     };
 
     let (code, ended) = match end {

@@ -212,7 +212,7 @@ pub async fn run(
                 cwd.to_path_buf(),
                 120,
                 ctx.shell,
-                Some(ctx.cancel_notify.clone()),
+                Some(ctx.cancel_signal()),
             )
             .await
             {

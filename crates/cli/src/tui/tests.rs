@@ -7,6 +7,19 @@ fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
 
+/// Point the slash menu at a named match — the candidate pool folds in
+/// user-level skills and file commands, so a prefix can win a different
+/// first row on a real machine (e.g. a `research` skill shadows `/res` →
+/// `resume`). Tests must select the target, not assume its sort slot.
+fn select_match(app: &mut App, name: &str) {
+    let m = app.slash_menu.as_mut().expect("slash menu must be open");
+    m.selected = m
+        .matches
+        .iter()
+        .position(|c| c == name)
+        .unwrap_or_else(|| panic!("{name} must be among the matches: {:?}", m.matches));
+}
+
 /// Readline convention: Up browses history, Down past the newest entry
 /// restores the half-typed draft — losing it is a data-loss bug, not a
 /// cosmetic quirk.
@@ -120,8 +133,7 @@ fn slash_menu_tab_completes_without_submit() {
     for c in "/res".chars() {
         app.insert_char(c);
     }
-    let m = app.slash_menu.as_ref().expect("menu must open on /res");
-    assert_eq!(m.matches[m.selected], "resume");
+    select_match(&mut app, "resume");
 
     input_key(&mut app, key(KeyCode::Tab), &tx);
     assert_eq!(app.input, "/resume ");
@@ -189,8 +201,7 @@ fn slash_arg_command_enter_fills_and_reopens() {
     for c in "/res".chars() {
         app.insert_char(c);
     }
-    let m = app.slash_menu.as_ref().expect("menu opens on /res");
-    assert_eq!(m.matches[m.selected], "resume");
+    select_match(&mut app, "resume");
     input_key(&mut app, key(KeyCode::Enter), &tx);
     assert!(rx.try_recv().is_err(), "arg command must not submit");
     assert_eq!(app.input, "/resume ");
@@ -428,6 +439,7 @@ fn resume_picker_lists_sessions_and_enter_resumes() {
         app.insert_char(c);
     }
     // resume is arg-taking: Enter fills `/resume `, then the picker opens
+    select_match(&mut app, "resume");
     input_key(&mut app, key(KeyCode::Enter), &tx);
     assert_eq!(app.input, "/resume ");
     let m = app

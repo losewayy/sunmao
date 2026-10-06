@@ -501,7 +501,11 @@ impl ChannelAdapter for QqAdapter {
     }
 
     // edit_text: QQ v2 edits exist for streamed replies but no caller in
-    // this gateway needs one — the progress draft is a fresh message.
+    // this gateway needs one — the progress draft is posted once and left
+    // alone until the edit surface is actually wired.
+    fn can_edit(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

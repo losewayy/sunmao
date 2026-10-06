@@ -52,49 +52,7 @@ impl ProviderAdapter for RecProvider {
     }
 }
 
-pub(super) fn tool_call(id: &str, name: &str, args: &str) -> Vec<StreamDelta> {
-    vec![
-        StreamDelta::ToolCalls(vec![
-            ToolCallFragment {
-                index: 0,
-                id: Some(id.into()),
-                name: Some(name.into()),
-                arguments: None,
-            },
-            ToolCallFragment {
-                index: 0,
-                arguments: Some(args.into()),
-                ..Default::default()
-            },
-        ]),
-        StreamDelta::Finish {
-            reason: Some("tool_calls".into()),
-            usage: None,
-        },
-    ]
-}
-
-pub(super) fn text(s: &str) -> Vec<StreamDelta> {
-    vec![
-        StreamDelta::Content(s.into()),
-        StreamDelta::Finish {
-            reason: Some("stop".into()),
-            usage: Some(Usage::default()),
-        },
-    ]
-}
-
-pub(super) fn queued(
-    v: Vec<Vec<StreamDelta>>,
-) -> std::sync::Mutex<std::collections::VecDeque<Vec<StreamDelta>>> {
-    std::sync::Mutex::new(std::collections::VecDeque::from(v))
-}
-
-use super::fusion_fixture::{fusion_context, fusion_ctx};
-
-async fn events(ctx: &Arc<Context>) -> Vec<SessionEvent> {
-    ctx.sessions.lock().await.events().await.unwrap_or_default()
-}
+use super::fusion_fixture::{events, fusion_context, fusion_ctx, queued, text, tool_call};
 
 /// `/mode fusion` flips the third axis: the `turn_mode_change` fact is
 /// durable, the per-context read_only flag arms on the spot, and a

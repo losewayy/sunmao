@@ -169,23 +169,32 @@ async fn run_verifies(ctx: &Arc<Context>) -> Vec<(String, i32, String)> {
     out
 }
 
-/// exit -1 (the spawn never resolved — parse error, timeout kill) and the
+/// exit -1 (the spawn never resolved — parse error, lost worker) and the
 /// classic "command could not start" shapes mean the ENVIRONMENT failed,
 /// not the work. Classifying them as work failures burns the escalation
 /// streak and nearly drives the Lead to rewrite code that was never the
-/// problem.
+/// problem. Two guards keep the label honest: a run that hit its timeout
+/// is a WORK verdict (the delegated command hung — saying "environment"
+/// would let the Lead steer a hang forever), and the free-text match is
+/// restricted to the codes a missing-command produces (1 on pwsh, -1 on
+/// spawn) so a real exit-2 failure whose output merely mentions the
+/// phrases still counts.
 fn inconclusive(code: i32, detail: &str) -> bool {
+    if detail.contains("timed out") {
+        return false;
+    }
     code == -1
         || code == 127
         || code == 9009
-        || [
-            "could not execute process",
-            "is not recognized",
-            "command not found",
-            "没有应用程序",
-        ]
-        .iter()
-        .any(|t| detail.contains(t))
+        || (code == 1
+            && [
+                "could not execute process",
+                "is not recognized",
+                "command not found",
+                "没有应用程序",
+            ]
+            .iter()
+            .any(|t| detail.contains(t)))
 }
 
 /// A compact digest of the Sidekick's own tool calls appended to the
@@ -234,4 +243,37 @@ async fn sidekick_trace(ctx: &Arc<Context>) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("\n\n[sidekick ran: {parts} — transcript: {sub_id}]")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inconclusive;
+
+    #[test]
+    fn inconclusive_covers_environment_faults_only() {
+        // a spawn that never resolved, and the classic not-found codes
+        assert!(inconclusive(-1, "could not execute process"));
+        assert!(inconclusive(127, "bash: foo: command not found"));
+        assert!(inconclusive(9009, "'foo' is not recognized"));
+        assert!(inconclusive(
+            1,
+            "foo : The term 'foo' is not recognized as a cmdlet"
+        ));
+        // a hung command is a WORK verdict — the run resolved, the work
+        // didn't finish; calling it "environment" would let the Lead
+        // steer a hang forever without escalating
+        assert!(!inconclusive(-1, "[timed out after 120s — killed]"));
+        assert!(!inconclusive(
+            -1,
+            "partial output\n[timed out after 120s — killed]"
+        ));
+        // a real failure whose output merely mentions the phrases still
+        // counts — the free-text match only applies to the codes a
+        // missing command produces
+        assert!(!inconclusive(
+            2,
+            "grep found 'command not found' in the log"
+        ));
+        assert!(!inconclusive(1, "test failed: 3 assertions"));
+    }
 }

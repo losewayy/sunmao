@@ -307,3 +307,92 @@ fn claude_layer_can_override_the_default_model() {
     assert_eq!(default_selector(&dir).as_deref(), Some("proj/m2"));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn reload_keeps_the_file_default_provider() {
+    let dir = crate::fresh_test_dir("models-reload-default");
+    let r = ModelResolver::load(
+        &dir,
+        ProviderDef {
+            base_url: "http://session/v1".into(),
+            api_key_env: Some("SESSION_KEY".into()),
+            dialect: "openai".into(),
+            ..Default::default()
+        },
+        "default",
+    );
+    write_models(
+        &dir,
+        ".sunmao",
+        r#"{"providers":{"default":{"base_url":"http://file/v1","api_key_env":"FILE_KEY","dialect":"anthropic","catalog":[{"id":"saved"}],"request_timeout":7}}}"#,
+    );
+    r.reload();
+    let file = r.file();
+    let provider = file.providers.get("default").unwrap();
+    assert_eq!(provider.base_url, "http://file/v1");
+    assert_eq!(provider.api_key_env.as_deref(), Some("FILE_KEY"));
+    assert_eq!(provider.dialect, "anthropic");
+    assert_eq!(provider.catalog[0].id, "saved");
+    assert_eq!(provider.extra["request_timeout"], serde_json::json!(7));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn load_keeps_the_file_default_provider() {
+    let dir = crate::fresh_test_dir("models-load-default");
+    write_models(
+        &dir,
+        ".sunmao",
+        r#"{"providers":{"default":{"base_url":"http://file/v1","api_key_env":"FILE_KEY","dialect":"anthropic","catalog":[{"id":"saved"}],"request_timeout":7}}}"#,
+    );
+    let r = ModelResolver::load(
+        &dir,
+        ProviderDef {
+            base_url: "http://session/v1".into(),
+            api_key_env: Some("SESSION_KEY".into()),
+            dialect: "openai".into(),
+            ..Default::default()
+        },
+        "default",
+    );
+    let file = r.file();
+    let provider = file.providers.get("default").unwrap();
+    assert_eq!(provider.base_url, "http://file/v1");
+    assert_eq!(provider.api_key_env.as_deref(), Some("FILE_KEY"));
+    assert_eq!(provider.dialect, "anthropic");
+    assert_eq!(provider.catalog[0].id, "saved");
+    assert_eq!(provider.extra["request_timeout"], serde_json::json!(7));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn file_default_uses_runtime_credentials_without_persisting_them() {
+    let dir = crate::fresh_test_dir("models-runtime-credential");
+    write_models(
+        &dir,
+        ".sunmao",
+        r#"{"providers":{"default":{"base_url":"http://file/v1","dialect":"anthropic","catalog":[{"id":"saved"}]}}}"#,
+    );
+    let resolver = ModelResolver::load(
+        &dir,
+        ProviderDef {
+            base_url: "http://session/v1".into(),
+            api_key: Some("session-test-key".into()),
+            dialect: "openai".into(),
+            ..Default::default()
+        },
+        "default",
+    );
+    let target = resolver.resolve("default/saved").unwrap();
+    assert_eq!(target.provider.base_url, "http://file/v1");
+    assert_eq!(target.provider.dialect, "anthropic");
+    assert_eq!(target.provider.api_key.as_deref(), Some("session-test-key"));
+    assert!(resolver.provider_api_key_set("default"));
+    let effective = resolver.provider_def("default").unwrap();
+    assert_eq!(effective.base_url, "http://file/v1");
+    assert_eq!(effective.api_key.as_deref(), Some("session-test-key"));
+    let file_provider = resolver.file().providers.remove("default").unwrap();
+    assert!(file_provider.api_key.is_none());
+    assert!(file_provider.api_key_env.is_none());
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -139,7 +139,8 @@ impl ToolImpl for FusionExecuteTool {
              not even start (missing toolchain, spawn error) reports \
              [inconclusive — environment] and does NOT count toward \
              escalation. On a failed verdict, call again with `steer` alone \
-             (feedback text; `spec` may be omitted) to resume the SAME \
+             (feedback text; `spec` may be omitted, or carried as the \
+             revised brief it receives first) to resume the SAME \
              Sidekick; new `files` entries widen — never shrink — the \
              whitelist, and new `verify_commands` replace the check list. \
              After repeated failures the delegation escalates: your write \
@@ -374,9 +375,10 @@ async fn rework(ctx: &Arc<Context>, a: &Args) -> anyhow::Result<ToolResult> {
     }
     crate::task::spawn::roster_changed(&ctx.live_sink.get().cloned(), &sub_id);
     let _roster = crate::task::spawn::RosterGuard::new(&ctx.live_tasks, &sub_id);
+    let prompt = rework_prompt(a);
     let res = crate::task::spawn::run_spawn(
         sidekick,
-        a.steer.clone().unwrap_or_default(),
+        prompt,
         ctx.live_sink.get().cloned(),
         "fusion-rework",
     )
@@ -409,11 +411,7 @@ pub(super) async fn audit(ctx: &Arc<Context>, event: &str, detail: &str) {
 /// The Sidekick's opening user message — spec plus the two grant lists it
 /// needs up front (its own system prompt already carries the contract).
 fn sidekick_prompt(a: &Args) -> String {
-    let spec = match a.spec.as_ref() {
-        Some(Value::String(s)) => s.clone(),
-        Some(other) => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
-        None => String::new(),
-    };
+    let spec = a.spec.as_ref().map(spec_text).unwrap_or_default();
     let mut p = format!("# Spec\n{spec}");
     if !a.context_files.is_empty() {
         p.push_str(&format!(
@@ -438,6 +436,33 @@ fn sidekick_prompt(a: &Args) -> String {
         ));
     }
     p
+}
+
+/// The steer prompt — a steer MAY carry a revised spec or fresh context
+/// files: passing them and delivering nothing would silently break the
+/// Lead's intent, so they lead the prompt and the steer text follows.
+fn rework_prompt(a: &Args) -> String {
+    let mut p = String::new();
+    if let Some(spec) = &a.spec {
+        p.push_str(&format!("# Revised spec\n{}\n\n", spec_text(spec)));
+    }
+    if !a.context_files.is_empty() {
+        p.push_str(&format!(
+            "# Read these files first\n{}\n\n",
+            a.context_files.join("\n")
+        ));
+    }
+    p.push_str(a.steer.as_deref().unwrap_or_default());
+    p
+}
+
+/// The spec as prompt text — a plain string passes through, structured
+/// values serialize readable.
+fn spec_text(spec: &Value) -> String {
+    match spec {
+        Value::String(s) => s.clone(),
+        other => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
+    }
 }
 
 /// One-line digest for the roster row — spec objects digest their `goal`
@@ -479,4 +504,28 @@ fn spec_hash(spec: &Value) -> String {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     spec.to_string().hash(&mut h);
     format!("{:016x}", h.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rework_prompt_delivers_spec_and_context_files_with_the_steer() {
+        // a steer-only call: bare steer text, nothing prepended
+        let a: Args = serde_json::from_value(json!({"steer": "fix the guard"})).unwrap();
+        assert_eq!(rework_prompt(&a), "fix the guard");
+        // spec + context files on a steer reach the child — silently
+        // dropping them was the regression this guards
+        let a: Args = serde_json::from_value(json!({
+            "steer": "rework it",
+            "spec": {"goal": "v2"},
+            "context_files": ["src/a.rs"]
+        }))
+        .unwrap();
+        let p = rework_prompt(&a);
+        assert!(p.contains("v2"), "revised spec delivered: {p}");
+        assert!(p.contains("src/a.rs"), "context files delivered: {p}");
+        assert!(p.ends_with("rework it"), "steer closes the prompt: {p}");
+    }
 }

@@ -79,6 +79,11 @@ pub fn readonly_verbs(extra: &[String]) -> std::collections::HashSet<String> {
     set
 }
 
+/// `tool --version`/`--help`-only calls print and exit — a probe, not a
+/// write. Shared by both shell dialects; the set is closed on purpose:
+/// `-v` alone is verbose, not version.
+pub(crate) const PROBE_FLAGS: &[&str] = &["--version", "-V", "version", "--help", "-h", "/?"];
+
 /// Would running this tool call mutate anything outside the transcript?
 /// Read-only tools (Read/Grep/Glob/WebFetch/JobOutput/JobList/SearchTools)
 /// pass; everything write-shaped — files, artifacts, the task list,
@@ -179,7 +184,13 @@ fn command_mutates(
                 return true;
             };
             if !verbs.contains(verb.as_str()) && !(verb == "git" && git_reads(&sc.args)) {
-                return true;
+                // `cargo --version` only prints — unknown verbs with
+                // nothing but probe flags still count as reads
+                let probe = sc.args.len() > 1
+                    && sc.args.iter().skip(1).all(|w| {
+                        static_word_text(w).is_some_and(|t| PROBE_FLAGS.contains(&t.as_str()))
+                    });
+                return !probe;
             }
             // read-shaped verbs whose FLAGS mutate: `find . -exec rm {} ;`,
             // `sort -o out`, `fd -x rm`. A non-static arg could expand into
@@ -418,6 +429,11 @@ mod tests {
             "find . -name '*.rs'",
             "cat < input.txt",
             "echo hi >&2",
+            // `x --version`/`--help` probes print and exit — unknown
+            // verbs with nothing but probe flags still read
+            "cargo --version",
+            "node --help",
+            "git -C subdir status",
         ] {
             assert!(!bash_mutates(cmd, &v), "{cmd} should be read-only");
         }
@@ -503,6 +519,23 @@ mod tests {
             "Get-Process | Select-Object -First 5",
             "git status",
             "Get-Content a.txt; pwd",
+            // git's global flags take a value — `-C` must not read as
+            // the subcommand (a Lead's `git -C . status` was refused)
+            "git -C . status",
+            "git -C . log --oneline -3",
+            "git remote -v",
+            // `x --version`/`--help` probes print and exit
+            "cargo --version",
+            "node -h",
+            // the call operator's string target classifies by basename —
+            // `& "X\cargo.exe" --version` reads like `cargo --version`
+            "& \"C:\\tools\\cargo.exe\" --version",
+            "& \"C:\\tools\\git.exe\" status",
+            // a bare variable/member evaluation writes nothing
+            "$env:TEMP",
+            // a read-only scriptblock body stays readable
+            "Get-ChildItem src | ForEach-Object { $_.Name }",
+            "@{Name='x'; Length=1}",
         ] {
             assert!(
                 !call_mutates("Bash", &bash(cmd), &v, pwsh),
@@ -531,6 +564,17 @@ mod tests {
             "& { rm x }",
             "Get-Item *.log | % { Remove-Item $_ }",
             "gci | ? { $_.Length -gt 0 } | % { del $_ }",
+            // the call operator's dynamic/unreadable targets stay refused
+            "& $cmd --version",
+            "& { rm x }",
+            // a mutating scriptblock body still mutates through the
+            // recursive classify
+            "gci | % { Remove-Item $_.FullName }",
+            // a mutating git sub behind a global flag is still write
+            "git -C . push",
+            "git stash drop",
+            // a member CALL on a variable isn't a bare member read
+            "$fs.Write('x')",
         ] {
             assert!(
                 call_mutates("Bash", &bash(cmd), &v, pwsh),

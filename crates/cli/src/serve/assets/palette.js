@@ -127,6 +127,8 @@ function palSource() {
     { g: t('操作'), t: t('执行记录'), i: 'history', run: () => pop($('[data-act="events"]'), eventsHTML(), { align: 'end', cls: 'events' }) },
     { g: t('操作'), t: t('在对话中查找'), i: 'search', k: 'Ctrl F', run: openFind },
     { g: t('操作'), t: t('导出当前会话'), i: 'download', run: () => exportSession(sessionId) },
+    { g: t('操作'), t: t('导出调试包'), i: 'file', run: () => exportZipSession(sessionId) },
+    { g: t('操作'), t: t('设置会话目标'), i: 'zap', run: () => goalPop(curGoal ? $('#cmp-goal') : $('[data-act="crumb"]')) },
     { g: t('操作'), t: t('刷新会话列表'), i: 'reset', run: refreshSessions },
     { g: t('操作'), t: S.railGroup === 'project' ? t('会话列表：按时间排列') : t('会话列表：按项目分组'), i: 'blocks', run: () => { S.railGroup = S.railGroup === 'project' ? 'time' : 'project'; save(); renderRail(); } },
     { g: t('外观'), t: t('主题：深色'), i: 'moon', run: () => { S.mode = 'dark'; commit(); } },

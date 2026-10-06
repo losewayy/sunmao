@@ -208,6 +208,52 @@ pub(super) fn session_markdown(s: &Arc<Shared>, id: &str) -> HostResponse {
     }
 }
 
+/// `GET /session/{id}/zip` — the `/export-zip` debug bundle served for
+/// the GUI's download path: the slash command leaves the file in
+/// `.sunmao/exports/` where a browser can't reach it, so this runs the
+/// same builder and streams the bytes back as an attachment. The exports
+/// dir keeps its copy either way — same side effect the slash path has.
+pub(super) fn session_zip(s: &Arc<Shared>, id: &str) -> HostResponse {
+    let Some(p) = log_path(s, id) else {
+        return HostResponse::err(404, "no such session".into());
+    };
+    let Ok(text) = std::fs::read_to_string(&p) else {
+        return HostResponse::err(500, "unreadable log".into());
+    };
+    let events: Vec<sunmao_core::session::SessionEvent> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    // exports land in the SESSION's project, not the serve root — the
+    // bundle's manifest also names that dir
+    let cwd = events
+        .iter()
+        .find_map(|e| match e {
+            sunmao_core::session::SessionEvent::Started { cwd, .. } => {
+                Some(std::path::PathBuf::from(cwd))
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| s.cwd.clone());
+    match crate::commands::export_zip(&cwd, id, &events, &p) {
+        Ok(path) => match std::fs::read(&path) {
+            Ok(bytes) => HostResponse {
+                status: 200,
+                headers: vec![
+                    ("content-type".into(), "application/zip".into()),
+                    (
+                        "content-disposition".into(),
+                        format!("attachment; filename=\"sunmao-{id}.zip\""),
+                    ),
+                ],
+                body: bytes,
+            },
+            Err(e) => HostResponse::err(500, format!("read bundle: {e}")),
+        },
+        Err(e) => HostResponse::err(500, format!("export failed: {e:#}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::log_is_empty;

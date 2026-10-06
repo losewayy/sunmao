@@ -29,6 +29,8 @@
 .pop .field input{flex:1;min-width:0;border:0;outline:0;background:none;font:var(--fs-sm) var(--font-mono);color:var(--c-text)}
 .pop .field .cdot{width:var(--icon-sm);height:var(--icon-sm);border-radius:var(--r-full);box-shadow:inset 0 0 0 var(--bw-hairline) var(--c-swatch-ring)}
 .pop .hint{padding:var(--s-2) var(--s-10) var(--s-6);font-size:var(--fs-2xs);color:var(--c-text-3)}
+.pop .goal-cur{display:flex;flex-direction:column;gap:var(--s-2);padding:var(--s-4) var(--s-10) var(--s-8);font-size:var(--fs-xs);color:var(--c-text)}
+.pop .goal-cur small{color:var(--c-text-3);font-size:var(--fs-2xs)}
 .sws{display:grid;grid-template-columns:repeat(6,var(--h-md));gap:var(--s-8);padding:var(--s-4) var(--s-10) var(--s-10)}
 .swt{width:var(--h-md);height:var(--h-md);border-radius:var(--r-full);background:var(--_c);box-shadow:inset 0 0 0 var(--bw-hairline) var(--c-swatch-ring)}
 .swt.on{box-shadow:var(--ring-swatch-on)}

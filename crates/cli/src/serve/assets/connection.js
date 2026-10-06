@@ -380,26 +380,6 @@ async function deleteSession(id, quiet) {
     if (!quiet) toast(t('已删除会话'), 'trash');
   } catch (e) { toast(t('删除失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
-/* ---- export — a GET on the session's `/md` route gives us the server's
-   `commands::export::markdown` output (the SAME fold `/export-md` and the
-   debug bundle ride) so the download is byte-for-byte what REPL/TUI would
-   produce. The transcript the user scrolls is the folded live view; the
-   download is the durable event-source. ---- */
-async function exportSession(id) {
-  try {
-    const r = await fetch(`/session/${encodeURIComponent(id)}/md`);
-    if (!r.ok) throw new Error(`${r.status}`);
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([await r.text()], { type: 'text/markdown' }));
-    a.download = `sunmao-${id}.md`;
-    a.click();
-    // revoke on a delay — engines that hand the blob to the download
-    // manager asynchronously (Firefox) read an empty file if we revoke
-    // in the same task
-    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-    toast(t('已导出 {name}', { name: id + '.md' }), 'download');
-  } catch (e) { toast(t('导出失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
-}
 let dfTimer = 0;
 function refreshDataflowSoon() { clearTimeout(dfTimer); dfTimer = setTimeout(refreshDataflow, DEBOUNCE_DATAFLOW); }
 async function refreshDataflow() {

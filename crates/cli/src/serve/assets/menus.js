@@ -91,7 +91,8 @@ async function submitNote(name, btn) {
    over — indistinguishable from a dead button. The click flips this state
    in the same frame; the turn end (`setBusy(false)`), a fresh busy frame,
    or the unlock timer (set above the kernel's hard-stop grace) releases
-   it. */
+   it. The button stays live — `cancel` is idempotent kernel-side, and a
+   dropped frame (dead socket) is unrecoverable if repeat clicks are inert. */
 let stopping = false, stopUnlockT = 0;
 const STOP_UNLOCK_MS = 14000;
 function markStopping() {
@@ -99,8 +100,6 @@ function markStopping() {
   stopping = true;
   stopLabel(t('停止生成') + '…');
   const btn = $('#send-btn');
-  btn.dataset.act = 'stopping'; // no dispatcher case — a repeat click is inert
-  btn.disabled = true;
   btn.classList.add('off');
   clearTimeout(stopUnlockT);
   stopUnlockT = setTimeout(clearStopping, STOP_UNLOCK_MS);
@@ -206,7 +205,16 @@ function act(name, el) {
     case 'pick-effort': return effortPop(el);
     case 'send': return send();
     case 'cmp-attach': return $('#att-file').click();
-    case 'stop': markStopping(); return wsSend({ type: 'cancel' });
+    case 'stop': {
+      // a dead/reconnecting socket drops this frame silently — revert the
+      // ack state instead of pretending a cancel is in flight, and say so
+      markStopping();
+      if (!wsSend({ type: 'cancel' })) {
+        clearStopping();
+        toast(t('未连接到内核，无法发送'), 'alert', 'warn');
+      }
+      return;
+    }
     case 'new-chat': return newChat();
     case 'grants-clear': return revokeGrant('*');
     case 'compact': return wsSend({ type: 'prompt', text: '/compact' });

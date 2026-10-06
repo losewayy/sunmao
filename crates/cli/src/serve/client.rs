@@ -379,6 +379,11 @@ impl Client {
             "cancel" => {
                 if let Some(h) = self.viewing_host() {
                     h.agent.cancel();
+                    super::driver::flush_pending(&h);
+                    let _ = self.s.live.send(super::host::input_queue_frame(&h));
+                    let _ = self.s.live.send(serde_json::json!({
+                        "type": "steer_queue", "sess": h.id, "items": Vec::<String>::new(),
+                    }));
                 }
             }
             "approval" => {

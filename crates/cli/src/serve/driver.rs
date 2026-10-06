@@ -84,6 +84,21 @@ async fn rewind_via_mgmt(
     rx.await.map_err(|_| "host mgmt dropped".to_string())?
 }
 
+/// `cancel` means the session goes quiet: queued FIFO inputs and pending
+/// steers would each become the next turn the moment the running one dies —
+/// drain both here so a single click really halts it. The caller rebroadcasts
+/// `input_queue`/`steer_queue` so every tab's chips clear with the turn.
+pub(super) fn flush_pending(host: &Host) {
+    let dropped = host.queue.lock_or_recover().drain(..).count();
+    if dropped > 0 {
+        host.agent
+            .context()
+            .input_pending
+            .fetch_sub(dropped, Ordering::Relaxed);
+    }
+    host.agent.drain_steer();
+}
+
 /// The submission driver for ONE session host — one turn at a time,
 /// slash builtins resolved here, prompts stream LiveEvents tagged with
 /// this session's id.

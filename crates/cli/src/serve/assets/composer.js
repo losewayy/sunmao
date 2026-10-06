@@ -353,3 +353,40 @@ new ResizeObserver(() => {
   $('.stage').style.setProperty('--off-hero-bottom', (h + 16) + 'px');
 }).observe($('#composer'));
 
+/* the hero's launch-mode switch. A session's loop driver froze into its
+   Started event, so "run this task as X" can't mutate the shell under
+   the hero — but the hero only sits on EMPTY sessions, which are free
+   to swap: persist the pick as the new-session default, then trade the
+   empty shell for one built on the chosen driver and retire the old
+   one quietly. The toggle's checked side always reads the live session
+   driver, never the stored default — they can diverge when the pick was
+   made elsewhere. */
+let heroModeBusy = false;
+function syncHeroMode() {
+  const hm = $('#hero-mode');
+  if (!hm) return;
+  const on = driver === 'ptc' ? 'ptc' : 'full';
+  hm.dataset.on = on;
+  $$('.hm-opt', hm).forEach(b => b.setAttribute('aria-checked', String(b.dataset.hm === on)));
+}
+async function heroModePick(v) {
+  if ((v !== 'full' && v !== 'ptc') || heroModeBusy) return;
+  S.loopDriver = v; save();
+  // nothing to swap — the pick is already what this session runs, or the
+  // transcript below isn't empty (the hero wouldn't be showing anyway)
+  if (!sessionId || TX.children.length || !driver || driver === v) return syncHeroMode();
+  heroModeBusy = true;
+  $('#hero-mode')?.setAttribute('data-busy', '');
+  const old = sessionId;
+  try {
+    const r = await api('/session/new', jpost({ cwd, loop: v }));
+    if (!r || !r.session) return;
+    sessionId = r.session;
+    if (typeof dockSessionSwap === 'function') dockSessionSwap();
+    wsSend({ type: 'view', id: r.session });
+    renderCrumb(); refreshSessions();
+    await deleteSession(old, true);
+  } catch (e) { toast(t('切换失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
+  finally { heroModeBusy = false; $('#hero-mode')?.removeAttribute('data-busy'); }
+}
+

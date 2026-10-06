@@ -141,6 +141,12 @@ pub(super) async fn driver(s: Arc<Shared>, host: Arc<Host>) {
         // lines stores a permit and notified() returns immediately — never
         // lost, at worst one spurious wakeup.
         let input = loop {
+            // a retired host exits here — empty-session deletes set the
+            // flag then poke the notify; exiting drops this task's Arc so
+            // the log writer closes and the file can unlink
+            if host.shutdown.load(Ordering::Relaxed) {
+                return;
+            }
             if let Some(i) = host.queue.lock_or_recover().pop_front() {
                 break i;
             }

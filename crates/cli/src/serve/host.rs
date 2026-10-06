@@ -46,8 +46,7 @@ pub(crate) struct Host {
     /// prompts (mpsc only offers recv-order teardown). `notify` pokes the
     /// driver out of `recv()` when a push lands.
     pub(crate) queue: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<Input>>>,
-    /// wakes the driver's dequeue loop — one notify per push, never a
-    /// channel. Stale notifies are harmless (the loop re-reads the queue).
+    /// wakes the driver's dequeue loop — one notify per push; stale wakes are harmless
     pub(crate) queue_notify: std::sync::Arc<tokio::sync::Notify>,
     /// next queue-entry id (wraps `client` → tickets are unique per queue)
     pub(crate) queue_next_id: std::sync::Arc<std::sync::atomic::AtomicU64>,
@@ -55,9 +54,10 @@ pub(crate) struct Host {
     pub(crate) approvals: Arc<Pending>,
     /// submissions currently running (drives the busy badge + cancel)
     pub(crate) busy: std::sync::atomic::AtomicUsize,
-    /// adoption order — reconnecting viewers land on the newest host;
-    /// HashMap iteration order can't answer "newest" (a resumed old log
-    /// should win over an untouched fresh one it out-sorts lexically)
+    /// the driver's dequeue wait exits on this — an empty-session delete sets it, dropping the log writer
+    pub(crate) shutdown: std::sync::atomic::AtomicBool,
+    /// adoption order — reconnecting viewers land on the newest host
+    /// (a resumed old log must out-sort an untouched fresh one)
     pub(crate) adopted: u64,
 }
 
@@ -245,6 +245,7 @@ impl Shared {
             queue_next_id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
             approvals: pending,
             busy: std::sync::atomic::AtomicUsize::new(0),
+            shutdown: std::sync::atomic::AtomicBool::new(false),
             adopted: self.adopt_seq.fetch_add(1, Ordering::Relaxed) + 1,
         });
         self.sessions

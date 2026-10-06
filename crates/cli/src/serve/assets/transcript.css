@@ -185,11 +185,27 @@
 .hero-sub{margin:0;font-size:var(--fs-sm);color:var(--c-text-2);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hero-sub:empty{display:none}
 .hero-actions{display:flex;justify-content:center;flex-wrap:wrap;gap:var(--s-8);pointer-events:auto}
+/* launch-mode switch — the only interactive thing on the hero (the hero
+   itself is pointer-events:none). Two options in a glass capsule with a
+   sliding thumb; aria-checked rides the real session driver, which
+   heroModePick keeps honest by swapping the empty shell underneath */
+.hero-mode{position:relative;display:grid;grid-template-columns:1fr 1fr;width:min(300px,72vw);margin-top:var(--s-4);padding:var(--s-4);border-radius:var(--r-xl);background:color-mix(in srgb,var(--c-sunken) 70%,transparent);box-shadow:var(--ring-1);backdrop-filter:blur(var(--blur-edge));-webkit-backdrop-filter:blur(var(--blur-edge));pointer-events:auto}
+.hero-mode .hm-thumb{position:absolute;top:var(--s-4);bottom:var(--s-4);left:var(--s-4);width:calc(50% - var(--s-4));border-radius:var(--r-lg);background:var(--c-fill-3);box-shadow:var(--ring-1),0 6px 18px -8px color-mix(in srgb,var(--c-accent) 55%,transparent);transition:transform var(--dur-base) var(--ease-out)}
+.hero-mode[data-on="ptc"] .hm-thumb{transform:translateX(100%)}
+.hero-mode[data-on="ptc"] .hm-opt[data-hm="ptc"],.hero-mode[data-on="full"] .hm-opt[data-hm="full"]{color:var(--c-text)}
+.hero-mode[data-on="ptc"] .hm-opt[data-hm="ptc"] b{color:var(--c-accent)}
+.hm-opt{position:relative;display:flex;flex-direction:column;align-items:center;gap:var(--s-2);padding:var(--s-8) var(--s-12);border:0;border-radius:var(--r-lg);background:transparent;color:var(--c-text-3);cursor:pointer;font:var(--fs-sm) var(--font-ui);transition:color var(--dur-fast) var(--ease-out)}
+.hm-opt:hover{color:var(--c-text-2)}
+.hm-opt:focus-visible{outline:var(--focus-outline);outline-offset:var(--s-2)}
+.hm-opt b{font-size:var(--fs-sm);font-weight:var(--fw-medium);letter-spacing:var(--ls-display)}
+.hm-opt span{font-size:var(--fs-2xs);color:inherit;opacity:.72;white-space:nowrap}
+.hero-mode[data-busy]{opacity:.62;pointer-events:none}
 .hero.play .mk-a{animation:k-join-l var(--dur-scene) var(--ease-out) both}
 .hero.play .mk-b{animation:k-join-r var(--dur-scene) var(--ease-out) both}
 .hero.play .hero-title{animation:k-rise var(--dur-scene) calc(var(--stagger) * 1) var(--ease-out) both}
 .hero.play .hero-sub{animation:k-rise var(--dur-scene) calc(var(--stagger) * 2) var(--ease-out) both}
-.hero.play .hero-actions{animation:k-rise var(--dur-scene) calc(var(--stagger) * 3) var(--ease-out) both}
+.hero.play .hero-mode{animation:k-rise var(--dur-scene) calc(var(--stagger) * 3) var(--ease-out) both}
+.hero.play .hero-actions{animation:k-rise var(--dur-scene) calc(var(--stagger) * 4) var(--ease-out) both}
 
 /* the selection quote button — floats over the transcript, at the selection */
 .quote-pop{position:fixed;z-index:var(--z-tip);display:flex;align-items:center;gap:var(--s-4);height:var(--h-lg);padding:0 var(--s-12);border:0;border-radius:var(--r-full);color:var(--c-text);font-size:var(--fs-xs);cursor:pointer;box-shadow:var(--ring-1)}

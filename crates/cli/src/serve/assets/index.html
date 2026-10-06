@@ -139,6 +139,11 @@
         </svg>
         <h1 class="hero-title" data-i18n="开始一个任务">开始一个任务</h1>
         <p class="hero-sub" id="hero-sub"></p>
+        <div class="hero-mode" id="hero-mode" role="radiogroup" aria-label="执行模式" data-i18n-al="执行模式">
+          <i class="hm-thumb" aria-hidden="true"></i>
+          <button type="button" class="hm-opt" data-act="hero-mode" data-hm="full" role="radio" data-tip="标准 — 工具逐个声明给模型" data-i18n-tip="标准 — 工具逐个声明给模型"><b data-i18n="标准">标准</b><span data-i18n="工具逐个声明">工具逐个声明</span></button>
+          <button type="button" class="hm-opt" data-act="hero-mode" data-hm="ptc" role="radio" data-tip="代码模式 — 模型只拿 RunCode/SearchTools，脚本内调工具" data-i18n-tip="代码模式 — 模型只拿 RunCode/SearchTools，脚本内调工具"><b>PTC</b><span data-i18n="代码模式 · 脚本调工具">代码模式 · 脚本调工具</span></button>
+        </div>
       </div>
       <div class="scroller scroll" id="scroller">
         <div class="tx" id="tx"></div>

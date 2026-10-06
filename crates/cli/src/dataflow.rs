@@ -42,6 +42,7 @@ pub async fn report(session_path: &Path) -> anyhow::Result<Value> {
             | SessionEvent::Goal { .. }
             | SessionEvent::ModeChange { .. }
             | SessionEvent::TurnModeChange { .. }
+            | SessionEvent::FusionModelsChange { .. }
             | SessionEvent::FusionSpec { .. }
             | SessionEvent::FusionAccepted { .. }
             | SessionEvent::FusionEscalated { .. }

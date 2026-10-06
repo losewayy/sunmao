@@ -486,6 +486,38 @@ impl Client {
                     }
                 }
             }
+            "fusion_model" => {
+                let role = match v["role"].as_str() {
+                    Some("lead") => sunmao_core::context::FusionModelRole::Lead,
+                    Some("sidekick") => sunmao_core::context::FusionModelRole::Sidekick,
+                    _ => {
+                        self.emit(serde_json::json!({
+                            "type":"note","sess":self.viewing,"text":"[unknown Fusion model role]",
+                        }));
+                        return;
+                    }
+                };
+                let selector = v["sel"].as_str().map(str::to_string);
+                if let Some(h) = self.viewing_host() {
+                    match h.agent.set_fusion_model(role, selector).await {
+                        Ok(()) => {
+                            let (lead, sidekick) = h.agent.fusion_models();
+                            let _ = self.s.live.send(serde_json::json!({
+                                "type":"fusion_models","sess":h.id,"lead":lead,"sidekick":sidekick,
+                                "ready":h.agent.fusion_ready(),
+                            }));
+                            let _ = self.s.live.send(super::host::effort_frame(&h).await);
+                        }
+                        Err(error) => {
+                            let (lead, sidekick) = h.agent.fusion_models();
+                            self.emit(serde_json::json!({
+                                "type":"fusion_models","sess":h.id,"lead":lead,"sidekick":sidekick,
+                                "ready":h.agent.fusion_ready(),"error":error,
+                            }));
+                        }
+                    }
+                }
+            }
             // {type:"effort", level} — the composer chip's picker; "default"
             // (or an empty level) clears back to the provider's own.
             "effort" => {
@@ -514,6 +546,7 @@ impl Client {
                                     "type":"note","sess":h.id,
                                     "text":format!("[turn mode → {}]", tm.as_str()),
                                 }));
+                                let _ = self.s.live.send(super::host::effort_frame(&h).await);
                             }
                             Err(e) => {
                                 self.emit(serde_json::json!({

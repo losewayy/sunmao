@@ -27,6 +27,7 @@ mod repl;
 mod rewind;
 mod serve;
 mod sessions;
+pub(crate) mod spec;
 mod tui;
 
 pub use serve::{
@@ -55,9 +56,12 @@ pub struct Cli {
     /// API key.
     #[arg(long, env = "SUNMAO_API_KEY", default_value = "your-api-key-here")]
     api_key: String,
-    /// Model id.
-    #[arg(long, env = "SUNMAO_MODEL", default_value = DEFAULT_MODEL)]
-    model: String,
+    /// Model id. `None` when neither the flag nor the env named one — the
+    /// option-ness IS the "was it chosen?" bit: a project's `default_model`
+    /// outranks the compiled fallback, but loses to a value the user
+    /// actually passed, even when that value equals the fallback.
+    #[arg(long, env = "SUNMAO_MODEL")]
+    model: Option<String>,
     /// Provider dialect: openai (default) or anthropic.
     #[arg(long, default_value = "openai", env = "SUNMAO_PROVIDER")]
     provider: String,
@@ -113,6 +117,15 @@ pub struct Cli {
 }
 
 /// clap needs a String error, not anyhow — same refusal surface.
+impl Cli {
+    /// The launch model — the user's pick, or the compiled fallback when
+    /// nothing was passed. `model_override` in the HostSpec keeps the
+    /// option-ness for the `default_model` precedence question.
+    pub(crate) fn model_label(&self) -> &str {
+        self.model.as_deref().unwrap_or(DEFAULT_MODEL)
+    }
+}
+
 fn parse_driver(s: &str) -> Result<sunmao_core::agent::LoopDriver, String> {
     sunmao_core::agent::LoopDriver::parse(s).map_err(|e| e.to_string())
 }
@@ -138,14 +151,18 @@ fn session_id() -> String {
 
 /// Session provider adapter from the cli flags — shared by the interactive
 /// path and `sunmao eval`.
-fn provider_adapter(cli: &Cli) -> Arc<dyn sunmao_llm::ProviderAdapter> {
+pub(crate) fn provider_adapter(cli: &Cli) -> Arc<dyn sunmao_llm::ProviderAdapter> {
     match cli.provider.as_str() {
         "anthropic" => Arc::new(sunmao_llm::AnthropicClient::new(
             &cli.base_url,
             &cli.api_key,
-            &cli.model,
+            cli.model_label(),
         )),
-        _ => Arc::new(OaiClient::new(&cli.base_url, &cli.api_key, &cli.model)),
+        _ => Arc::new(OaiClient::new(
+            &cli.base_url,
+            &cli.api_key,
+            cli.model_label(),
+        )),
     }
 }
 
@@ -153,7 +170,9 @@ fn provider_adapter(cli: &Cli) -> Arc<dyn sunmao_llm::ProviderAdapter> {
 /// `fork` copies the source to a fresh id first. `None` = fresh session.
 /// Shared by the interactive path and `serve` (each session the GUI host
 /// adopts gets its own Context; only the log resolution is shared).
-async fn open_first_log(cli: &Cli) -> anyhow::Result<Option<(SessionLog, &'static str)>> {
+pub(crate) async fn open_first_log(
+    cli: &Cli,
+) -> anyhow::Result<Option<(SessionLog, &'static str)>> {
     let mut resume_target = cli.resume.clone();
     let mut source = "resume";
     if let Some(src) = &cli.fork {
@@ -241,7 +260,7 @@ pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
         return acp::run(
             &cli.base_url,
             &cli.api_key,
-            &cli.model,
+            cli.model_label(),
             &cli.provider,
             &cli.preset,
         )
@@ -376,7 +395,7 @@ pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
     if !resumed {
         let mut log = ctx.sessions.lock().await;
         log.append(&sunmao_core::SessionEvent::Started {
-            model: cli.model.clone(),
+            model: cli.model_label().to_string(),
             cwd: ctx.cwd.display().to_string(),
             driver: Some(ctx.loop_driver.as_str().into()),
         })
@@ -424,7 +443,7 @@ pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
     if cli.tui {
         let res = tui::run(
             agent,
-            &cli.model,
+            cli.model_label(),
             cwd.clone(),
             rx_approval,
             replay_events,
@@ -471,7 +490,7 @@ pub async fn run(mut cli: Cli) -> anyhow::Result<()> {
 /// funnel here. `listener` is pre-bound by the caller; pass a port-0 bind
 /// for an ephemeral port. Runs until the process exits.
 pub async fn serve_main(cli: &Cli, listener: std::net::TcpListener) -> anyhow::Result<()> {
-    let spec = host_spec(cli).await?;
+    let spec = spec::host_spec(cli).await?;
     serve::run(spec, listener).await
 }
 
@@ -480,87 +499,8 @@ pub async fn serve_main(cli: &Cli, listener: std::net::TcpListener) -> anyhow::R
 /// `sunmao`/`sunmao-sandbox` schemes + an IPC Channel instead of HTTP/WS
 /// (GUI.md §8); the returned handle is the transport-free front door.
 pub async fn serve_host(cli: &Cli) -> anyhow::Result<HostHandle> {
-    let spec = host_spec(cli).await?;
+    let spec = spec::host_spec(cli).await?;
     serve::spawn_host(spec, 0).await
-}
-
-/// `Cli` → `HostSpec`: the Context assembly both host paths share —
-/// provider, MCP servers, presets, model routes, `--loop` override.
-/// Every session tab gets its own Context/AgentLoop (built by the
-/// factory) — no shared Context swapping mid-tab. The MCP connections are
-/// process-wide; each Context registers fresh tool handles sharing them.
-async fn host_spec(cli: &Cli) -> anyhow::Result<serve::HostSpec> {
-    let cwd = cli.cwd.canonicalize().context("bad --cwd")?;
-    let preset_roots = sunmao_core::presets::resolve(&cwd, &cli.preset)?;
-    let llm = provider_adapter(cli);
-    let mcp = sunmao_core::mcp::connect_all(&cwd, &preset_roots).await;
-    // untrusted-server skips audit into every session tab's own log —
-    // serve connects MCP process-wide before any session exists
-    let mcp_skips = mcp.skipped.clone();
-    let first_log = open_first_log(cli).await?;
-    let system_prompt = sunmao_core::prompt::PromptAssembler::new(&cwd)
-        .with_extra_roots(&preset_roots)
-        .assemble(cli.system.as_deref());
-    let default_provider = sunmao_core::models::ProviderDef {
-        base_url: cli.base_url.clone(),
-        api_key: Some(cli.api_key.clone()),
-        dialect: cli.provider.clone(),
-        ..Default::default()
-    };
-    let model_label = cli.model.clone();
-    // `--model`/`SUNMAO_MODEL` only outranks a project's `default_model` when
-    // it names a model of its own — the compiled fallback is not a choice
-    let model_override = (model_label != DEFAULT_MODEL).then(|| model_label.clone());
-    let driver_override = cli.driver;
-    let serve_roots = preset_roots.clone();
-    let factory = serve::SessionFactory {
-        make: Box::new(move |log, approver, cwd| {
-            let llm = llm.clone();
-            let mcp_servers = mcp.servers.clone();
-            let mcp_skips = mcp_skips.clone();
-            let preset_roots = preset_roots.clone();
-            let driver = driver_override;
-            let default_provider = default_provider.clone();
-            Box::pin(async move {
-                let mut log = log;
-                sunmao_core::mcp::audit_skips(&mcp_skips, &mut log).await;
-                let registry = builtin_registry();
-                for h in &mcp_servers {
-                    for t in h.tool_impls() {
-                        registry.register_boxed(t);
-                    }
-                }
-                // `cwd` is the *session's* project — adopted logs carry
-                // their own root (cross-project resume keeps it)
-                let mut ctx_raw = Context::new(llm, log, registry, cwd.clone())
-                    .with_extra_plugin_roots(preset_roots);
-                ctx_raw.mcp_servers = mcp_servers;
-                if let Some(d) = driver {
-                    ctx_raw.loop_driver = d;
-                }
-                ctx_raw.connect_extensions().await;
-                ctx_raw.approval = approver;
-                ctx_raw.models = Some(Arc::new(sunmao_core::models::ModelResolver::load(
-                    &cwd,
-                    default_provider,
-                    "default",
-                )));
-                Ok(ctx_raw)
-            })
-        }),
-    };
-    Ok(serve::HostSpec {
-        factory,
-        cwd: cwd.clone(),
-        roots: serve_roots,
-        // --system freezes the prompt; absent it each session's project
-        // dir assembles its own (AGENTS.md etc. follow the project)
-        prompt_override: cli.system.as_ref().map(|_| system_prompt.clone()),
-        model_label,
-        model_override,
-        first_log,
-        driver_override: cli.driver,
-    })
 }
 
 /// Interactive approver for the REPL: prints the risky command, y/n on stdin.

@@ -227,7 +227,7 @@ pub(crate) async fn run(cli: &Cli) -> Result<()> {
     let mut cli2 = cli.clone();
     cli2.cwd = workspace.clone();
     cli2.session_dir = workspace.join(".sunmao/sessions");
-    let mut spec = crate::host_spec(&cli2).await?;
+    let mut spec = crate::spec::host_spec(&cli2).await?;
     spec.first_log = None; // the gateway owns session bootstrap, not --resume
     let (spec_roots, spec_driver) = (spec.roots.clone(), spec.driver_override);
     let handle = crate::serve::spawn_host(spec, 0).await?;
@@ -279,7 +279,7 @@ pub(crate) async fn run(cli: &Cli) -> Result<()> {
         store: store.clone(),
         shared: shared.clone(),
         workspace: workspace.clone(),
-        model: cli.model.clone(),
+        model: cli.model_label().to_string(),
         roots: spec_roots.clone(),
         driver: spec_driver,
         lanes: tokio::sync::Mutex::new(std::collections::HashMap::new()),

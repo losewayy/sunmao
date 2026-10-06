@@ -194,7 +194,7 @@ async fn run_case_inner(
     {
         let mut log = ctx.sessions.lock().await;
         log.append(&SessionEvent::Started {
-            model: cli.model.clone(),
+            model: cli.model_label().to_string(),
             cwd: case_cwd.display().to_string(),
             driver: Some(ctx.loop_driver.as_str().into()),
         })

@@ -35,22 +35,28 @@ let turnMode = 'standard';
 function setTurnMode(m) {
   if (m !== 'standard' && m !== 'fusion') return;
   turnMode = m;
-  const btn = $('#model-btn');
-  if (btn) btn.dataset.tip = m === 'fusion' ? t('Fusion 已开：Lead 和 Sidekick 均为会话级模型；请分别在设置 › Fusion 中选择。') : '';
   renderComposerModel();
   if (view === 'settings' && setPage === 'fusion') renderFusion();
 }
 // the composer model chip mirrors the adapter a turn actually runs on:
-// standard uses the session model; Fusion runs on the session's Lead, so
-// the chip shows that selector instead — opening the model picker here
-// would imply a switch the composer no longer owns (roles live in
-// Settings › Fusion)
+// standard names the session model; Fusion runs on the session's
+// Lead/Sidekick pair, so the chip says Fusion and its tooltip lists the two
+// selectors — opening the model picker here would imply a switch the
+// composer no longer owns (roles live in Settings › Fusion)
 function renderComposerModel() {
-  const el = $('#cmp-model');
+  const el = $('#cmp-model'), btn = $('#model-btn');
   if (!el) return;
-  el.textContent = turnMode === 'fusion'
-    ? (MODELS && MODELS.fusion_lead) || t('未设置')
-    : modelLabel || '…';
+  if (turnMode === 'fusion') {
+    const role = v => v || t('未设置');
+    el.textContent = 'Fusion';
+    if (btn) btn.dataset.tip = t('Lead：{lead} · Sidekick：{sidekick}', {
+      lead: role(MODELS && MODELS.fusion_lead),
+      sidekick: role(MODELS && MODELS.fusion_sidekick),
+    });
+  } else {
+    el.textContent = modelLabel || '…';
+    if (btn) btn.dataset.tip = '';
+  }
 }
 function turnModeOf(events) {
   for (let i = (events || []).length - 1; i >= 0; i--) {

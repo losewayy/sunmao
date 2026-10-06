@@ -346,6 +346,7 @@ const I18N_EN_CHROME = {
   "Fusion 已开：Lead 和 Sidekick 均为会话级模型；请分别在设置 › Fusion 中选择。": "Fusion is on: Lead and Sidekick are session-level models. Choose each in Settings › Fusion.",
   "Lead 负责规划与验证，Sidekick 负责委派执行；两个模型可以相同也可以不同。": "The Lead plans and verifies while the Sidekick handles delegated work; they can use the same or different models.",
   "Lead 只读规划并验证，写入由 Sidekick 执行；连续两次验证不过时 Lead 接管到本回合结束": "The Lead plans and verifies read-only while a Sidekick does the writing; after two failed verifications the Lead takes over until the end of the turn",
+  "Lead：{lead} · Sidekick：{sidekick}": "Lead: {lead} · Sidekick: {sidekick}",
   "PTC 代码模式 — 模型经 RunCode 脚本调用工具": "PTC code mode: the model calls tools through RunCode scripts",
   "resume 失败：{msg}": "resume failed: {msg}",
   "serve 模式：直接关闭此标签页即可退出": "serve mode: close this tab to exit",

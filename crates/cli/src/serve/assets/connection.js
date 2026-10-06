@@ -28,17 +28,13 @@ function setConn(on) {
   d.dataset.tip = on ? t('已连接 {host}', { host: location.host }) : t('未连接 · 重连中');
   $('#df-live').classList.toggle('off', !on);
 }
-/* the turn SHAPE (`standard` | `fusion`) — the third axis, beside the
-   approval stance and the loop driver. `turn_mode` on hello/replay is the
-   kernel's answer; folding the durable `turn_mode_change` out of the replay
-   is the fallback for a host that predates the field, and the live
-   `turn.mode` hook is how another tab's switch reaches this one. */
+/* the turn SHAPE (`standard` | `fusion`): `turn_mode` on hello/replay is the
+   kernel's answer, the live `turn.mode` hook is another tab's switch, and
+   folding `turn_mode_change` covers an older host. */
 let turnMode = 'standard';
 function setTurnMode(m) {
   if (m !== 'standard' && m !== 'fusion') return;
   turnMode = m;
-  // the composer chip is the one model-shaped thing always on screen: its
-  // tooltip carries the Lead/Sidekick relationship when Fusion is armed
   const btn = $('#model-btn');
   if (btn) btn.dataset.tip = m === 'fusion' ? t('Fusion：本会话模型就是 Lead，Sidekick 默认继承它') : '';
   if (view === 'settings' && setPage === 'fusion') renderFusion();
@@ -416,14 +412,24 @@ function modelsBody(edit) {
   const body = { providers, routes: (MODELS && MODELS.routes) || {} };
   const dm = edit && 'default_model' in edit ? edit.default_model : MODELS && MODELS.default_model;
   if (dm) body.default_model = dm;
+  // Fusion's Sidekick pick rides the file's unknown-key map, so it is always
+  // posted: an omitted key would be carried over by the merge and a clear
+  // could never land.
+  const fsk = edit && 'fusion_sidekick' in edit ? edit.fusion_sidekick : MODELS && MODELS.fusion_sidekick;
+  body.fusion_sidekick = fsk || null;
   // The save's request-level metadata rides in one reserved namespace: a
   // rename must name where the credential moves (the view is redacted, so the
-  // page cannot retype it), and an add must name the entry it creates (the
-  // body always carries the whole provider map). Bare top-level names would
-  // collide with hand-written file keys, so both go under `$request`.
+  // page cannot retype it), an add must name the entry it creates (the body
+  // always carries the whole provider map), a touched model list must name the
+  // provider it decides (every other catalog comes from the file), and a
+  // default-model pick must say so (a value the user chose has to be usable,
+  // not quietly stored). Bare top-level names would collide with hand-written
+  // file keys, so they all go under `$request`.
   const req = {};
   if (edit && edit.renameFrom) req.rename_from = { [edit.name]: edit.renameFrom };
   if (edit && edit.add) req.adding = edit.name;
+  if (edit && edit.ownsCatalog) req.catalog_owner = edit.name;
+  if (edit && 'default_model' in edit) req.set_default = true;
   if (Object.keys(req).length) body.$request = req;
   return body;
 }

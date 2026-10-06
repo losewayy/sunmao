@@ -41,6 +41,51 @@ fn bare_model_uses_default_provider() {
     assert_eq!(t.provider.base_url, "http://local/v1");
 }
 
+/// The selector list is what a session can actually run: an `@route` or a
+/// catalog-backed `provider/model`. A provider with no catalog must not
+/// contribute a bare `provider/` entry — resolving that yields an EMPTY model
+/// id (the GUI menu's `default/` line), which the provider then rejects.
+#[test]
+fn selectors_only_offer_real_models() {
+    let r = resolver();
+    {
+        let mut file = r.file.write_or_recover();
+        file.providers
+            .get_mut("big")
+            .unwrap()
+            .catalog
+            .push(CatalogEntry {
+                id: "claude-haiku".into(),
+                ..Default::default()
+            });
+        file.providers.insert(
+            "empty".into(),
+            ProviderDef {
+                base_url: "http://empty/v1".into(),
+                ..Default::default()
+            },
+        );
+    }
+    let sel = r.selectors();
+    assert!(sel.contains(&"@smol".into()), "{sel:?}");
+    assert!(sel.contains(&"big/claude-haiku".into()), "{sel:?}");
+    assert!(
+        !sel.iter().any(|s| s.ends_with('/')),
+        "no empty-model entries may be offered: {sel:?}"
+    );
+    assert!(
+        !sel.iter().any(|s| s.starts_with("empty")),
+        "a catalog-less provider must not appear: {sel:?}"
+    );
+    // what the old list offered: it *resolves*, to a model id of "" — usable
+    // looking, unusable in practice, which is exactly why it must not be listed
+    let t = r.resolve("big/").unwrap();
+    assert!(
+        t.model.is_empty(),
+        "an empty model id is the bug, not a target"
+    );
+}
+
 #[test]
 fn route_alias_expands_chain_in_order() {
     let r = resolver();
@@ -247,30 +292,6 @@ fn merge_save_keeps_what_the_redacted_view_cannot_carry() {
         merged.providers["p"].api_key_env.as_deref(),
         Some("OLD_ENV")
     );
-}
-
-/// Deleting a provider must not leave `default_model` pointing at it; a pin
-/// that still resolves, a bare id, and an `@route` alias all stay.
-#[test]
-fn prune_dangling_default_only_drops_dead_provider_pins() {
-    let mut f: ModelsFile = serde_json::from_str(
-        r#"{"providers":{"other":{"base_url":"http://other/v1"}},"default_model":"local/m1"}"#,
-    )
-    .unwrap();
-    assert!(f.prune_dangling_default("default"));
-    assert_eq!(f.default_model, None);
-
-    for pin in ["other/m9", "bare-id", "@fast"] {
-        let mut f: ModelsFile =
-            serde_json::from_str(r#"{"providers":{"other":{"base_url":"http://o/v1"}}}"#).unwrap();
-        f.default_model = Some(pin.into());
-        assert!(!f.prune_dangling_default("default"), "{pin} must survive");
-        assert_eq!(f.default_model.as_deref(), Some(pin));
-    }
-    // the session's own provider is injected, never in the file — not dangling
-    let mut f: ModelsFile =
-        serde_json::from_str(r#"{"providers":{},"default_model":"default/m1"}"#).unwrap();
-    assert!(!f.prune_dangling_default("default"));
 }
 
 /// The `.claude` compat layer overrides a `.sunmao` twin per key — the

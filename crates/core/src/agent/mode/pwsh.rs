@@ -318,10 +318,15 @@ fn pwsh_segment_mutates(seg: &str, verbs: &std::collections::HashSet<String>) ->
         "get-itemproperty",
         "get-executionpolicy",
     ];
-    if verbs.contains(&v) || PWSH_READS.contains(&v.as_str()) {
+    if verbs.contains(&v) || PWSH_READS.contains(&v.as_str()) || v.starts_with("get-") {
         // `gc`/`Get-Content` reading a file is fine — but `-Encoding` etc.
         // can't turn it into a write; arg-level mutation check not needed
         // for the read verb's own flags (unlike `find -exec` in POSIX).
+        // `get-` is a prefix, not a list: PowerShell's approved-verb
+        // contract reserves Get-* for pure reads (Get-FileHash, Get-Acl,
+        // Get-WinEvent …) and the Lead's prompt already promises it —
+        // an explicit-name list could never cover every cmdlet the OS
+        // ships.
         return false;
     }
     true

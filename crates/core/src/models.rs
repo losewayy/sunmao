@@ -129,29 +129,6 @@ impl ModelsFile {
         }
         out
     }
-
-    /// Drop a `default_model` whose `provider/model` prefix no longer names a
-    /// provider — deleting a provider must not write a dead pin back. A bare
-    /// id resolves through the session's own provider (never in the file) and
-    /// `@route` through `routes`, so only a concrete `provider/...` pin can
-    /// dangle. `session_provider` is that injected name. Returns whether the
-    /// pin was cleared.
-    pub fn prune_dangling_default(&mut self, session_provider: &str) -> bool {
-        let Some(sel) = self.default_model.as_deref() else {
-            return false;
-        };
-        if sel.starts_with('@') {
-            return false;
-        }
-        let Some((prov, _)) = sel.split_once('/') else {
-            return false;
-        };
-        if prov.is_empty() || self.providers.contains_key(prov) || prov == session_provider {
-            return false;
-        }
-        self.default_model = None;
-        true
-    }
 }
 
 /// The pinned new-session model for `cwd` — `.sunmao/models.json` then
@@ -550,15 +527,17 @@ impl ModelResolver {
         out
     }
 
-    /// Completable selectors for `/model` argument completion: `@route`
-    /// names, concrete catalog ids, and `provider/` prefixes (a model id
-    /// that isn't catalogued still resolves — the provider may know it).
+    /// What a model picker may offer: `@route` aliases plus catalog-backed
+    /// `provider/model` ids — the list the GUI's default-model menu, the
+    /// composer capsule and the Fusion picker all read. A provider with no
+    /// catalog contributes nothing: a bare `provider/` resolves to an EMPTY
+    /// model id, so offering it hands the user a selector that looks usable
+    /// and cannot run (`default/` in the settings menu was exactly that).
     pub fn selectors(&self) -> Vec<String> {
         let file = self.file.read_or_recover();
         let mut out: Vec<String> = file.routes.keys().map(|r| format!("@{r}")).collect();
         for (name, p) in &file.providers {
-            out.push(format!("{name}/"));
-            for m in &p.catalog {
+            for m in p.catalog.iter().filter(|m| !m.id.trim().is_empty()) {
                 out.push(format!("{name}/{}", m.id));
             }
         }

@@ -118,12 +118,9 @@ function renderModelRows(p, q) {
   if (modelLabel && (!q || modelLabel.toLowerCase().includes(q)))
     rows.push(`<div class="lbl">${t('当前')}</div><div class="mi cur"><span class="mt mono"><span>${esc(modelLabel)}</span><small>${t('本会话正在使用')}</small></span>${ic('check', 'i sm ck')}</div>`);
   const routes = (MODELS && MODELS.routes) || {};
-  // Fusion splits the session into a Lead and a Sidekick. The picker is
-  // where a model gets named, so the relationship belongs here: the picked
-  // model IS the Lead's, and the Sidekick inherits it unless the Lead routes
-  // one per delegation.
+  // the picked model is the Lead's; the Sidekick side has its own row in 设置 › Fusion
   if (turnMode === 'fusion')
-    rows.push(`<div class="hint" data-fusion-note>${esc(t('Fusion 已开：本会话模型就是 Lead，Sidekick 默认继承它；Lead 可在委派时用 @route 指定别的模型'))}</div>`);
+    rows.push(`<div class="hint" data-fusion-note>${esc(t('Fusion 已开：Sidekick 在设置 › Fusion 里选；未设置时继承本会话模型'))}</div>`);
   for (const [r, chain] of Object.entries(routes)) {
     const sel = '@' + r, d = Array.isArray(chain) ? chain.join(' → ') : String(chain);
     if (!q || (sel + ' ' + d).toLowerCase().includes(q)) rows.push(`<button class="mi" data-v="${esc(sel)}">${ic('zap')}<span class="mt mono"><span>${esc(sel)}</span><small>${esc(d)}</small></span></button>`);
@@ -243,7 +240,7 @@ function renderProviders() {
         + `<div class="pv-acts"><button class="btn ghost sm" data-pv="edit" data-n="${esc(n)}" data-tip="${esc(t('编辑'))}">${ic('pen', 'i sm')}</button><button class="btn ghost sm" data-pv="del" data-n="${esc(n)}" data-tip="${esc(t('删除'))}">${ic('trash', 'i sm')}</button></div></div>`
         + (cat.length
           ? `<div class="pv-cat">${cat.slice(0, 8).map(m => `<span class="tag" data-tip="${esc(n + '/' + m.id)}">${esc(m.id)}${modMarks(m) ? ' ·' + modMarks(m) : ''}${m.context_length ? ' ·' + esc(ctxLen(m.context_length)) : ''}${(m.thinking || []).length || m.reasoning ? ' ·' + t('思') : ''}</span>`).join('')}${cat.length > 8 ? `<span class="tag">${t('等 {n} 个', { n: cat.length })}</span>` : ''}</div>`
-          : '');
+          : `<div class="pv-empty">${t('还没有模型 — 点「编辑」拉取，或手写一个 model id')}</div>`);
     }
     html += `<div class="card glass cfg pv">${body}</div>`;
   }
@@ -375,8 +372,13 @@ async function providerAction(kind, el) {
     const base = g('base_url');
     if (!name || !base) return toast(t('名称与 Base URL 必填'), 'alert', 'warn');
     const catalog = (pvEdit.cands || []).filter(m => pvEdit.sel.has(m.id));
+    // The list this save carries is authoritative only when it differs from
+    // what the form was shown: a form that never rendered a catalog (a stale
+    // or empty view) must not be the reason one gets cleared, so the server
+    // keeps the file's models unless this flag names the provider it owns.
+    const ownsCatalog = JSON.stringify(catalog) !== JSON.stringify((MODELS.providers[name] && MODELS.providers[name].catalog) || []);
     const dBtn = cardEl.querySelector('[data-pv="dialect"]');
-    const edit = { name, base_url: base, dialect: (dBtn && dBtn.dataset.v) || 'openai', api_key: g('api_key') || null, keepKey: true, keepCatalog: false, setCatalog: catalog };
+    const edit = { name, base_url: base, dialect: (dBtn && dBtn.dataset.v) || 'openai', api_key: g('api_key') || null, keepKey: true, keepCatalog: false, setCatalog: catalog, ownsCatalog };
     if (pvEdit && pvEdit.name && pvEdit.name !== name) edit.renameFrom = pvEdit.name;
     else if (pvEdit && !pvEdit.name) edit.add = true;
     pvEdit = null;
@@ -577,45 +579,50 @@ function renderMcp() {
       : '<div class="empty-hint">' + t('当前会话没有连接 MCP 服务器') + '</div>');
 }
 
-/* Fusion page — the third turn-shape axis (`standard` | `fusion`). Two kinds
-   of content only: the ONE real control (the per-session turn mode, which is
-   a session-log fact with no `.sunmao` key behind it, so there is no file
-   form to offer and a persisted toggle would be a knob that does nothing),
-   and read-only notes about what the kernel fixes at compile time. */
+/* Fusion page — the turn-shape switch plus the model pair: this session's
+   model is the Lead, the Sidekick is picked here (unset = inherit the Lead). */
 function renderFusion() {
   if (view !== 'settings' || setPage !== 'fusion') return;
   const host = $('#set-generic');
   const cur = turnMode === 'fusion' ? 'fusion' : 'standard';
   const ptc = driver === 'ptc';
-  // both options always render: the live one is disabled and labelled, so
-  // the page shows the state and the way out of it in the same row
-  const opt = (v, name, desc) => row(name, desc,
-    `<button class="btn ghost sm" id="fusion-${v}" data-fusion="${v}"${(v === cur || (ptc && v === 'fusion')) ? ' disabled' : ''}>${t(v === cur ? '使用中' : '切换')}</button>`);
-  const fact = (k, b, s, code) => `<div class="cr" data-fact="${k}"><div class="l"><b>${b}</b><span>${s}</span></div><span class="mono">${code}</span></div>`;
-  host.innerHTML = head(t('Fusion'), t('回合形状的第三个轴，与审批模式、循环驱动正交。'))
-    + sec(t('本会话的回合模式'), t('立即生效；按会话记在会话日志里，恢复会话时延续。新会话默认标准。'), card([
-      row(t('当前'), t('内核报告的状态，不是本页自己记的'), `<span class="tag" id="fusion-cur" data-mode="${cur}">${cur === 'fusion' ? 'Fusion' : t('标准')}</span>`),
-      opt('standard', t('标准'), t('单模型回合：本会话自己读写与执行')),
-      opt('fusion', 'Fusion', t('本会话变成只读 Lead：不写文件、不改状态，工作交给全新上下文的 Sidekick；Sidekick 的写入受文件白名单约束，验证命令由内核真跑。')),
-      ...(ptc ? [`<div class="cr" data-fusion-why><div class="l"><b>${t('当前会话用 ptc 循环驱动')}</b><span>${t('它只声明 RunCode 一条路，Fusion 无法委派，切换会被内核拒绝。')}</span></div></div>`] : []),
-    ]))
-    + sec(t('它什么时候触发、触发后发生什么'), '', card([
-      row(t('委派'), t('Lead 自己决定要不要委派：每次委派是一次完整的 spec，Sidekick 看不到本会话的任何上下文。返回后内核真跑验证命令，不过就让 Lead 带反馈重做同一个 Sidekick。'), ''),
-    ]))
-    + sec(t('模型'), t('Fusion 没有单独的模型设置。'), card([
-      row(t('Lead'), t('就是本会话当前使用的模型'), `<span class="tag mono">${esc(modelLabel || '—')}</span>`),
-      row(t('Sidekick'), t('默认继承同一个模型；本会话换模型会一起带走。Lead 也可以在委派时用 .sunmao/models.json 里的 @route 指定别的模型。'), ''),
-    ]))
-    + sec(t('这几个是编译期常量，前端改不了'), t('写在设置页是为了让你知道它们存在、去哪改。'), card([
-      fact('escalate', t('连续失败后升级'), t('验证命令连续两次不过，Lead 的写工具解锁到本回合结束，由它自己收尾。'), 'ESCALATE_AFTER'),
-      fact('verify', t('验证命令超时'), t('单条验证命令的时限。'), 'VERIFY_TIMEOUT_SECS'),
-      fact('scope', t('生效范围'), t('回合模式只属于当前会话，不写进 .sunmao 配置，也没有全局默认。其他前端用 /mode fusion 切换。'), 'turn_mode_change'),
-      fact('prompt', t('提示词'), t('fusion-lead 与 fusion-sidekick 的提示词可以用 prompt.d/ 覆盖。'), 'prompt.d/'),
-    ]));
+  const side = (MODELS && MODELS.fusion_sidekick) || '';
+  // each option carries its own name; the live one is checked and disabled, so
+  // the row reads as "the shape you are in, and the other one"
+  const opt = (v, name) => `<button class="btn ghost sm" id="fusion-${v}" data-fusion="${v}" data-mode="${cur}"${(v === cur || (ptc && v === 'fusion')) ? ' disabled' : ''}>${v === cur ? ic('check', 'i xs ck') : ''}${name}</button>`;
+  host.innerHTML = head(t('Fusion'), t('强模型当 Lead 规划与验证，便宜模型当 Sidekick 执行；两个模型可以相同也可以不同。'))
+    + card([
+      row(t('回合模式'), '', `${opt('standard', t('标准'))} ${opt('fusion', 'Fusion')}`),
+      row(t('Lead'), t('本会话正在使用的模型'), `<span class="tag mono">${esc(modelLabel || '—')}</span>`),
+      row(t('Sidekick'), t('Fusion 委派时执行工作的模型'), `<button class="pill plain" id="fusion-sidekick"><span class="mono">${esc(side || t('继承 Lead'))}</span>${ic('chev-d')}</button>`),
+    ])
+    + (ptc ? `<div class="empty-hint" data-fusion-why>${t('当前会话用 ptc 循环驱动：它只声明 RunCode 一条路，Fusion 无法委派，切换会被内核拒绝。')}</div>` : '');
   host.querySelectorAll('[data-fusion]').forEach(b => b.addEventListener('click', () => {
     if (b.disabled) return;
     wsSend({ type: 'mode', sel: b.dataset.fusion });
   }));
+  const sk = $('#fusion-sidekick');
+  if (sk) sk.addEventListener('click', () => sidekickModelPop(sk));
+}
+
+/* Sidekick picker — `fusion_sidekick` in models.json; the empty row clears it
+   back to "inherit the Lead". */
+function sidekickModelPop(el) {
+  const cur = (MODELS && MODELS.fusion_sidekick) || '';
+  const items = [
+    { label: t('Sidekick 模型') },
+    { v: '', t: t('继承 Lead'), on: !cur },
+    ...((MODELS && MODELS.selectors) || []).map(s => ({ v: s, t: s, mono: true, on: s === cur })),
+  ];
+  menuPop(el, items, v => saveFusionSidekick(v), { place: 'top', align: 'end' });
+}
+async function saveFusionSidekick(sel) {
+  try {
+    MODELS = await api('/models', jput(modelsBody({ fusion_sidekick: sel || null })));
+    models = MODELS.selectors || [];
+    toast(t('已保存；下次委派生效'), 'check');
+    renderFusion();
+  } catch (e) { toast(t('保存失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
 
 const PAGES = {

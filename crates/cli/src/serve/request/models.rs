@@ -30,8 +30,19 @@ fn models_host(s: &Arc<Shared>, sess: Option<String>) -> Option<Arc<Host>> {
 pub(super) async fn view(s: &Arc<Shared>, sess: Option<String>) -> HostResponse {
     let host = models_host(s, sess);
     let resolver = host.as_ref().and_then(|h| h.agent.models_resolver());
+    let default_provider = resolver
+        .as_ref()
+        .map(|m| m.default_provider())
+        .unwrap_or_else(|| "default".into());
     let file = match resolver.as_ref() {
-        Some(m) => m.file(),
+        Some(m) => {
+            // The page has to show the FILE, not this process's last snapshot:
+            // an edit made elsewhere (another frontend, a hand edit) must be
+            // visible here, or the next save writes the stale table back over
+            // it — that is how a configured catalog gets silently reduced.
+            m.reload();
+            m.file()
+        }
         None => {
             // no live host — the bare file still answers (the session's
             // own `default` row is honestly absent: nothing is running)
@@ -53,10 +64,23 @@ pub(super) async fn view(s: &Arc<Shared>, sess: Option<String>) -> HostResponse 
         "providers": providers_view(&file),
         "routes": file.routes,
         // the new-session pick — the settings page renders it and writes it
-        // back through the same PUT (null = nothing pinned)
-        "default_model": file.default_selector(),
+        // back through the same PUT (null = nothing pinned). A stored pin
+        // that no longer resolves reads as unpinned: the pill must never show
+        // a selector the picker cannot offer, and the next save drops it.
+        "default_model": file
+            .default_selector()
+            .filter(|sel| default_model_problem(sel, &file, &default_provider).is_none()),
+        // the model a Fusion delegation falls back to when the Lead pins none
+        // (null = the Sidekick inherits the Lead). The key rides the file's
+        // unknown-key map, so the view has to surface it for the page to
+        // render and round-trip it.
+        "fusion_sidekick": file
+            .extra
+            .get(sunmao_core::agent::SIDEKICK_KEY)
+            .filter(|v| v.as_str().is_some_and(|s| !s.trim().is_empty()))
+            .cloned(),
         "selectors": resolver.as_ref().map(|m| m.selectors()).unwrap_or_default(),
-        "default_provider": resolver.as_ref().map(|m| m.default_provider()).unwrap_or_else(|| "default".into()),
+        "default_provider": default_provider,
     }))
 }
 
@@ -130,12 +154,13 @@ pub(super) async fn fetch(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) ->
 
 /// The save's request-level metadata, under the reserved `$request` key.
 ///
-/// A save has to say two things the document shape cannot: "this entry is a
-/// create, not an edit" and "this entry was renamed from X". Bare top-level
-/// names would collide with hand-written file keys (`models.json` may
-/// legitimately carry `adding`), so they ride in one reserved namespace that
-/// the server strips before the file parse. Everything outside `$request` is
-/// document content, unknown keys included.
+/// A save has to say things the document shape cannot: "this entry is a
+/// create, not an edit", "this entry was renamed from X", "this save decides
+/// that provider's model list", "the user actually picked the default model".
+/// Bare top-level names would collide with hand-written file keys
+/// (`models.json` may legitimately carry `adding`), so they ride in one
+/// reserved namespace that the server strips before the file parse. Everything
+/// outside `$request` is document content, unknown keys included.
 #[derive(serde::Deserialize, Default)]
 struct SaveRequest {
     /// `{new: old}` — where a renamed entry's credential has to move, and
@@ -146,6 +171,41 @@ struct SaveRequest {
     /// map, so only the page knows which entry is a new one.
     #[serde(default)]
     adding: Option<String>,
+    /// the provider whose catalog THIS save decides (the editor's candidate
+    /// pool was changed). Every other provider's catalog is taken from the
+    /// file, so a page whose snapshot is stale or empty can never shrink one.
+    #[serde(default)]
+    catalog_owner: Option<String>,
+    /// the user picked or cleared `default_model`, rather than the page
+    /// carrying the current value through: a value this save names must be
+    /// usable, so a dead one is refused instead of quietly stored.
+    #[serde(default)]
+    set_default: bool,
+}
+
+/// Why `default_model` cannot be used — `None` means it is fine or nothing is
+/// pinned. A bare id resolves through the session's own provider (never in the
+/// file), `provider/` names no model at all, and a `@route` has to exist.
+fn default_model_problem(
+    sel: &str,
+    file: &sunmao_core::models::ModelsFile,
+    session_provider: &str,
+) -> Option<String> {
+    let sel = sel.trim();
+    if sel.is_empty() {
+        return None;
+    }
+    if let Some(route) = sel.strip_prefix('@') {
+        return (!file.routes.contains_key(route)).then(|| format!("no route named @{route}"));
+    }
+    let (prov, model) = sel.split_once('/')?;
+    if model.trim().is_empty() {
+        return Some(format!("`{sel}` names no model"));
+    }
+    if !file.providers.contains_key(prov) && prov != session_provider {
+        return Some(format!("no provider named {prov}"));
+    }
+    None
 }
 
 /// `PUT /models?sess=` — fold the page's desired table onto
@@ -175,6 +235,8 @@ pub(super) async fn put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> H
     let SaveRequest {
         rename_from,
         adding,
+        catalog_owner,
+        set_default,
     } = req;
     let incoming: sunmao_core::models::ModelsFile = match serde_json::from_value(v) {
         Ok(f) => f,
@@ -216,9 +278,43 @@ pub(super) async fn put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> H
     }
     let mut merged =
         sunmao_core::models::ModelsFile::merge_save(&existing, &incoming, &rename_from);
-    // deleting the provider `default_model` points at must not write a dead
-    // selector back
-    merged.prune_dangling_default(&default_name);
+    // A catalog can only be decided by an editor that showed one. For every
+    // other provider the file keeps its model list: the page posts whatever
+    // snapshot it had, and a stale or empty one must not shrink (or clear) a
+    // configured catalog — `$request.catalog_owner` names the one provider
+    // whose pool the user actually changed.
+    for (name, old) in &existing.providers {
+        if old.catalog.is_empty() || catalog_owner.as_deref() == Some(name.as_str()) {
+            continue;
+        }
+        if let Some(p) = merged.providers.get_mut(name) {
+            p.catalog = old.catalog.clone();
+        }
+    }
+    // a pin this save named explicitly must be usable; one that merely rode
+    // along (its provider was just deleted, or a hand edit left it stale) is
+    // dropped instead of blocking an unrelated save
+    if let Some(sel) = merged.default_model.clone()
+        && let Some(why) = default_model_problem(&sel, &merged, &default_name)
+    {
+        if set_default {
+            return HostResponse::err(400, format!("default_model: {why}"));
+        }
+        merged.default_model = None;
+    }
+    // an explicit null for the Fusion Sidekick pick means "unset": the page
+    // posts the key on every save, and it rides the unknown-key map, so
+    // writing the null straight through would leave a dead husk in a
+    // hand-editable file. Drop the key instead. (A pick that no longer
+    // resolves is NOT pruned here: the delegation falls back at resolve time
+    // with a warn, so a renamed provider doesn't rewrite the user's file.)
+    if merged
+        .extra
+        .get(sunmao_core::agent::SIDEKICK_KEY)
+        .is_some_and(|v| v.is_null())
+    {
+        merged.extra.remove(sunmao_core::agent::SIDEKICK_KEY);
+    }
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return HostResponse::err(500, format!("{e:#}"));
     }
@@ -534,6 +630,65 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// The Fusion Sidekick pick is a real top-level key the page round-trips:
+    /// GET carries it, a save that names one writes it, an explicit null
+    /// clears it out of the file, and a save whose body never mentions it (the
+    /// provider editor's own body) leaves it alone.
+    #[tokio::test]
+    async fn models_save_round_trips_the_fusion_sidekick_pick() {
+        let root = models_dir(
+            "sidekick",
+            r#"{"providers":{"local":{"base_url":"http://local/v1"}},"fusion_sidekick":"local/cheap"}"#,
+        );
+        let h = handle(&root);
+        let view: serde_json::Value =
+            serde_json::from_slice(&h.request("GET", "/models", b"").await.body).unwrap();
+        assert_eq!(
+            view["fusion_sidekick"], "local/cheap",
+            "the GET view has to carry the pick or the page can never show it"
+        );
+
+        // the provider editor's body never names it — the save must not drop it
+        let body = gui_body(&view);
+        assert!(!body.as_object().unwrap().contains_key("fusion_sidekick"));
+        assert_eq!(
+            h.request("PUT", "/models", body.to_string().as_bytes())
+                .await
+                .status,
+            200
+        );
+        assert_eq!(disk(&root)["fusion_sidekick"], "local/cheap");
+
+        // naming another one writes it
+        let mut body = gui_body(&view);
+        body["fusion_sidekick"] = "local/other".into();
+        assert_eq!(
+            h.request("PUT", "/models", body.to_string().as_bytes())
+                .await
+                .status,
+            200
+        );
+        assert_eq!(disk(&root)["fusion_sidekick"], "local/other");
+
+        // an explicit null clears the key instead of leaving a null husk
+        let mut body = gui_body(&view);
+        body["fusion_sidekick"] = serde_json::Value::Null;
+        assert_eq!(
+            h.request("PUT", "/models", body.to_string().as_bytes())
+                .await
+                .status,
+            200
+        );
+        assert!(
+            !disk(&root)
+                .as_object()
+                .unwrap()
+                .contains_key("fusion_sidekick"),
+            "clearing must remove the key, not write a dead null"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A hand-written provider-level key the view never carries must survive a
     /// save the same way a top-level one does.
     #[tokio::test]
@@ -656,5 +811,171 @@ mod tests {
         assert_eq!(d["rename_from"]["local"], "plain");
         assert_eq!(d["providers"]["plain"]["base_url"], "http://plain/v1");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A save must not shrink a catalog it never showed. The page posts its
+    /// snapshot, but the file is the truth: an empty candidate pool means
+    /// "nothing to render", not "delete them all". Only an editor that
+    /// actually touched the list owns it (`$request.catalog_owner`).
+    #[tokio::test]
+    async fn models_save_keeps_a_catalog_the_form_did_not_own() {
+        let root = models_dir(
+            "catalogkeep",
+            r#"{"providers":{"local":{"base_url":"http://local/v1",
+                 "catalog":[{"id":"m1"},{"id":"m2"},{"id":"m3"}]}}}"#,
+        );
+        let h = handle(&root);
+        // what "open the editor, change nothing catalog-related, hit 保存" posts
+        let body = serde_json::json!({
+            "providers": {"local": {"base_url": "http://local/v1", "dialect": "openai", "catalog": []}},
+            "routes": {},
+        });
+        let put = h
+            .request("PUT", "/models", body.to_string().as_bytes())
+            .await;
+        assert_eq!(put.status, 200, "{}", String::from_utf8_lossy(&put.body));
+        let d = disk(&root);
+        assert_eq!(
+            d["providers"]["local"]["catalog"]
+                .as_array()
+                .map(|a| a.len())
+                .unwrap_or(0),
+            3,
+            "a form that showed no candidates must not clear the file's catalog"
+        );
+    }
+
+    /// ...but an editor that DID touch the pool owns it, so unchecking the
+    /// last model really does clear the catalog.
+    #[tokio::test]
+    async fn models_save_lets_the_owning_editor_clear_a_catalog() {
+        let root = models_dir(
+            "catalogown",
+            r#"{"providers":{"local":{"base_url":"http://local/v1",
+                 "catalog":[{"id":"m1"},{"id":"m2"}]}}}"#,
+        );
+        let h = handle(&root);
+        let body = serde_json::json!({
+            "providers": {"local": {"base_url": "http://local/v1", "dialect": "openai", "catalog": []}},
+            "routes": {},
+            "$request": {"catalog_owner": "local"},
+        });
+        let put = h
+            .request("PUT", "/models", body.to_string().as_bytes())
+            .await;
+        assert_eq!(put.status, 200, "{}", String::from_utf8_lossy(&put.body));
+        assert_eq!(
+            disk(&root)["providers"]["local"]["catalog"]
+                .as_array()
+                .map(|a| a.len())
+                .unwrap_or(0),
+            0,
+            "an explicit clear must land"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A default model the save names explicitly has to be usable; one that
+    /// merely rode along (its provider was just deleted) is dropped instead of
+    /// blocking an unrelated save.
+    #[tokio::test]
+    async fn models_save_rejects_an_empty_or_dead_default_model() {
+        let file =
+            r#"{"providers":{"local":{"base_url":"http://local/v1","catalog":[{"id":"m1"}]}}}"#;
+        for sel in ["local/", "ghost/m1", "@nosuch"] {
+            let root = models_dir("defbad", file);
+            let h = handle(&root);
+            let body = serde_json::json!({
+                "providers": {"local": {"base_url": "http://local/v1", "dialect": "openai", "catalog": [{"id": "m1"}]}},
+                "routes": {},
+                "default_model": sel,
+                "$request": {"set_default": true},
+            });
+            let put = h
+                .request("PUT", "/models", body.to_string().as_bytes())
+                .await;
+            assert_eq!(
+                put.status,
+                400,
+                "{sel} must be refused: {}",
+                String::from_utf8_lossy(&put.body)
+            );
+            assert!(
+                disk(&root)["default_model"].is_null(),
+                "{sel}: a refused save writes nothing"
+            );
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        // carried, not set: pruned so the stale pin can't strand a new chat
+        let root = models_dir("defstale", file);
+        let h = handle(&root);
+        let body = serde_json::json!({
+            "providers": {"local": {"base_url": "http://local/v1", "dialect": "openai", "catalog": [{"id": "m1"}]}},
+            "routes": {},
+            "default_model": "ghost/m1",
+        });
+        assert_eq!(
+            h.request("PUT", "/models", body.to_string().as_bytes())
+                .await
+                .status,
+            200
+        );
+        assert!(disk(&root)["default_model"].is_null(), "dead pin dropped");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The happy path: a real catalogued model round-trips through PUT/GET and
+    /// stays pinned, with its catalog intact.
+    #[tokio::test]
+    async fn models_save_round_trips_a_real_default_model() {
+        let root = models_dir(
+            "defgood",
+            r#"{"providers":{"local":{"base_url":"http://local/v1","catalog":[{"id":"m1"}]}}}"#,
+        );
+        let h = handle(&root);
+        let body = serde_json::json!({
+            "providers": {"local": {"base_url": "http://local/v1", "dialect": "openai", "catalog": [{"id": "m1"}]}},
+            "routes": {},
+            "default_model": "local/m1",
+            "$request": {"set_default": true, "catalog_owner": "local"},
+        });
+        let put = h
+            .request("PUT", "/models", body.to_string().as_bytes())
+            .await;
+        assert_eq!(put.status, 200, "{}", String::from_utf8_lossy(&put.body));
+        let d = disk(&root);
+        assert_eq!(d["default_model"], "local/m1");
+        assert_eq!(d["providers"]["local"]["catalog"][0]["id"], "m1");
+        let view: serde_json::Value = serde_json::from_slice(&put.body).unwrap();
+        assert_eq!(view["default_model"], "local/m1");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The pin rule the save path enforces: a bare id resolves through the
+    /// session's own provider, a `provider/model` is fine even when the id is
+    /// not catalogued (the provider may know it), and only an empty model
+    /// part, a missing provider or a missing route is dead.
+    #[test]
+    fn default_model_problem_flags_only_dead_pins() {
+        let f: sunmao_core::models::ModelsFile = serde_json::from_str(
+            r#"{"providers":{"other":{"base_url":"http://o/v1"}},"routes":{"fast":"other/m1"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            super::default_model_problem("other/m9", &f, "default"),
+            None
+        );
+        assert_eq!(super::default_model_problem("bare-id", &f, "default"), None);
+        assert_eq!(super::default_model_problem("", &f, "default"), None);
+        assert_eq!(super::default_model_problem("@fast", &f, "default"), None);
+        assert_eq!(
+            super::default_model_problem("default/m1", &f, "default"),
+            None,
+            "the session's own provider is injected, never dangling"
+        );
+        assert!(super::default_model_problem("other/", &f, "default").is_some());
+        assert!(super::default_model_problem("ghost/m1", &f, "default").is_some());
+        assert!(super::default_model_problem("@nope", &f, "default").is_some());
     }
 }

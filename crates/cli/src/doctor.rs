@@ -11,12 +11,12 @@ pub async fn run(cli: &crate::Cli) -> anyhow::Result<()> {
         "anthropic" => std::sync::Arc::new(sunmao_llm::AnthropicClient::new(
             &cli.base_url,
             &cli.api_key,
-            &cli.model,
+            cli.model_label(),
         )),
         _ => std::sync::Arc::new(sunmao_llm::OaiClient::new(
             &cli.base_url,
             &cli.api_key,
-            &cli.model,
+            cli.model_label(),
         )),
     };
     let probe = sunmao_llm::ChatRequest {

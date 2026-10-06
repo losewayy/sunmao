@@ -256,7 +256,10 @@ impl ChannelAdapter for WechatAdapter {
     }
 
     // edit_text: iLink has no message-edit call — the progress draft is
-    // re-posted, and the default no-op is the honest behavior.
+    // posted once and left alone (rate limits make resend-as-edit worse).
+    fn can_edit(&self) -> bool {
+        false
+    }
     // send_typing: iLink exposes `getconfig`/`sendtyping`; the typing
     // keep-alive is out of scope for this batch.
 }

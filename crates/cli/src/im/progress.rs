@@ -264,7 +264,12 @@ async fn tick(state: &Shared, channels: &[Arc<Delivery>]) {
                     _ => {}
                 },
                 Some(mid) => {
-                    if adapter.edit_text(&key.chat_id, &mid, &text).await.is_ok()
+                    // channels without an edit call keep their first draft —
+                    // no resend-as-edit: wechat rate-limits burst sends and a
+                    // fresh status bubble every throttle tick is spam, not
+                    // progress
+                    if adapter.can_edit()
+                        && adapter.edit_text(&key.chat_id, &mid, &text).await.is_ok()
                         && let Some(d) = state.lock().unwrap().drafts.get_mut(key)
                     {
                         d.last_edit = Some(Instant::now());
@@ -454,6 +459,38 @@ mod tests {
         state
     }
 
+    /// Adapter declaring `can_edit: false` (wechat/dingtalk/qq shape) — the
+    /// lane must post the draft once and then leave it alone: no edit calls
+    /// and no resend on later ticks.
+    struct NoEditAdapter {
+        sends: std::sync::Mutex<Vec<String>>,
+        edits: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChannelAdapter for NoEditAdapter {
+        fn channel(&self) -> &'static str {
+            "test"
+        }
+        async fn poll(&self, _tx: tokio::sync::mpsc::Sender<crate::im::channels::InboundMsg>) {}
+        async fn send_text(&self, _chat_id: &str, text: &str) -> SendResult {
+            self.sends.lock().unwrap().push(text.to_string());
+            Ok(Some("1".into()))
+        }
+        async fn edit_text(
+            &self,
+            _chat_id: &str,
+            _message_id: &str,
+            text: &str,
+        ) -> anyhow::Result<()> {
+            self.edits.lock().unwrap().push(text.to_string());
+            Ok(())
+        }
+        fn can_edit(&self) -> bool {
+            false
+        }
+    }
+
     /// A draft that delivered part of its bubble must not be posted again
     /// from the top: the chat would show the first chunk twice. The lane has
     /// no ledger to resume from, so the turn simply stops drafting and the
@@ -487,6 +524,39 @@ mod tests {
             state.lock().unwrap().drafts[&key].abandoned,
             "the turn's drafting stops, it does not retry"
         );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// Channels without an edit call keep their first draft and never touch
+    /// it again — no edit calls and no resend, however many ticks follow.
+    #[tokio::test]
+    async fn a_no_edit_channel_keeps_its_first_draft() {
+        let (s, dir) = store();
+        let a = Arc::new(NoEditAdapter {
+            sends: std::sync::Mutex::new(Vec::new()),
+            edits: std::sync::Mutex::new(Vec::new()),
+        });
+        let delivery = Delivery::new(s.clone(), a.clone());
+        let key = ChatKey {
+            channel: "test".into(),
+            chat_id: "42".into(),
+        };
+        let state = drafting_state(&key);
+        let channels = [Arc::new(delivery)];
+        tick(&state, &channels).await;
+        assert_eq!(a.sends.lock().unwrap().len(), 1, "draft posted once");
+        // backdate the throttle cursor so the next tick is genuinely due —
+        // without can_edit this would be a resend/edit candidate
+        state
+            .lock()
+            .unwrap()
+            .drafts
+            .get_mut(&key)
+            .unwrap()
+            .last_edit = Some(Instant::now() - EDIT_INTERVAL * 2);
+        tick(&state, &channels).await;
+        assert_eq!(a.sends.lock().unwrap().len(), 1, "no resend");
+        assert!(a.edits.lock().unwrap().is_empty(), "no edit calls");
         std::fs::remove_dir_all(dir).ok();
     }
 

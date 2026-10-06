@@ -252,7 +252,10 @@ impl ChannelAdapter for DingtalkAdapter {
     }
 
     // edit_text: no edit API for enterprise robot messages — the progress
-    // draft is re-posted, and the default no-op is the honest behavior.
+    // draft is posted once and left alone.
+    fn can_edit(&self) -> bool {
+        false
+    }
     // send_typing: no typing indicator on this channel.
 }
 

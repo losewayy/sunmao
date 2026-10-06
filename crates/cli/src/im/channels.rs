@@ -131,6 +131,13 @@ pub trait ChannelAdapter: Send + Sync {
     async fn edit_text(&self, _chat_id: &str, _message_id: &str, _text: &str) -> Result<()> {
         Ok(())
     }
+    /// `false` where the platform has no message-edit call — the progress
+    /// lane keeps its first draft and stops touching it rather than
+    /// hammering a dead method (or worse, resending a fresh status bubble
+    /// every throttle tick on rate-limited channels).
+    fn can_edit(&self) -> bool {
+        true
+    }
     /// Typing indicator — best effort, errors are swallowed upstream.
     async fn send_typing(&self, _chat_id: &str) {}
 }

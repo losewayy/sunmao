@@ -167,6 +167,173 @@ fn log_is_empty(p: &std::path::Path) -> bool {
         })
 }
 
+/// `POST /session/{id}/open {path}` — click-to-open for files a tool call
+/// actually surfaced in THIS session. The acceptable path set is rebuilt
+/// from the log on every click: file-tool `path` args, Glob/Grep result
+/// lines, artifact records, and the session root itself. Anything else is
+/// a webview-invented string and gets 403 — the page can only open what
+/// the transcript already showed it, never an arbitrary filesystem path.
+/// No caching or snapshotting: a file the agent rewrote opens at its
+/// current bytes; a deleted one answers with a plain 404.
+pub(super) fn session_open(s: &Arc<Shared>, id: &str, body: &[u8]) -> HostResponse {
+    let raw = serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v["path"].as_str().map(str::to_string))
+        .unwrap_or_default();
+    if raw.trim().is_empty() {
+        return HostResponse::err(400, "missing path".into());
+    }
+    let Some(log) = log_path(s, id) else {
+        return HostResponse::err(404, "no such session".into());
+    };
+    let Ok(text) = std::fs::read_to_string(&log) else {
+        return HostResponse::err(500, "unreadable log".into());
+    };
+    match validate_open_click(&text, &s.cwd, &raw) {
+        Err(msg) => HostResponse::err(403, msg),
+        Ok(None) => HostResponse::err(404, "file no longer exists".into()),
+        Ok(Some(want)) => match open::that(&want) {
+            Ok(()) => HostResponse::json(serde_json::json!({"ok": true})),
+            Err(e) => HostResponse::err(500, format!("open failed: {e}")),
+        },
+    }
+}
+
+/// Resolve a click's raw path against the session's surfaced set.
+/// `Err` = forbidden (not in the log / not a path); `Ok(None)` = surfaced
+/// but gone from disk; `Ok(Some)` = safe to hand to the OS handler.
+fn validate_open_click(
+    text: &str,
+    fallback_cwd: &std::path::Path,
+    raw: &str,
+) -> Result<Option<std::path::PathBuf>, String> {
+    let (cwd, exposed) = exposed_paths(text, fallback_cwd);
+    let Some(want) = normalize_click(&cwd, raw) else {
+        return Err("not a filesystem path".into());
+    };
+    if !exposed.contains(&path_key(&want)) {
+        return Err("path wasn't surfaced by this session".into());
+    }
+    Ok(if want.exists() { Some(want) } else { None })
+}
+
+/// The session's surfaced set: normalized keys for every path a tool call
+/// or its output put in front of the user, plus the session root.
+fn exposed_paths(
+    text: &str,
+    fallback_cwd: &std::path::Path,
+) -> (std::path::PathBuf, std::collections::HashSet<String>) {
+    let mut cwd = fallback_cwd.to_path_buf();
+    // the Started event's cwd is the normalization base — a resumed
+    // foreign project's session resolves relative paths against ITS root
+    for line in text.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v["type"].as_str() == Some("started") {
+            if let Some(c) = v["cwd"].as_str() {
+                cwd = std::path::PathBuf::from(c);
+            }
+            break;
+        }
+    }
+    let mut set = std::collections::HashSet::new();
+    let mut push = |raw: &str| {
+        if let Some(p) = normalize_click(&cwd, raw) {
+            set.insert(path_key(&p));
+        }
+    };
+    push(&cwd.to_string_lossy());
+    for line in text.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        match v["type"].as_str().unwrap_or("") {
+            "tool_call" => {
+                let name = v["call"]["function"]["name"].as_str().unwrap_or("");
+                if !matches!(name, "Read" | "Write" | "Edit" | "Glob" | "Grep") {
+                    continue;
+                }
+                let args = v["call"]["function"]["arguments"].as_str().unwrap_or("{}");
+                let Ok(a) = serde_json::from_str::<serde_json::Value>(args) else {
+                    continue;
+                };
+                if let Some(p) = a["path"].as_str() {
+                    push(p);
+                }
+            }
+            "tool_result" => {
+                let name = v["name"].as_str().unwrap_or("");
+                if name != "Glob" && name != "Grep" {
+                    continue;
+                }
+                for line in v["output"].as_str().unwrap_or("").lines() {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with('[') {
+                        continue;
+                    }
+                    if name == "Grep" {
+                        // rg prints `path:line:match` — scan colon
+                        // positions for the first `:digits:` split so a
+                        // drive-letter colon inside the path can't eat it
+                        for (i, _) in line.match_indices(':') {
+                            let rest = &line[i + 1..];
+                            let Some(end) = rest.find(':') else { break };
+                            if end > 0 && rest[..end].chars().all(|c| c.is_ascii_digit()) {
+                                push(&line[..i]);
+                                break;
+                            }
+                        }
+                    } else {
+                        push(line);
+                    }
+                }
+            }
+            "artifact" => {
+                if let Some(p) = v["path"].as_str() {
+                    push(p);
+                }
+            }
+            _ => {}
+        }
+    }
+    (cwd, set)
+}
+
+/// Lexical normalize a clicked path: `file://` stripped, other schemes
+/// refused, relative joins the session cwd, `.`/`..` folded without
+/// touching the filesystem (the file may already be gone).
+fn normalize_click(cwd: &std::path::Path, raw: &str) -> Option<std::path::PathBuf> {
+    let raw = raw.trim();
+    let raw = raw.strip_prefix("file://").unwrap_or(raw);
+    if raw.is_empty() || raw.contains("://") {
+        return None;
+    }
+    let p = std::path::PathBuf::from(raw);
+    let joined = if p.is_absolute() { p } else { cwd.join(&p) };
+    let mut out = std::path::PathBuf::new();
+    for c in joined.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    Some(out)
+}
+
+/// Set-key for a path: slash-normalized, and case-folded on Windows where
+/// the filesystem can't tell `Src/Foo.rs` from `src/foo.rs`.
+fn path_key(p: &std::path::Path) -> String {
+    let s = p.to_string_lossy().replace('/', "\\");
+    #[cfg(windows)]
+    return s.to_lowercase();
+    #[cfg(not(windows))]
+    s
+}
+
 /// `GET /session/{id}/events` — the raw durable event list (`{events:[]}`),
 /// for dormant logs that never got a host. Frontend exports (markdown
 /// download) read this instead of re-deriving the fold.
@@ -256,7 +423,7 @@ pub(super) fn session_zip(s: &Arc<Shared>, id: &str) -> HostResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::log_is_empty;
+    use super::{log_is_empty, validate_open_click};
 
     fn log_path(tag: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!("sunmao-sessdel-{tag}-{}", std::process::id()))
@@ -301,5 +468,82 @@ mod tests {
             assert!(!log_is_empty(&p), "{line} should count as content");
         }
         let _ = std::fs::remove_file(&p);
+    }
+
+    fn open_fixture() -> String {
+        concat!(
+            r#"{"type":"started","model":"m","cwd":"/proj","driver":"full"}"#,
+            "\n",
+            r#"{"type":"tool_call","call":{"function":{"name":"Read","arguments":"{\"path\":\"src/foo.rs\"}"}}}"#,
+            "\n",
+            r#"{"type":"tool_call","call":{"function":{"name":"Bash","arguments":"{\"command\":\"cat /etc/passwd\"}"}}}"#,
+            "\n",
+            r#"{"type":"tool_result","name":"Glob","ok":true,"output":"src/a.rs\nsrc/dir/b.rs\n[truncated at 200]"}"#,
+            "\n",
+            r#"{"type":"tool_result","name":"Grep","ok":true,"output":"src/c.rs:12:match text"}"#,
+            "\n",
+            r#"{"type":"artifact","name":"x","path":"/proj/.sunmao/artifacts/x.html","bytes":1}"#,
+            "\n",
+        )
+        .to_string()
+    }
+
+    #[test]
+    fn open_click_accepts_surfaced_paths_only() {
+        let text = open_fixture();
+        let cwd = std::path::Path::new("/fallback");
+        // tool-arg, glob line, grep path, artifact, and the session root
+        for ok in [
+            "src/foo.rs",
+            "src/a.rs",
+            "src/dir/b.rs",
+            "src/c.rs",
+            "/proj/.sunmao/artifacts/x.html",
+            "/proj",
+            "./src/foo.rs",
+            "src/../src/foo.rs",
+        ] {
+            assert!(validate_open_click(&text, cwd, ok).is_ok(), "{ok}");
+        }
+        // forged: never surfaced, bash-command string, scheme, traversal
+        for bad in [
+            "src/secret.rs",
+            "/etc/passwd",
+            "https://evil/x",
+            "../outside.rs",
+        ] {
+            assert!(validate_open_click(&text, cwd, bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn open_click_reports_gone_files_distinctly() {
+        let text = open_fixture();
+        // surfaced + missing on disk → Ok(None), the 404 branch
+        assert!(matches!(
+            validate_open_click(&text, std::path::Path::new("/x"), "src/foo.rs"),
+            Ok(None)
+        ));
+    }
+
+    #[test]
+    fn open_click_resolves_a_real_surfaced_file() {
+        let dir = std::env::temp_dir().join("sm-open-fixture");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        let real = dir.join("src").join("real.txt");
+        std::fs::write(&real, "x").unwrap();
+        let cwd_json = serde_json::to_string(&dir.to_string_lossy().to_string()).unwrap();
+        let started =
+            format!(r#"{{"type":"started","model":"m","cwd":{cwd_json},"driver":"full"}}"#);
+        let text = format!(
+            "{started}\n{}\n",
+            r#"{"type":"tool_call","call":{"function":{"name":"Read","arguments":"{\"path\":\"src/real.txt\"}"}}}"#
+        );
+        match validate_open_click(&text, std::path::Path::new("/fb"), "src/real.txt") {
+            Ok(Some(p)) => assert!(p.ends_with("real.txt")),
+            other => panic!("expected Ok(Some), got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

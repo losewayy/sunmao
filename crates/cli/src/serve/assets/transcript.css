@@ -88,6 +88,8 @@
 .st.wait .i{animation:k-breathe var(--loop-breathe) var(--ease-in-out) infinite}
 .nm{font-family:var(--font-mono);font-weight:var(--fw-medium);color:var(--c-tool);flex:none}
 .sum{font-family:var(--font-mono);color:var(--c-text-2);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fp{color:var(--c-accent);text-decoration:underline dotted;text-underline-offset:3px;cursor:pointer}
+.fp:hover{filter:brightness(1.2)}
 .tm{font:var(--fs-2xs) var(--font-mono);color:color-mix(in srgb,var(--c-text-2) 65%,var(--c-text-3));font-variant-numeric:tabular-nums;flex:none}
 .tm.w{font:var(--fs-xs) var(--font-ui);color:var(--c-warn)}
 .tm.e{font:var(--fs-xs) var(--font-ui);color:var(--c-err)}

@@ -20,6 +20,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 clap.workspace = true
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures-util.workspace = true
+# OS-default-handler launch for "open this file" — the file lives on the
+# serve's machine, so the route (not the webview) resolves and validates it
+open = "5"
 tracing = { workspace = true }
 pulldown-cmark = { version = "0.13", default-features = false }
 ratatui = "0.30.2"

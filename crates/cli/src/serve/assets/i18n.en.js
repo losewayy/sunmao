@@ -373,4 +373,5 @@ const I18N_EN_CHROME = {
   "设置目标": "Set goal",
   "放弃目标": "Abandon goal",
   "设置会话目标": "Set session goal",
+  "已用系统程序打开": "Opened with the system default",
 };

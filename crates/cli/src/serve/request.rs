@@ -190,6 +190,7 @@ impl HostHandle {
             // byte-for-byte. Frontend never re-implements the fold.
             ("GET", ["session", id, "md"]) => session::session_markdown(s, id),
             ("GET", ["session", id, "zip"]) => session::session_zip(s, id),
+            ("POST", ["session", id, "open"]) => session::session_open(s, id, body),
             ("GET", ["session", id, "turns"]) => {
                 // the /rewind picker's data — user-turn boundaries on the
                 // log, numbered and previewed exactly like the TUI list

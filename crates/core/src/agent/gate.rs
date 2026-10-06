@@ -206,17 +206,22 @@ pub(crate) async fn gate_call(
         // the contract keys on `is_sidekick`, never list emptiness — an
         // empty `files:` delegates NO writes, not "no restriction". Any
         // mutating tool carrying a `path`/`file` arg is checked (Write,
-        // Edit, mcp/ext write tools alike); a mutating Bash has no path
-        // to check, so the segment classifier is the arbiter — if it
-        // mutates, it's outside the delegated file set by definition.
-        // Tools that mutate without a path arg (RunCode — its inner calls
-        // each re-enter this gate — TodoWrite, SendMessage) pass through.
+        // Edit, mcp/ext write tools alike). Bash is deliberately NOT
+        // gated here: the spec's verify commands are Bash — refusing
+        // mutating shell outright made the delegation contract
+        // unfulfillable (a Sidekick could never build or test its own
+        // work). Shell commands fall through to the normal gate below —
+        // deny rules, the segment scan, and the risky-pattern ask still
+        // apply to the child exactly as to the main agent. Tools that
+        // mutate without a path arg (RunCode — its inner calls each
+        // re-enter this gate — TodoWrite, SendMessage) pass through.
         if sidekick && call_mutates(tool, args, &ctx.readonly_verbs, ctx.shell) {
-            let detail = if let Some(p) = args["path"].as_str().or_else(|| args["file"].as_str()) {
-                (!whitelist_covers(&wl, &ctx.cwd, p)).then(|| format!("{tool}: {p}"))
-            } else {
-                (tool == "Bash").then(|| format!("{tool}: {specifier}"))
-            };
+            let detail = args["path"]
+                .as_str()
+                .or_else(|| args["file"].as_str())
+                .and_then(|p| {
+                    (!whitelist_covers(&wl, &ctx.cwd, p)).then(|| format!("{tool}: {p}"))
+                });
             if let Some(detail) = detail {
                 audit_fact(ctx, "fusion.whitelist.denied", &detail, observer).await;
                 return Err(format!(

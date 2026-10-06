@@ -200,7 +200,9 @@ const head = (t, d) => `<h1>${t}</h1>${d ? `<p class="lead">${d}</p>` : ''}`;
    write-only (the page shows 已配置, a blank field means "keep").
    Model selection lives INSIDE the editor: pvEdit.cands is the fetched
    + hand-added candidate pool, pvEdit.sel the checked subset — only the
-   checked ids ever land in catalog. Fetching never writes until 保存. */
+   checked ids ever land in catalog. Fetch marks its new ids checked so
+   拉取→保存 persists the listing it just showed; untick to exclude.
+   Fetching never writes until 保存. */
 let pvEdit = null; // { name|null for add, sel:Set, cands:[ModelEntry], fetched:bool }
 let pvListH = ''; // dragged list height — outlives the per-form pvEdit
 /* dialect pick list — native <select> pops a system-drawn menu that ignores
@@ -432,9 +434,12 @@ async function providerAction(kind, el) {
       const r = await api(modelApiPath('/models/fetch'), jpost(body));
       const cat = r.catalog || [];
       const have = new Set(pvEdit.cands.map(m => m.id));
-      // the listing is a menu, not a decision: everything lands in the list
-      // unchecked, and the user ticks what this provider should actually serve
-      for (const m of cat) if (!have.has(m.id)) pvEdit.cands.push(m);
+      // a freshly fetched id lands in the list CHECKED — 拉取→保存 has to
+      // persist what the listing just showed, or the save writes an empty
+      // catalog and the page reads as "nothing happened". Untick to
+      // exclude; a re-fetch only touches ids it has never seen, so
+      // deliberate unticks survive 重新拉取.
+      for (const m of cat) if (!have.has(m.id)) { pvEdit.cands.push(m); pvEdit.sel.add(m.id); }
       pvEdit.fetched = true;
       if (!cat.length) toast(t('该 provider 返回了空列表'), 'alert', 'warn');
     } catch (e) { toast(t('拉取失败：{msg}', { msg: e.message }), 'alert', 'warn'); }

@@ -13,6 +13,7 @@ mod compact;
 mod driver;
 mod effort;
 mod fusion;
+mod fusion_sidekick;
 mod goal;
 mod hooks;
 mod lazy;

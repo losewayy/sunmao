@@ -52,7 +52,7 @@ impl ProviderAdapter for RecProvider {
     }
 }
 
-fn tool_call(id: &str, name: &str, args: &str) -> Vec<StreamDelta> {
+pub(super) fn tool_call(id: &str, name: &str, args: &str) -> Vec<StreamDelta> {
     vec![
         StreamDelta::ToolCalls(vec![
             ToolCallFragment {
@@ -74,7 +74,7 @@ fn tool_call(id: &str, name: &str, args: &str) -> Vec<StreamDelta> {
     ]
 }
 
-fn text(s: &str) -> Vec<StreamDelta> {
+pub(super) fn text(s: &str) -> Vec<StreamDelta> {
     vec![
         StreamDelta::Content(s.into()),
         StreamDelta::Finish {
@@ -84,7 +84,7 @@ fn text(s: &str) -> Vec<StreamDelta> {
     ]
 }
 
-fn queued(
+pub(super) fn queued(
     v: Vec<Vec<StreamDelta>>,
 ) -> std::sync::Mutex<std::collections::VecDeque<Vec<StreamDelta>>> {
     std::sync::Mutex::new(std::collections::VecDeque::from(v))
@@ -93,7 +93,7 @@ fn queued(
 /// A context whose `models` routes `@sidekick` to a second mock — the
 /// FusionExecute args pin `model:"@sidekick"` so the child never shares
 /// the Lead's response queue.
-fn fusion_ctx(
+pub(super) fn fusion_ctx(
     dir: &std::path::Path,
     log: SessionLog,
     lead: Arc<MockProvider>,

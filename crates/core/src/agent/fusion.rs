@@ -84,6 +84,11 @@ pub(crate) fn lead_decl(name: &str, escalated: bool) -> bool {
 /// Verify commands get the same default budget a `Bash` call would.
 const VERIFY_TIMEOUT_SECS: u64 = 120;
 
+/// Which model the Sidekick runs on — split out for the file budget; the
+/// re-export keeps the one-public-path promise (`agent::SIDEKICK_KEY`).
+pub(crate) mod sidekick;
+pub use sidekick::KEY as SIDEKICK_KEY;
+
 /// The Lead's delegation tool — fusion's replacement for `Task`'s slot.
 pub struct FusionExecuteTool;
 
@@ -178,18 +183,9 @@ async fn delegate(ctx: &Arc<Context>, a: &Args) -> anyhow::Result<ToolResult> {
             ok: false,
         });
     }
-    let llm_override = match &a.model {
-        None => None,
-        Some(sel) => match ctx.models.as_ref() {
-            Some(m) => m.adapter_for(sel).map(Some).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "unknown model selector `{sel}` — available: {}",
-                    m.describe().join(", ")
-                )
-            })?,
-            None => anyhow::bail!("model selector `{sel}` needs .sunmao/models.json routes"),
-        },
-    };
+    // the pair is the point: the Lead's own model plans and verifies, and the
+    // Sidekick runs on the pinned or configured selector (see `sidekick`)
+    let llm_override = sidekick::adapter(ctx, a.model.as_deref())?;
     let sys_prompt = crate::prompt::PromptAssembler::new(&ctx.cwd)
         .with_extra_roots(&ctx.extra_plugin_roots)
         .assemble_fusion_sidekick();

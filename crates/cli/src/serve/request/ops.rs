@@ -161,7 +161,7 @@ pub(super) fn mcp_list(s: &Arc<Shared>, sess: Option<String>) -> HostResponse {
 /// `sess` 指向的项目目录：活动宿主报它自己的 `session_cwd`；休眠日志从
 /// `<project>/.sunmao/sessions/<id>.jsonl` 反推项目；都找不到时用启动
 /// 目录兜底（jobs 是按项目分桶的，不是按会话）。
-fn project_for(s: &Arc<Shared>, sess: Option<String>) -> std::path::PathBuf {
+pub(super) fn project_for(s: &Arc<Shared>, sess: Option<String>) -> std::path::PathBuf {
     sess.as_deref()
         .and_then(|id| s.host(id))
         .map(|h| h.agent.session_cwd())

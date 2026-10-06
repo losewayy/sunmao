@@ -99,6 +99,8 @@ function route(v) {
     case 'hello':
       sessionId = v.session || '';
       fusionArm = false; // the arm latch belongs to this tab's gesture on the old session
+      window.pluginEmit?.('session', { sess: sessionId });
+      window.loadPlugins?.(); // project plugins arrive with the session that owns them
       if (typeof dockSessionSwap === 'function') dockSessionSwap();
       clientId = v.client || 0;
       cwd = String(v.cwd || '').replace(/^\\\\\?\\/, '');
@@ -505,7 +507,7 @@ function renderDock(d) {
 }
 
 /* ================= crumb / views ================= */
-const SET_NAV = [['appearance', t('外观'), 'palette'], ['providers', t('模型与提供商'), 'cpu'], ['channels', t('IM 渠道'), 'shield-check'], ['shell', t('终端'), 'terminal'], ['hooks', t('钩子'), 'zap'], ['mcp', t('MCP 服务器'), 'blocks'], ['grants', t('已授权命令'), 'lock'], ['keys', t('快捷键'), 'keyboard'], ['about', t('关于'), 'info']];
+const SET_NAV = [['appearance', t('外观'), 'palette'], ['providers', t('模型与提供商'), 'cpu'], ['channels', t('IM 渠道'), 'shield-check'], ['shell', t('终端'), 'terminal'], ['hooks', t('钩子'), 'zap'], ['mcp', t('MCP 服务器'), 'blocks'], ['plugins', t('插件'), 'grid'], ['grants', t('已授权命令'), 'lock'], ['keys', t('快捷键'), 'keyboard'], ['about', t('关于'), 'info']];
 function renderCrumb() {
   const c = $('#crumb');
   const interactive = view === 'session' && !!sessionId;
@@ -567,6 +569,8 @@ function dockTab(name) {
   $$('.dock-pane', dock).forEach(p => { p.hidden = p.dataset.pane !== name; });
   try { localStorage.setItem('sunmao.dock.tab', name); } catch {}
   if (typeof brSyncAll === 'function') brSyncAll();
+  // plugin dock panes mount lazily on first activation (plugins.js)
+  window.pluginDockActivated?.(name);
 }
 try { dockTab(localStorage.getItem('sunmao.dock.tab') || 'overview'); } catch {}
 

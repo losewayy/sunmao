@@ -39,8 +39,8 @@ const nativeBr = () => !!(TAURI && TAURI.webview);
 function renderDockTabs() {
   const tabs = sessionTabs(), cur = $('#dock').dataset.tab;
   $('#dt-dyn').innerHTML = tabs.map(tb => {
-    if (t.kind === 'pane') {
-      const m = PANE_META[t.pane] || {};
+    if (tb.kind === 'pane') {
+      const m = PANE_META[tb.pane] || {};
       return `<button class="dock-tab" role="tab" data-act="dock-tab" data-tab="${esc(tb.pane)}" aria-selected="${cur === tb.pane}"><svg class="i"><use href="#i-${m.i}"/></svg><span>${esc(m.t)}</span>${m.num ? `<i class="dt-num" id="${m.num}"></i>` : ''}<i class="dt-x" data-bclose="${tb.id}">×</i></button>`;
     }
     return `<button class="dock-tab dock-dyn" role="tab" data-act="dock-tab" data-tab="br:${tb.id}" aria-selected="${cur === 'br:' + tb.id}" data-tip="${esc(tb.url || esc(t('新标签页')))}"><svg class="i"><use href="#i-globe"/></svg><span>${esc(brTitle(tb))}</span><i class="dt-x" data-bclose="${tb.id}">×</i></button>`;
@@ -59,6 +59,9 @@ function renderDockTabs() {
 
 function dockAddKind(v) {
   if (v === 'browser') return brNew();
+  // one pane kind per dock — a second add just focuses the first
+  const dup = sessionTabs().find(t => t.kind === 'pane' && t.pane === v);
+  if (dup) return dockTab(v);
   sessionTabs().push({ id: brSeq++, kind: 'pane', pane: v });
   save(); renderDockTabs(); dockTab(v);
 }

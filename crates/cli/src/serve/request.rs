@@ -255,6 +255,9 @@ impl HostHandle {
             ("GET", ["hooks"]) => ops::hooks_list(s, query_arg(query, "sess")),
             ("PUT", ["hooks"]) => ops::hooks_put(s, query_arg(query, "sess"), body).await,
             ("GET", ["mcp"]) => ops::mcp_list(s, query_arg(query, "sess")),
+            ("GET", ["plugins"]) => plugins::plugins_list(s, query_arg(query, "sess")),
+            ("GET", ["plugins", name]) => plugins::plugin_get(s, name, query_arg(query, "sess")),
+            ("PUT", ["plugins"]) => plugins::plugins_put(s, query_arg(query, "sess"), body),
             ("DELETE", ["session", id, "grants"]) => ops::grants_delete(s, id, body).await,
             ("GET", ["jobs"]) => ops::jobs_list(s, query_arg(query, "sess")),
             ("GET", ["jobs", id, "output"]) => {
@@ -340,6 +343,7 @@ fn js_asset(name: &str) -> Option<&'static str> {
         "jobs.js" => super::JOBS_JS,
         "channels.js" => super::CHANNELS_JS,
         "dock.js" => super::DOCK_JS,
+        "plugins.js" => super::PLUGINS_JS,
         "boot.js" => super::BOOT_JS,
         _ => return None,
     })
@@ -497,6 +501,7 @@ mod fs;
 mod models;
 #[path = "request/ops.rs"]
 mod ops;
+mod plugins;
 #[path = "request/sched.rs"]
 mod sched;
 #[path = "request/session.rs"]

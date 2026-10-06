@@ -13,6 +13,7 @@ mod compact;
 mod driver;
 mod effort;
 mod fusion;
+mod fusion_contract;
 mod fusion_fixture;
 mod fusion_sidekick;
 mod goal;

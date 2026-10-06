@@ -1,8 +1,7 @@
 //! Fusion Sidekick routing — split out of `fusion.rs`'s test file for the
 //! god-file budget; `super::fusion` owns the shared fixtures.
 
-use super::fusion::{queued, text, tool_call};
-use super::fusion_fixture::{fusion_ctx, fusion_ctx_unconfigured};
+use super::fusion_fixture::{fusion_ctx, fusion_ctx_unconfigured, queued, text, tool_call};
 use super::*;
 use std::sync::atomic::Ordering;
 

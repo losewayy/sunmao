@@ -81,11 +81,12 @@ pub(crate) fn lead_decl(name: &str, escalated: bool) -> bool {
     LEAD_TOOLS.contains(&name)
 }
 
-/// Verify commands get the same default budget a `Bash` call would.
-const VERIFY_TIMEOUT_SECS: u64 = 120;
-
 /// Sidekick model selection and adapter resolution.
 pub(crate) mod sidekick;
+
+/// The verdict stage — verify execution, escalation accounting and the
+/// Sidekick trace digest. (Split out: delegation plumbing lives here.)
+mod verdict;
 
 /// The Lead's delegation tool — fusion's replacement for `Task`'s slot.
 pub struct FusionExecuteTool;
@@ -93,12 +94,18 @@ pub struct FusionExecuteTool;
 #[derive(Deserialize)]
 struct Args {
     /// The complete brief — object (`goal`/`context`/`constraints`…), a
-    /// plain string, or a list of instructions. Serialized verbatim into
-    /// the Sidekick's opening prompt; it sees nothing else.
-    spec: Value,
+    /// plain string, or a list of instructions. Required for a fresh
+    /// delegation; optional on `steer`, where the Sidekick already holds
+    /// its transcript and the steer text IS the delta.
+    spec: Option<Value>,
     /// Files the Sidekick may Write/Edit — the whitelist the gate enforces.
     #[serde(default)]
     files: Vec<String>,
+    /// Paths the Sidekick should Read before editing — it has the read
+    /// tools, so naming the file beats pasting its contents into `spec`
+    /// (cheaper, and can't drift from what's on disk).
+    #[serde(default)]
+    context_files: Vec<String>,
     /// Shell commands that must exit 0 after the run — executed by the
     /// harness (`tool::run_foreground`), never by the model's own claim.
     #[serde(default)]
@@ -120,27 +127,38 @@ impl ToolImpl for FusionExecuteTool {
         Tool::function(
             "FusionExecute",
             "Delegate a work spec to the Sidekick — it executes with the full \
-             toolset while you stay read-only. `spec` is the complete brief: the \
-             Sidekick sees NOTHING of this conversation, so include goal, context \
-             and constraints. `files` whitelists the paths it may Write/Edit \
+             toolset (its Bash included — it can and should run builds/tests \
+             itself) while you stay read-only. `spec` is the complete brief, \
+             required for a fresh delegation: the Sidekick sees NOTHING of \
+             this conversation, so include goal, context and constraints — \
+             name files it should read via `context_files` instead of pasting \
+             their contents in. `files` whitelists the paths it may Write/Edit \
              (add-only once granted). `verify_commands` run through the real \
              shell afterwards and their exit codes come back in this result — \
-             they are execution facts, not the Sidekick's claim. On a failed \
-             verdict, call again with `steer` (feedback text) to resume the SAME \
-             Sidekick; new `files` entries widen — never shrink — the whitelist, \
-             and new `verify_commands` replace the check list. After repeated \
-             failures the delegation escalates: your write tools unlock so you \
-             can finish the work yourself.",
+             execution facts, not the Sidekick's claim; a command that could \
+             not even start (missing toolchain, spawn error) reports \
+             [inconclusive — environment] and does NOT count toward \
+             escalation. On a failed verdict, call again with `steer` alone \
+             (feedback text; `spec` may be omitted) to resume the SAME \
+             Sidekick; new `files` entries widen — never shrink — the \
+             whitelist, and new `verify_commands` replace the check list. \
+             After repeated failures the delegation escalates: your write \
+             tools unlock so you can finish the work yourself.",
             json!({
                 "type": "object",
                 "properties": {
                     "spec": {
-                        "description": "Complete work brief — object (e.g. {goal, context, constraints}), plain text, or a list of instructions"
+                        "description": "Complete work brief — object (e.g. {goal, context, constraints}), plain text, or a list of instructions. Required for a fresh delegation; omit when `steer` alone carries the rework"
                     },
                     "files": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Files the Sidekick may write — whitelist enforced at the gate; add-only once granted"
+                    },
+                    "context_files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Paths (project-relative) the Sidekick should Read before editing — cheaper than inlining their contents into spec"
                     },
                     "verify_commands": {
                         "type": "array",
@@ -156,7 +174,6 @@ impl ToolImpl for FusionExecuteTool {
                         "description": "Model selector — @route or provider/<model-id> from .sunmao/models.json; the Sidekick runs on that adapter instead of inheriting yours"
                     }
                 },
-                "required": ["spec"]
             }),
         )
     }
@@ -165,8 +182,15 @@ impl ToolImpl for FusionExecuteTool {
         let a: Args = serde_json::from_value(args.clone())?;
         if a.steer.is_some() {
             rework(ctx, &a).await
-        } else {
+        } else if a.spec.is_some() {
             delegate(ctx, &a).await
+        } else {
+            Ok(ToolResult {
+                output: "missing `spec` — a fresh delegation needs the complete \
+                         brief (`steer` alone only resumes a live Sidekick)"
+                    .into(),
+                ok: false,
+            })
         }
     }
 }
@@ -204,7 +228,11 @@ async fn delegate(ctx: &Arc<Context>, a: &Args) -> anyhow::Result<ToolResult> {
         f.spec_seq += 1;
         f.whitelist = grant;
         f.verify = a.verify_commands.clone();
-        (f.spec_seq, spec_hash(&a.spec))
+        // `call` only reaches here with a present spec
+        (
+            f.spec_seq,
+            spec_hash(a.spec.as_ref().unwrap_or(&Value::Null)),
+        )
     };
     // The delegation contract is the fusion audit spine — the full spec is
     // durable, `seq`/`spec_hash` tie the accepted/escalated verdicts back.
@@ -229,7 +257,7 @@ async fn delegate(ctx: &Arc<Context>, a: &Args) -> anyhow::Result<ToolResult> {
         ctx,
         &sub_id,
         sub_ctx.lane,
-        &spec_digest(&a.spec),
+        &spec_digest(a.spec.as_ref().unwrap_or(&Value::Null)),
         Some("fusion-sidekick"),
         &steer,
         &cancel,
@@ -250,7 +278,7 @@ async fn delegate(ctx: &Arc<Context>, a: &Args) -> anyhow::Result<ToolResult> {
     .await;
     crate::task::spawn::finish_task(&ctx.live_tasks, &sub_id, res.ok);
     crate::task::spawn::roster_changed(&ctx.live_sink.get().cloned(), &sub_id);
-    settle(ctx, seq, res).await
+    verdict::settle(ctx, seq, res).await
 }
 
 /// Rework: `steer` resumes the SAME Sidekick — its transcript, read ledger
@@ -312,7 +340,15 @@ async fn rework(ctx: &Arc<Context>, a: &Args) -> anyhow::Result<ToolResult> {
     let (seq, hash) = {
         let mut f = ctx.fusion.lock_or_recover();
         f.spec_seq += 1;
-        (f.spec_seq, spec_hash(&a.spec))
+        // a steer-only call has no new spec — the steer text fingerprints it
+        (
+            f.spec_seq,
+            spec_hash(
+                &a.spec
+                    .clone()
+                    .unwrap_or_else(|| json!({ "steer": a.steer })),
+            ),
+        )
     };
     {
         let mut log = ctx.sessions.lock().await;
@@ -347,136 +383,13 @@ async fn rework(ctx: &Arc<Context>, a: &Args) -> anyhow::Result<ToolResult> {
     .await;
     crate::task::spawn::finish_task(&ctx.live_tasks, &sub_id, res.ok);
     crate::task::spawn::roster_changed(&ctx.live_sink.get().cloned(), &sub_id);
-    settle(ctx, seq, res).await
-}
-
-/// The verdict stage both paths share: the Sidekick's run result + the
-/// verify commands executed for real. Clean run + every exit code 0 →
-/// `FusionAccepted` and ok; anything else counts toward the escalation
-/// streak, and past `ESCALATE_AFTER` the Lead's write tools unlock for the
-/// rest of the turn (`FusionEscalated` — the audit's "delegation gave up"
-/// fact).
-async fn settle(ctx: &Arc<Context>, seq: u64, res: ToolResult) -> anyhow::Result<ToolResult> {
-    let sidekick_id = ctx.fusion.lock_or_recover().sidekick_id.clone();
-    let verifies = run_verifies(ctx).await;
-
-    let mut out = String::new();
-    out.push_str(&res.output);
-    if !verifies.is_empty() {
-        out.push_str("\n\n[verify — executed by the harness, not the Sidekick]");
-        for (command, exit_code, detail) in &verifies {
-            out.push_str(&format!("\n$ {command}\nexit {exit_code}"));
-            if *exit_code != 0 {
-                out.push_str(&format!("\n{}", crate::agent::truncate_output(detail)));
-            }
-        }
-    }
-
-    if res.ok && verifies.iter().all(|(_, code, _)| *code == 0) {
-        ctx.fusion.lock_or_recover().verify_fails = 0;
-        let mut log = ctx.sessions.lock().await;
-        log.append_audit(&SessionEvent::FusionAccepted {
-            spec_seq: seq,
-            sidekick: sidekick_id.unwrap_or_default(),
-        })
-        .await;
-        return Ok(ToolResult {
-            output: format!("[delegation accepted — verify clean]\n{out}"),
-            ok: true,
-        });
-    }
-
-    let (fails, escalate) = {
-        let mut f = ctx.fusion.lock_or_recover();
-        f.verify_fails += 1;
-        (
-            f.verify_fails,
-            f.verify_fails >= ESCALATE_AFTER && !f.escalated,
-        )
-    };
-    if escalate {
-        {
-            let mut f = ctx.fusion.lock_or_recover();
-            f.escalated = true;
-        }
-        ctx.read_only
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        let reason = format!("{fails} consecutive delegation(s) failed verify");
-        {
-            let mut log = ctx.sessions.lock().await;
-            log.append_audit(&SessionEvent::FusionEscalated {
-                spec_seq: seq,
-                reason: reason.clone(),
-            })
-            .await;
-        }
-        audit(ctx, "fusion.escalated", &reason).await;
-        out.push_str(&format!(
-            "\n\n[delegation escalated: {reason} — your write tools are \
-             unlocked for the rest of this turn; finish the work yourself and \
-             re-run the verify commands]"
-        ));
-    } else {
-        out.push_str(&format!(
-            "\n\n[delegation failed verify ({fails}/{ESCALATE_AFTER} before \
-             escalation) — call FusionExecute with `steer` to rework the same \
-             Sidekick, or a fresh spec to respawn]"
-        ));
-    }
-    Ok(ToolResult {
-        output: out,
-        ok: false,
-    })
-}
-
-/// Run the delegation's verify commands through the real shell path —
-/// `run_foreground` returns actual exit codes, so "verify passed" is an
-/// execution fact. Each run lands in the Sidekick's own log as a
-/// `LocalShell` fact: the rework transcript shows the command, the code and
-/// the output exactly the way a `!` command would, and the audit trail
-/// shows which checks the spec's verdict rested on.
-/// `(command, exit_code, combined output)` — a run that never resolved
-/// (parse error, timeout kill) counts as exit -1 with the message.
-async fn run_verifies(ctx: &Arc<Context>) -> Vec<(String, i32, String)> {
-    let (sidekick, commands) = {
-        let f = ctx.fusion.lock_or_recover();
-        (f.sidekick.clone(), f.verify.clone())
-    };
-    let Some(sub_ctx) = sidekick else {
-        return Vec::new();
-    };
-    let mut out = Vec::with_capacity(commands.len());
-    for command in commands {
-        let (code, detail) = match crate::tool::run_foreground(
-            &command,
-            sub_ctx.cwd.clone(),
-            VERIFY_TIMEOUT_SECS,
-            sub_ctx.shell,
-            Some(ctx.cancel_signal()),
-        )
-        .await
-        {
-            Ok(run) => (run.exit_code, crate::tool::render_run(&run)),
-            Err(msg) => (-1, msg),
-        };
-        {
-            let mut log = sub_ctx.sessions.lock().await;
-            log.append_audit(&SessionEvent::LocalShell {
-                command: command.clone(),
-                exit_code: code,
-                output: detail.clone(),
-            })
-            .await;
-        }
-        out.push((command, code, detail));
-    }
-    out
+    verdict::settle(ctx, seq, res).await
 }
 
 /// Audit fact on the LEAD's log + live sink — `gate::audit_fact` takes the
 /// turn's observer, which a tool body doesn't see; the live sink is the
 /// same row's mirror.
-async fn audit(ctx: &Arc<Context>, event: &str, detail: &str) {
+pub(super) async fn audit(ctx: &Arc<Context>, event: &str, detail: &str) {
     {
         let mut log = ctx.sessions.lock().await;
         log.append_audit(&SessionEvent::Hook {
@@ -496,11 +409,18 @@ async fn audit(ctx: &Arc<Context>, event: &str, detail: &str) {
 /// The Sidekick's opening user message — spec plus the two grant lists it
 /// needs up front (its own system prompt already carries the contract).
 fn sidekick_prompt(a: &Args) -> String {
-    let spec = match &a.spec {
-        Value::String(s) => s.clone(),
-        other => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
+    let spec = match a.spec.as_ref() {
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
+        None => String::new(),
     };
     let mut p = format!("# Spec\n{spec}");
+    if !a.context_files.is_empty() {
+        p.push_str(&format!(
+            "\n\n# Read these files first (they carry the context the spec references)\n{}",
+            a.context_files.join("\n")
+        ));
+    }
     if !a.files.is_empty() {
         p.push_str(&format!(
             "\n\n# Files you may write\n{}",

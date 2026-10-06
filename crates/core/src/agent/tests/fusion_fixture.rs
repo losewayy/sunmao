@@ -1,8 +1,53 @@
 use std::sync::Arc;
 
 use crate::context::{Context, FusionModelSettings};
-use crate::session::SessionLog;
-use sunmao_llm::ProviderAdapter;
+use crate::session::{SessionEvent, SessionLog};
+use sunmao_llm::types::Usage;
+use sunmao_llm::{ProviderAdapter, StreamDelta, ToolCallFragment};
+
+/// Scripted response helpers shared by every fusion test file.
+pub(crate) fn tool_call(id: &str, name: &str, args: &str) -> Vec<StreamDelta> {
+    vec![
+        StreamDelta::ToolCalls(vec![
+            ToolCallFragment {
+                index: 0,
+                id: Some(id.into()),
+                name: Some(name.into()),
+                arguments: None,
+            },
+            ToolCallFragment {
+                index: 0,
+                arguments: Some(args.into()),
+                ..Default::default()
+            },
+        ]),
+        StreamDelta::Finish {
+            reason: Some("tool_calls".into()),
+            usage: None,
+        },
+    ]
+}
+
+pub(crate) fn text(s: &str) -> Vec<StreamDelta> {
+    vec![
+        StreamDelta::Content(s.into()),
+        StreamDelta::Finish {
+            reason: Some("stop".into()),
+            usage: Some(Usage::default()),
+        },
+    ]
+}
+
+pub(crate) fn queued(
+    v: Vec<Vec<StreamDelta>>,
+) -> std::sync::Mutex<std::collections::VecDeque<Vec<StreamDelta>>> {
+    std::sync::Mutex::new(std::collections::VecDeque::from(v))
+}
+
+/// Fold a context's session log — the assertion surface for durable facts.
+pub(crate) async fn events(ctx: &Arc<Context>) -> Vec<SessionEvent> {
+    ctx.sessions.lock().await.events().await.unwrap_or_default()
+}
 
 fn ensure_fusion_catalog(dir: &std::path::Path) {
     let path = dir.join(".sunmao/models.json");

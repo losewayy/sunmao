@@ -40,7 +40,11 @@ pub(super) async fn view(s: &Arc<Shared>, sess: Option<String>) -> HostResponse 
             // an edit made elsewhere (another frontend, a hand edit) must be
             // visible here, or the next save writes the stale table back over
             // it — that is how a configured catalog gets silently reduced.
-            m.reload();
+            if let Some(h) = host.as_ref() {
+                h.agent.reload_models().await;
+            } else {
+                m.reload();
+            }
             m.file()
         }
         None => {
@@ -60,8 +64,18 @@ pub(super) async fn view(s: &Arc<Shared>, sess: Option<String>) -> HostResponse 
             f
         }
     };
+    let (fusion_models, fusion_ready, turn_mode) = host
+        .as_ref()
+        .map(|host| {
+            (
+                host.agent.fusion_models(),
+                host.agent.fusion_ready(),
+                host.agent.turn_mode().as_str(),
+            )
+        })
+        .unwrap_or(((None, None), false, "standard"));
     HostResponse::json(serde_json::json!({
-        "providers": providers_view(&file),
+        "providers": providers_view(&file, resolver.as_deref()),
         "routes": file.routes,
         // the new-session pick — the settings page renders it and writes it
         // back through the same PUT (null = nothing pinned). A stored pin
@@ -70,15 +84,10 @@ pub(super) async fn view(s: &Arc<Shared>, sess: Option<String>) -> HostResponse 
         "default_model": file
             .default_selector()
             .filter(|sel| default_model_problem(sel, &file, &default_provider).is_none()),
-        // the model a Fusion delegation falls back to when the Lead pins none
-        // (null = the Sidekick inherits the Lead). The key rides the file's
-        // unknown-key map, so the view has to surface it for the page to
-        // render and round-trip it.
-        "fusion_sidekick": file
-            .extra
-            .get(sunmao_core::agent::SIDEKICK_KEY)
-            .filter(|v| v.as_str().is_some_and(|s| !s.trim().is_empty()))
-            .cloned(),
+        "fusion_lead": fusion_models.0,
+        "fusion_sidekick": fusion_models.1,
+        "fusion_ready": fusion_ready,
+        "turn_mode": turn_mode,
         "selectors": resolver.as_ref().map(|m| m.selectors()).unwrap_or_default(),
         "default_provider": default_provider,
     }))
@@ -87,7 +96,10 @@ pub(super) async fn view(s: &Arc<Shared>, sess: Option<String>) -> HostResponse 
 /// Serialize the provider table for the GUI — keys are redacted to a
 /// `api_key_set` boolean; the settings editor writes keys, it never
 /// reads them back.
-fn providers_view(file: &sunmao_core::models::ModelsFile) -> serde_json::Value {
+fn providers_view(
+    file: &sunmao_core::models::ModelsFile,
+    resolver: Option<&sunmao_core::models::ModelResolver>,
+) -> serde_json::Value {
     file.providers
         .iter()
         .map(|(name, p)| {
@@ -97,7 +109,7 @@ fn providers_view(file: &sunmao_core::models::ModelsFile) -> serde_json::Value {
                     "base_url": p.base_url,
                     "dialect": p.dialect,
                     "api_key_env": p.api_key_env,
-                    "api_key_set": p.api_key_env.is_some() || p.api_key.is_some(),
+                    "api_key_set": p.api_key_env.is_some() || p.api_key.is_some() || resolver.is_some_and(|resolver| resolver.provider_api_key_set(name)),
                     "catalog": p.catalog,
                 }),
             )
@@ -117,13 +129,17 @@ pub(super) async fn fetch(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) ->
     };
     let def: sunmao_core::models::ProviderDef = if let Some(name) = v["provider"].as_str() {
         let resolver = models_host(s, sess.clone()).and_then(|h| h.agent.models_resolver());
-        let file = resolver.as_ref().map(|m| m.file()).unwrap_or_else(|| {
+        let provider = if let Some(resolver) = resolver {
+            resolver.provider_def(name)
+        } else {
             let text =
                 std::fs::read_to_string(s.cwd.join(".sunmao/models.json")).unwrap_or_default();
-            serde_json::from_str(&text).unwrap_or_default()
-        });
-        match file.providers.get(name) {
-            Some(p) => p.clone(),
+            let file: sunmao_core::models::ModelsFile =
+                serde_json::from_str(&text).unwrap_or_default();
+            file.providers.get(name).cloned()
+        };
+        match provider {
+            Some(provider) => provider,
             None => return HostResponse::err(404, format!("no such provider: {name}")),
         }
     } else {
@@ -302,19 +318,6 @@ pub(super) async fn put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> H
         }
         merged.default_model = None;
     }
-    // an explicit null for the Fusion Sidekick pick means "unset": the page
-    // posts the key on every save, and it rides the unknown-key map, so
-    // writing the null straight through would leave a dead husk in a
-    // hand-editable file. Drop the key instead. (A pick that no longer
-    // resolves is NOT pruned here: the delegation falls back at resolve time
-    // with a warn, so a renamed provider doesn't rewrite the user's file.)
-    if merged
-        .extra
-        .get(sunmao_core::agent::SIDEKICK_KEY)
-        .is_some_and(|v| v.is_null())
-    {
-        merged.extra.remove(sunmao_core::agent::SIDEKICK_KEY);
-    }
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return HostResponse::err(500, format!("{e:#}"));
     }
@@ -327,7 +330,7 @@ pub(super) async fn put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> H
     }
     for id in s.live_ids() {
         if let Some(h) = s.host(&id) {
-            h.agent.reload_models();
+            h.agent.reload_models().await;
             // the level vocabulary (and the default it implies) comes from
             // the catalog this write just replaced: re-announce it now, or
             // the composer keeps yesterday's ladder until a model swap or a
@@ -630,12 +633,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// The Fusion Sidekick pick is a real top-level key the page round-trips:
-    /// GET carries it, a save that names one writes it, an explicit null
-    /// clears it out of the file, and a save whose body never mentions it (the
-    /// provider editor's own body) leaves it alone.
+    /// The legacy project Sidekick key is preserved as an unknown field, but
+    /// it neither configures a session role nor appears as an active pick.
     #[tokio::test]
-    async fn models_save_round_trips_the_fusion_sidekick_pick() {
+    async fn models_save_preserves_but_does_not_use_legacy_project_sidekick() {
         let root = models_dir(
             "sidekick",
             r#"{"providers":{"local":{"base_url":"http://local/v1"}},"fusion_sidekick":"local/cheap"}"#,
@@ -643,12 +644,8 @@ mod tests {
         let h = handle(&root);
         let view: serde_json::Value =
             serde_json::from_slice(&h.request("GET", "/models", b"").await.body).unwrap();
-        assert_eq!(
-            view["fusion_sidekick"], "local/cheap",
-            "the GET view has to carry the pick or the page can never show it"
-        );
-
-        // the provider editor's body never names it — the save must not drop it
+        assert!(view["fusion_sidekick"].is_null());
+        assert_eq!(view["fusion_ready"], false);
         let body = gui_body(&view);
         assert!(!body.as_object().unwrap().contains_key("fusion_sidekick"));
         assert_eq!(
@@ -658,34 +655,6 @@ mod tests {
             200
         );
         assert_eq!(disk(&root)["fusion_sidekick"], "local/cheap");
-
-        // naming another one writes it
-        let mut body = gui_body(&view);
-        body["fusion_sidekick"] = "local/other".into();
-        assert_eq!(
-            h.request("PUT", "/models", body.to_string().as_bytes())
-                .await
-                .status,
-            200
-        );
-        assert_eq!(disk(&root)["fusion_sidekick"], "local/other");
-
-        // an explicit null clears the key instead of leaving a null husk
-        let mut body = gui_body(&view);
-        body["fusion_sidekick"] = serde_json::Value::Null;
-        assert_eq!(
-            h.request("PUT", "/models", body.to_string().as_bytes())
-                .await
-                .status,
-            200
-        );
-        assert!(
-            !disk(&root)
-                .as_object()
-                .unwrap()
-                .contains_key("fusion_sidekick"),
-            "clearing must remove the key, not write a dead null"
-        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

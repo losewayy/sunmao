@@ -260,6 +260,13 @@ impl App {
                     // visibility as the approval stance
                     self.push_audit(&format!("turn.mode — {}", mode.as_str()));
                 }
+                E::FusionModelsChange { lead, sidekick } => {
+                    self.push_audit(&format!(
+                        "fusion.models — Lead: {}, Sidekick: {}",
+                        lead.as_deref().unwrap_or("unset"),
+                        sidekick.as_deref().unwrap_or("unset")
+                    ));
+                }
                 E::FusionSpec { seq, spec, .. } => {
                     // the delegation spec IS the audit spine — digest the
                     // payload so replay stays a transcript, not a dump

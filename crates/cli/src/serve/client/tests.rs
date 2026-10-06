@@ -79,12 +79,22 @@ async fn connect_views_the_newest_adopted_session() {
             factory: crate::serve::SessionFactory {
                 make: Box::new(|log, _approver, cwd| {
                     Box::pin(async move {
-                        Ok(sunmao_core::Context::new(
+                        let mut context = sunmao_core::Context::new(
                             Arc::new(StubLlm),
                             log,
                             sunmao_core::tool::builtin_registry(),
-                            cwd,
-                        ))
+                            cwd.clone(),
+                        );
+                        context.models = Some(Arc::new(sunmao_core::models::ModelResolver::load(
+                            &cwd,
+                            sunmao_core::models::ProviderDef {
+                                base_url: "http://unused/v1".into(),
+                                dialect: "openai".into(),
+                                ..Default::default()
+                            },
+                            "default",
+                        )));
+                        Ok(context)
                     })
                 }),
             },
@@ -135,6 +145,12 @@ async fn hello_and_replay_carry_the_turn_mode() {
     let dir = std::env::temp_dir().join(format!("sunmao-turn-mode-{}", std::process::id()));
     let sdir = dir.join("sess");
     std::fs::create_dir_all(&sdir).unwrap();
+    std::fs::create_dir_all(dir.join(".sunmao")).unwrap();
+    std::fs::write(
+        dir.join(".sunmao/models.json"),
+        r#"{"providers":{"default":{"base_url":"http://unused/v1","catalog":[{"id":"lead"},{"id":"sidekick"}]}}}"#,
+    )
+    .unwrap();
     let s = {
         let (live, _) = tokio::sync::broadcast::channel::<serde_json::Value>(8);
         let (mgmt, _rx) = mpsc::unbounded_channel();
@@ -146,12 +162,22 @@ async fn hello_and_replay_carry_the_turn_mode() {
             factory: crate::serve::SessionFactory {
                 make: Box::new(|log, _approver, cwd| {
                     Box::pin(async move {
-                        Ok(sunmao_core::Context::new(
+                        let mut context = sunmao_core::Context::new(
                             Arc::new(StubLlm),
                             log,
                             sunmao_core::tool::builtin_registry(),
-                            cwd,
-                        ))
+                            cwd.clone(),
+                        );
+                        context.models = Some(Arc::new(sunmao_core::models::ModelResolver::load(
+                            &cwd,
+                            sunmao_core::models::ProviderDef {
+                                base_url: "http://unused/v1".into(),
+                                dialect: "openai".into(),
+                                ..Default::default()
+                            },
+                            "default",
+                        )));
+                        Ok(context)
                     })
                 }),
             },
@@ -172,6 +198,20 @@ async fn hello_and_replay_carry_the_turn_mode() {
         .unwrap();
     s.adopt(log, "resume").await.unwrap();
     let host = s.host("s-fuse").unwrap();
+    host.agent
+        .set_fusion_model(
+            sunmao_core::context::FusionModelRole::Lead,
+            Some("default/lead".into()),
+        )
+        .await
+        .unwrap();
+    host.agent
+        .set_fusion_model(
+            sunmao_core::context::FusionModelRole::Sidekick,
+            Some("default/sidekick".into()),
+        )
+        .await
+        .unwrap();
 
     let (out, mut rx) = mpsc::unbounded_channel::<String>();
     let mut client = Client::connect(s.clone(), out).await;
@@ -207,20 +247,18 @@ async fn hello_and_replay_carry_the_turn_mode() {
 
     // exactly what the frontend's switch sends — the frames have to follow
     client.send_replay(&host).await;
-    let mut replay = serde_json::Value::Null;
-    for _ in 0..8 {
+    let replay = loop {
         match tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await {
-            // the mode flip also emits a live hook on the same bus
+            // mode and effort changes can both emit frames before replay
             Ok(Some(v)) => {
                 let parsed: serde_json::Value = serde_json::from_str(&v).unwrap();
                 if parsed["type"] == "replay" {
-                    replay = parsed;
-                    break;
+                    break parsed;
                 }
             }
-            _ => break,
+            _ => panic!("replay frame should arrive after queued mode changes"),
         }
-    }
+    };
     assert_eq!(
         replay["turn_mode"], "fusion",
         "the replay carries the mode it resumed at"

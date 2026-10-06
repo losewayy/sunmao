@@ -296,8 +296,8 @@ pub struct ModelResolver {
     cwd: std::path::PathBuf,
     /// provider used for bare `model` selectors — defaults to "default".
     default_provider: String,
-    /// the session's own provider def — re-registered on every reload so
-    /// edits can never delete it
+    /// Session defaults fill a missing provider and supply credentials to a
+    /// keyless default provider at resolution time.
     default_def: ProviderDef,
     cache: std::sync::Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
     /// pre-built adapters keyed by selector — tests inject fakes here so a
@@ -306,50 +306,30 @@ pub struct ModelResolver {
 }
 
 impl ModelResolver {
-    /// `default_*` describes the session's own provider (CLI/env), so a bare
-    /// selector like `model: "qwen-flash"` keeps working without config.
-    /// A file entry under the same name contributes its `catalog` — the
-    /// process's own credentials still win, but the GUI-managed model list
-    /// survives the re-registration.
+    /// Session defaults fill a missing provider entry; an existing file provider
+    /// stays authoritative for identity while keyless default credentials fall back in memory.
     pub fn load(cwd: &Path, default_provider: ProviderDef, default_name: &str) -> Self {
         let mut file = read_models_file(cwd);
-        let catalog = file
-            .providers
-            .get(default_name)
-            .map(|p| p.catalog.clone())
-            .unwrap_or_default();
-        let mut def = default_provider;
-        if !catalog.is_empty() {
-            def.catalog = catalog;
-        }
-        file.providers.insert(default_name.to_string(), def.clone());
+        file.providers
+            .entry(default_name.to_string())
+            .or_insert_with(|| default_provider.clone());
         Self {
             file: std::sync::RwLock::new(file),
             cwd: cwd.to_path_buf(),
             default_provider: default_name.to_string(),
-            default_def: def,
+            default_def: default_provider,
             cache: std::sync::Mutex::new(HashMap::new()),
             overrides: HashMap::new(),
         }
     }
 
-    /// Re-read the models file(s) — the GUI's provider editor writes the
-    /// file then calls this through the host so the session picks up new
-    /// providers/catalog without a restart. The default provider is
-    /// re-registered (keeping its file-managed catalog); the adapter cache
-    /// clears so edited keys take effect.
+    /// Re-read model files after GUI edits; file identities remain authoritative,
+    /// and the session provider still supplies credentials for a keyless default.
     pub fn reload(&self) {
         let mut file = read_models_file(&self.cwd);
-        let catalog = file
-            .providers
-            .get(&self.default_provider)
-            .map(|p| p.catalog.clone())
-            .unwrap_or_default();
-        let mut def = self.default_def.clone();
-        if !catalog.is_empty() {
-            def.catalog = catalog;
-        }
-        file.providers.insert(self.default_provider.clone(), def);
+        file.providers
+            .entry(self.default_provider.clone())
+            .or_insert_with(|| self.default_def.clone());
         *self.file.write_or_recover() = file;
         self.cache.lock_or_recover().clear();
     }
@@ -359,6 +339,29 @@ impl ModelResolver {
     pub fn with_adapter(mut self, selector: &str, adapter: Arc<dyn ProviderAdapter>) -> Self {
         self.overrides.insert(selector.to_string(), adapter);
         self
+    }
+
+    /// Resolve a provider while keeping a keyless file default's credential in memory.
+    pub fn provider_def(&self, name: &str) -> Option<ProviderDef> {
+        let mut provider = self.file.read_or_recover().providers.get(name)?.clone();
+        self.apply_default_credentials(name, &mut provider);
+        Some(provider)
+    }
+
+    /// Report configured credentials without returning the secret value.
+    pub fn provider_api_key_set(&self, name: &str) -> bool {
+        self.provider_def(name)
+            .is_some_and(|provider| provider.api_key.is_some() || provider.api_key_env.is_some())
+    }
+
+    fn apply_default_credentials(&self, name: &str, provider: &mut ProviderDef) {
+        if name == self.default_provider
+            && provider.api_key.is_none()
+            && provider.api_key_env.is_none()
+        {
+            provider.api_key = self.default_def.api_key.clone();
+            provider.api_key_env = self.default_def.api_key_env.clone();
+        }
     }
 
     /// Selector → concrete target. Chains (`@route` or inline lists in the
@@ -495,7 +498,8 @@ impl ModelResolver {
             Some((p, m)) => (p.to_string(), m.to_string()),
             None => (self.default_provider.clone(), selector.to_string()),
         };
-        let provider = file.providers.get(&pname)?.clone();
+        let mut provider = file.providers.get(&pname)?.clone();
+        self.apply_default_credentials(&pname, &mut provider);
         Some(ModelTarget { provider, model })
     }
 

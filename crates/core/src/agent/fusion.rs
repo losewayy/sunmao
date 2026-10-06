@@ -84,10 +84,8 @@ pub(crate) fn lead_decl(name: &str, escalated: bool) -> bool {
 /// Verify commands get the same default budget a `Bash` call would.
 const VERIFY_TIMEOUT_SECS: u64 = 120;
 
-/// Which model the Sidekick runs on — split out for the file budget; the
-/// re-export keeps the one-public-path promise (`agent::SIDEKICK_KEY`).
+/// Sidekick model selection and adapter resolution.
 pub(crate) mod sidekick;
-pub use sidekick::KEY as SIDEKICK_KEY;
 
 /// The Lead's delegation tool — fusion's replacement for `Task`'s slot.
 pub struct FusionExecuteTool;

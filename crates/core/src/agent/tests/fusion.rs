@@ -90,33 +90,7 @@ pub(super) fn queued(
     std::sync::Mutex::new(std::collections::VecDeque::from(v))
 }
 
-/// A context whose `models` routes `@sidekick` to a second mock — the
-/// FusionExecute args pin `model:"@sidekick"` so the child never shares
-/// the Lead's response queue.
-pub(super) fn fusion_ctx(
-    dir: &std::path::Path,
-    log: SessionLog,
-    lead: Arc<MockProvider>,
-    sidekick: Arc<MockProvider>,
-) -> Arc<Context> {
-    let mut raw = Context::new(lead, log, builtin_registry(), dir.to_path_buf());
-    raw.models = Some(Arc::new(
-        crate::models::ModelResolver::load(
-            dir,
-            crate::models::ProviderDef {
-                base_url: "http://unused".into(),
-                api_key_env: None,
-                api_key: None,
-                dialect: "openai".into(),
-                catalog: Vec::new(),
-                extra: Default::default(),
-            },
-            "default",
-        )
-        .with_adapter("@sidekick", sidekick),
-    ));
-    Arc::new(raw)
-}
+use super::fusion_fixture::{fusion_context, fusion_ctx};
 
 async fn events(ctx: &Arc<Context>) -> Vec<SessionEvent> {
     ctx.sessions.lock().await.events().await.unwrap_or_default()
@@ -136,9 +110,28 @@ async fn fusion_switch_is_durable_and_reseeds() {
         responses: std::sync::Mutex::new(Default::default()),
         calls: std::sync::atomic::AtomicUsize::new(0),
     });
-    let ctx = Arc::new(Context::new(provider, log, builtin_registry(), dir.clone()));
+    let ctx = Arc::new(fusion_context(
+        &dir,
+        log,
+        provider.clone(),
+        provider.clone(),
+        false,
+    ));
     let agent = AgentLoop::new(ctx.clone());
-
+    agent
+        .set_fusion_model(
+            crate::context::FusionModelRole::Lead,
+            Some("default/lead".into()),
+        )
+        .await
+        .unwrap();
+    agent
+        .set_fusion_model(
+            crate::context::FusionModelRole::Sidekick,
+            Some("default/sidekick".into()),
+        )
+        .await
+        .unwrap();
     agent
         .set_turn_mode(TurnMode::Fusion, &NullObserver)
         .await
@@ -156,17 +149,18 @@ async fn fusion_switch_is_durable_and_reseeds() {
 
     // a reopened context reseeds mode + flag from the log
     let log2 = SessionLog::open_path(&path).await.unwrap();
-    let ctx2 = Context::new(
-        Arc::new(MockProvider {
-            responses: std::sync::Mutex::new(Default::default()),
-            calls: std::sync::atomic::AtomicUsize::new(0),
-        }),
+    let ctx2 = Arc::new(fusion_context(
+        &dir,
         log2,
-        builtin_registry(),
-        dir.clone(),
-    );
-    assert_eq!(*ctx2.turn_mode.read_or_recover(), TurnMode::Fusion);
+        provider.clone(),
+        provider.clone(),
+        false,
+    ));
+    let resumed = AgentLoop::new(ctx2.clone());
+    assert_eq!(resumed.turn_mode(), TurnMode::Fusion);
+    assert!(resumed.fusion_model_problem().is_none());
     assert!(ctx2.read_only.load(Ordering::Relaxed));
+    drop(resumed);
     drop(ctx2);
 
     agent
@@ -267,11 +261,12 @@ async fn fusion_turn_carries_lead_contract_and_surface() {
         responses: queued(vec![text("ok")]),
         requests: std::sync::Mutex::new(Vec::new()),
     });
-    let raw = Context::new(
-        provider.clone(),
+    let raw = fusion_context(
+        &dir,
         SessionLog::ephemeral(),
-        builtin_registry(),
-        dir.clone(),
+        provider.clone(),
+        provider.clone(),
+        true,
     );
     *raw.turn_mode.write_or_recover() = TurnMode::Fusion;
     raw.read_only.store(true, Ordering::Relaxed);

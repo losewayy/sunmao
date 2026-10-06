@@ -211,6 +211,7 @@ pub(crate) async fn build_sub_ctx(
         // turn mode is per-context, unlike approval_mode: a sub-agent
         // always runs Standard — a Sidekick can't delegate a second level
         turn_mode: std::sync::RwLock::new(crate::agent::TurnMode::Standard),
+        fusion_models: std::sync::RwLock::new(crate::context::FusionModelSettings::default()),
         // same per-context rule: the Lead's read_only flag is its own —
         // arming fusion must never lock the child it delegates to
         read_only: std::sync::atomic::AtomicBool::new(false),

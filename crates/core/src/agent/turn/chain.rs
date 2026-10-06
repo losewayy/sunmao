@@ -58,54 +58,63 @@ impl AgentLoop {
         let res = loop {
             let res = {
                 let _turn_permit = self.ctx.turn_lock.lock().await;
-                // MCP push traffic lands here — inside the fence, before the
-                // driver runs, so a catalog bump can never swap the registry
-                // between a turn's ToolCall and its ToolResult.
-                self.drain_mcp(observer).await;
-                // The driver answers a cancel at every await that armed a
-                // `CancelSignal`. What it cannot answer is an await with no
-                // arm at all (a hook process, the log's lock, a tool that
-                // ignores the signal) — this arm is the backstop. Past the
-                // grace the round is dropped where it stands, which is the
-                // only way out of a stuck await, and the drop is what kills
-                // the in-flight tool futures.
-                let cancel = self.ctx.cancel_signal();
                 let mut forced = false;
-                let res = tokio::select! {
-                    r = async {
-                        match self.ctx.loop_driver {
-                            // PTC is the full loop with a RunCode+SearchTools
-                            // advertised surface — `advertised_tools` does the
-                            // trim; hooks, the gate and compaction all still run.
-                            crate::agent::LoopDriver::Full | crate::agent::LoopDriver::Ptc => {
-                                self.run_turn_full(&prompt, &atts, observer).await
+                let fusion_problem = if self.turn_mode() == crate::agent::TurnMode::Fusion {
+                    self.fusion_model_problem()
+                } else {
+                    None
+                };
+                let res = if let Some(problem) = fusion_problem {
+                    Err(anyhow::anyhow!(problem))
+                } else {
+                    // MCP push traffic lands here — inside the fence, before the
+                    // driver runs, so a catalog bump can never swap the registry
+                    // between a turn's ToolCall and its ToolResult.
+                    self.drain_mcp(observer).await;
+                    // The driver answers a cancel at every await that armed a
+                    // `CancelSignal`. What it cannot answer is an await with no
+                    // arm at all (a hook process, the log's lock, a tool that
+                    // ignores the signal) — this arm is the backstop. Past the
+                    // grace the round is dropped where it stands, which is the
+                    // only way out of a stuck await, and the drop is what kills
+                    // the in-flight tool futures.
+                    let cancel = self.ctx.cancel_signal();
+                    tokio::select! {
+                        r = async {
+                            match self.ctx.loop_driver {
+                                // PTC is the full loop with a RunCode+SearchTools
+                                // advertised surface — `advertised_tools` does the
+                                // trim; hooks, the gate and compaction all still run.
+                                crate::agent::LoopDriver::Full | crate::agent::LoopDriver::Ptc => {
+                                    self.run_turn_full(&prompt, &atts, observer).await
+                                }
+                                crate::agent::LoopDriver::Bare => {
+                                    self.run_turn_bare(&prompt, &atts, observer).await
+                                }
                             }
-                            crate::agent::LoopDriver::Bare => {
-                                self.run_turn_bare(&prompt, &atts, observer).await
-                            }
+                        } => r,
+                        () = async {
+                            cancel.wait().await;
+                            tokio::time::sleep(crate::agent::cancel::HARD_STOP_GRACE).await;
+                        } => {
+                            // A kill path that armed its waiter *after* the click
+                            // missed the first wake (notify_waiters stores no
+                            // permit) — this second one reaches it, so the shell
+                            // still SIGKILLs its process tree before the round is
+                            // abandoned. The flag is already set; re-waking is
+                            // all a cooperative waiter needs.
+                            self.ctx.cancel_notify.notify_waiters();
+                            forced = true;
+                            tracing::warn!(
+                                "cancel grace ({}s) lapsed — force-ending the turn",
+                                crate::agent::cancel::HARD_STOP_GRACE.as_secs()
+                            );
+                            observer.on_event(&LiveEvent::Hook {
+                                event: "force_stop".into(),
+                                detail: "cancel grace lapsed".into(),
+                            });
+                            Ok(TurnOutcome::Cancelled)
                         }
-                    } => r,
-                    () = async {
-                        cancel.wait().await;
-                        tokio::time::sleep(crate::agent::cancel::HARD_STOP_GRACE).await;
-                    } => {
-                        // A kill path that armed its waiter *after* the click
-                        // missed the first wake (notify_waiters stores no
-                        // permit) — this second one reaches it, so the shell
-                        // still SIGKILLs its process tree before the round is
-                        // abandoned. The flag is already set; re-waking is
-                        // all a cooperative waiter needs.
-                        self.ctx.cancel_notify.notify_waiters();
-                        forced = true;
-                        tracing::warn!(
-                            "cancel grace ({}s) lapsed — force-ending the turn",
-                            crate::agent::cancel::HARD_STOP_GRACE.as_secs()
-                        );
-                        observer.on_event(&LiveEvent::Hook {
-                            event: "force_stop".into(),
-                            detail: "cancel grace lapsed".into(),
-                        });
-                        Ok(TurnOutcome::Cancelled)
                     }
                 };
                 // cancelled resets at turn END on *every* exit path — an Err

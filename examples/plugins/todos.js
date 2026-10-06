@@ -2,17 +2,19 @@
    session's live task list. `/todos` only ever rendered as a one-off note;
    this pane keeps the latest `todos` frame pinned where you can see it.
 
-   Contract (v1): the file runs as an ES module, reaches the app only via
-   `window.sunmao`, and calls `register` exactly once with `id` equal to
-   this filename minus `.js`. Dock slots mount lazily on first activation
-   with (bodyEl, host); the host is the capability facade — session-scoped
-   api(), live frames via on('live'), and i18n/toast helpers. */
+   Contract (v1): the file runs as an ES module, reaches the app via
+   `window.sunmao`, and calls `register` exactly once DURING evaluation —
+   `spec.id` must equal the filename minus `.js` (the import window is how
+   the host binds file to plugin; deferred setTimeout-register is refused).
+   Dock slots mount lazily on first activation with (bodyEl, host); the
+   host is the capability facade — session-scoped api(), live frames via
+   on('live'), session switches via on('session'), i18n/toast helpers. */
 sunmao.register({
   id: 'todos',
   slots: {
     dock: [{
       id: 'list',
-      title: '待办',
+      title: t('待办'),
       icon: 'square-check',
       mount(el, host) {
         let items = [];

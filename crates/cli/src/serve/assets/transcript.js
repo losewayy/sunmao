@@ -435,7 +435,8 @@ function renderReplay(events, anim) {
       const g = toolGroup(host);
       let a = null, sum = '';
       try { a = JSON.parse(ev.args || '{}'); sum = a.command || a.path || a.pattern || a.name || a.prompt || String(ev.args).slice(0, 120); } catch { sum = String(ev.args || '').slice(0, 120); }
-      append(g, toolHTML([ev.ok ? 'ok' : 'err', '↳ ' + (ev.name || '?'), sum, '', capOut(ev.output || '')], { body: editPreviewHTML(ev.name, a), sumHtml: fpArgSum(ev.name, a) }));
+      const ptcOut = capOut(ev.output || '');
+      append(g, toolHTML([ev.ok ? 'ok' : 'err', '↳ ' + (ev.name || '?'), sum, '', ptcOut], { body: editPreviewHTML(ev.name, a), sumHtml: fpArgSum(ev.name, a), rawOut: fpMarkedOut(ev.name, ptcOut) }));
       logEv('tool_result', `↳ ${ev.name || '?'} ${ev.ok ? 'ok' : 'err'}`);
     } else if (ty === 'session_meta') {
       // rename fact — rail title override; audit-visible like mode_change,

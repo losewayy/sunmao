@@ -81,11 +81,15 @@ function fpMarkedOut(name, out) {
   if (!out || !FP_OUT_TOOLS.has(name)) return null;
   return out.split('\n').map(line => {
     if (name === 'Grep') {
-      const m = line.match(/^(.*):(\d+):(.*)$/);
+      // FIRST `:digits:` split — mirrors the server's exposed-set scan, so
+      // a `:` inside the match text can't be mistaken for the separator
+      const m = line.match(/^(.*?):(\d+):(.*)$/);
       return m && m[1] ? fpSpan(m[1]) + esc(`:${m[2]}:` + m[3]) : esc(line);
     }
     const v = line.trim();
-    return !v || v.startsWith('[') ? esc(line) : `<span class="fp" data-fopen="${esc(v)}">${esc(line)}</span>`;
+    // `[`-prefixed = section header, `…` = the capOut truncation tail —
+    // neither is a path
+    return !v || v.startsWith('[') || v.startsWith('…') ? esc(line) : `<span class="fp" data-fopen="${esc(v)}">${esc(line)}</span>`;
   }).join('\n');
 }
 function editPreviewHTML(name, args) {

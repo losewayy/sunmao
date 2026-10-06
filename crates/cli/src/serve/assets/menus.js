@@ -293,10 +293,11 @@ function act(name, el) {
       const cur = +isl.dataset.revCur || 1, max = +isl.dataset.revMax || 1;
       const q = cur === max ? '' : `?rev=${cur}`;
       // under the shell the artifact URL is a WebView2-internal scheme —
-      // an external browser can't resolve it; open the real file path
+      // an external browser can't resolve it; open the real file through
+      // the SAME validated path every other file open takes (the artifact
+      // event already put it in the surfaced set)
       if (TAURI) {
-        const p = `${cwd}/.sunmao/artifacts/${isl.dataset.artifact}.html`;
-        return Promise.resolve(TAURI.openExternal(p)).catch(e => toast(t('打开失败：{msg}', { msg: e }), 'alert', 'warn'));
+        return openFilePath(`${cwd}/.sunmao/artifacts/${isl.dataset.artifact}.html`);
       }
       return open('/artifacts/' + encodeURIComponent(isl.dataset.artifact) + q, '_blank');
     }

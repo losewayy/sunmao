@@ -495,6 +495,7 @@ mod attachments;
 mod browse;
 #[path = "request/channels.rs"]
 mod channels;
+mod fopen;
 #[path = "request/fs.rs"]
 mod fs;
 #[path = "request/models.rs"]

@@ -145,7 +145,10 @@ impl ChannelAdapter for NoEditAdapter {
     async fn poll(&self, _tx: tokio::sync::mpsc::Sender<crate::im::channels::InboundMsg>) {}
     async fn send_text(&self, _chat_id: &str, text: &str) -> SendResult {
         self.sends.lock().unwrap().push(text.to_string());
-        Ok(Some("1".into()))
+        // wechat/dingtalk have no message id to hand back — the bug this
+        // test guards is the draft resending every tick on exactly that
+        // shape, so the fake must return Ok(None) too
+        Ok(None)
     }
     async fn edit_text(&self, _chat_id: &str, _message_id: &str, text: &str) -> anyhow::Result<()> {
         self.edits.lock().unwrap().push(text.to_string());

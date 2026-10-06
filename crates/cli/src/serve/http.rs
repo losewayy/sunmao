@@ -7,7 +7,7 @@ use anyhow::Result;
 use axum::body::{Body, to_bytes};
 use axum::extract::Request;
 use axum::http::StatusCode;
-use axum::response::{Html, Response};
+use axum::response::{Html, IntoResponse as _, Response};
 use axum::routing::get;
 
 use super::request::HostResponse;
@@ -28,10 +28,54 @@ fn into_response(r: HostResponse) -> Response {
     })
 }
 
+/// Loopback-only request headers. The surface has no auth, so three cheap
+/// walls do the work: `Host` must name a loopback address (kills DNS
+/// rebind — an attacker domain resolving to 127.0.0.1 arrives with its
+/// own Host), `sec-fetch-site: cross-site` is refused outright (kills
+/// cross-site POST/PUT/DELETE and ws upgrades from a foreign page —
+/// browsers stamp the metadata, non-browser clients don't send it at
+/// all), and a `Origin` that isn't loopback gets the same on anything
+/// but a read.
+fn headers_ok(parts: &axum::http::request::Parts, mutating: bool) -> bool {
+    let loopback_host = |v: &str| {
+        let h = v
+            .trim()
+            .trim_start_matches('[')
+            .split([':', ']'])
+            .next()
+            .unwrap_or("");
+        h == "127.0.0.1" || h.eq_ignore_ascii_case("localhost") || h == "::1"
+    };
+    if let Some(host) = parts.headers.get("host").and_then(|v| v.to_str().ok())
+        && !loopback_host(host)
+    {
+        return false;
+    }
+    if let Some(site) = parts
+        .headers
+        .get("sec-fetch-site")
+        .and_then(|v| v.to_str().ok())
+        && site == "cross-site"
+    {
+        return false;
+    }
+    if mutating && let Some(origin) = parts.headers.get("origin").and_then(|v| v.to_str().ok()) {
+        let body = origin
+            .trim_start_matches("http://")
+            .trim_start_matches("https://");
+        return loopback_host(body);
+    }
+    true
+}
+
 /// Everything except `/ws` funnels into the transport-free route table —
 /// one dispatch implementation for axum and the Tauri `sunmao` scheme.
 async fn rest_dispatch(host: axum::extract::State<HostHandle>, req: Request) -> Response {
     let (parts, body) = req.into_parts();
+    let mutating = !matches!(parts.method.as_str(), "GET" | "HEAD" | "OPTIONS");
+    if !headers_ok(&parts, mutating) {
+        return (StatusCode::FORBIDDEN, "not a loopback client").into_response();
+    }
     let method = parts.method.as_str();
     let pq = parts
         .uri

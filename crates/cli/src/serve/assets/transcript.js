@@ -339,7 +339,7 @@ function renderReplay(events, anim) {
     const ty = ev.type;
     if (ty === 'started') {
       modelLabel = ev.model || modelLabel;
-      $('#cmp-model').textContent = modelLabel || '…';
+      renderComposerModel();
       // chrome, not transcript — model + cwd already live in the composer;
       // the event log keeps the fact. An empty session shows the hero.
       logEv('started', t('会话已开始'));

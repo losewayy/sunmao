@@ -198,7 +198,11 @@ function act(name, el) {
         { label: t('回合模式') }, ...TURN.map(m => Object.assign({}, m, { on: m.v === cur })),
       ], v => { wsSend({ type: 'mode', sel: v }); }, { place: 'top', align: 'end' });
     }
-    case 'pick-model': return modelPop(el);
+    case 'pick-model':
+      // Fusion turns run on the Lead/Sidekick pair — the chip is a status
+      // display there, not a switcher; it lands on the page that owns them
+      if (turnMode === 'fusion') { show('settings'); return settingsPage('fusion'); }
+      return modelPop(el);
     case 'pick-effort': return effortPop(el);
     case 'send': return send();
     case 'cmp-attach': return $('#att-file').click();

@@ -37,7 +37,20 @@ function setTurnMode(m) {
   turnMode = m;
   const btn = $('#model-btn');
   if (btn) btn.dataset.tip = m === 'fusion' ? t('Fusion 已开：Lead 和 Sidekick 均为会话级模型；请分别在设置 › Fusion 中选择。') : '';
+  renderComposerModel();
   if (view === 'settings' && setPage === 'fusion') renderFusion();
+}
+// the composer model chip mirrors the adapter a turn actually runs on:
+// standard uses the session model; Fusion runs on the session's Lead, so
+// the chip shows that selector instead — opening the model picker here
+// would imply a switch the composer no longer owns (roles live in
+// Settings › Fusion)
+function renderComposerModel() {
+  const el = $('#cmp-model');
+  if (!el) return;
+  el.textContent = turnMode === 'fusion'
+    ? (MODELS && MODELS.fusion_lead) || t('未设置')
+    : modelLabel || '…';
 }
 function turnModeOf(events) {
   for (let i = (events || []).length - 1; i >= 0; i--) {
@@ -219,7 +232,7 @@ function route(v) {
         // The replay repopulates everything.
         renderReplay([]);
         steerQ = []; inputQ = []; renderQueueChips();
-        modelLabel = ''; $('#cmp-model').textContent = '…';
+        modelLabel = ''; renderComposerModel();
         wsSend({ type: 'view', id: sessionId });
         renderCrumb();
       }
@@ -246,7 +259,7 @@ function route(v) {
     case 'model':
       if (sess === sessionId) {
         modelLabel = v.label || modelLabel;
-        $('#cmp-model').textContent = modelLabel;
+        renderComposerModel();
         if (view === 'settings' && setPage === 'fusion') renderFusion();
         toast(t('模型切换为 {model}', { model: v.label }), 'cpu');
       }
@@ -259,6 +272,7 @@ function route(v) {
           MODELS.fusion_ready = !!v.ready;
         } else refreshModels();
         fusionPending = false;
+        renderComposerModel();
         if (view === 'settings' && setPage === 'fusion') renderFusion();
         if (v.error) toast(t('保存失败：{msg}', { msg: v.error }), 'alert', 'warn');
         else toast(t('Fusion 模型已保存'), 'check');
@@ -404,6 +418,7 @@ async function refreshModels() {
     if (MODELS.turn_mode) setTurnMode(MODELS.turn_mode);
   } catch { MODELS = null; }
   fusionPending = false;
+  renderComposerModel();
   if (view === 'settings' && setPage === 'providers') renderProviders();
   else if (view === 'settings' && setPage === 'fusion') renderFusion();
   if (popEl && popEl.classList.contains('models')) renderModelRows(popEl, $('#mp-in') ? $('#mp-in').value.trim() : '');

@@ -36,13 +36,11 @@ function setTurnMode(m) {
   if (m !== 'standard' && m !== 'fusion') return;
   turnMode = m;
   renderComposerModel();
-  if (view === 'settings' && setPage === 'fusion') renderFusion();
 }
 // the composer model chip mirrors the adapter a turn actually runs on:
 // standard names the session model; Fusion runs on the session's
 // Lead/Sidekick pair, so the chip says Fusion and its tooltip lists the two
-// selectors — opening the model picker here would imply a switch the
-// composer no longer owns (roles live in Settings › Fusion)
+// selectors — clicking opens the fusion card where the pair is picked
 function renderComposerModel() {
   const el = $('#cmp-model'), btn = $('#model-btn');
   if (!el) return;
@@ -100,6 +98,7 @@ function route(v) {
   switch (v.type) {
     case 'hello':
       sessionId = v.session || '';
+      fusionArm = false; // the arm latch belongs to this tab's gesture on the old session
       if (typeof dockSessionSwap === 'function') dockSessionSwap();
       clientId = v.client || 0;
       cwd = String(v.cwd || '').replace(/^\\\\\?\\/, '');
@@ -266,7 +265,6 @@ function route(v) {
       if (sess === sessionId) {
         modelLabel = v.label || modelLabel;
         renderComposerModel();
-        if (view === 'settings' && setPage === 'fusion') renderFusion();
         toast(t('模型切换为 {model}', { model: v.label }), 'cpu');
       }
       break;
@@ -278,8 +276,9 @@ function route(v) {
           MODELS.fusion_ready = !!v.ready;
         } else refreshModels();
         fusionPending = false;
+        // the card armed the mode switch — roles now complete, flip it
+        if (v.ready && fusionArm) { fusionArm = false; wsSend({ type: 'mode', sel: 'fusion' }); }
         renderComposerModel();
-        if (view === 'settings' && setPage === 'fusion') renderFusion();
         if (v.error) toast(t('保存失败：{msg}', { msg: v.error }), 'alert', 'warn');
         else toast(t('Fusion 模型已保存'), 'check');
       }
@@ -426,7 +425,6 @@ async function refreshModels() {
   fusionPending = false;
   renderComposerModel();
   if (view === 'settings' && setPage === 'providers') renderProviders();
-  else if (view === 'settings' && setPage === 'fusion') renderFusion();
   if (popEl && popEl.classList.contains('models')) renderModelRows(popEl, $('#mp-in') ? $('#mp-in').value.trim() : '');
 }
 const provNames = () => Object.keys((MODELS && MODELS.providers) || {}).sort();
@@ -525,7 +523,7 @@ function renderDock(d) {
 }
 
 /* ================= crumb / views ================= */
-const SET_NAV = [['appearance', t('外观'), 'palette'], ['providers', t('模型与提供商'), 'cpu'], ['fusion', 'Fusion', 'zap'], ['channels', t('IM 渠道'), 'shield-check'], ['shell', t('终端'), 'terminal'], ['hooks', t('钩子'), 'zap'], ['mcp', t('MCP 服务器'), 'blocks'], ['grants', t('已授权命令'), 'lock'], ['keys', t('快捷键'), 'keyboard'], ['about', t('关于'), 'info']];
+const SET_NAV = [['appearance', t('外观'), 'palette'], ['providers', t('模型与提供商'), 'cpu'], ['channels', t('IM 渠道'), 'shield-check'], ['shell', t('终端'), 'terminal'], ['hooks', t('钩子'), 'zap'], ['mcp', t('MCP 服务器'), 'blocks'], ['grants', t('已授权命令'), 'lock'], ['keys', t('快捷键'), 'keyboard'], ['about', t('关于'), 'info']];
 function renderCrumb() {
   const c = $('#crumb');
   const interactive = view === 'session' && !!sessionId;

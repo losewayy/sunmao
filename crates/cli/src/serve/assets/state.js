@@ -182,7 +182,14 @@ const INITIAL = Object.assign(clone(DEFAULTS), { wallpaper: 'dusk-ridge', dim: 0
  * the default takes over, and the caller writes the healed object back so
  * the bad value can never bite twice. */
 const UI_NUM = { dim: [0, 1], panelOpacity: [0, 1], blur: [0, 64], contrast: [0, 100], zoom: [0.2, 5] };
-const UI_STR = ['mode', 'motion', 'accent', 'background', 'foreground', 'wallpaper', 'lang', 'railGroup', 'loopDriver'];
+/* 1 = must be a non-empty string, 0 = `''` is a legal value — `loopDriver`
+   is exactly that case (it means "no override" and defaults to ''). Flagging
+   an empty-but-legal string as bad made the healed object differ from the
+   stored one on EVERY loadUi: the write-back save() emitted ui_changed,
+   which re-entered loadUi — a self-sustaining rewrite loop that re-ran
+   apply()+dockSessionSwap() every debounce tick and read as the whole UI
+   flickering. */
+const UI_STR = { mode: 1, motion: 1, accent: 1, background: 1, foreground: 1, wallpaper: 1, lang: 1, railGroup: 1, loopDriver: 0 };
 const uiNum = v => {
   const n = typeof v === 'number' ? v : (typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);
   return Number.isFinite(n) ? n : null;
@@ -199,7 +206,7 @@ function healUi(v) {
     if (fixed === null) { delete o[k]; bad.push(k); }
     else if (fixed !== o[k]) { o[k] = fixed; bad.push(k); }
   }
-  for (const k of UI_STR) if (k in o && !(typeof o[k] === 'string' && o[k])) { delete o[k]; bad.push(k); }
+  for (const [k, req] of Object.entries(UI_STR)) if (k in o && !(typeof o[k] === 'string' && (!req || o[k]))) { delete o[k]; bad.push(k); }
   if ('translucentSidebar' in o && typeof o.translucentSidebar !== 'boolean') { delete o.translucentSidebar; bad.push('translucentSidebar'); }
   if ('railFold' in o && (!o.railFold || typeof o.railFold !== 'object' || Array.isArray(o.railFold))) { delete o.railFold; bad.push('railFold'); }
   const fonts = (o.fonts && typeof o.fonts === 'object' && !Array.isArray(o.fonts)) ? o.fonts : {};

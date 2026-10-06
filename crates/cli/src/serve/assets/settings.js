@@ -120,7 +120,7 @@ function renderModelRows(p, q, options = {}) {
     rows.push(`<div class="lbl">${t('当前')}</div><div class="mi cur"><span class="mt mono"><span>${esc(modelLabel)}</span><small>${t('本会话正在使用')}</small></span>${ic('check', 'i sm ck')}</div>`);
   const routes = (MODELS && MODELS.routes) || {};
   if (turnMode === 'fusion' && !options.onSelect)
-    rows.push(`<div class="hint" data-fusion-note>${esc(t('Fusion 已开：Lead 和 Sidekick 均为会话级模型；请分别在设置 › Fusion 中选择。'))}</div>`);
+    rows.push(`<div class="hint" data-fusion-note>${esc(t('Fusion 已开：本会话由 Lead / Sidekick 模型搭档执行 — 在模型芯片的 Fusion 卡中选择。'))}</div>`);
   for (const [r, chain] of Object.entries(routes)) {
     const sel = '@' + r, d = Array.isArray(chain) ? chain.join(' → ') : String(chain);
     if (!q || (sel + ' ' + d).toLowerCase().includes(q)) {
@@ -601,63 +601,8 @@ function renderMcp() {
       : '<div class="empty-hint">' + t('当前会话没有连接 MCP 服务器') + '</div>');
 }
 
-let fusionPending = false;
-function renderFusion() {
-  if (view !== 'settings' || setPage !== 'fusion') return;
-  const host = $('#set-generic');
-  const cur = turnMode === 'fusion' ? 'fusion' : 'standard';
-  const ptc = driver === 'ptc';
-  const lead = (MODELS && MODELS.fusion_lead) || '';
-  const side = (MODELS && MODELS.fusion_sidekick) || '';
-  const ready = !!(MODELS && MODELS.fusion_ready);
-  const disabled = fusionPending || !MODELS ? ' disabled' : '';
-  const opt = (v, label) => `<button type="button" class="fusion-mode${v === cur ? ' on' : ''}" data-fusion="${v}" aria-pressed="${v === cur}"${v === 'fusion' && (ptc || !ready || fusionPending) ? ' disabled' : ''}>${v === cur ? ic('check', 'i xs ck') : ''}${label}</button>`;
-  const desc = ready
-    ? t('Lead 负责规划与验证，Sidekick 负责委派执行；两个模型可以相同也可以不同。')
-    : t('Fusion 需要分别设置有效的 Lead 和 Sidekick 模型后才能开启。');
-  host.innerHTML = head(t('Fusion'), desc)
-    + card([
-      row(t('回合模式'), '', `<div class="fusion-mode-switch" role="group" aria-label="${esc(t('回合模式'))}">${opt('standard', t('标准'))}${opt('fusion', 'Fusion')}</div>`),
-      `<div class="fusion-model-grid"><div class="fusion-model-field"><span class="fusion-model-label">${t('Lead')}</span><button type="button" class="fusion-model-select" id="fusion-lead"${disabled}><span class="mono">${esc(lead || t('未设置'))}</span>${ic('chev-d')}</button><span class="fusion-model-hint">${lead ? t('Fusion 规划与验证模型') : t('必须设置才能开启 Fusion')}</span></div><div class="fusion-model-field"><span class="fusion-model-label">${t('Sidekick')}</span><button type="button" class="fusion-model-select" id="fusion-sidekick"${disabled}><span class="mono">${esc(side || t('未设置'))}</span>${ic('chev-d')}</button><span class="fusion-model-hint">${side ? t('Fusion 委派时执行工作的模型') : t('必须设置才能开启 Fusion')}</span></div></div>`,
-    ])
-    + (ptc ? `<div class="empty-hint" data-fusion-why>${t('当前会话用 ptc 循环驱动：它只声明 RunCode 一条路，Fusion 无法委派，切换会被内核拒绝。')}</div>` : '');
-  host.querySelectorAll('[data-fusion]').forEach(button => button.addEventListener('click', () => {
-    if (button.disabled || button.dataset.fusion === cur) return;
-    wsSend({ type: 'mode', sel: button.dataset.fusion });
-  }));
-  const leadButton = $('#fusion-lead');
-  const sidekickButton = $('#fusion-sidekick');
-  if (leadButton) leadButton.addEventListener('click', () => modelPop(leadButton, {
-    selected: lead,
-    allowFreeform: false,
-    emptyLabel: cur === 'fusion' ? null : t('未设置'),
-    showCurrent: false,
-    place: 'bottom',
-    align: 'start',
-    onSelect: selector => saveFusionModel('lead', selector),
-  }));
-  if (sidekickButton) sidekickButton.addEventListener('click', () => modelPop(sidekickButton, {
-    selected: side,
-    allowFreeform: false,
-    emptyLabel: cur === 'fusion' ? null : t('未设置'),
-    showCurrent: false,
-    place: 'bottom',
-    align: 'start',
-    onSelect: selector => saveFusionModel('sidekick', selector),
-  }));
-}
-function saveFusionModel(role, selector) {
-  if (fusionPending) return;
-  const value = selector || null;
-  fusionPending = true;
-  if (MODELS) MODELS[role === 'lead' ? 'fusion_lead' : 'fusion_sidekick'] = value;
-  renderFusion();
-  wsSend({ type: 'fusion_model', role, sel: value });
-}
-
 const PAGES = {
   providers: () => head(t('模型与提供商'), '') + '<div class="empty-hint">' + t('正在读取模型配置…') + '</div>',
-  fusion: () => head(t('Fusion'), '') + '<div class="empty-hint">' + t('正在读取会话状态…') + '</div>',
   channels: () => head(t('IM 渠道'), '') + '<div class="empty-hint">' + t('正在读取渠道状态…') + '</div>',
   grants: () => head(t('已授权命令'), '') + '<div class="empty-hint">' + t('正在读取授权…') + '</div>',
   hooks: () => head(t('钩子'), '') + '<div class="empty-hint">' + t('正在读取钩子…') + '</div>',
@@ -676,7 +621,6 @@ function settingsPage(p) {
   renderCrumb();
   if (isA) { renderWallGrid(); syncSettingsUI(); }
   else if (p === 'providers') { renderProviders(); }
-  else if (p === 'fusion') { renderFusion(); }
   else if (p === 'channels') { refreshChannels(); }
   else if (p === 'grants') { renderGrants(); }
   else if (p === 'hooks') { renderHooks(); }

@@ -120,6 +120,50 @@ function stopLabel(text) {
   if (last) last.nodeValue = text;
 }
 
+/* ---- Fusion card — Lead/Effort/Sidekick selectors off the model chip ----
+   Session-scoped roles ride `fusion_model` wire ops; the choices persist
+   through the session's own event log and replay on resume, so the card
+   only ever renders what the kernel reports. `fusionArm` is the "picked
+   Fusion in the mode menu before the roles existed" latch — once both
+   are set the fusion_models frame turns the mode on by itself. */
+let fusionPending = false, fusionArm = false;
+function saveFusionModel(role, selector) {
+  if (fusionPending) return;
+  fusionPending = true;
+  if (MODELS) MODELS[role === 'lead' ? 'fusion_lead' : 'fusion_sidekick'] = selector || null;
+  wsSend({ type: 'fusion_model', role, sel: selector || null });
+}
+function fusionPop(anchor) {
+  if (!anchor) return;
+  if (popAnchor === anchor) return closePop();
+  const role = v => v || t('未设置');
+  const ready = !!(MODELS && MODELS.fusion_ready);
+  pop(anchor, `
+    <div class="fcard-h"><b>Fusion</b><span>${esc(t('Lead 规划与验证 · Sidekick 委派执行'))}</span></div>
+    <div class="fcard-row"><span>Lead</span><button type="button" class="fcard-sel" id="fc-lead"><span class="mono">${esc(role(MODELS && MODELS.fusion_lead))}</span>${ic('chev-d')}</button></div>
+    <div class="fcard-row"><span>${esc(t('思考强度'))}</span><button type="button" class="fcard-sel" id="fc-effort"><span class="mono">${esc(effortLevel || t('默认'))}</span>${ic('chev-d')}</button></div>
+    <div class="fcard-row"><span>Sidekick</span><button type="button" class="fcard-sel" id="fc-side"><span class="mono">${esc(role(MODELS && MODELS.fusion_sidekick))}</span>${ic('chev-d')}</button></div>
+    ${ready ? '' : `<div class="fcard-hint">${esc(t('两个角色都选好后自动开启 Fusion'))}</div>`}`,
+    { place: 'top', align: 'end', cls: 'fcard', onMount(p) {
+      // the pickers are their own popovers, and this card already owns the
+      // chip as popAnchor — modelPop(anchor) would read as a toggle-off.
+      // Close first, then the picker opens fresh on the same chip; the
+      // card reopens after the pick lands
+      const pick = role => {
+        closePop();
+        modelPop(anchor, {
+          selected: MODELS && MODELS[role === 'lead' ? 'fusion_lead' : 'fusion_sidekick'],
+          allowFreeform: false,
+          showCurrent: false,
+          onSelect: sel => { saveFusionModel(role, sel); fusionPop(anchor); },
+        });
+      };
+      $('#fc-lead', p).addEventListener('click', e => { e.stopPropagation(); pick('lead'); });
+      $('#fc-side', p).addEventListener('click', e => { e.stopPropagation(); pick('sidekick'); });
+      $('#fc-effort', p).addEventListener('click', e => { e.stopPropagation(); closePop(); effortPop(anchor); });
+    } });
+}
+
 function act(name, el) {
   switch (name) {
     case 'palette': return openPalette();
@@ -181,26 +225,34 @@ function act(name, el) {
         { v: 'full_access', t: t('完全访问'), d: t('不再询问；deny 规则依旧生效'), icon: 'lock', warn: true },
       ];
       const cur = typeof turnMode === 'string' ? turnMode : 'standard';
-      const fusionDisabled = driver === 'ptc' || !MODELS?.fusion_ready;
-      const fusionDescription = driver === 'ptc'
+      const ptcBlocked = driver === 'ptc';
+      const fusionDescription = ptcBlocked
         ? t('当前会话用 ptc 循环驱动：它只声明 RunCode 一条路，Fusion 无法委派，切换会被内核拒绝。')
-        : fusionDisabled
-          ? t('Fusion 需要分别设置有效的 Lead 和 Sidekick 模型后才能开启。')
-          : t('Lead 只读规划并验证，写入由 Sidekick 执行；连续两次验证不过时 Lead 接管到本回合结束');
+        : MODELS?.fusion_ready
+          ? t('Lead 只读规划并验证，写入由 Sidekick 执行；连续两次验证不过时 Lead 接管到本回合结束')
+          : t('先在本会话选 Lead 和 Sidekick 两个模型 — 选齐即开启。');
       const TURN = [
         { v: 'standard', t: t('标准'), d: t('单模型回合：本会话自己读写与执行'), icon: 'cpu' },
-        { v: 'fusion', t: 'Fusion', d: fusionDescription, icon: 'zap', disabled: fusionDisabled },
+        { v: 'fusion', t: 'Fusion', d: fusionDescription, icon: 'zap', disabled: ptcBlocked },
       ];
       return menuPop(el, [
         { label: t('审批模式') }, ...MODES.map(m => Object.assign({}, m, { on: m.v === approvalMode })),
         '-',
         { label: t('回合模式') }, ...TURN.map(m => Object.assign({}, m, { on: m.v === cur })),
-      ], v => { wsSend({ type: 'mode', sel: v }); }, { place: 'top', align: 'end' });
+      ], v => {
+        // roles unset → open the card instead of erroring: picking both
+        // arms the switch, and the fusion_models frame flips the mode on
+        if (v === 'fusion' && !MODELS?.fusion_ready) {
+          fusionArm = true;
+          return fusionPop($('#model-btn'));
+        }
+        wsSend({ type: 'mode', sel: v });
+      }, { place: 'top', align: 'end' });
     }
     case 'pick-model':
-      // Fusion turns run on the Lead/Sidekick pair — the chip is a status
-      // display there, not a switcher; it lands on the page that owns them
-      if (turnMode === 'fusion') { show('settings'); return settingsPage('fusion'); }
+      // Fusion turns run on the Lead/Sidekick pair — the chip opens the
+      // pair's card (which is also where the roles are configured)
+      if (turnMode === 'fusion') return fusionPop(el);
       return modelPop(el);
     case 'pick-effort': return effortPop(el);
     case 'send': return send();

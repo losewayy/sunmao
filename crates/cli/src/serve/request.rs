@@ -189,6 +189,7 @@ impl HostHandle {
             // ride, served over HTTP so the download matches REPL/TUI output
             // byte-for-byte. Frontend never re-implements the fold.
             ("GET", ["session", id, "md"]) => session::session_markdown(s, id),
+            ("GET", ["session", id, "zip"]) => session::session_zip(s, id),
             ("GET", ["session", id, "turns"]) => {
                 // the /rewind picker's data — user-turn boundaries on the
                 // log, numbered and previewed exactly like the TUI list

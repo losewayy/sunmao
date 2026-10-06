@@ -12,10 +12,72 @@ function sessionMenu(id) {
   items.push('-');
   items.push({ v: 'rename', t: t('重命名'), icon: 'pen' });
   items.push({ v: 'export', t: t('导出为 Markdown'), icon: 'download' });
+  items.push({ v: 'export-zip', t: t('导出调试包'), icon: 'file' });
   items.push({ v: 'delete', t: t('删除会话'), icon: 'trash', warn: true });
   items.push('-');
   items.push({ v: 'copy', t: t('复制会话 ID'), icon: 'copy' });
   return items;
+}
+/* the goal chip's popover — the standing objective with status/rounds, an
+   input to set or replace it, and a clear button. Both actions ride the
+   slash path (`/goal …`, `/goal clear`) so the serve driver's builtin
+   dispatch stays the single implementation. */
+function goalPop(at) {
+  const g = curGoal;
+  pop(at, `<div class="lbl">${t('会话目标')}</div>` +
+    (g ? `<div class="goal-cur">${esc(g.objective || '')}<small>${esc(GOAL_STATUS[g.status] || g.status)} · ${t('轮 {n}/{m}', { n: g.rounds, m: g.max_rounds })}</small></div>`
+       : `<div class="hint">${t('还没设目标 — 设了之后模型会自己追到完成或受阻')}</div>`) +
+    `<div class="field"><input id="gp-in" placeholder="${esc(t('目标 — 例：修好登录页的 500'))}" value="${esc(g ? g.objective || '' : '')}" spellcheck="false" autocomplete="off"></div>` +
+    `<div class="field"><button class="btn btn-sm" id="gp-set">${g ? t('更新目标') : t('设置目标')}</button>` +
+    (g ? `<button class="btn btn-sm ghost" id="gp-clear">${t('放弃目标')}</button>` : '') + `</div>`,
+    { place: 'top', onMount(p) {
+      const inp = $('#gp-in', p);
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#gp-set', p).click(); } });
+      $('#gp-set', p).addEventListener('click', () => {
+        const v = inp.value.trim();
+        if (!v) return inp.focus();
+        closePop(); wsSend({ type: 'prompt', text: '/goal ' + v });
+      });
+      $('#gp-clear', p)?.addEventListener('click', () => { closePop(); wsSend({ type: 'prompt', text: '/goal clear' }); });
+      setTimeout(() => inp.focus(), 20);
+    } });
+}
+/* ---- export — a GET on the session's `/md` route gives us the server's
+   `commands::export::markdown` output (the SAME fold `/export-md` and the
+   debug bundle ride) so the download is byte-for-byte what REPL/TUI would
+   produce. The transcript the user scrolls is the folded live view; the
+   download is the durable event-source. ---- */
+async function exportSession(id) {
+  if (!id) return;
+  try {
+    const r = await fetch(`/session/${encodeURIComponent(id)}/md`);
+    if (!r.ok) throw new Error(`${r.status}`);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([await r.text()], { type: 'text/markdown' }));
+    a.download = `sunmao-${id}.md`;
+    a.click();
+    // revoke on a delay — engines that hand the blob to the download
+    // manager asynchronously (Firefox) read an empty file if we revoke
+    // in the same task
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    toast(t('已导出 {name}', { name: id + '.md' }), 'download');
+  } catch (e) { toast(t('导出失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
+}
+/* the /export-zip bundle through the same download path as the markdown —
+   the slash command only leaves the file in .sunmao/exports where a
+   browser can't reach it, so GET /session/{id}/zip streams it back */
+async function exportZipSession(id) {
+  if (!id) return;
+  try {
+    const r = await fetch(`/session/${encodeURIComponent(id)}/zip`);
+    if (!r.ok) throw new Error(`${r.status}`);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([await r.blob()], { type: 'application/zip' }));
+    a.download = `sunmao-${id}.zip`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    toast(t('已导出 {name}', { name: id + '.zip' }), 'download');
+  } catch (e) { toast(t('导出失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
 function sessionAction(v, id, at) {
   if (v === 'resume') resumeSession(id);
@@ -24,6 +86,7 @@ function sessionAction(v, id, at) {
   else if (v === 'compact') wsSend({ type: 'prompt', text: '/compact' });
   else if (v === 'rename') renamePop(id, at);
   else if (v === 'export') exportSession(id);
+  else if (v === 'export-zip') exportZipSession(id);
   else if (v === 'delete') deletePop(id, at);
   else if (v === 'copy') { if (navigator.clipboard) navigator.clipboard.writeText(id).catch(() => {}); toast(t('已复制会话 ID'), 'copy'); }
 }
@@ -52,12 +115,27 @@ async function rewindPick(id, at) {
   try { turns = (await api(`/session/${encodeURIComponent(id)}/turns`)).turns || []; }
   catch (e) { toast(t('回退列表失败：{msg}', { msg: e.message }), 'alert', 'warn'); return; }
   if (!turns.length) return toast(t('没有可回退的轮次'), 'reset');
-  const items = turns.map(turn => ({ v: String(turn.n), t: t('第 {n} 轮', { n: turn.n }), d: turn.preview }));
-  menuPop(at, [{ label: t('选择要回退到的位置') }, ...items], v => rewindTo(id, +v));
+  // the kernel rewinds three surfaces — transcript-only, files-only, or
+  // both — but the old picker hardwired 'both'; a seg row makes the other
+  // two reachable (session = keep file state, code = keep transcript)
+  let rwMode = 'both';
+  pop(at, `<div class="lbl">${t('回退到第几轮之前')}</div><div class="np-modes"><span class="np-ml">${t('回退范围')}</span>` +
+    [['both', t('会话+文件'), t('消息与工作区都回到该轮之前')], ['session', t('仅会话'), t('只回退消息 — 磁盘文件不动')], ['code', t('仅文件'), t('只恢复文件 — 会话记录保留')]]
+      .map(([v, l, d]) => `<button class="seg${v === 'both' ? ' on' : ''}" data-rwm="${v}" data-tip="${d}">${l}</button>`).join('') +
+    `</div><div class="mp-list scroll">` +
+    turns.map(turn => `<button class="mi" data-n="${turn.n}"><span class="mt"><span>${t('第 {n} 轮', { n: turn.n })}</span><small>${esc(turn.preview || '')}</small></span></button>`).join('') +
+    `</div>`, { place: 'top', cls: 'models', onMount(p) {
+      p.addEventListener('click', e => {
+        const seg = e.target.closest('[data-rwm]');
+        if (seg) { rwMode = seg.dataset.rwm; $$('.seg', p).forEach(b => b.classList.toggle('on', b === seg)); return; }
+        const it = e.target.closest('[data-n]');
+        if (it) { closePop(); rewindTo(id, +it.dataset.n, rwMode); }
+      });
+    } });
 }
-async function rewindTo(id, n) {
+async function rewindTo(id, n, mode) {
   try {
-    const r = await api(`/session/${encodeURIComponent(id)}/rewind`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ turn: n, mode: 'both' }) });
+    const r = await api(`/session/${encodeURIComponent(id)}/rewind`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ turn: n, mode: mode || 'both' }) });
     const files = (r.restored || []).length;
     if (r.session) wsSend({ type: 'view', id: r.session });
     toast(t('已回退到第 {n} 轮之前', { n }) + (files ? t('，恢复 {files} 个文件', { files }) : ''), 'reset');
@@ -269,6 +347,7 @@ function act(name, el) {
     }
     case 'new-chat': return newChat();
     case 'hero-mode': return heroModePick(el.dataset.hm);
+    case 'goal': if (popAnchor === el) return closePop(); return goalPop(el);
     case 'grants-clear': return revokeGrant('*');
     case 'compact': return wsSend({ type: 'prompt', text: '/compact' });
     case 'new-chat-pop': return newChatPop(el);

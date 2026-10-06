@@ -130,7 +130,8 @@ the project layer). Prompt sections order: built-in assets → user → project
 ```rust
 SessionEvent::Started | Message | ToolCall | ToolResult
                   | Compacted | Artifact | Usage | Hook | LocalShell
-                  | TaskDone | Todos | ModeChange | SessionMeta | Checkpoint
+                  | TaskDone | Todos | ModeChange | TurnModeChange
+                  | FusionModelsChange | SessionMeta | Checkpoint
 ```
 
 Append-only JSONL; the visible transcript is a pure fold over them. `messages()`

@@ -5,6 +5,7 @@
 let popEl = null, popAnchor = null;
 function pop(anchor, html, o = {}) {
   closePop();
+  document.querySelectorAll('.pop').forEach(old => old.remove());
   const p = document.createElement('div');
   p.className = 'pop glass' + (o.cls ? ' ' + o.cls : '');
   p.innerHTML = html; document.body.appendChild(p);
@@ -54,12 +55,13 @@ function menuHTML(items) {
   return items.map(it => {
     if (it === '-') return '<div class="sep"></div>';
     if (it.label) return `<div class="lbl">${it.label}</div>`;
-    return `<button class="mi${it.warn ? ' warn' : ''}" data-v="${esc(it.v)}"${it.style ? ` style="${it.style}"` : ''}>${it.icon ? ic(it.icon) : ''}<span class="mt${it.mono ? ' mono' : ''}"><span>${esc(it.t)}</span>${it.d ? `<small>${esc(it.d)}</small>` : ''}</span>${it.k ? `<kbd>${esc(it.k)}</kbd>` : ''}${it.on ? ic('check', 'i sm ck') : ''}</button>`;
+    const disabled = it.disabled ? ' disabled aria-disabled="true"' : '';
+    return `<button class="mi${it.warn ? ' warn' : ''}${it.disabled ? ' disabled' : ''}" data-v="${esc(it.v)}"${disabled}${it.style ? ` style="${it.style}"` : ''}>${it.icon ? ic(it.icon) : ''}<span class="mt${it.mono ? ' mono' : ''}"><span>${esc(it.t)}</span>${it.d ? `<small>${esc(it.d)}</small>` : ''}</span>${it.k ? `<kbd>${esc(it.k)}</kbd>` : ''}${it.on ? ic('check', 'i sm ck') : ''}</button>`;
   }).join('');
 }
 function menuPop(anchor, items, onPick, o = {}) {
   if (popAnchor === anchor) return closePop();
-  pop(anchor, menuHTML(items), Object.assign({}, o, { onMount(p) { p.addEventListener('click', e => { const b = e.target.closest('.mi'); if (!b) return; closePop(); onPick(b.dataset.v); }); } }));
+  pop(anchor, menuHTML(items), Object.assign({}, o, { onMount(p) { p.addEventListener('click', e => { const b = e.target.closest('.mi'); if (!b || b.disabled) return; closePop(); onPick(b.dataset.v); }); } }));
 }
 const tip = $('#tip'); let tipT = 0, tipFor = null, tipHeld = false;
 document.addEventListener('mouseover', e => {

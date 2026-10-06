@@ -182,9 +182,15 @@ function act(name, el) {
         { v: 'full_access', t: t('完全访问'), d: t('不再询问；deny 规则依旧生效'), icon: 'lock', warn: true },
       ];
       const cur = typeof turnMode === 'string' ? turnMode : 'standard';
+      const fusionDisabled = driver === 'ptc' || !MODELS?.fusion_ready;
+      const fusionDescription = driver === 'ptc'
+        ? t('当前会话用 ptc 循环驱动：它只声明 RunCode 一条路，Fusion 无法委派，切换会被内核拒绝。')
+        : fusionDisabled
+          ? t('Fusion 需要分别设置有效的 Lead 和 Sidekick 模型后才能开启。')
+          : t('Lead 只读规划并验证，写入由 Sidekick 执行；连续两次验证不过时 Lead 接管到本回合结束');
       const TURN = [
         { v: 'standard', t: t('标准'), d: t('单模型回合：本会话自己读写与执行'), icon: 'cpu' },
-        { v: 'fusion', t: 'Fusion', d: t('Lead 只读规划并验证，写入由 Sidekick 执行；连续两次验证不过时 Lead 接管到本回合结束'), icon: 'zap' },
+        { v: 'fusion', t: 'Fusion', d: fusionDescription, icon: 'zap', disabled: fusionDisabled },
       ];
       return menuPop(el, [
         { label: t('审批模式') }, ...MODES.map(m => Object.assign({}, m, { on: m.v === approvalMode })),

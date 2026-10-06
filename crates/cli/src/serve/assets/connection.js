@@ -36,7 +36,7 @@ function setTurnMode(m) {
   if (m !== 'standard' && m !== 'fusion') return;
   turnMode = m;
   const btn = $('#model-btn');
-  if (btn) btn.dataset.tip = m === 'fusion' ? t('Fusion：本会话模型就是 Lead，Sidekick 默认继承它') : '';
+  if (btn) btn.dataset.tip = m === 'fusion' ? t('Fusion 已开：Lead 和 Sidekick 均为会话级模型；请分别在设置 › Fusion 中选择。') : '';
   if (view === 'settings' && setPage === 'fusion') renderFusion();
 }
 function turnModeOf(events) {
@@ -75,7 +75,7 @@ function route(v) {
   // attributed to whatever this tab happens to be viewing (audit-gui #13)
   // — every emitter tags, so an untagged one is already an anomaly:
   // drop it to the event log rather than mis-draw it.
-  const SESS_TYPES = new Set(['live', 'note', 'approval', 'approval_done', 'steer_queue', 'input_queue', 'model', 'mode', 'effort', 'busy']);
+  const SESS_TYPES = new Set(['live', 'note', 'approval', 'approval_done', 'steer_queue', 'input_queue', 'model', 'fusion_models', 'mode', 'effort', 'busy']);
   const sess = typeof v.sess === 'string' ? v.sess : null;
   if (SESS_TYPES.has(v.type) && sess == null) { logEv('note', `untagged ${v.type} frame dropped`); return; }
   switch (v.type) {
@@ -162,7 +162,7 @@ function route(v) {
       steerQ = v.steer || []; inputQ = v.queue || []; renderQueueChips();
       syncWait();
       driver = v.driver || '';
-      refreshSessions(); refreshRoster(); refreshJobs(); refreshGrants(); HOOKS = MCPS = null; renderCrumb();
+      refreshSessions(); refreshModels(); refreshRoster(); refreshJobs(); refreshGrants(); HOOKS = MCPS = null; renderCrumb();
       break;
     case 'approval':
       waitingSessions.add(sess);
@@ -244,13 +244,35 @@ function route(v) {
     case 'shell_changed': refreshShell(); break;
     case 'wallpaper_changed': loadCustom(true); break;
     case 'model':
-      if (sess === sessionId) { modelLabel = v.label || modelLabel; $('#cmp-model').textContent = modelLabel; toast(t('模型切换为 {model}', { model: v.label }), 'cpu'); }
+      if (sess === sessionId) {
+        modelLabel = v.label || modelLabel;
+        $('#cmp-model').textContent = modelLabel;
+        if (view === 'settings' && setPage === 'fusion') renderFusion();
+        toast(t('模型切换为 {model}', { model: v.label }), 'cpu');
+      }
+      break;
+    case 'fusion_models':
+      if (sess === sessionId) {
+        if (MODELS) {
+          MODELS.fusion_lead = v.lead || null;
+          MODELS.fusion_sidekick = v.sidekick || null;
+          MODELS.fusion_ready = !!v.ready;
+        } else refreshModels();
+        fusionPending = false;
+        if (view === 'settings' && setPage === 'fusion') renderFusion();
+        if (v.error) toast(t('保存失败：{msg}', { msg: v.error }), 'alert', 'warn');
+        else toast(t('Fusion 模型已保存'), 'check');
+      }
       break;
     case 'mode':
       if (sess === sessionId) { setApprovalMode(v.mode); toast(t('审批模式切换为 {mode}', { mode: modeLabel(v.mode) }), 'shield'); }
       break;
     case 'effort':
-      if (sess === sessionId) { setEffort(v.level, v.levels); toast(t('思考强度 → {level}', { level: v.level || t('默认') }), 'sparkles'); }
+      if (sess === sessionId) {
+        const previous = effortLevel;
+        setEffort(v.level, v.levels);
+        if (previous !== effortLevel) toast(t('思考强度 → {level}', { level: v.level || t('默认') }), 'sparkles');
+      }
       break;
     case 'busy':
       busySessions[v.busy ? 'add' : 'delete'](sess);
@@ -374,12 +396,16 @@ let MODELS = null;
 let SHELL = null;
 const jput = v => ({ method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(v) });
 const jpost = v => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(v) });
+const modelApiPath = path => sessionId ? `${path}?sess=${encodeURIComponent(sessionId)}` : path;
 async function refreshModels() {
   try {
-    MODELS = await api('/models');
+    MODELS = await api(modelApiPath('/models'));
     models = MODELS.selectors || [];
+    if (MODELS.turn_mode) setTurnMode(MODELS.turn_mode);
   } catch { MODELS = null; }
+  fusionPending = false;
   if (view === 'settings' && setPage === 'providers') renderProviders();
+  else if (view === 'settings' && setPage === 'fusion') renderFusion();
   if (popEl && popEl.classList.contains('models')) renderModelRows(popEl, $('#mp-in') ? $('#mp-in').value.trim() : '');
 }
 const provNames = () => Object.keys((MODELS && MODELS.providers) || {}).sort();
@@ -412,11 +438,6 @@ function modelsBody(edit) {
   const body = { providers, routes: (MODELS && MODELS.routes) || {} };
   const dm = edit && 'default_model' in edit ? edit.default_model : MODELS && MODELS.default_model;
   if (dm) body.default_model = dm;
-  // Fusion's Sidekick pick rides the file's unknown-key map, so it is always
-  // posted: an omitted key would be carried over by the merge and a clear
-  // could never land.
-  const fsk = edit && 'fusion_sidekick' in edit ? edit.fusion_sidekick : MODELS && MODELS.fusion_sidekick;
-  body.fusion_sidekick = fsk || null;
   // The save's request-level metadata rides in one reserved namespace: a
   // rename must name where the credential moves (the view is redacted, so the
   // page cannot retype it), an add must name the entry it creates (the body
@@ -448,8 +469,9 @@ async function saveProviders(edit, ok) {
     return toast(t('名称已存在：{n}', { n: edit.name }), 'alert', 'warn');
   }
   try {
-    MODELS = await api('/models', jput(modelsBody(edit)));
+    MODELS = await api(modelApiPath('/models'), jput(modelsBody(edit)));
     models = MODELS.selectors || [];
+    if (MODELS.turn_mode) setTurnMode(MODELS.turn_mode);
     if (ok) toast(ok, 'check');
     if (view === 'settings' && setPage === 'providers') renderProviders();
   } catch (e) { toast(t('保存失败：{msg}', { msg: e.message }), 'alert', 'warn'); }

@@ -85,16 +85,47 @@ pub(super) async fn session_rename(s: &Arc<Shared>, id: &str, body: &[u8]) -> Ho
 }
 
 /// `DELETE /session/{id}` — remove the log file. A live session refuses
-/// outright (idle or busy): there's no graceful host teardown today, and a
-/// driver still appending to an unlinked log would keep mutating a session
-/// the UI already forgot — restartable confusion, not data safety.
+/// outright (idle or busy) — except an EMPTY session, which never ran a
+/// turn: its driver is parked on the queue notify, so flagging `shutdown`
+/// exits it and the last Arc drops the log writer. A content-bearing live
+/// session still refuses: the driver appending to an unlinked log would
+/// keep mutating a session the UI already forgot.
 pub(super) async fn session_delete(s: &Arc<Shared>, id: &str) -> HostResponse {
-    if s.host(id).is_some() {
-        return HostResponse::err(409, "session is live — close it before deleting".into());
-    }
     let Some(p) = log_path(s, id) else {
         return HostResponse::err(404, "no such session".into());
     };
+    let live = s.host(id);
+    if live.is_some() && !log_is_empty(&p) {
+        return HostResponse::err(409, "session is live — close it before deleting".into());
+    }
+    if let Some(host) = live {
+        use std::sync::atomic::Ordering;
+        host.shutdown.store(true, Ordering::Relaxed);
+        host.queue_notify.notify_one();
+        use sunmao_core::context::MutexRecover;
+        s.sessions.lock_or_recover().remove(id);
+        // our own Arc keeps the host (and its log writer) alive — drop it
+        // before waiting on the driver's exit or the count never reaches 0
+        drop(host);
+        // the driver's pop check wakes on the notify and exits — the file
+        // stays locked until that Arc drops, so retry briefly instead of
+        // racing the first remove_file
+        for _ in 0..20 {
+            match std::fs::remove_file(&p) {
+                Ok(()) => {
+                    s.emit(serde_json::json!({"type":"sessions_changed"}));
+                    return HostResponse::json(serde_json::json!({"ok": true}));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+                Err(e) => {
+                    return HostResponse::err(500, format!("delete {}: {e}", p.display()));
+                }
+            }
+        }
+        return HostResponse::err(409, "session is live — close it before deleting".into());
+    }
     match std::fs::remove_file(&p) {
         Ok(()) => {
             s.emit(serde_json::json!({"type":"sessions_changed"}));
@@ -102,6 +133,38 @@ pub(super) async fn session_delete(s: &Arc<Shared>, id: &str) -> HostResponse {
         }
         Err(e) => HostResponse::err(500, format!("delete {}: {e}", p.display())),
     }
+}
+
+/// The log holds only setup events — no user content ever landed. Config
+/// writes (fusion role picks, mode changes) don't count as content: a
+/// session that got configured but never prompted is still deletable.
+/// Neither does the seeded system `message` — every fresh log carries it.
+fn log_is_empty(p: &std::path::Path) -> bool {
+    const CONTENT: &[&str] = &[
+        "prompt",
+        "tool_call",
+        "tool_result",
+        "turn_end",
+        "usage",
+        "local_shell",
+    ];
+    let Ok(text) = std::fs::read_to_string(p) else {
+        return false;
+    };
+    !text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .any(|e| {
+            let t = e.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            if t == "message" {
+                return e
+                    .get("message")
+                    .and_then(|m| m.get("role"))
+                    .and_then(|r| r.as_str())
+                    .is_some_and(|r| r != "system");
+            }
+            CONTENT.contains(&t)
+        })
 }
 
 /// `GET /session/{id}/events` — the raw durable event list (`{events:[]}`),
@@ -142,5 +205,55 @@ pub(super) fn session_markdown(s: &Arc<Shared>, id: &str) -> HostResponse {
         status: 200,
         headers: vec![("content-type".into(), "text/markdown; charset=utf-8".into())],
         body: md.into_bytes(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::log_is_empty;
+
+    fn log_path(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("sunmao-sessdel-{tag}-{}", std::process::id()))
+    }
+
+    #[test]
+    fn empty_log_tolerates_setup_events() {
+        let p = log_path("empty");
+        std::fs::write(
+            &p,
+            concat!(
+                r#"{"type":"started","model":"m","cwd":".","driver":"full"}"#,
+                "\n",
+                r#"{"type":"message","message":{"role":"system","content":[]}}"#,
+                "\n",
+                r#"{"type":"turn_mode_change","mode":"fusion"}"#,
+                "\n",
+                r#"{"type":"fusion_models_change","lead":"a","sidekick":"b"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        assert!(log_is_empty(&p));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn user_content_makes_the_log_live() {
+        let p = log_path("live");
+        for line in [
+            r#"{"type":"message","message":{"role":"user","content":[]}}"#,
+            r#"{"type":"message","message":{"role":"assistant","content":[]}}"#,
+            r#"{"type":"tool_call","call":{}}"#,
+            r#"{"type":"turn_end"}"#,
+            r#"{"type":"usage"}"#,
+        ] {
+            std::fs::write(
+                &p,
+                format!("{}\n{line}\n", r#"{"type":"started","driver":"full"}"#),
+            )
+            .unwrap();
+            assert!(!log_is_empty(&p), "{line} should count as content");
+        }
+        let _ = std::fs::remove_file(&p);
     }
 }

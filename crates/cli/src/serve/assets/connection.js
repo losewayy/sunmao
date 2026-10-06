@@ -126,6 +126,7 @@ function route(v) {
       (v.pending || []).forEach(c => approvalCard(c));
       setBusy(!!v.busy);
       driver = v.driver || '';
+      syncHeroMode();
       refreshSessions(); refreshModels(); refreshProjects();
       refreshRoster(); refreshJobs(); refreshGrants(); HOOKS = MCPS = null;
       renderCrumb();
@@ -180,6 +181,7 @@ function route(v) {
       steerQ = v.steer || []; inputQ = v.queue || []; renderQueueChips();
       syncWait();
       driver = v.driver || '';
+      syncHeroMode();
       refreshSessions(); refreshModels(); refreshRoster(); refreshJobs(); refreshGrants(); HOOKS = MCPS = null; renderCrumb();
       break;
     case 'approval':
@@ -369,13 +371,13 @@ async function renameSession(id, title) {
     toast(t('已重命名'), 'pen');
   } catch (e) { toast(t('重命名失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
-async function deleteSession(id) {
+async function deleteSession(id, quiet) {
   try {
     await api(`/session/${encodeURIComponent(id)}`, { method: 'DELETE' });
     delete SESSION_META[id];
     SESSION_IDS = SESSION_IDS.filter(x => x !== id);
     renderRail();
-    toast(t('已删除会话'), 'trash');
+    if (!quiet) toast(t('已删除会话'), 'trash');
   } catch (e) { toast(t('删除失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
 /* ---- export — a GET on the session's `/md` route gives us the server's

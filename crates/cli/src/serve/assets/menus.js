@@ -268,6 +268,7 @@ function act(name, el) {
       return;
     }
     case 'new-chat': return newChat();
+    case 'hero-mode': return heroModePick(el.dataset.hm);
     case 'grants-clear': return revokeGrant('*');
     case 'compact': return wsSend({ type: 'prompt', text: '/compact' });
     case 'new-chat-pop': return newChatPop(el);

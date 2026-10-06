@@ -54,6 +54,7 @@ rg
 grep
 egrep
 fgrep
+findstr
 jq
 od
 hexdump

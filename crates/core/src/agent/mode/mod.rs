@@ -536,6 +536,12 @@ mod tests {
             // a read-only scriptblock body stays readable
             "Get-ChildItem src | ForEach-Object { $_.Name }",
             "@{Name='x'; Length=1}",
+            // a real Lead run hit both of these: `findstr` is the Windows
+            // grep (pure read, no write flags) and `Get-*` is the
+            // approved-verb read contract, not an enumerable name list
+            "findstr /C:needle file.txt",
+            "Get-FileHash a.txt -Algorithm SHA256 | Select-Object -ExpandProperty Hash",
+            "Get-Content hello.txt | Select-String -Pattern 'x' -SimpleMatch",
         ] {
             assert!(
                 !call_mutates("Bash", &bash(cmd), &v, pwsh),

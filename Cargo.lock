@@ -5401,6 +5401,7 @@ dependencies = [
  "clap",
  "crossterm",
  "futures-util",
+ "open",
  "pulldown-cmark",
  "ratatui",
  "reqwest",

@@ -29,7 +29,6 @@ mod steer;
 mod turn;
 mod turn_mode;
 
-pub use fusion::SIDEKICK_KEY;
 pub use mode::ApprovalMode;
 pub use turn_mode::TurnMode;
 
@@ -196,11 +195,15 @@ pub struct AgentLoop {
 
 impl AgentLoop {
     pub fn new(ctx: Arc<Context>) -> Self {
-        Self {
+        let agent = Self {
             ctx,
             max_iterations: 64,
             compact_threshold: 180_000,
+        };
+        if let Some(problem) = agent.reconcile_fusion_mode() {
+            tracing::warn!("resumed Fusion mode disabled: {problem}");
         }
+        agent
     }
 
     pub fn with_max_iterations(mut self, n: usize) -> Self {
@@ -295,12 +298,14 @@ impl AgentLoop {
         });
     }
 
-    /// Hot-swap the models file after a GUI edit — every session re-reads
-    /// `.sunmao/models.json` and clears its adapter cache so edited keys
-    /// and catalogs take effect without a restart.
-    pub fn reload_models(&self) {
-        if let Some(m) = self.ctx.models.as_ref() {
-            m.reload();
+    /// Reload the models file at a turn fence and reconcile Fusion selectors.
+    pub async fn reload_models(&self) {
+        let _turn_permit = self.ctx.turn_lock.lock().await;
+        if let Some(models) = self.ctx.models.as_ref() {
+            models.reload();
+            if let Some(problem) = self.reconcile_fusion_mode() {
+                tracing::warn!("Fusion mode disabled after model reload: {problem}");
+            }
         }
     }
 
@@ -488,6 +493,10 @@ impl AgentLoop {
         self.ctx.reseed_ptc_store(&events);
         self.ctx.reseed_effort(&events);
         self.ctx.reseed_turn_mode(&events);
+        self.ctx.reseed_fusion_models(&events);
+        if let Some(problem) = self.reconcile_fusion_mode() {
+            tracing::warn!("Fusion mode disabled after session swap: {problem}");
+        }
         // SESSION facts that have no event to reseed from must still not
         // leak across the swap: the abandoned session's approvals, its
         // read-before-write ledger, its model pick, and any un-drained

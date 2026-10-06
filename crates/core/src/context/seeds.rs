@@ -156,6 +156,22 @@ pub(super) fn seed_turn_mode(path: &std::path::Path) -> crate::agent::TurnMode {
     Default::default()
 }
 
+pub(super) fn seed_fusion_models(path: &std::path::Path) -> super::FusionModelSettings {
+    if !path.as_os_str().is_empty()
+        && let Ok(text) = std::fs::read_to_string(path)
+    {
+        for line in text.lines().rev() {
+            if line.contains("\"fusion_models_change\"")
+                && let Ok(crate::session::SessionEvent::FusionModelsChange { lead, sidekick }) =
+                    serde_json::from_str::<crate::session::SessionEvent>(line)
+            {
+                return super::FusionModelSettings { lead, sidekick };
+            }
+        }
+    }
+    super::FusionModelSettings::default()
+}
+
 /// Rebuild the `RunCode` KV store a reopened log left behind — every
 /// `PtcStore` line folds in order so later writes win. Ephemeral logs and
 /// missing files seed empty.
@@ -263,6 +279,23 @@ impl Context {
             std::sync::atomic::Ordering::Relaxed,
         );
         *self.fusion.lock_or_recover() = crate::agent::fusion::FusionState::default();
+    }
+
+    pub(crate) fn reseed_fusion_models(&self, events: &[crate::session::SessionEvent]) {
+        let settings = events
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                crate::session::SessionEvent::FusionModelsChange { lead, sidekick } => {
+                    Some(super::FusionModelSettings {
+                        lead: lead.clone(),
+                        sidekick: sidekick.clone(),
+                    })
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
+        *self.fusion_models.write_or_recover() = settings;
     }
 
     /// Re-point the effort override at a swapped-in log — last

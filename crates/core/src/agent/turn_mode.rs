@@ -2,7 +2,7 @@
 //! distinct from the approval stance (`approval_mode`, how permissive the
 //! gate is) and the loop driver (`loop_driver`, which circuit runs).
 //! Standard is the single-adapter turn; Fusion splits a turn into a
-//! read-only Lead (the session's model) plus a delegated Sidekick worker
+//! read-only Lead plus a delegated Sidekick worker; both models are explicit session settings
 //! (`agent/fusion.rs`).
 //!
 //! Durable as `SessionEvent::TurnModeChange` — a dedicated event rather
@@ -20,10 +20,10 @@ pub enum TurnMode {
     /// The ordinary single-adapter turn — every tool call runs here.
     #[default]
     Standard,
-    /// Lead/Sidekick split: this context becomes the read-only Lead —
-    /// mutating calls short-circuit at the gate (`ctx.read_only`) and its
-    /// declared surface sheds the write tools; work delegates to a
-    /// fresh-context Sidekick through `FusionExecute`.
+    /// Lead/Sidekick split, enabled only while both explicit session
+    /// selectors resolve: this context becomes the read-only Lead, the gate
+    /// short-circuits mutations, its surface sheds write tools, and work
+    /// delegates to a fresh-context Sidekick through `FusionExecute`.
     Fusion,
 }
 
@@ -61,10 +61,9 @@ impl AgentLoop {
     /// `read_only` flag (the Lead's gate block); switching back disarms
     /// it and drops any live delegation state.
     ///
-    /// Refuses `fusion` under the `ptc` driver — fusion ⊥ ptc: the Ptc
-    /// advertised surface is RunCode alone, so a Lead could never emit
-    /// the delegation call. (TODO: a fusion-aware Ptc surface could
-    /// advertise FusionExecute alongside RunCode.)
+    /// Refuses `fusion` under the `ptc` driver — its advertised surface is
+    /// RunCode alone — and when either required session model is unset or stale.
+    /// (TODO: a fusion-aware Ptc surface could advertise FusionExecute alongside RunCode.)
     pub async fn set_turn_mode(
         &self,
         mode: TurnMode,
@@ -77,6 +76,11 @@ impl AgentLoop {
             );
         }
         let _turn_permit = self.ctx.turn_lock.lock().await;
+        if mode == TurnMode::Fusion
+            && let Some(problem) = self.fusion_model_problem()
+        {
+            return Err(problem);
+        }
         *self.ctx.turn_mode.write_or_recover() = mode;
         self.ctx.read_only.store(
             mode == TurnMode::Fusion,
@@ -96,6 +100,103 @@ impl AgentLoop {
             event: "turn.mode".into(),
             detail: mode.as_str().to_string(),
         });
+        Ok(())
+    }
+
+    /// The explicitly configured session Fusion Lead and Sidekick selectors.
+    pub fn fusion_models(&self) -> (Option<String>, Option<String>) {
+        let settings = self.ctx.fusion_models.read().unwrap().clone();
+        (settings.lead, settings.sidekick)
+    }
+
+    /// Explain why this session cannot enter Fusion yet.
+    pub fn fusion_model_problem(&self) -> Option<String> {
+        let (lead, sidekick) = self.fusion_models();
+        let Some(models) = self.ctx.models.as_ref() else {
+            return Some("Fusion needs a model catalog for this session".into());
+        };
+        let selectors = models.selectors();
+        for (role, selector) in [("Lead", lead.as_deref()), ("Sidekick", sidekick.as_deref())] {
+            let Some(selector) = selector else {
+                return Some(format!(
+                    "Fusion {role} must be explicitly selected for this session"
+                ));
+            };
+            if !selectors.iter().any(|available| available == selector)
+                || models.adapter_for(selector).is_none()
+            {
+                return Some(format!(
+                    "Fusion {role} selector `{selector}` is no longer available"
+                ));
+            }
+        }
+        None
+    }
+
+    /// Whether both session Fusion role selectors still resolve.
+    pub fn fusion_ready(&self) -> bool {
+        self.fusion_model_problem().is_none()
+    }
+
+    pub(crate) fn reconcile_fusion_mode(&self) -> Option<String> {
+        if self.turn_mode() != TurnMode::Fusion {
+            return None;
+        }
+        let problem = self.fusion_model_problem()?;
+        *self.ctx.turn_mode.write_or_recover() = TurnMode::Standard;
+        self.ctx
+            .read_only
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        *self.ctx.fusion.lock_or_recover() = fusion::FusionState::default();
+        Some(problem)
+    }
+
+    /// Persist one session Fusion model override at the next turn fence.
+    pub async fn set_fusion_model(
+        &self,
+        role: crate::context::FusionModelRole,
+        selector: Option<String>,
+    ) -> Result<(), String> {
+        let selector = selector
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let _turn_permit = self.ctx.turn_lock.lock().await;
+        if self.turn_mode() == TurnMode::Fusion && selector.is_none() {
+            return Err("switch to Standard before clearing a Fusion model".into());
+        }
+        let mut settings = self.ctx.fusion_models.read().unwrap().clone();
+        if let Some(selector) = selector.as_deref() {
+            let available = self.ctx.models.as_ref().is_some_and(|models| {
+                models
+                    .selectors()
+                    .iter()
+                    .any(|candidate| candidate == selector)
+                    && models.adapter_for(selector).is_some()
+            });
+            if !available {
+                let role = match role {
+                    crate::context::FusionModelRole::Lead => "Lead",
+                    crate::context::FusionModelRole::Sidekick => "Sidekick",
+                };
+                return Err(format!(
+                    "unknown or unavailable Fusion {role} selector: {selector}"
+                ));
+            }
+        }
+        match role {
+            crate::context::FusionModelRole::Lead => settings.lead = selector,
+            crate::context::FusionModelRole::Sidekick => settings.sidekick = selector,
+        }
+        {
+            let mut log = self.ctx.sessions.lock().await;
+            log.append(&SessionEvent::FusionModelsChange {
+                lead: settings.lead.clone(),
+                sidekick: settings.sidekick.clone(),
+            })
+            .await
+            .map_err(|error| format!("Fusion model save failed: {error:#}"))?;
+        }
+        *self.ctx.fusion_models.write().unwrap() = settings;
         Ok(())
     }
 }

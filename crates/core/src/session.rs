@@ -116,6 +116,12 @@ pub enum SessionEvent {
     /// `ApprovalMode`, and `fusion` is not an approval stance. The fold
     /// ignores it; a resume reseeds `Context.turn_mode`/`read_only`.
     TurnModeChange { mode: crate::agent::TurnMode },
+    /// The session's explicit Fusion model roles. Both must be configured
+    /// before the turn mode can enter Fusion.
+    FusionModelsChange {
+        lead: Option<String>,
+        sidekick: Option<String>,
+    },
     /// The Lead issued a delegation spec (`FusionExecute`) — the full spec
     /// is durable because "what the Lead asked the Sidekick to change" is
     /// the fusion audit spine's whole point. `seq` orders it against the

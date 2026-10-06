@@ -87,7 +87,7 @@ impl AgentLoop {
             return Vec::new();
         };
         let selector = {
-            let s = self.ctx.active_selector.read_or_recover().clone();
+            let s = self.ctx.effective_selector();
             match s {
                 Some(s) => Some(s),
                 // baseline adapter — its wire name is the `Started` fact

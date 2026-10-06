@@ -15,6 +15,15 @@ use crate::session::SessionLog;
 use crate::tool::ToolRegistry;
 use sunmao_llm::ProviderAdapter;
 
+/// A Fusion model role a session can override.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FusionModelRole {
+    /// The planner and verifier model.
+    Lead,
+    /// The delegated worker model.
+    Sidekick,
+}
+
 pub struct Context {
     /// Provider adapter (chat-completions dialect for v0.1). The session's
     /// baseline — `llm_override` wins when a mid-session switch landed.
@@ -110,6 +119,7 @@ pub struct Context {
     /// Sidekick can't delegate a second level. Durable via
     /// `SessionEvent::TurnModeChange`; seeded from the log on open.
     pub turn_mode: std::sync::RwLock<crate::agent::TurnMode>,
+    pub(crate) fusion_models: std::sync::RwLock<FusionModelSettings>,
     /// Per-context read-only flag — the gate's `mode==ReadOnly` block
     /// ORs this in, so `TurnMode::Fusion`'s Lead refuses mutations without
     /// touching the session's shared `approval_mode` (a shared switch
@@ -369,6 +379,7 @@ impl Context {
         let goal = seed_goal(sessions.path());
         let approval_mode = seed_mode(sessions.path());
         let turn_mode = seed_turn_mode(sessions.path());
+        let fusion_models = seed_fusion_models(sessions.path());
         let effort = seed_effort(sessions.path());
         let ptc_store = seed_ptc_store(sessions.path());
         // builtin skills land on disk so the prompt's skills index can
@@ -451,6 +462,7 @@ impl Context {
             )),
             approval_mode: std::sync::Arc::new(std::sync::RwLock::new(approval_mode)),
             turn_mode: std::sync::RwLock::new(turn_mode),
+            fusion_models: std::sync::RwLock::new(fusion_models),
             // Fusion arms it; a resumed fusion log seeds it — the flag
             // follows the mode, never the shared approval stance
             read_only: std::sync::atomic::AtomicBool::new(
@@ -544,21 +556,17 @@ impl Context {
         }
         self
     }
-
-    /// The adapter the next request uses — override wins over the baseline.
-    pub fn active_llm(&self) -> Arc<dyn ProviderAdapter> {
-        self.llm_override
-            .read()
-            .unwrap()
-            .clone()
-            .unwrap_or_else(|| self.llm.clone())
-    }
 }
 
+mod fusion;
+pub(crate) use fusion::FusionModelSettings;
 mod seeds;
 mod surface;
 pub(crate) use seeds::tool_timeout_table;
-use seeds::{seed_effort, seed_goal, seed_mode, seed_ptc_store, seed_todos, seed_turn_mode};
+use seeds::{
+    seed_effort, seed_fusion_models, seed_goal, seed_mode, seed_ptc_store, seed_todos,
+    seed_turn_mode,
+};
 
 mod cancel;
 pub use cancel::CancelSignal;

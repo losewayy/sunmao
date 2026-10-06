@@ -169,18 +169,13 @@ impl AgentLoop {
     /// back to `compact_threshold`. 85% headroom leaves room for the turn
     /// that tips it over.
     pub(super) fn effective_threshold(&self) -> usize {
-        let window = self
-            .ctx
-            .active_selector
-            .read()
-            .unwrap()
-            .as_deref()
-            .and_then(|sel| {
-                self.ctx
-                    .models
-                    .as_ref()
-                    .and_then(|m| m.context_length_for(sel))
-            });
+        let selector = self.ctx.effective_selector();
+        let window = selector.as_deref().and_then(|sel| {
+            self.ctx
+                .models
+                .as_ref()
+                .and_then(|m| m.context_length_for(sel))
+        });
         match window {
             Some(w) => ((w * 85 / 100) as usize).max(1),
             None => self.compact_threshold,

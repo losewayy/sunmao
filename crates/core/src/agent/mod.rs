@@ -29,6 +29,7 @@ mod steer;
 mod turn;
 mod turn_mode;
 
+pub use fusion::SIDEKICK_KEY;
 pub use mode::ApprovalMode;
 pub use turn_mode::TurnMode;
 

@@ -173,11 +173,8 @@ function act(name, el) {
     case 'tg': { const g = el.closest('.tools'); g.dataset.user = '1'; return foldGroup(g, !g.classList.contains('fold')); }
     case 'rewind-turn': return rewindMsg(el);
     case 'pick-mode': {
-      // two axes on one chip: the four approval stances the kernel gates on
-      // (labels mirror the TUI's /mode), then the turn SHAPE — standard vs
-      // Fusion, whose whole point is that this session stops writing and
-      // delegates. The wire op is the same one; `parse` tries turn modes
-      // first, so the two vocabularies never collide.
+      // two axes on one chip: the approval stances, then the turn SHAPE
+      // (standard | Fusion) — same wire op, `parse` tries turn modes first
       const MODES = [
         { v: 'always_ask', t: t('请求批准'), d: t('写入与风险命令前询问'), icon: 'shield-check' },
         { v: 'auto', t: t('自动'), d: t('读写直接放行，风险命令仍询问'), icon: 'shield' },

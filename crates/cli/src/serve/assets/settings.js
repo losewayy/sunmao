@@ -101,57 +101,74 @@ function motionPop(anchor) {
   menuPop(anchor, [{ label: t('动效') }, ...OPTS.map(m => Object.assign({}, m, { on: m.v === S.motion }))], v => { S.motion = v; commit(); }, { align: 'end' });
 }
 
-/* model picker — the live model first, then routes, then each provider's
-   catalog. Enter picks the typed selector verbatim (provider/id or bare id
-   resolve through the kernel's ModelResolver); rows carry capability
-   badges. A provider with no catalog offers the pull, never a fake id. */
+/* Model selectors list routes and saved provider catalogs. Composer picks may
+   use a typed selector; Fusion roles stay within the saved choices. */
 const ctxLen = n => typeof n === 'number' && Number.isFinite(n)
   ? (n >= 1000 ? Math.round(n / 1000) + 'k' : String(n))
   : (n ? String(n) : '');
 const MOD_MARK = { image: t('图'), audio: t('音'), video: t('视'), file: t('档') };
 const modMarks = m => ((m.input_modalities && m.input_modalities.length) ? m.input_modalities : (m.vision ? ['image'] : [])).map(k => MOD_MARK[k] || k).join('');
-function renderModelRows(p, q) {
+function renderModelRows(p, q, options = {}) {
   q = (q || '').toLowerCase();
   const rows = [];
-  // what this session is running on comes first — the picker's job is to
-  // state the live model, not to ask for it again
-  if (modelLabel && (!q || modelLabel.toLowerCase().includes(q)))
+  const selected = options.selected || '';
+  if (options.emptyLabel && (!q || options.emptyLabel.toLowerCase().includes(q))) {
+    const on = !selected;
+    rows.push(`<button class="mi${on ? ' on' : ''}" data-v="" aria-selected="${on}">${on ? ic('check', 'i sm ck') : ''}<span class="mt"><span>${esc(options.emptyLabel)}</span></span></button>`);
+  }
+  if (options.showCurrent !== false && !options.onSelect && modelLabel && (!q || modelLabel.toLowerCase().includes(q)))
     rows.push(`<div class="lbl">${t('当前')}</div><div class="mi cur"><span class="mt mono"><span>${esc(modelLabel)}</span><small>${t('本会话正在使用')}</small></span>${ic('check', 'i sm ck')}</div>`);
   const routes = (MODELS && MODELS.routes) || {};
-  // the picked model is the Lead's; the Sidekick side has its own row in 设置 › Fusion
-  if (turnMode === 'fusion')
-    rows.push(`<div class="hint" data-fusion-note>${esc(t('Fusion 已开：Sidekick 在设置 › Fusion 里选；未设置时继承本会话模型'))}</div>`);
+  if (turnMode === 'fusion' && !options.onSelect)
+    rows.push(`<div class="hint" data-fusion-note>${esc(t('Fusion 已开：Lead 和 Sidekick 均为会话级模型；请分别在设置 › Fusion 中选择。'))}</div>`);
   for (const [r, chain] of Object.entries(routes)) {
     const sel = '@' + r, d = Array.isArray(chain) ? chain.join(' → ') : String(chain);
-    if (!q || (sel + ' ' + d).toLowerCase().includes(q)) rows.push(`<button class="mi" data-v="${esc(sel)}">${ic('zap')}<span class="mt mono"><span>${esc(sel)}</span><small>${esc(d)}</small></span></button>`);
+    if (!q || (sel + ' ' + d).toLowerCase().includes(q)) {
+      const on = sel === selected;
+      rows.push(`<button class="mi${on ? ' on' : ''}" data-v="${esc(sel)}" aria-selected="${on}">${on ? ic('check', 'i sm ck') : ic('zap')}<span class="mt mono"><span>${esc(sel)}</span><small>${esc(d)}</small></span></button>`);
+    }
   }
   for (const n of provNames()) {
     const p0 = MODELS.providers[n], cat = p0.catalog || [];
     const shown = cat.filter(m => !q || `${n}/${m.id}`.toLowerCase().includes(q));
-    // name only: the picker's job is to say which model, and the capability
-    // fields (window, output cap, thinking ladder, tool flag) turn a list you
-    // scan into one you have to read — they live in 设置 › 模型, where there
-    // is room to explain them
-    const listed = shown.map(m => `<button class="mi" data-v="${esc(n + '/' + m.id)}"><span class="mt mono"><span>${esc(n + '/' + m.id)}</span></span></button>`).join('');
+    const listed = shown.map(m => {
+      const sel = n + '/' + m.id, on = sel === selected;
+      return `<button class="mi${on ? ' on' : ''}" data-v="${esc(sel)}" aria-selected="${on}">${on ? ic('check', 'i sm ck') : ''}<span class="mt mono"><span>${esc(sel)}</span></span></button>`;
+    }).join('');
     if (listed) rows.push(`<div class="lbl">${esc(n)} · ${t('{n} 个模型', { n: cat.length })}</div>` + listed);
   }
-  $('.mp-list', p).innerHTML = rows.join('') || `<div class="hint">${t('无匹配 — 输入 provider/model 或模型 id，回车直接切换')}</div>`;
+  const emptyHint = options.allowFreeform === false
+    ? t('没有匹配的已保存模型')
+    : t('无匹配 — 输入 provider/model 或模型 id，回车直接切换');
+  $('.mp-list', p).innerHTML = rows.join('') || `<div class="hint">${emptyHint}</div>`;
 }
-function modelPop(el) {
+function modelPop(el, options = {}) {
   if (popAnchor === el) return closePop();
-  pop(el, `<div class="field"><input id="mp-in" placeholder="${esc(t('provider/model 或 @route — 回车切换'))}" spellcheck="false" autocomplete="off"></div><div class="mp-list scroll"></div>`, { place: 'top', align: 'end', cls: 'models', onMount(p) {
+  const choose = value => {
+    closePop();
+    if (options.onSelect) options.onSelect(value);
+    else wsSend({ type: 'model', sel: value });
+  };
+  const placeholder = options.allowFreeform === false ? t('搜索已保存的模型') : t('provider/model 或 @route — 回车切换');
+  pop(el, `<div class="field"><input id="mp-in" placeholder="${esc(placeholder)}" spellcheck="false" autocomplete="off"></div><div class="mp-list scroll"></div>`, { place: options.place || 'top', align: options.align || 'end', cls: 'models', onMount(p) {
     const inp = $('#mp-in', p);
-    renderModelRows(p, '');
-    inp.addEventListener('input', () => renderModelRows(p, inp.value.trim()));
+    renderModelRows(p, '', options);
+    inp.addEventListener('input', () => renderModelRows(p, inp.value.trim(), options));
     inp.addEventListener('keydown', e => {
       if (e.key !== 'Enter') return;
       e.preventDefault();
-      const v = inp.value.trim(); if (!v) return;
-      closePop(); wsSend({ type: 'model', sel: v });
+      const query = inp.value.trim();
+      if (options.allowFreeform === false) {
+        if (!query) return;
+        const first = p.querySelector('.mp-list .mi[data-v]');
+        if (first) choose(first.dataset.v);
+        return;
+      }
+      if (query) choose(query);
     });
     p.addEventListener('click', e => {
-      const b = e.target.closest('.mi'); if (!b || !b.dataset.v) return;
-      closePop(); wsSend({ type: 'model', sel: b.dataset.v });
+      const b = e.target.closest('.mi'); if (!b || !b.hasAttribute('data-v')) return;
+      choose(b.dataset.v);
     });
     setTimeout(() => inp.focus(), 20);
   } });
@@ -214,7 +231,7 @@ function defaultModelPop(el) {
 }
 async function saveDefaultModel(sel) {
   try {
-    MODELS = await api('/models', jput(modelsBody({ default_model: sel || null })));
+    MODELS = await api(modelApiPath('/models'), jput(modelsBody({ default_model: sel || null })));
     models = MODELS.selectors || [];
     toast(t('设置已保存；新会话生效'), 'check');
     renderProviders();
@@ -239,7 +256,7 @@ function renderProviders() {
         + `<span class="tag">${p.api_key_set ? t('key 已配置') : t('无 key')}</span>${n === MODELS.default_provider ? '<span class="tag">' + t('本会话') + '</span>' : ''}`
         + `<div class="pv-acts"><button class="btn ghost sm" data-pv="edit" data-n="${esc(n)}" data-tip="${esc(t('编辑'))}">${ic('pen', 'i sm')}</button><button class="btn ghost sm" data-pv="del" data-n="${esc(n)}" data-tip="${esc(t('删除'))}">${ic('trash', 'i sm')}</button></div></div>`
         + (cat.length
-          ? `<div class="pv-cat">${cat.slice(0, 8).map(m => `<span class="tag" data-tip="${esc(n + '/' + m.id)}">${esc(m.id)}${modMarks(m) ? ' ·' + modMarks(m) : ''}${m.context_length ? ' ·' + esc(ctxLen(m.context_length)) : ''}${(m.thinking || []).length || m.reasoning ? ' ·' + t('思') : ''}</span>`).join('')}${cat.length > 8 ? `<span class="tag">${t('等 {n} 个', { n: cat.length })}</span>` : ''}</div>`
+          ? `<div class="pv-cat"><span class="tag pv-count">${t('已选 {n} 个模型', { n: cat.length })}</span>${cat.slice(0, 5).map(m => `<span class="tag" data-tip="${esc(n + '/' + m.id)}">${esc(m.id)}</span>`).join('')}${cat.length > 5 ? `<span class="tag pv-overflow" data-tip="${esc(cat.slice(5).map(m => n + '/' + m.id).join(', '))}">+${cat.length - 5}</span>` : ''}</div>`
           : `<div class="pv-empty">${t('还没有模型 — 点「编辑」拉取，或手写一个 model id')}</div>`);
     }
     html += `<div class="card glass cfg pv">${body}</div>`;
@@ -412,7 +429,7 @@ async function providerAction(kind, el) {
     const inline = base && (pvEdit.name == null || key || base !== MODELS.providers[pvEdit.name]?.base_url || dialect !== MODELS.providers[pvEdit.name]?.dialect);
     const body = inline ? { base_url: base, api_key: key || undefined, dialect } : { provider: pvEdit.name };
     try {
-      const r = await api('/models/fetch', jpost(body));
+      const r = await api(modelApiPath('/models/fetch'), jpost(body));
       const cat = r.catalog || [];
       const have = new Set(pvEdit.cands.map(m => m.id));
       // the listing is a menu, not a decision: everything lands in the list
@@ -579,50 +596,58 @@ function renderMcp() {
       : '<div class="empty-hint">' + t('当前会话没有连接 MCP 服务器') + '</div>');
 }
 
-/* Fusion page — the turn-shape switch plus the model pair: this session's
-   model is the Lead, the Sidekick is picked here (unset = inherit the Lead). */
+let fusionPending = false;
 function renderFusion() {
   if (view !== 'settings' || setPage !== 'fusion') return;
   const host = $('#set-generic');
   const cur = turnMode === 'fusion' ? 'fusion' : 'standard';
   const ptc = driver === 'ptc';
+  const lead = (MODELS && MODELS.fusion_lead) || '';
   const side = (MODELS && MODELS.fusion_sidekick) || '';
-  // each option carries its own name; the live one is checked and disabled, so
-  // the row reads as "the shape you are in, and the other one"
-  const opt = (v, name) => `<button class="btn ghost sm" id="fusion-${v}" data-fusion="${v}" data-mode="${cur}"${(v === cur || (ptc && v === 'fusion')) ? ' disabled' : ''}>${v === cur ? ic('check', 'i xs ck') : ''}${name}</button>`;
-  host.innerHTML = head(t('Fusion'), t('强模型当 Lead 规划与验证，便宜模型当 Sidekick 执行；两个模型可以相同也可以不同。'))
+  const ready = !!(MODELS && MODELS.fusion_ready);
+  const disabled = fusionPending || !MODELS ? ' disabled' : '';
+  const opt = (v, label) => `<button type="button" class="fusion-mode${v === cur ? ' on' : ''}" data-fusion="${v}" aria-pressed="${v === cur}"${v === 'fusion' && (ptc || !ready || fusionPending) ? ' disabled' : ''}>${v === cur ? ic('check', 'i xs ck') : ''}${label}</button>`;
+  const desc = ready
+    ? t('Lead 负责规划与验证，Sidekick 负责委派执行；两个模型可以相同也可以不同。')
+    : t('Fusion 需要分别设置有效的 Lead 和 Sidekick 模型后才能开启。');
+  host.innerHTML = head(t('Fusion'), desc)
     + card([
-      row(t('回合模式'), '', `${opt('standard', t('标准'))} ${opt('fusion', 'Fusion')}`),
-      row(t('Lead'), t('本会话正在使用的模型'), `<span class="tag mono">${esc(modelLabel || '—')}</span>`),
-      row(t('Sidekick'), t('Fusion 委派时执行工作的模型'), `<button class="pill plain" id="fusion-sidekick"><span class="mono">${esc(side || t('继承 Lead'))}</span>${ic('chev-d')}</button>`),
+      row(t('回合模式'), '', `<div class="fusion-mode-switch" role="group" aria-label="${esc(t('回合模式'))}">${opt('standard', t('标准'))}${opt('fusion', 'Fusion')}</div>`),
+      `<div class="fusion-model-grid"><div class="fusion-model-field"><span class="fusion-model-label">${t('Lead')}</span><button type="button" class="fusion-model-select" id="fusion-lead"${disabled}><span class="mono">${esc(lead || t('未设置'))}</span>${ic('chev-d')}</button><span class="fusion-model-hint">${lead ? t('Fusion 规划与验证模型') : t('必须设置才能开启 Fusion')}</span></div><div class="fusion-model-field"><span class="fusion-model-label">${t('Sidekick')}</span><button type="button" class="fusion-model-select" id="fusion-sidekick"${disabled}><span class="mono">${esc(side || t('未设置'))}</span>${ic('chev-d')}</button><span class="fusion-model-hint">${side ? t('Fusion 委派时执行工作的模型') : t('必须设置才能开启 Fusion')}</span></div></div>`,
     ])
     + (ptc ? `<div class="empty-hint" data-fusion-why>${t('当前会话用 ptc 循环驱动：它只声明 RunCode 一条路，Fusion 无法委派，切换会被内核拒绝。')}</div>` : '');
-  host.querySelectorAll('[data-fusion]').forEach(b => b.addEventListener('click', () => {
-    if (b.disabled) return;
-    wsSend({ type: 'mode', sel: b.dataset.fusion });
+  host.querySelectorAll('[data-fusion]').forEach(button => button.addEventListener('click', () => {
+    if (button.disabled || button.dataset.fusion === cur) return;
+    wsSend({ type: 'mode', sel: button.dataset.fusion });
   }));
-  const sk = $('#fusion-sidekick');
-  if (sk) sk.addEventListener('click', () => sidekickModelPop(sk));
+  const leadButton = $('#fusion-lead');
+  const sidekickButton = $('#fusion-sidekick');
+  if (leadButton) leadButton.addEventListener('click', () => modelPop(leadButton, {
+    selected: lead,
+    allowFreeform: false,
+    emptyLabel: cur === 'fusion' ? null : t('未设置'),
+    showCurrent: false,
+    place: 'bottom',
+    align: 'start',
+    onSelect: selector => saveFusionModel('lead', selector),
+  }));
+  if (sidekickButton) sidekickButton.addEventListener('click', () => modelPop(sidekickButton, {
+    selected: side,
+    allowFreeform: false,
+    emptyLabel: cur === 'fusion' ? null : t('未设置'),
+    showCurrent: false,
+    place: 'bottom',
+    align: 'start',
+    onSelect: selector => saveFusionModel('sidekick', selector),
+  }));
 }
-
-/* Sidekick picker — `fusion_sidekick` in models.json; the empty row clears it
-   back to "inherit the Lead". */
-function sidekickModelPop(el) {
-  const cur = (MODELS && MODELS.fusion_sidekick) || '';
-  const items = [
-    { label: t('Sidekick 模型') },
-    { v: '', t: t('继承 Lead'), on: !cur },
-    ...((MODELS && MODELS.selectors) || []).map(s => ({ v: s, t: s, mono: true, on: s === cur })),
-  ];
-  menuPop(el, items, v => saveFusionSidekick(v), { place: 'top', align: 'end' });
-}
-async function saveFusionSidekick(sel) {
-  try {
-    MODELS = await api('/models', jput(modelsBody({ fusion_sidekick: sel || null })));
-    models = MODELS.selectors || [];
-    toast(t('已保存；下次委派生效'), 'check');
-    renderFusion();
-  } catch (e) { toast(t('保存失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
+function saveFusionModel(role, selector) {
+  if (fusionPending) return;
+  const value = selector || null;
+  fusionPending = true;
+  if (MODELS) MODELS[role === 'lead' ? 'fusion_lead' : 'fusion_sidekick'] = value;
+  renderFusion();
+  wsSend({ type: 'fusion_model', role, sel: value });
 }
 
 const PAGES = {

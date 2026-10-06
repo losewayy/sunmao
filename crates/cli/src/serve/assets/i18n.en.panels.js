@@ -212,6 +212,7 @@ const I18N_EN_PANELS = {
   "已停用": "Disabled",
   "已信任": "Trusted",
   "已信任此钩子": "Hook trusted",
+  "已选 {n} 个模型": "{n} models selected",
   "已允许账号": "Allowed accounts",
   "已允许账号接入": "Account access approved",
   "以 PowerShell 语法运行命令": "Run commands with PowerShell syntax",

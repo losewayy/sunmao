@@ -79,6 +79,23 @@ async function exportZipSession(id) {
     toast(t('已导出 {name}', { name: id + '.zip' }), 'download');
   } catch (e) { toast(t('导出失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
+/* click-to-open for transcript-surfaced paths — POST /session/{id}/open
+   rebuilds THIS session's exposed set from its log and 403s any string a
+   tool never mentioned, so the click handler never hands the OS a
+   webview-invented path. The span lives inside .tool-h's toggle button:
+   capture phase + stopPropagation keeps the card from expanding instead. */
+async function openFilePath(p) {
+  try {
+    await api(`/session/${encodeURIComponent(sessionId)}/open`, jpost({ path: p }));
+    toast(t('已用系统程序打开'), 'external');
+  } catch (e) { toast(t('打开失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
+}
+document.addEventListener('click', e => {
+  const fp = e.target.closest('[data-fopen]');
+  if (!fp) return;
+  e.preventDefault(); e.stopPropagation();
+  openFilePath(fp.dataset.fopen);
+}, true);
 function sessionAction(v, id, at) {
   if (v === 'resume') resumeSession(id);
   else if (v === 'fork') forkSession(id);

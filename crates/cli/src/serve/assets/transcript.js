@@ -10,8 +10,11 @@ function toolHTML([st, nm, sm, tm, out], o = {}) {
   const time = st === 'run' ? `<span class="tm live" data-start="${o.start ?? performance.now()}">0.0s</span>` : st === 'wait' ? `<span class="tm w">${t('等待批准')}</span>` : `<span class="tm${st === 'err' && tm && !/\d/.test(tm) ? ' e' : ''}">${tm || ''}</span>`;
   const body = o.body || '';
   const chev = (out || body) ? ic('chev-r', 'i xs chev') : '';
-  return `<div class="tool${st === 'err' ? ' bad' : ''}${o.cls ? ' ' + o.cls : ''}"><button class="tool-h">${stIcon(st)}<span class="nm">${esc(nm)}</span><span class="sum">${esc(sm)}</span>${time}${chev}</button>${body || out ? `<div class="tool-o">${body}${out ? `<pre>${esc(out)}</pre>` : ''}</div>` : ''}</div>`;
+  return `<div class="tool${st === 'err' ? ' bad' : ''}${o.cls ? ' ' + o.cls : ''}"><button class="tool-h">${stIcon(st)}<span class="nm">${esc(nm)}</span><span class="sum">${o.sumHtml || esc(sm)}</span>${time}${chev}</button>${body || out ? `<div class="tool-o">${body}${out ? `<pre>${o.rawOut ? out : esc(out)}</pre>` : ''}</div>` : ''}</div>`;
 }
+/* file-path click-to-open helpers (`fpArgSum`, `fpMarkedOut`, `fpSpan`)
+   live in diff.js with the other tool-card renderers; the click itself is
+   a capture-phase delegate in menus.js -> POST /session/{id}/open. */
 // replayed prompts carry no timestamp in the log — only a live send shows
 // the wall clock, rather than stamping history with "now"
 // turnSeq mirrors the log's turn_boundaries scan — the Nth stamped
@@ -126,7 +129,7 @@ function foldSettled(root, except) {
     if (g !== except && g.classList.contains('many') && !g.dataset.user && !$('.st.run', g) && !$('.st.wait', g)) foldGroup(g, true);
   }
 }
-function setTool(el, st, tm, out) {
+function setTool(el, st, tm, out, raw) {
   el.classList.toggle('bad', st === 'err');
   const h = $('.tool-h', el);
   $('.st', h).outerHTML = stIcon(st);
@@ -136,8 +139,8 @@ function setTool(el, st, tm, out) {
   else { delete t.dataset.start; if (st === 'err' && tm && !/\d/.test(tm)) t.classList.add('e'); t.textContent = tm || ''; }
   if (out) {
     const o = $('.tool-o', el);
-    if (o) { const p = $('pre', o); p ? p.textContent = out : o.insertAdjacentHTML('beforeend', `<pre>${esc(out)}</pre>`); } // a diff body keeps the result under it
-    else { h.insertAdjacentHTML('beforeend', ic('chev-r', 'i xs chev')); el.insertAdjacentHTML('beforeend', `<div class="tool-o"><pre>${esc(out)}</pre></div>`); }
+    if (o) { const p = $('pre', o); p ? (raw ? p.innerHTML = out : p.textContent = out) : o.insertAdjacentHTML('beforeend', `<pre>${raw ? out : esc(out)}</pre>`); } // a diff body keeps the result under it
+    else { h.insertAdjacentHTML('beforeend', ic('chev-r', 'i xs chev')); el.insertAdjacentHTML('beforeend', `<div class="tool-o"><pre>${raw ? out : esc(out)}</pre></div>`); }
   }
 }
 setInterval(() => { for (const t of $$('.tm.live')) t.textContent = ((performance.now() - +t.dataset.start) / 1000).toFixed(1) + 's'; }, 100);
@@ -195,7 +198,7 @@ function toolStart(ev) {
   foldSettled(host, g); // an earlier card in this reply is done — tuck it away
   const name = (ev.depth ? '↳ ' : '') + (ev.name || '?');
   // Edit/Write cards get a live diff/preview from the call's args payload
-  const el = append(g, toolHTML(['run', name, ev.summary || '', '', ''], { cls: 'enter', start: performance.now(), body: editPreviewHTML(ev.name, ev.args) }));
+  const el = append(g, toolHTML(['run', name, ev.summary || '', '', ''], { cls: 'enter', start: performance.now(), body: editPreviewHTML(ev.name, ev.args), sumHtml: fpArgSum(ev.name, ev.args) }));
   refreshGroup(g);
   runningTools.push({ el, name: ev.name, lane: ev.lane || 0, depth: ev.depth || 0, call_id: ev.call_id || null, t0: performance.now() });
   curBubble = null; sealThink(); // next text/reasoning opens fresh blocks in timeline position
@@ -219,7 +222,8 @@ function toolDone(ev) {
   runningTools.splice(i, 1);
   // kernel's elapsed_ms is authoritative; local t0 is the replay/orphan fallback
   const secs = (typeof ev.elapsed_ms === 'number' ? ev.elapsed_ms / 1000 : (performance.now() - t.t0) / 1000).toFixed(1) + 's';
-  setTool(t.el, ev.ok ? 'ok' : 'err', secs, capOut(ev.output || ''));
+  const capped = capOut(ev.output || ''), marked = fpMarkedOut(ev.name, capped);
+  setTool(t.el, ev.ok ? 'ok' : 'err', secs, marked || capped, !!marked);
   refreshGroup(t.el.parentElement);
 }
 function islandHTML(ev) {
@@ -379,7 +383,7 @@ function renderReplay(events, anim) {
       const host = msgHost();
       absorbStep(host);
       let g = toolGroup(host);
-      const el = append(g, toolHTML(['run', (ev.depth ? '↳ ' : '') + (fn.name || '?'), sum, '', ''], { body: editPreviewHTML(fn.name, a) }));
+      const el = append(g, toolHTML(['run', (ev.depth ? '↳ ' : '') + (fn.name || '?'), sum, '', ''], { body: editPreviewHTML(fn.name, a), sumHtml: fpArgSum(fn.name, a) }));
       // key on (call.id, depth, lane) — relayed sub-agent calls can share a
       // call id namespace across lanes; missing id falls back to a unique key
       pendingCalls.set(c.id ? `${ev.depth || 0}:${ev.lane || 0}:${c.id}` : Symbol(),
@@ -399,7 +403,10 @@ function renderReplay(events, anim) {
         }
         if (k !== undefined) { hit = pendingCalls.get(k); pendingCalls.delete(k); }
       }
-      if (hit) setTool(hit.el, ev.ok ? 'ok' : 'err', '', capOut(ev.output || ''));
+      if (hit) {
+        const capped = capOut(ev.output || ''), marked = fpMarkedOut(ev.name, capped);
+        setTool(hit.el, ev.ok ? 'ok' : 'err', '', marked || capped, !!marked);
+      }
       else addNote(`${ev.ok ? '✓' : '✗'} ${ev.name || '?'}`); // result without a call — surface, don't fabricate a row
       logEv('tool_result', `${ev.name || '?'} ${ev.ok ? 'ok' : 'err'}`);
     } else if (ty === 'compacted') {
@@ -428,7 +435,7 @@ function renderReplay(events, anim) {
       const g = toolGroup(host);
       let a = null, sum = '';
       try { a = JSON.parse(ev.args || '{}'); sum = a.command || a.path || a.pattern || a.name || a.prompt || String(ev.args).slice(0, 120); } catch { sum = String(ev.args || '').slice(0, 120); }
-      append(g, toolHTML([ev.ok ? 'ok' : 'err', '↳ ' + (ev.name || '?'), sum, '', capOut(ev.output || '')], { body: editPreviewHTML(ev.name, a) }));
+      append(g, toolHTML([ev.ok ? 'ok' : 'err', '↳ ' + (ev.name || '?'), sum, '', capOut(ev.output || '')], { body: editPreviewHTML(ev.name, a), sumHtml: fpArgSum(ev.name, a) }));
       logEv('tool_result', `↳ ${ev.name || '?'} ${ev.ok ? 'ok' : 'err'}`);
     } else if (ty === 'session_meta') {
       // rename fact — rail title override; audit-visible like mode_change,

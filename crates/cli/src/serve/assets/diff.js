@@ -67,6 +67,27 @@ function newFileHTML(text) {
 
 // Card body for Edit/Write args — the expandable preview under the tool row.
 // Returns '' when the args don't carry a renderable payload.
+/* file paths the transcript surfaces render clickable — a click routes
+   through POST /session/{id}/open where the serve rebuilds THIS session's
+   exposed set from its log and 403s anything a tool never mentioned, so
+   the page can only open what it was actually shown. `fpArgSum` marks the
+   single-path arg of file tools; `fpMarkedOut` marks search-result lines
+   (Glob whole-line, Grep the path half of `path:line:match`). */
+const FP_ARG_TOOLS = new Set(['Read', 'Write', 'Edit']);
+const FP_OUT_TOOLS = new Set(['Glob', 'Grep']);
+const fpSpan = p => `<span class="fp" data-fopen="${esc(p)}">${esc(p)}</span>`;
+const fpArgSum = (name, a) => (a && FP_ARG_TOOLS.has(name) && typeof a.path === 'string' && a.path) ? fpSpan(a.path) : '';
+function fpMarkedOut(name, out) {
+  if (!out || !FP_OUT_TOOLS.has(name)) return null;
+  return out.split('\n').map(line => {
+    if (name === 'Grep') {
+      const m = line.match(/^(.*):(\d+):(.*)$/);
+      return m && m[1] ? fpSpan(m[1]) + esc(`:${m[2]}:` + m[3]) : esc(line);
+    }
+    const v = line.trim();
+    return !v || v.startsWith('[') ? esc(line) : `<span class="fp" data-fopen="${esc(v)}">${esc(line)}</span>`;
+  }).join('\n');
+}
 function editPreviewHTML(name, args) {
   if (!args || typeof args !== 'object') return '';
   if (name === 'Edit') {

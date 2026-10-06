@@ -99,3 +99,12 @@ button.rt:hover{background:var(--c-fill-2);color:var(--c-text)}
 .pop.jobview-pop{max-width:min(var(--w-jobview),calc(100vw - var(--s-32)))}
 .pop .jobview{max-height:var(--h-pop-list);margin:var(--s-2) var(--s-6) var(--s-4);padding:var(--s-6) var(--s-8);border-radius:var(--r-md);background:var(--c-sunken);font:var(--fs-2xs)/var(--lh-body) var(--font-mono);white-space:pre-wrap;word-break:break-all;color:var(--c-text-2);overflow-y:auto}
 
+/* plugin panes — plugins.js mounts into .plg-body; rows get the design
+   tokens, never their own palette */
+.plg-body{display:flex;flex-direction:column;gap:var(--s-8);min-height:0;overflow-y:auto}
+.plg-todos{display:flex;flex-direction:column;gap:var(--s-2);margin-top:var(--s-8)}
+.plg-todo{display:flex;align-items:flex-start;gap:var(--s-8);padding:var(--s-4) var(--s-6);border-radius:var(--r-md);font-size:var(--fs-sm);color:var(--c-text-2)}
+.plg-todo .plg-mark{color:var(--c-text-3);flex:none}
+.plg-todo.done{color:var(--c-text-3)}
+.plg-todo.done .plg-mark{color:var(--c-ok)}
+.plg-todo.in_progress .plg-mark{color:var(--c-accent)}

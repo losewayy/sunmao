@@ -1,0 +1,33 @@
+/* todos.js — the plugin system's first customer: a dock pane listing the
+   session's live task list. `/todos` only ever rendered as a one-off note;
+   this pane keeps the latest `todos` frame pinned where you can see it.
+
+   Contract (v1): the file runs as an ES module, reaches the app only via
+   `window.sunmao`, and calls `register` exactly once with `id` equal to
+   this filename minus `.js`. Dock slots mount lazily on first activation
+   with (bodyEl, host); the host is the capability facade — session-scoped
+   api(), live frames via on('live'), and i18n/toast helpers. */
+sunmao.register({
+  id: 'todos',
+  slots: {
+    dock: [{
+      id: 'list',
+      title: '待办',
+      icon: 'square-check',
+      mount(el, host) {
+        let items = [];
+        const MARK = { done: '☑', in_progress: '▶', pending: '☐' };
+        const render = () => {
+          el.innerHTML = `<section class="df"><div class="df-h"><span>${host.t('待办')}</span><span class="df-cnt">${items.filter(i => i.status === 'done').length}/${items.length}</span></div>` +
+            (items.length
+              ? `<div class="plg-todos">${items.map(i => `<div class="plg-todo ${host.esc(i.status || 'pending')}"><span class="plg-mark">${MARK[i.status] || '☐'}</span><span>${host.esc(i.content || '')}</span></div>`).join('')}</div>`
+              : `<div class="empty-hint">${host.t('会话还没有任务列表')}</div>`) +
+            `</section>`;
+        };
+        host.on('live', ev => { if (ev.type === 'todos') { items = ev.items || []; render(); } });
+        host.on('session', () => { items = []; render(); });
+        render();
+      },
+    }],
+  },
+});

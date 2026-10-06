@@ -601,11 +601,45 @@ function renderMcp() {
       : '<div class="empty-hint">' + t('当前会话没有连接 MCP 服务器') + '</div>');
 }
 
+/* plugins page — the project's `.sunmao/plugins/*.js` inventory. Enabling
+   pins the file's current sha256 into `.sunmao/plugins.json` (same ledger
+   shape as trusted-hooks); a tampered file shows a warning until it's
+   re-approved at its new bytes. `data-plgt` toggles through menus.js. */
+let PLUGIN_CAT = null;
+async function refreshPlugins() {
+  try { PLUGIN_CAT = await api('/plugins?sess=' + encodeURIComponent(sessionId)); } catch { PLUGIN_CAT = null; }
+  if (view === 'settings' && setPage === 'plugins') renderPlugins();
+}
+function renderPlugins() {
+  if (view !== 'settings' || setPage !== 'plugins') return;
+  const host = $('#set-generic');
+  if (!PLUGIN_CAT) { host.innerHTML = head(t('插件'), '') + '<div class="empty-hint">' + t('正在读取插件目录…') + '</div>'; refreshPlugins(); return; }
+  const list = PLUGIN_CAT.plugins || [];
+  host.innerHTML = head(t('插件'), t('项目插件 — {dir} 下的 .js 文件。启用即按当前内容哈希钉扎；文件被改动后会停服并标红，需重新批准。', { dir: esc(PLUGIN_CAT.dir || '') }))
+    + (list.length
+      ? sec('', '', card(list.map(p => {
+          const act = p.tampered
+            ? `<span class="tag warn">${t('已改动')}</span><button class="btn ghost sm" data-plgt="${esc(p.name)}:1">${t('重新批准')}</button>`
+            : `<button class="btn ghost sm${p.enabled ? ' warn' : ''}" data-plgt="${esc(p.name)}:${p.enabled ? 0 : 1}">${p.enabled ? t('停用') : t('启用')}</button>`;
+          return `<div class="cr"><div class="l" style="flex:1;min-width:0"><b>${esc(p.name)}${p.enabled ? ' <span class="sd run"></span>' : ''}</b><span>${fmtBytes(p.bytes || 0)}</span></div>${act}</div>`;
+        })))
+      : '<div class="empty-hint">' + t('目录下没有插件文件 — 把 .js 放进 {dir} 后回到这里启用', { dir: PLUGIN_CAT.dir || '.sunmao/plugins' }) + '</div>');
+}
+async function pluginToggle(name, on) {
+  try {
+    PLUGIN_CAT = await api('/plugins?sess=' + encodeURIComponent(sessionId), jput({ name, enabled: on }));
+    if (on) await window.loadPlugins?.(); // newly enabled: import right now
+    else window.sunmao && pluginUnregister(name.replace(/\.js$/, ''));
+    renderPlugins();
+  } catch (e) { toast(t('插件操作失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
+}
+
 const PAGES = {
   providers: () => head(t('模型与提供商'), '') + '<div class="empty-hint">' + t('正在读取模型配置…') + '</div>',
   channels: () => head(t('IM 渠道'), '') + '<div class="empty-hint">' + t('正在读取渠道状态…') + '</div>',
   grants: () => head(t('已授权命令'), '') + '<div class="empty-hint">' + t('正在读取授权…') + '</div>',
   hooks: () => head(t('钩子'), '') + '<div class="empty-hint">' + t('正在读取钩子…') + '</div>',
+  plugins: () => head(t('插件'), '') + '<div class="empty-hint">' + t('正在读取插件目录…') + '</div>',
   mcp: () => head(t('MCP 服务器'), '') + '<div class="empty-hint">' + t('正在读取 MCP 服务器…') + '</div>',
   shell: () => head(t('终端'), '') + '<div class="empty-hint">' + t('正在读取设置…') + '</div>',
   keys: () => head(t('快捷键'), '') + sec('', '', card([[t('新对话'), 'Ctrl N'], [t('命令面板'), 'Ctrl K'], [t('打开设置'), 'Ctrl ,'], [t('显示或隐藏数据面板'), 'Ctrl \\'], [t('允许一次 / 拒绝 / 本会话允许'), 'Y N A'], [t('发送'), 'Enter'], [t('追加指示'), 'Ctrl Enter'], [t('换行'), 'Shift Enter'], [t('关闭弹层或返回'), 'Esc']].map(([a, k]) => row(a, '', `<span class="keys">${k.split(' ').map(x => `<kbd>${esc(x)}</kbd>`).join('')}</span>`)))),
@@ -616,7 +650,12 @@ function settingsPage(p) {
   $('#snav').innerHTML = SET_NAV.map(([k, t, i]) => `<button class="nav-i${k === p ? ' on' : ''}" data-page="${k}">${ic(i)}<span>${t}</span></button>`).join('');
   const isA = p === 'appearance';
   $('#set-appearance').hidden = !isA; $('#set-generic').hidden = isA;
-  if (!isA) $('#set-generic').innerHTML = PAGES[p]();
+  if (!isA) {
+    $('#set-generic').innerHTML = PAGES[p]();
+    // plugin pages own their whole host div — render() draws into it
+    const plg = window.PLUGIN_PAGES?.get(p);
+    if (plg) { try { plg.slot.render($('#set-generic .plg-host'), plg.host); } catch (e) { console.warn('plugin page failed', p, e); } }
+  }
   $('#set-scroll').scrollTop = 0;
   renderCrumb();
   if (isA) { renderWallGrid(); syncSettingsUI(); }
@@ -624,6 +663,7 @@ function settingsPage(p) {
   else if (p === 'channels') { refreshChannels(); }
   else if (p === 'grants') { renderGrants(); }
   else if (p === 'hooks') { renderHooks(); }
+  else if (p === 'plugins') { renderPlugins(); }
   else if (p === 'mcp') { renderMcp(); }
   else if (p === 'shell') { renderShell(); }
 }

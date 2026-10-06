@@ -510,6 +510,7 @@ function liveEvent(raw) {
   if (!ev || typeof ev !== 'object') return;
   const ty = ev.type;
   if (!ty) return; // {} — unserializable tuple variant placeholder
+  window.pluginEmit?.('live', ev); // plugin panes get the raw frame too
   const text = ev.text ?? ev.content ?? ev.delta ?? (typeof ev[0] === 'string' ? ev[0] : null);
   if (ty === 'content') { if (text == null) return; if (!curText) logEv('message', t('{b}：…', { b: brand() })); contentDelta(text); }
   else if (ty === 'reasoning') { if (text == null) return; reasoningDelta(text); }

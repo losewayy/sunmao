@@ -431,6 +431,7 @@ document.addEventListener('click', e => {
   const pg = t.closest('[data-page]'); if (pg) return settingsPage(pg.dataset.page);
   const gv = t.closest('[data-gv]'); if (gv) return revokeGrant(gv.dataset.gv);
   const ht = t.closest('[data-ht]'); if (ht) { const [i, tr] = ht.dataset.ht.split(':'); return setHookTrust(+i, tr === '1'); }
+  const pt = t.closest('[data-plgt]'); if (pt) { const [n, on] = pt.dataset.plgt.split(':'); return pluginToggle(n, on === '1'); }
   const wx = t.closest('[data-wx]'); if (wx) return wallClear();
   const w = t.closest('[data-wall]'); if (w) { S.wallpaper = w.dataset.wall; return commit(); }
   const m = t.closest('.tc[data-mode]'); if (m) { S.mode = m.dataset.mode; return commit(); }

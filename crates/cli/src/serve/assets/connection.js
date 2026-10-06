@@ -169,7 +169,12 @@ function route(v) {
       }
       break;
     case 'replay':
-      if (v.session && v.session !== sessionId) { sessionId = v.session; if (typeof dockSessionSwap === 'function') dockSessionSwap(); }
+      if (v.session && v.session !== sessionId) {
+        sessionId = v.session;
+        window.pluginEmit?.('session', { sess: sessionId });
+        window.loadPlugins?.(); // same project usually, a new one possibly
+        if (typeof dockSessionSwap === 'function') dockSessionSwap();
+      }
       if (v.cwd) { cwd = String(v.cwd).replace(/^\\\\\?\\/, ''); $('#df-cwd').textContent = projectName(cwd) || '—'; $('#df-cwd').dataset.tip = cwd; }
       // switching sessions rebuilds the whole transcript — fadeSwap turns
       // the hard cut into a fast out/in so the swap reads as a transition
@@ -233,6 +238,8 @@ function route(v) {
       // UI but keeps prompts/approvals hitting the abandoned session.
       if (v.client != null ? v.client === clientId : (!v.from || v.from === sessionId)) {
         sessionId = v.id || sessionId;
+        window.pluginEmit?.('session', { sess: sessionId });
+        window.loadPlugins?.();
         if (typeof dockSessionSwap === 'function') dockSessionSwap();
         // the frame itself carries no replay — clear the transcript +
         // per-session caches NOW (renderReplay([]) tears islands down and

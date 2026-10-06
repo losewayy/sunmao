@@ -113,4 +113,40 @@ mod endpoint_base_tests {
         assert_eq!(canonical_base("https://x/v1/responses/"), "https://x/v1");
         assert_eq!(canonical_base("https://x/v1/messages"), "https://x/v1");
     }
+
+    #[test]
+    fn pasted_endpoint_tolerates_extra_trailing_slashes() {
+        use crate::canonical_base;
+        assert_eq!(
+            canonical_base("https://x/v1/chat/completions/"),
+            "https://x/v1"
+        );
+        assert_eq!(canonical_base("https://x/v1/responses///"), "https://x/v1");
+        assert_eq!(
+            canonical_base("https://api.openai.com/v1/"),
+            "https://api.openai.com/v1"
+        );
+    }
+
+    #[test]
+    fn empty_and_root_base_are_preserved() {
+        use crate::canonical_base;
+        assert_eq!(canonical_base(""), "");
+        assert_eq!(canonical_base("/"), "");
+        assert_eq!(canonical_base("///"), "");
+    }
+
+    #[test]
+    fn canonical_base_is_idempotent() {
+        use crate::canonical_base;
+        let inputs = [
+            "https://x/v1",
+            "https://x/v1/chat/completions",
+            "http://host:4000/openai/v1/",
+        ];
+        for input in inputs {
+            let once = canonical_base(input);
+            assert_eq!(canonical_base(&once), once);
+        }
+    }
 }

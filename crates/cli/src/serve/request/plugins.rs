@@ -11,6 +11,8 @@ use std::sync::Arc;
 
 use sha2::Digest as _;
 
+use sunmao_core::context::MutexRecover as _;
+
 use super::super::host::{Shared, display_path};
 use super::{HostResponse, ops::project_for};
 
@@ -55,7 +57,9 @@ fn catalog(project: &std::path::Path) -> Vec<serde_json::Value> {
     if let Ok(rd) = std::fs::read_dir(plugins_dir(project)) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            if !name.ends_with(".js") {
+            // regular files only — a `x.js` DIRECTORY is backend-bundle
+            // territory (.sunmao/plugins/<name>/) or noise, not a plugin
+            if !name.ends_with(".js") || !e.file_type().is_ok_and(|t| t.is_file()) {
                 continue;
             }
             let bytes = std::fs::read(e.path()).unwrap_or_default();
@@ -75,13 +79,26 @@ fn catalog(project: &std::path::Path) -> Vec<serde_json::Value> {
 }
 
 /// A plugin filename is exactly that — no separators, no traversal, a
-/// `.js` tail. The route can never address outside the plugins dir.
+/// `.js` tail, a non-empty stem in a filesystem-boring charset. `:` is
+/// refused because Windows reads `name:stream` as an alternate data
+/// stream, and the DOS device stems (`con`, `nul`, …) would make
+/// `std::fs::read` block the handler on a device — a one-request local
+/// DoS. The charset bound doubles as the frontend's attribute-safety
+/// contract (`data-pane="plg:<id>:<slot>"` interpolates the stem raw).
 fn valid_name(name: &str) -> bool {
-    name.ends_with(".js")
-        && !name.is_empty()
-        && !name.contains('/')
-        && !name.contains('\\')
-        && !name.contains("..")
+    const DEVICES: &[&str] = &[
+        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+    ];
+    let Some(stem) = name.strip_suffix(".js") else {
+        return false;
+    };
+    !stem.is_empty()
+        && stem
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        && !stem.contains("..")
+        && !DEVICES.contains(&stem.to_ascii_lowercase().as_str())
 }
 
 /// `GET /plugins?sess=` — the management page's inventory: every `.js` in
@@ -136,6 +153,10 @@ pub(super) fn plugins_put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) ->
     }
     let project = project_for(s, sess);
     let file = plugins_dir(&project).join(&name);
+    // the read-modify-write serializes on one lock — two racing PUTs
+    // can't silently resurrect each other's pin
+    static LEDGER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _write = LEDGER_LOCK.lock_or_recover();
     let mut pins = pinned(&project);
     if v["enabled"].as_bool().unwrap_or(false) {
         let Ok(bytes) = std::fs::read(&file) else {
@@ -146,14 +167,20 @@ pub(super) fn plugins_put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) ->
         pins.remove(&name);
     }
     let json = serde_json::json!({ "enabled": pins });
+    // tempfile + rename — a crash mid-write leaves the last good ledger,
+    // not a half-JSON that pins-nothing-but-also-loses-history
+    let led = ledger_path(&project);
+    let tmp = led.with_extension("json.tmp");
     if std::fs::write(
-        ledger_path(&project),
+        &tmp,
         serde_json::to_string_pretty(&json).unwrap_or_default(),
     )
     .is_err()
+        || std::fs::rename(&tmp, &led).is_err()
     {
         return HostResponse::err(500, "ledger write failed".into());
     }
+    drop(_write);
     HostResponse::json(serde_json::json!({
         "dir": display_path(&plugins_dir(&project)),
         "plugins": catalog(&project),
@@ -193,5 +220,19 @@ mod tests {
             assert!(!valid_name(bad), "{bad}");
         }
         assert!(valid_name("pane.js"));
+    }
+
+    #[test]
+    fn plugin_names_reject_streams_devices_and_empty_stems() {
+        // ':' is an NTFS alternate-data-stream suffix; device stems hang a
+        // blocking read; bare ".js" has no id; '"' would break the pane
+        // attribute the frontend interpolates the stem into
+        for bad in [
+            "x:y.js", "con.js", "NUL.js", "aux.js", "com3.js", ".js", "my\"x.js", "my x.js",
+        ] {
+            assert!(!valid_name(bad), "{bad}");
+        }
+        assert!(valid_name("my-pane_2.js"));
+        assert!(valid_name("a.b.js"));
     }
 }

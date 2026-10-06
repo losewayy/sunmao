@@ -13,9 +13,31 @@ use super::{HostHandle, client::Client};
 
 pub(super) async fn ws_upgrade(
     State(host): State<HostHandle>,
+    headers: axum::http::HeaderMap,
     ws: WebSocketUpgrade,
-) -> impl IntoResponse {
+) -> axum::response::Response {
+    // a browser ws always carries Origin — a foreign page's socket must not
+    // reach the agent (it could drive prompts AND answer its own approval
+    // prompts). Loopback Origin or absent (CLI clients) is the door.
+    let ok = match headers.get("origin").and_then(|v| v.to_str().ok()) {
+        None => true,
+        Some(o) => {
+            let body = o
+                .trim_start_matches("http://")
+                .trim_start_matches("https://");
+            let h = body
+                .trim_start_matches('[')
+                .split([':', ']'])
+                .next()
+                .unwrap_or("");
+            h == "127.0.0.1" || h.eq_ignore_ascii_case("localhost") || h == "::1"
+        }
+    };
+    if !ok {
+        return (axum::http::StatusCode::FORBIDDEN, "not a loopback origin").into_response();
+    }
     ws.on_upgrade(move |socket| ws_client(host.s.clone(), socket))
+        .into_response()
 }
 
 /// One browser tab: the `Client` owns viewer state; this wrapper owns the

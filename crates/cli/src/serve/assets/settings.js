@@ -619,16 +619,25 @@ function renderPlugins() {
     + (list.length
       ? sec('', '', card(list.map(p => {
           const act = p.tampered
-            ? `<span class="tag warn">${t('已改动')}</span><button class="btn ghost sm" data-plgt="${esc(p.name)}:1">${t('重新批准')}</button>`
+            // tampered+enabled needs BOTH: re-approve the new bytes OR
+            // kill the still-running old instance — either way the user
+            // holds the kill switch
+            ? `<span class="tag warn">${t('已改动')}</span><button class="btn ghost sm" data-plgt="${esc(p.name)}:1">${t('重新批准')}</button><button class="btn ghost sm warn" data-plgt="${esc(p.name)}:0">${t('停用')}</button>`
             : `<button class="btn ghost sm${p.enabled ? ' warn' : ''}" data-plgt="${esc(p.name)}:${p.enabled ? 0 : 1}">${p.enabled ? t('停用') : t('启用')}</button>`;
           return `<div class="cr"><div class="l" style="flex:1;min-width:0"><b>${esc(p.name)}${p.enabled ? ' <span class="sd run"></span>' : ''}</b><span>${fmtBytes(p.bytes || 0)}</span></div>${act}</div>`;
         })))
-      : '<div class="empty-hint">' + t('目录下没有插件文件 — 把 .js 放进 {dir} 后回到这里启用', { dir: PLUGIN_CAT.dir || '.sunmao/plugins' }) + '</div>');
+      : '<div class="empty-hint">' + t('目录下没有插件文件 — 把 .js 放进 {dir} 后回到这里启用', { dir: esc(PLUGIN_CAT.dir || '.sunmao/plugins') }) + '</div>');
 }
 async function pluginToggle(name, on) {
   try {
     PLUGIN_CAT = await api('/plugins?sess=' + encodeURIComponent(sessionId), jput({ name, enabled: on }));
-    if (on) await window.loadPlugins?.(); // newly enabled: import right now
+    if (on) {
+      // re-approving a TAMPERED plugin must evict the stale module first —
+      // PLUGIN_IDS/PLUGIN_LOADED still hold the old registration, so a
+      // bare loadPlugins() would dedup itself into a no-op
+      window.pluginUnregister?.(name.replace(/\.js$/, ''));
+      await window.loadPlugins?.();
+    }
     else window.sunmao && pluginUnregister(name.replace(/\.js$/, ''));
     renderPlugins();
   } catch (e) { toast(t('插件操作失败：{msg}', { msg: e.message }), 'alert', 'warn'); }

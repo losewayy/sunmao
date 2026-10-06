@@ -162,14 +162,19 @@ pub(crate) fn shell_notify(app: tauri::AppHandle, title: &str, body: &str) -> Re
         .map_err(|e| e.to_string())
 }
 
-/// Open a local file with the OS default handler — artifact islands live on
-/// the internal `sunmao` scheme, which no external browser can resolve, so
-/// the page hands us the real filesystem path.
+/// Open an external http(s) URL in the system browser — dock browser tabs
+/// use it for "open in external browser". Deliberately URLs only: local
+/// FILE opening must go through `POST /session/{id}/open`, which validates
+/// the path against what the viewed session actually surfaced — letting
+/// the webview name any file path here would bypass that whole check.
 #[tauri::command]
 pub(crate) fn shell_open(app: tauri::AppHandle, path: &str) -> Result<(), String> {
+    if !(path.starts_with("http://") || path.starts_with("https://")) {
+        return Err(format!("shell_open is for http(s) urls only: {path}"));
+    }
     use tauri_plugin_opener::OpenerExt as _;
     app.opener()
-        .open_path(path, None::<&str>)
+        .open_url(path, None::<&str>)
         .map_err(|e| format!("open {path}: {e}"))
 }
 

@@ -41,6 +41,11 @@ struct Draft {
     last_edit: Option<Instant>,
     last_typing: Option<Instant>,
     abandoned: bool,
+    /// Send answered `Ok(None)` — the bubble posted but the channel gave no
+    /// id to edit (wechat/dingtalk). The draft is finished: later ticks must
+    /// NOT resend, or a no-id channel gets a fresh status bubble every
+    /// throttle interval.
+    settled: bool,
 }
 
 /// The lane's shared state — ingress adds chats, the subscriber drains.
@@ -220,8 +225,12 @@ async fn tick(state: &Shared, channels: &[Arc<Delivery>]) {
                 let d = st.drafts.get(key);
                 (
                     d.and_then(|d| d.message_id.clone()),
-                    d.and_then(|d| d.last_edit)
-                        .is_none_or(|t| t.elapsed() >= EDIT_INTERVAL),
+                    match d {
+                        None => true,
+                        Some(d) => {
+                            !d.settled && d.last_edit.is_none_or(|t| t.elapsed() >= EDIT_INTERVAL)
+                        }
+                    },
                     d.is_some_and(|d| d.abandoned),
                 )
             };
@@ -231,10 +240,14 @@ async fn tick(state: &Shared, channels: &[Arc<Delivery>]) {
             match id {
                 // first frame → post the draft, keep the id for edits
                 None => match adapter.send_text(&key.chat_id, &text).await {
-                    Ok(Some(mid)) => {
+                    Ok(mid) => {
                         let mut st = state.lock().unwrap();
                         let d = st.drafts.entry(key.clone()).or_default();
-                        d.message_id = Some(mid);
+                        // a returned id keeps the edit lane alive; `None`
+                        // means the channel can't name its own message, so
+                        // the draft settles after this one post
+                        d.settled = mid.is_none();
+                        d.message_id = mid;
                         d.last_edit = Some(Instant::now());
                     }
                     // The draft is a status bubble, not the answer. When part
@@ -268,11 +281,15 @@ async fn tick(state: &Shared, channels: &[Arc<Delivery>]) {
                     // no resend-as-edit: wechat rate-limits burst sends and a
                     // fresh status bubble every throttle tick is spam, not
                     // progress
-                    if adapter.can_edit()
-                        && adapter.edit_text(&key.chat_id, &mid, &text).await.is_ok()
-                        && let Some(d) = state.lock().unwrap().drafts.get_mut(key)
-                    {
-                        d.last_edit = Some(Instant::now());
+                    if adapter.can_edit() {
+                        // stamp the attempt, not just the success — a failing
+                        // edit endpoint must not get hammered per live frame;
+                        // the throttle makes the next try wait out the
+                        // interval instead of retrying per token
+                        let _ = adapter.edit_text(&key.chat_id, &mid, &text).await;
+                        if let Some(d) = state.lock().unwrap().drafts.get_mut(key) {
+                            d.last_edit = Some(Instant::now());
+                        }
                     }
                 }
             }

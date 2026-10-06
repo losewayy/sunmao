@@ -5390,7 +5390,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sunmao"
-version = "0.1.13"
+version = "0.2.0"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -5422,7 +5422,7 @@ dependencies = [
 
 [[package]]
 name = "sunmao-core"
-version = "0.1.13"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5448,7 +5448,7 @@ dependencies = [
 
 [[package]]
 name = "sunmao-gui"
-version = "0.1.13"
+version = "0.2.0"
 dependencies = [
  "clap",
  "serde_json",
@@ -5469,7 +5469,7 @@ dependencies = [
 
 [[package]]
 name = "sunmao-llm"
-version = "0.1.13"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",

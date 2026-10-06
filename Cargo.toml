@@ -10,7 +10,7 @@ members = [
 
 [workspace.package]
 edition = "2024"
-version = "0.1.13"
+version = "0.2.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/losewayy/sunmao"
 rust-version = "1.85"

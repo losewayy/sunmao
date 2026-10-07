@@ -85,11 +85,11 @@ impl Content {
 /// to re-read + re-encode on EVERY request of the session (each turn's
 /// message list carries the block again). Attachments are immutable by
 /// convention; the stat pair still re-checks in case one was rewritten.
+type ImageCache = std::collections::HashMap<String, (u64, u64, std::sync::Arc<str>)>;
+
 async fn resolve_image(path: &str) -> anyhow::Result<std::sync::Arc<str>> {
-    use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<HashMap<String, (u64, u64, std::sync::Arc<str>)>>> =
-        OnceLock::new();
+    static CACHE: OnceLock<Mutex<ImageCache>> = OnceLock::new();
     let meta = tokio::fs::metadata(path).await?;
     let key = (
         meta.modified()

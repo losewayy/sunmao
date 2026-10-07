@@ -63,20 +63,33 @@ impl Context {
                 .filter(|t| crate::agent::fusion::lead_decl(&t.function.name, escalated))
                 .collect();
         }
+        let mut pins = self.advertised_pins.lock_or_recover();
         if decls.len() > LAZY_ADVERTISE_AT {
             let promoted = self.promoted_tools.lock_or_recover().clone();
-            return decls
+            // hot set + promoted + PINNED: a tool once on the wire stays on
+            // the wire for the session's life — the catalog may grow (MCP
+            // connects mid-turn) but the model's surface only ever widens
+            let out: Vec<_> = decls
                 .into_iter()
                 .filter(|t| {
                     (LAZY_HOT.contains(&t.function.name.as_str())
-                        || promoted.contains(&t.function.name))
+                        || promoted.contains(&t.function.name)
+                        || pins.contains(&t.function.name))
                         && t.function.name != "FusionExecute"
                 })
                 .collect();
+            for t in &out {
+                pins.insert(t.function.name.clone());
+            }
+            return out;
         }
-        decls
+        let out: Vec<_> = decls
             .into_iter()
             .filter(|t| t.function.name != "SearchTools" && t.function.name != "FusionExecute")
-            .collect()
+            .collect();
+        for t in &out {
+            pins.insert(t.function.name.clone());
+        }
+        out
     }
 }

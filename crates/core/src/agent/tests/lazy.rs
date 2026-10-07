@@ -104,3 +104,32 @@ async fn fat_catalog_defers_and_searchtools_promotes() {
         .await;
     assert!(res.output.contains("mcp__srv__tool4") && !res.output.contains("parameters"));
 }
+
+#[test]
+fn crossing_the_threshold_never_drops_an_advertised_tool() {
+    // the failure shape that motivated advertised_pins: a session starts
+    // under the threshold with an MCP tool visible, the catalog then grows
+    // past it (second server connects mid-turn) — the tool must NOT vanish
+    let ctx = ctx_with(builtin_registry());
+    ctx.tools.register(FakeTool("mcp__srv__visible"));
+    assert!(names(&ctx).contains("mcp__srv__visible"));
+
+    for i in 0..10 {
+        let n: &'static str = Box::leak(format!("mcp__srv2__tool{i}").into_boxed_str());
+        ctx.tools.register(FakeTool(n));
+    }
+    let after = names(&ctx);
+    assert!(
+        after.contains("mcp__srv__visible"),
+        "a once-advertised tool must survive the eager→lazy flip"
+    );
+    // but a tool never advertised still defers — the lazy budget holds
+    assert!(!after.contains("mcp__srv2__tool0"));
+    // and growth is monotonic: the pinned set can only widen
+    let before: Vec<_> = names(&ctx).into_iter().collect();
+    ctx.promoted_tools
+        .lock_or_recover()
+        .insert("mcp__srv2__tool7".to_string());
+    let later = names(&ctx);
+    assert!(before.iter().all(|n| later.contains(n)) && later.contains("mcp__srv2__tool7"));
+}

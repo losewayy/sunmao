@@ -519,14 +519,7 @@ pub(crate) use projects::{projects, register_project, session_dirs, session_proj
 /// prefix for display so the GUI shows `F:\…` (and `\\server\…` for the
 /// `\\?\UNC\` form), not the verbatim spelling.
 pub(crate) fn display_path(p: &std::path::Path) -> String {
-    let s = p.display().to_string();
-    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{rest}")
-    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
-        rest.to_string()
-    } else {
-        s
-    }
+    sunmao_core::paths::display_path(p)
 }
 
 /// artifact names are `[a-z0-9_-]` — the same whitelist /annotate enforces;

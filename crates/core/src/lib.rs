@@ -14,6 +14,7 @@ pub mod hooks;
 pub mod mcp;
 pub mod model_knowledge;
 pub mod models;
+pub mod paths;
 pub mod permissions;
 pub mod plugin;
 pub mod preflight;

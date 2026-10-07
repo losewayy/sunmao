@@ -46,8 +46,8 @@ pub(super) async fn session_new(s: &Arc<Shared>, body: &[u8]) -> HostResponse {
 pub(super) fn session_meta(path: &std::path::Path) -> serde_json::Value {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<HashMap<std::path::PathBuf, (u64, u64, Option<String>)>>> =
-        OnceLock::new();
+    type MetaCache = HashMap<std::path::PathBuf, (u64, u64, Option<String>)>;
+    static CACHE: OnceLock<Mutex<MetaCache>> = OnceLock::new();
     let meta = std::fs::metadata(path).ok();
     let mtime = meta
         .as_ref()

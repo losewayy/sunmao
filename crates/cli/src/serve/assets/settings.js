@@ -665,7 +665,7 @@ function settingsPage(p) {
     $('#set-generic').innerHTML = PAGES[p]();
     // plugin pages own their whole host div — render() draws into it
     const plg = window.PLUGIN_PAGES?.get(p);
-    if (plg) { try { plg.slot.render($('#set-generic .plg-host'), plg.host); } catch (e) { console.warn('plugin page failed', p, e); } }
+    if (plg) { try { plg.slot.render($('#set-generic .plg-host'), plg.host); window.pluginPageMounted?.(p); } catch (e) { console.warn('plugin page failed', p, e); } }
   }
   $('#set-scroll').scrollTop = 0;
   renderCrumb();

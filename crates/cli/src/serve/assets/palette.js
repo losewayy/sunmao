@@ -137,6 +137,9 @@ function palSource() {
     ...WALLS.map(w => ({ g: t('外观'), t: t('壁纸：{name}', { name: w.name }), i: 'image', run: () => { S.wallpaper = w.id; commit(); } })),
     ...slashList.map(c => ({ g: t('命令'), t: '/' + c.name, sub: c.desc || '', i: 'terminal', run: () => { show('session'); $('#input').value = '/' + c.name + ' '; autoGrow(); $('#input').focus(); } })),
     ...SESSION_IDS.map(id => ({ g: t('会话'), t: sessTitle(id) || t('新对话'), d: id, i: 'note', run: () => { show('session'); resumeSession(id); } })),
+    // plugin rows trail everything — a plugin gets a real action surface
+    // without needing a dock pane
+    ...(window.PLUGIN_PAL_ITEMS || []),
   ];
 }
 function renderPal() {

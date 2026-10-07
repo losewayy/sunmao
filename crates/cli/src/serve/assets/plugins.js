@@ -16,7 +16,16 @@
    v1 slots: `dock` (a dock pane) and `settings` (a settings page). Adding
    a pane/page takes a file in .sunmao/plugins + one toggle — no edits to
    index.html, serve.rs, or request.rs (they carry the *system*, once). */
-const PLUGIN_DOCK = new Map();   // 'plg:<id>'  → {slot, plugin, host, mounted}
+const PLUGIN_DOCK = new Map();   // 'plg:<id>:<slot>'  → {slot, plugin, host, mounted}
+const PLUGIN_COMPOSER = new Map(); // 'plg:<id>:<slot>' → {slot, plugin, host} — cmp-bar chips
+const PLUGIN_PAL = [];           // {g,t,i,k,sub,run,plugin,host} — palette rows
+const PLUGIN_MENUS = [];         // {v,t,i,warn,run,plugin,host} — session-menu items
+const PLUGIN_TRANSFORM = [];     // {plugin, fn} — draft transforms (veto-able send)
+/* palSource() reads a plain items array — re-project whenever the set
+   changes (register + unregister) */
+function syncPalItems() {
+  window.PLUGIN_PAL_ITEMS = PLUGIN_PAL.map(m => ({ g: m.g, t: m.t, i: m.i, k: m.k, sub: m.sub, run: () => m.run(m.host) }));
+}
 // const bindings don't reach window — builtin consumers (settings page
 // dispatch) read it through this explicit handle instead
 window.PLUGIN_PAGES = new Map(); // 'plg:<id>'  → {slot, plugin, host}
@@ -38,7 +47,33 @@ const pluginHost = plugin => ({
   api: (path, opts) => api(`${path}${path.includes('?') ? '&' : '?'}sess=${encodeURIComponent(sessionId)}`, opts),
   t, esc, ic, toast,
   sess: () => sessionId,
+  // the viewed session's shape — read-only snapshot, refreshed per call
+  session: () => ({ id: sessionId, cwd, model: modelLabel, driver, busy: !!busy, goal: curGoal }),
   on: (ev, fn) => PLUGIN_EVENTS.push({ plugin, ev, fn }),
+  // draft-transform: runs on the outgoing prompt before it hits the wire;
+  // return the (possibly rewritten) text, or false to veto the send
+  onSend: fn => PLUGIN_TRANSFORM.push({ plugin, fn }),
+  // write paths — prompts steer through the same frames the composer sends
+  send: text => wsSend({ type: 'prompt', text: String(text || '') }),
+  steer: text => wsSend({ type: 'steer', text: String(text || '') }),
+  // chrome helpers — the shared popover/menu builders, so a plugin's UI
+  // lands with the app's own motion/placement instead of re-inventing it
+  pop: (anchor, html, o) => pop(anchor, html, o),
+  menuPop: (anchor, items, onPick, o) => menuPop(anchor, items, onPick, o),
+  closePop,
+  // namespaced KV — rides ui.json via save(); keys can't collide across
+  // plugins, and the value must stay JSON-shaped (it's ui.json on disk)
+  store: (k, v) => { S[`plg:${plugin}:${k}`] = v; save(); },
+  load: k => S[`plg:${plugin}:${k}`],
+  // a plugin ships its own glyphs: registers <symbol> defs and returns the
+  // name to feed ic()/slot icons. Ids are namespaced the same way.
+  icon: (name, innerSvg) => {
+    const sym = `plg-${plugin}-${name}`;
+    const defs = $('#icon-defs defs');
+    if (defs && !document.getElementById(`i-${sym}`))
+      defs.insertAdjacentHTML('beforeend', `<symbol id="i-${sym}" viewBox="0 0 24 24">${innerSvg}</symbol>`);
+    return sym;
+  },
 });
 
 function pluginEmit(ev, data) {
@@ -47,6 +82,15 @@ function pluginEmit(ev, data) {
   for (const l of PLUGIN_EVENTS.slice()) {
     if (l.ev !== ev) continue;
     try { l.fn(data); } catch (e) { console.warn('plugin', l.plugin, ev, e); }
+  }
+}
+
+/* a freshly-mounted surface gets the sticky live cache replayed to ITS OWN
+   listeners — dock panes and settings pages share the rule */
+function pluginReplayLive(plugin, label) {
+  for (const l of PLUGIN_EVENTS.slice()) {
+    if (l.plugin === plugin && l.ev === 'live')
+      for (const ev of Object.values(PLUGIN_LAST_LIVE)) { try { l.fn(ev); } catch (e) { console.warn('plugin replay', label, e); } }
   }
 }
 
@@ -60,19 +104,30 @@ function pluginDockActivated(name) {
   try {
     entry.slot.mount($(`.dock-pane[data-pane="${name}"] .plg-body`), entry.host);
     entry.mounted = true; // only on success — a throwing mount may retry
-    for (const l of PLUGIN_EVENTS.slice()) {
-      if (l.plugin === entry.plugin && l.ev === 'live')
-        for (const ev of Object.values(PLUGIN_LAST_LIVE)) { try { l.fn(ev); } catch (e) { console.warn('plugin replay', name, e); } }
-    }
+    pluginReplayLive(entry.plugin, name);
   } catch (e) { console.warn('plugin mount failed', name, e); }
 }
+
+/* settings.js calls this after a plugin page's render() — same sticky
+   replay, so a page opened mid-session sees current frames too */
+function pluginPageMounted(page) {
+  const entry = PLUGIN_PAGES.get(page);
+  if (entry) pluginReplayLive(entry.plugin, page);
+}
+window.pluginPageMounted = pluginPageMounted;
 
 function pluginUnregister(id) {
   for (const [k, v] of PLUGIN_DOCK) if (v.plugin === id) PLUGIN_DOCK.delete(k);
   for (const [k, v] of PLUGIN_PAGES) if (v.plugin === id) PLUGIN_PAGES.delete(k);
+  for (const [k, v] of PLUGIN_COMPOSER) if (v.plugin === id) PLUGIN_COMPOSER.delete(k);
+  for (let i = PLUGIN_PAL.length - 1; i >= 0; i--) if (PLUGIN_PAL[i].plugin === id) PLUGIN_PAL.splice(i, 1);
+  for (let i = PLUGIN_MENUS.length - 1; i >= 0; i--) if (PLUGIN_MENUS[i].plugin === id) PLUGIN_MENUS.splice(i, 1);
+  for (let i = PLUGIN_TRANSFORM.length - 1; i >= 0; i--) if (PLUGIN_TRANSFORM[i].plugin === id) PLUGIN_TRANSFORM.splice(i, 1);
+  syncPalItems();
   for (const [k, v] of Object.entries(PANE_META)) if (v.plg === id) delete PANE_META[k];
   for (const [k, v] of Object.entries(PAGES)) if (v.plg === id) delete PAGES[k];
   for (let i = PLUGIN_EVENTS.length - 1; i >= 0; i--) if (PLUGIN_EVENTS[i].plugin === id) PLUGIN_EVENTS.splice(i, 1);
+  $$('.cmp-bar .plg-cb').forEach(el => { if (!PLUGIN_COMPOSER.has(el.dataset.pcb)) el.remove(); });
   for (let i = SET_NAV.length - 1; i >= 0; i--) if (SET_NAV[i][3] === id) SET_NAV.splice(i, 1);
   $$('#dock .dock-pane[data-plg]').forEach(el => { if (PLUGIN_DOCK.get(el.dataset.pane)?.plugin !== id && !PLUGIN_DOCK.has(el.dataset.pane)) el.remove(); });
   for (const tabs of Object.values(S.dockTabs || {})) {
@@ -129,6 +184,27 @@ window.sunmao = {
         PAGES[page].plg = spec.id;
         SET_NAV.push([page, s.title, s.icon || 'blocks', spec.id]);
       }
+      // composer chips land in .cmp-bar ahead of the spacer — left group is
+      // affordances (attach/mode), right group is pickers + send, so plugin
+      // chips belong with the affordances. A chip is valid when it has a
+      // boring id plus a click surface (onClick or popover) — no title req.
+      const chipOk = s => s && /^[\w-]+$/.test(s.id) && (typeof s.onClick === 'function' || typeof s.popover === 'function');
+      for (const s of (spec.slots?.composer || []).filter(chipOk)) {
+        const key = `plg:${spec.id}:${s.id}`;
+        PLUGIN_COMPOSER.set(key, { slot: s, plugin: spec.id, host });
+        const sp = $('.cmp-bar .sp');
+        if (sp) sp.insertAdjacentHTML('beforebegin',
+          `<button class="cb plg-cb" data-act="plg-cb" data-pcb="${esc(key)}"${s.tip ? ` data-tip="${esc(s.tip)}"` : ''}>${s.icon ? ic(s.icon) : ''}${s.label ? `<span>${esc(s.label)}</span>` : ''}</button>`);
+      }
+      // palette rows and session-menu items are pure data — the surfaces
+      // pull them in at render time, nothing mounts eagerly
+      for (const s of (spec.slots?.palette || []))
+        if (s && typeof s.t === 'string' && typeof s.run === 'function')
+          PLUGIN_PAL.push({ g: s.g || spec.id, t: s.t, i: s.i || 'blocks', k: s.k, sub: s.sub, run: s.run, plugin: spec.id, host });
+      syncPalItems();
+      for (const s of (spec.slots?.sessionMenu || []))
+        if (s && typeof s.v === 'string' && /^[\w-]+$/.test(s.v) && typeof s.t === 'string' && typeof s.run === 'function')
+          PLUGIN_MENUS.push({ v: `${spec.id}:${s.v}`, t: s.t, i: s.i, warn: !!s.warn, run: s.run, plugin: spec.id, host });
     } catch (e) {
       // partial registration is worse than none — un-register so a
       // re-enable can try cleanly instead of finding a half-built pane
@@ -156,11 +232,16 @@ async function loadPluginsNow() {
   let list;
   try { list = (await api('/plugins?sess=' + encodeURIComponent(sessionId))).plugins || []; }
   catch { return; }
-  // a session switch may land on a DIFFERENT project — a plugin absent
-  // from its catalog unregisters, so panes/pages/listeners from the old
-  // project can't keep watching the new session's frames
-  const names = new Set(list.map(p => p.name.replace(/\.js$/, '')));
-  for (const id of [...PLUGIN_IDS]) if (!names.has(id)) pluginUnregister(id);
+  // the LIVE set is enabled + un-tampered — a disabled or tampered plugin
+  // tears down now, not at next reload (the ledger already says "stopped"),
+  // and a session switch to a project lacking it unregisters likewise
+  const live = new Set(list.filter(p => p.enabled && !p.tampered).map(p => p.name.replace(/\.js$/, '')));
+  for (const id of [...PLUGIN_IDS]) if (!live.has(id)) {
+    pluginUnregister(id);
+    // a burned PLUGIN_LOADED key must go with it — else a later re-enable
+    // finds the key taken and never re-imports (the surfaces stay dead)
+    for (const k of [...PLUGIN_LOADED]) if (k.endsWith(`:${id}.js`)) PLUGIN_LOADED.delete(k);
+  }
   for (const p of list.filter(p => p.enabled && !p.tampered)) {
     const key = `${sessionId}:${p.name}`;
     if (PLUGIN_LOADED.has(key)) continue;

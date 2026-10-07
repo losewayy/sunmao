@@ -54,6 +54,7 @@ fn main() {
         check_god_file(file, &root, &mut violations);
     }
     check_js_syntax(&asset_files, &root, &mut violations);
+    check_plugin_syntax(&root, &mut violations);
     check_asset_escaping(&asset_files, &root, &mut violations);
     check_mirrors(&root, &mut violations);
     check_design_tokens(&root, &mut violations);
@@ -161,6 +162,70 @@ fn check_js_syntax(files: &[PathBuf], root: &Path, violations: &mut Vec<String>)
                 rel(f, root),
                 tail.into_iter().rev().collect::<Vec<_>>().join("\n    ")
             ));
+        }
+    }
+}
+
+/// Plugin syntax gate — `examples/plugins/*.js` ship to users as starter
+/// code, so a broken one is a broken feature (and the loader's contract is
+/// ES modules: `node --check` needs `--input-type=module` via stdin).
+/// Node absent → warn locally, violation on CI, same as the asset gate.
+fn check_plugin_syntax(root: &Path, violations: &mut Vec<String>) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let dir = root.join("examples/plugins");
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let mut files: Vec<PathBuf> = rd
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().map(|x| x == "js").unwrap_or(false))
+        .collect();
+    files.sort();
+    let node_ok = Command::new("node")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !node_ok {
+        if std::env::var_os("CI").is_some() {
+            violations.push("js syntax: node not on PATH on CI — plugins unchecked".to_string());
+        }
+        return;
+    }
+    for f in files {
+        let bytes = match std::fs::read(&f) {
+            Ok(b) => b,
+            Err(e) => {
+                violations.push(format!("plugin js: cannot read {}: {e}", rel(&f, root)));
+                continue;
+            }
+        };
+        let mut c = match Command::new("node")
+            .args(["--check", "--input-type=module"])
+            .stdin(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                violations.push(format!("plugin js: node failed for {}: {e}", rel(&f, root)));
+                continue;
+            }
+        };
+        c.stdin.take().unwrap().write_all(&bytes).ok();
+        match c.wait_with_output() {
+            Ok(o) if !o.status.success() => {
+                let err = String::from_utf8_lossy(&o.stderr);
+                let tail: Vec<&str> = err.lines().rev().take(6).collect();
+                violations.push(format!(
+                    "plugin js: {} fails `node --check --input-type=module`:\n    {}",
+                    rel(&f, root),
+                    tail.into_iter().rev().collect::<Vec<_>>().join("\n    ")
+                ));
+            }
+            Ok(_) => {}
+            Err(e) => violations.push(format!("plugin js: wait failed for {}: {e}", rel(&f, root))),
         }
     }
 }

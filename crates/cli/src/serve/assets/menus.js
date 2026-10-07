@@ -16,6 +16,12 @@ function sessionMenu(id) {
   items.push({ v: 'delete', t: t('删除会话'), icon: 'trash', warn: true });
   items.push('-');
   items.push({ v: 'copy', t: t('复制会话 ID'), icon: 'copy' });
+  // plugin session-menu rows trail the builtins — v is already namespaced
+  // `plugin:verb` at register time
+  if (PLUGIN_MENUS?.length) {
+    items.push('-');
+    for (const m of PLUGIN_MENUS) items.push({ v: `plg:${m.v}`, t: m.t, icon: m.i, warn: m.warn });
+  }
   return items;
 }
 /* the goal chip's popover — the standing objective with status/rounds, an
@@ -101,6 +107,12 @@ document.addEventListener('click', e => {
   openFilePath(fp.dataset.fopen);
 }, true);
 function sessionAction(v, id, at) {
+  // plugin items arrive as `plg:<plugin>:<verb>` — dispatch back to the
+  // slot's run(id, host) before the builtin chain
+  if (v.startsWith('plg:')) {
+    const m = PLUGIN_MENUS.find(m => `plg:${m.v}` === v);
+    return m ? m.run(id, m.host) : undefined;
+  }
   if (v === 'resume') resumeSession(id);
   else if (v === 'fork') forkSession(id);
   else if (v === 'rewind') rewindPick(id, at);
@@ -283,6 +295,14 @@ function fusionPop(anchor) {
 function act(name, el) {
   switch (name) {
     case 'palette': return openPalette();
+    case 'plg-cb': {
+      // plugin composer chip — popover when the slot provides one, else a
+      // plain click handler; both get (anchorEl, host)
+      const cb = PLUGIN_COMPOSER.get(el.dataset.pcb);
+      if (!cb) return;
+      if (cb.slot.popover) return cb.slot.popover(el, cb.host);
+      return cb.slot.onClick?.(el, cb.host);
+    }
     case 'palette-close': return closePalette();
     case 'events': if (popAnchor === el) return closePop(); return pop(el, eventsHTML(), { align: 'end', cls: 'events' });
     case 'dock': return toggleDock();

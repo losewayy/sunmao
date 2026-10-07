@@ -12,7 +12,10 @@ function openFind() {
   $('#v-session').appendChild(findBar);
   const inp = $('#find-in', findBar);
   const [up, down, close] = $$('.ib', findBar);
-  inp.addEventListener('input', () => { findIdx = -1; findApply(); });
+  // every keystroke used to TreeWalker-scan the whole transcript — debounce
+  // like the rail search does (250ms is already the house interval)
+  let findT = 0;
+  inp.addEventListener('input', () => { findIdx = -1; clearTimeout(findT); findT = setTimeout(findApply, 150); });
   inp.addEventListener('keydown', e => {
     if (e.key === 'Escape') { e.preventDefault(); closeFind(); return; }
     if (e.key === 'Enter') { e.preventDefault(); findJump(e.shiftKey ? -1 : 1); }

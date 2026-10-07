@@ -79,7 +79,10 @@ const pluginHost = plugin => ({
 function pluginEmit(ev, data) {
   if (ev === 'session') for (const k of Object.keys(PLUGIN_LAST_LIVE)) delete PLUGIN_LAST_LIVE[k];
   if (ev === 'live' && data && typeof data === 'object' && data.type) PLUGIN_LAST_LIVE[data.type] = data;
-  for (const l of PLUGIN_EVENTS.slice()) {
+  // index-iterate instead of slicing — a live frame fires per token; a
+  // listener that unregisters itself mid-emit simply gets skipped
+  for (let i = 0; i < PLUGIN_EVENTS.length; i++) {
+    const l = PLUGIN_EVENTS[i];
     if (l.ev !== ev) continue;
     try { l.fn(data); } catch (e) { console.warn('plugin', l.plugin, ev, e); }
   }

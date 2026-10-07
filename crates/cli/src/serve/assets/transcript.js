@@ -57,7 +57,10 @@ const TX = $('#tx');
 // force=false by default — streamed output must not yank the scroller
 // while the user reads earlier output; only own bubbles/settle force it
 function append(parent, html, force) { const t = document.createElement('template'); t.innerHTML = html.trim(); const first = t.content.firstElementChild; parent.appendChild(t.content); keepBottom(!!force); return first; }
-function keepBottom(force) { const sc = $('#scroller'); if (force || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 240) sc.scrollTop = sc.scrollHeight; }
+// during replay every append used to read scrollHeight — one forced layout
+// per event, O(events × DOM). Replaying state already owns the flag; the
+// final rAF scroll at the end of renderReplay does the one real scroll.
+function keepBottom(force) { if (root.dataset.replaying !== undefined) return; const sc = $('#scroller'); if (force || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 240) sc.scrollTop = sc.scrollHeight; }
 /* ---- work cards: a run of tool calls (+ the short narration between
    them) shares one card; 3+ calls earn a summary header and fold once
    the run settles. Failed calls stay visible. ---- */
@@ -143,13 +146,27 @@ function setTool(el, st, tm, out, raw) {
     else { h.insertAdjacentHTML('beforeend', ic('chev-r', 'i xs chev')); el.insertAdjacentHTML('beforeend', `<div class="tool-o"><pre>${raw ? out : esc(out)}</pre></div>`); }
   }
 }
-setInterval(() => { for (const t of $$('.tm.live')) t.textContent = ((performance.now() - +t.dataset.start) / 1000).toFixed(1) + 's'; }, 100);
+// skip the querySelectorAll entirely when nothing is running — idle ticks
+// were waking 10x/sec to iterate an empty list
+setInterval(() => { if (!runningTools.length) return; for (const t of $$('.tm.live')) t.textContent = ((performance.now() - +t.dataset.start) / 1000).toFixed(1) + 's'; }, 100);
 
 /* ================= transcript live state ================= */
 let curMsg = null;      // open .msg.bot element
 let curBubble = null;   // streaming bubble element inside curMsg
 let curText = '';       // accumulated markdown for curBubble
 let curThink = null, curThinkText = '';
+/* deltas arrive per token — painting each one was O(deltas × message size):
+   a full mdRender + innerHTML rebuild + forced layout per token. Coalesce
+   to one paint per frame; the pending paint always flushes before the
+   bubble/thinking elements are sealed or reset. */
+let curPaint = 0, thinkPaint = 0;
+function flushDelta() {
+  if (curPaint) { cancelAnimationFrame(curPaint); curPaint = 0; }
+  if (thinkPaint) { cancelAnimationFrame(thinkPaint); thinkPaint = 0; }
+  if (curBubble) curBubble.innerHTML = mdRender(curText);
+  if (curThink) curThink.textContent = curThinkText;
+}
+function sealBubble() { flushDelta(); curBubble = null; }
 const runningTools = [];   // {el, name, lane, depth, t0}
 // pendingApprovals + the card lifecycle live in approvals.js
 // the session's standing goal — SessionEvent::Goal (replay) and
@@ -161,7 +178,7 @@ function msgHost() {
   if (!curMsg) { curMsg = append(TX, `<div class="msg bot">${botHead(true)}</div>`); curMsg.classList.add('enter'); }
   return curMsg;
 }
-function closeMsg() { sealThink(); curMsg = curBubble = null; curText = ''; }
+function closeMsg() { sealThink(); sealBubble(); curMsg = null; curText = ''; }
 // one fold = one contiguous reasoning stream — any later event seals it;
 // the next reasoning delta opens a NEW fold in timeline position
 function sealThink() {
@@ -177,18 +194,16 @@ function bubble() {
 function contentDelta(t) {
   if (!t) return;
   sealThink(); // reply text seals the reasoning stream that preceded it
-  const b = bubble();
+  bubble();
   curText += t;
-  b.innerHTML = mdRender(curText);
-  keepBottom();
+  if (!curPaint) curPaint = requestAnimationFrame(() => { curPaint = 0; if (curBubble) curBubble.innerHTML = mdRender(curText); keepBottom(); });
 }
 function reasoningDelta(txt) {
   if (!txt) return;
   const host = msgHost();
   if (!curThink) curThink = append(host, `<button class="think glass live enter" data-act="think">${ic('chev-r', 'i xs')}${t('思考')}</button><div class="think-o glass"></div>`).nextElementSibling, curThinkText = '';
   curThinkText += txt;
-  curThink.textContent = curThinkText;
-  keepBottom();
+  if (!thinkPaint) thinkPaint = requestAnimationFrame(() => { thinkPaint = 0; if (curThink) curThink.textContent = curThinkText; keepBottom(); });
 }
 const capOut = s => s.length > 12000 ? s.slice(0, 12000) + `\n…(${s.length - 12000} chars truncated)` : s;
 function toolStart(ev) {
@@ -201,7 +216,7 @@ function toolStart(ev) {
   const el = append(g, toolHTML(['run', name, ev.summary || '', '', ''], { cls: 'enter', start: performance.now(), body: editPreviewHTML(ev.name, ev.args), sumHtml: fpArgSum(ev.name, ev.args) }));
   refreshGroup(g);
   runningTools.push({ el, name: ev.name, lane: ev.lane || 0, depth: ev.depth || 0, call_id: ev.call_id || null, t0: performance.now() });
-  curBubble = null; sealThink(); // next text/reasoning opens fresh blocks in timeline position
+  sealBubble(); sealThink(); // next text/reasoning opens fresh blocks in timeline position
 }
 function toolDone(ev) {
   // exact join key first — same-name calls in one turn mispair without it;
@@ -252,7 +267,7 @@ function addArtifact(ev) {
   const host = msgHost();
   const el = append(host, islandHTML(ev));
   el.classList.add('enter');
-  curBubble = null; sealThink();
+  sealBubble(); sealThink();
   refreshNotes(el, ev.name);
   refreshRevs(el, ev.name, ev.rev || 0);
   probeApp(el, ev.name);
@@ -306,11 +321,23 @@ function applyGoalEvent(g, log) {
 function logEv(type, detail) {
   EVLOG.push([clock(true), type, detail]);
   if (EVLOG.length > 500) EVLOG.splice(0, EVLOG.length - 500);
-  if (popEl && popEl.classList.contains('events')) popEl.innerHTML = eventsHTML();
+  // the open events popover appends one row + refreshes the count — a full
+  // innerHTML rebuild per event was a 500-row rewrite per tool frame
+  if (popEl && popEl.classList.contains('events')) {
+    const head = popEl.querySelector('.ev-h span');
+    const list = popEl.querySelector('.ev-list');
+    if (head) head.textContent = t('{n} 条', { n: EVLOG.length });
+    if (list) {
+      list.querySelector('.empty-row')?.remove();
+      list.insertAdjacentHTML('beforeend', evRow(EVLOG[EVLOG.length - 1]));
+      while (list.children.length > 500) list.firstElementChild.remove();
+    }
+  }
 }
 const EV_LABELS = { started: t('开始'), message: t('对话'), tool_call: t('工具调用'), tool_result: t('工具结果'), approval: t('审批'), artifact: t('生成内容'), usage: t('用量'), hook: t('状态'), note: t('记录'), goal: t('目标') };
+const evRow = e => `<div class="ev-l"><span class="t">${e[0]}</span><span class="e ${e[1]}">${esc(EV_LABELS[e[1]] || e[1])}</span><span class="d">${esc(e[2])}</span></div>`;
 function eventsHTML() {
-  return `<div class="ev-h">${t('执行记录')}<span>${t('{n} 条', { n: EVLOG.length })}</span></div><div class="ev-list scroll">${EVLOG.map(e => `<div class="ev-l"><span class="t">${e[0]}</span><span class="e ${e[1]}">${esc(EV_LABELS[e[1]] || e[1])}</span><span class="d">${esc(e[2])}</span></div>`).join('') || '<div class="empty-row">' + t('暂无记录') + '</div>'}</div>`;
+  return `<div class="ev-h">${t('执行记录')}<span>${t('{n} 条', { n: EVLOG.length })}</span></div><div class="ev-list scroll">${EVLOG.map(evRow).join('') || '<div class="empty-row">' + t('暂无记录') + '</div>'}</div>`;
 }
 
 /* ================= replay ================= */
@@ -499,6 +526,12 @@ function updateHero() {
   // the hidden flag — otherwise `out` never comes off and the hero
   // (logo, title, mode switch) stays permanently invisible
   const h = $('#hero'), empty = !TX.children.length;
+  // steady state — hero hidden + transcript populated is where a running
+  // session sits; streamed tokens used to pay the whole update per frame
+  if (!empty && h.hidden && !h.classList.contains('out')) {
+    const pj = $('#cmp-proj'); if (pj && !pj.hidden) pj.hidden = true;
+    return;
+  }
   // the composer's project-pick row exists only on the empty surface —
   // glued to the same emptiness truth as the hero
   const pj = $('#cmp-proj');

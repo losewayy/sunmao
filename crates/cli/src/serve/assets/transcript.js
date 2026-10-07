@@ -493,9 +493,15 @@ function renderReplay(events, anim) {
 }
 function updateHero() {
   // transition-only: live frames arrive per-token while a session is still
-  // empty — re-running the play scene on each would strobe the mark
+  // empty — re-running the play scene on each would strobe the mark.
+  // Visibility is a TRILEMMA — `hidden`, shown, or shown-but-`out` (fading):
+  // a session swap can land out+play together when an update ran against
+  // the old transcript mid-fadeSwap, so guard on real visibility, not just
+  // the hidden flag — otherwise `out` never comes off and the hero
+  // (logo, title, mode switch) stays permanently invisible
   const h = $('#hero'), empty = !TX.children.length;
-  if (h.hidden === !empty) return;
+  const visible = !h.hidden && !h.classList.contains('out');
+  if (visible === empty) return;
   if (empty) { h.hidden = false; h.classList.remove('out', 'play'); void h.offsetWidth; h.classList.add('play'); return; }
   h.classList.add('out'); // the 560ms staged entrance earns a fade, not a cut
   setTimeout(() => { if (!h.classList.contains('play')) h.hidden = true; }, motion.dur('fast'));

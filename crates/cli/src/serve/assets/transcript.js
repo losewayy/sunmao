@@ -466,13 +466,8 @@ function renderReplay(events, anim) {
       append(host, `<div class="notice glass enter">${ic(ev.ok ? 'check' : 'x', 'i sm')}<span>${t(ev.ok ? '子代理 {id} 完成' : '子代理 {id} 失败', { id: `<code>${esc(ev.id)}</code>` })}</span></div>`);
       logEv('tool_result', `task ${ev.id} ${ev.ok ? 'ok' : 'err'}`);
     } else if (ty === 'todos') {
-      // durable state, not transcript — a replay shows it once, as a
-      // note; an empty write still marks "the list WAS cleared".
-      const items = ev.items || [];
-      const mark = { done: 'x', in_progress: '>', pending: ' ' };
-      addNote(items.length
-        ? 'task list:\n' + items.map(i => `- [${mark[i.status] || ' '}] ${i.content}`).join('\n')
-        : 'task list cleared');
+      // durable state pinned in the dock pane — a transcript note per write
+      // was noise on top of a surface that already shows the same list
     } else if (ty === 'goal' && ev.goal) {
       // status/objective flips are transcript-worthy; round bumps just
       // re-render the chip — otherwise a long run's replay is all noise
@@ -558,13 +553,7 @@ function liveEvent(raw) {
     logEv('message', t('你：') + c.slice(0, 60));
   }
   else if (ty === 'turn_boundary') { stampBoundary(ev.ordinal || 0); }
-  else if (ty === 'todos') {
-    const items = ev.items || [];
-    const mark = { done: 'x', in_progress: '>', pending: ' ' };
-    addNote(items.length
-      ? 'task list:\n' + items.map(i => `- [${mark[i.status] || ' '}] ${i.content}`).join('\n')
-      : 'task list cleared');
-  }
+  else if (ty === 'todos') { /* dock pane owns the live list — no transcript echo */ }
   else if (ty === 'goal' && ev.goal) {
     if (applyGoalEvent(ev.goal, true)) {
       addNote(`goal · ${GOAL_STATUS[ev.goal.status] || ev.goal.status}: ${ev.goal.objective || ''}` +

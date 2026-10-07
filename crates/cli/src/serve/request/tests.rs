@@ -61,7 +61,8 @@ pub(super) fn shared_at(cwd: std::path::PathBuf) -> super::super::host::Shared {
     use std::sync::atomic::AtomicU64;
     use std::sync::{Arc, Mutex};
     use tokio::sync::{broadcast, mpsc};
-    let (live, _) = broadcast::channel::<serde_json::Value>(8);
+    let (tx, _) = broadcast::channel::<std::sync::Arc<crate::serve::host::LiveFrame>>(8);
+    let live = crate::serve::host::LiveBus(tx);
     let (mgmt, _rx) = mpsc::unbounded_channel();
     super::super::host::Shared {
         cwd,
@@ -366,7 +367,7 @@ async fn ui_route_persists_appearance_object() {
         serde_json::from_slice(&h.request("GET", "/ui", b"").await.body).unwrap();
     assert_eq!(reread["ui"]["panelOpacity"], 0.8);
     assert_eq!(
-        rx.try_recv().unwrap()["type"].as_str().unwrap(),
+        rx.try_recv().unwrap().value["type"].as_str().unwrap(),
         "ui_changed"
     );
 
@@ -452,7 +453,7 @@ async fn wallpaper_route_roundtrips_and_rotates() {
     assert_eq!(put.status, 200);
     assert!(root.join(".sunmao/wallpapers/custom.png").exists());
     assert_eq!(
-        rx.try_recv().unwrap()["type"].as_str().unwrap(),
+        rx.try_recv().unwrap().value["type"].as_str().unwrap(),
         "wallpaper_changed"
     );
     let got = h.request("GET", "/wallpaper", b"").await;
@@ -504,7 +505,7 @@ async fn wallpaper_route_roundtrips_and_rotates() {
     assert_eq!(del.status, 200);
     assert!(!root.join(".sunmao/wallpapers/custom.jpg").exists());
     assert_eq!(
-        rx.try_recv().unwrap()["type"].as_str().unwrap(),
+        rx.try_recv().unwrap().value["type"].as_str().unwrap(),
         "wallpaper_changed"
     );
     assert_eq!(h.request("GET", "/wallpaper", b"").await.status, 404);

@@ -112,7 +112,7 @@ fn draft_text(st: &ProgressState) -> String {
 /// live bus to this session's frames.
 pub async fn run(
     sess: String,
-    mut rx: broadcast::Receiver<serde_json::Value>,
+    mut rx: broadcast::Receiver<std::sync::Arc<crate::serve::host::LiveFrame>>,
     state: Shared,
     channels: Vec<Arc<Delivery>>,
 ) {
@@ -122,15 +122,15 @@ pub async fn run(
             Err(broadcast::error::RecvError::Lagged(_)) => continue,
             Err(broadcast::error::RecvError::Closed) => return,
         };
-        if frame["sess"].as_str() != Some(sess.as_str()) {
+        if frame.value["sess"].as_str() != Some(sess.as_str()) {
             continue;
         }
-        match frame["type"].as_str().unwrap_or("") {
-            "live" => handle_live(&frame["event"], &state).await,
+        match frame.value["type"].as_str().unwrap_or("") {
+            "live" => handle_live(&frame.value["event"], &state).await,
             // slash-command replies (`note` frames) belong to whoever has a
             // pending turn — deliver verbatim through the ledger
             "note" => {
-                let text = frame["text"].as_str().unwrap_or_default().to_string();
+                let text = frame.value["text"].as_str().unwrap_or_default().to_string();
                 if !text.is_empty() {
                     let keys = pending_of(&state.lock().unwrap());
                     for key in keys {
@@ -145,7 +145,7 @@ pub async fn run(
         // any event is a reason to maybe-refresh drafts — the throttle
         // inside tick() caps it
         tick(&state, &channels).await;
-        flush_on_turn_end(&frame, &state, &channels).await;
+        flush_on_turn_end(&frame.value, &state, &channels).await;
     }
 }
 

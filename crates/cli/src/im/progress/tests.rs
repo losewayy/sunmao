@@ -300,15 +300,15 @@ async fn both_channels_get_turn_end_final() {
             Arc::new(Delivery::new(s.clone(), beta.clone())),
         ],
     ));
-    tx.send(serde_json::json!({
+    tx.send(crate::serve::host::LiveFrame::new(serde_json::json!({
         "sess": "s1", "type": "live",
         "event": {"type": "content", "text": "hello"},
-    }))
+    })))
     .unwrap();
-    tx.send(serde_json::json!({
+    tx.send(crate::serve::host::LiveFrame::new(serde_json::json!({
         "sess": "s1", "type": "live",
         "event": {"type": "turn_end", "outcome": "ok"},
-    }))
+    })))
     .unwrap();
     wait_for(|| alpha.sent("1", "hello") && beta.sent("2", "hello")).await;
     assert!(

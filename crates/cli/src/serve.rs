@@ -172,7 +172,8 @@ pub(crate) struct HostSpec {
 /// origin — the HTTP path fills in its sandbox listener's port, the Tauri
 /// shell passes 0 (the frontend substitutes the `sunmao-sandbox` scheme).
 pub(crate) async fn spawn_host(spec: HostSpec, sandbox_port: u16) -> Result<HostHandle> {
-    let (live, _) = broadcast::channel::<serde_json::Value>(512);
+    let (tx, _) = broadcast::channel::<std::sync::Arc<host::LiveFrame>>(512);
+    let live = host::LiveBus(tx);
     let (mgmt_tx, mgmt_rx) = mpsc::unbounded_channel::<SessionOp>();
     let shared = Arc::new(host::Shared {
         cwd: spec.cwd,

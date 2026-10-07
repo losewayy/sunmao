@@ -61,6 +61,38 @@ pub(crate) struct Host {
     pub(crate) adopted: u64,
 }
 
+/// One fan-out frame: the structured `Value` for consumers that inspect
+/// fields (IM lanes, tests), plus the wire text serialized ONCE at emit —
+/// a ws subscriber used to `to_string` the same frame all over again.
+#[derive(Debug)]
+pub struct LiveFrame {
+    pub value: serde_json::Value,
+    pub text: std::sync::Arc<str>,
+}
+
+impl LiveFrame {
+    pub fn new(v: serde_json::Value) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            text: v.to_string().into(),
+            value: v,
+        })
+    }
+}
+
+/// Thin bus wrapper so `live.send(value)` keeps its call signature while
+/// the serialize-per-subscriber cost moves to the single emit point.
+#[derive(Clone)]
+pub struct LiveBus(pub broadcast::Sender<std::sync::Arc<LiveFrame>>);
+
+impl LiveBus {
+    pub fn send(&self, v: serde_json::Value) {
+        let _ = self.0.send(LiveFrame::new(v));
+    }
+    pub fn subscribe(&self) -> broadcast::Receiver<std::sync::Arc<LiveFrame>> {
+        self.0.subscribe()
+    }
+}
+
 /// The multi-session host: a registry of live sessions plus the global bus
 /// every outbound frame fans out over (each carries its `sess` tag — the
 /// frontend keeps the transcript scoped per tab, the rail reads every
@@ -70,7 +102,7 @@ pub(crate) struct Shared {
     pub(crate) roots: Vec<std::path::PathBuf>,
     /// All host-originated traffic — one broadcast, `sess` carries the
     /// routing key. Session-less frames omit it.
-    pub(crate) live: broadcast::Sender<serde_json::Value>,
+    pub(crate) live: LiveBus,
     /// live session hosts by id
     pub(crate) sessions: Mutex<HashMap<String, Arc<Host>>>,
     /// builds a fully-seeded Context for a log (the startup assembly,
@@ -172,7 +204,7 @@ pub(crate) async fn mgmt_loop(s: Arc<Shared>, mut rx: mpsc::UnboundedReceiver<Se
 impl Shared {
     /// Fan-out helper — one tagged frame over the global bus.
     pub(crate) fn emit(&self, v: serde_json::Value) {
-        let _ = self.live.send(v);
+        self.live.send(v);
     }
 
     /// The host for a session id, if it's live.

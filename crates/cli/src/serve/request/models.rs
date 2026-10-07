@@ -367,7 +367,8 @@ mod tests {
     fn shared_at(cwd: std::path::PathBuf) -> Shared {
         use std::sync::Mutex;
         use tokio::sync::{broadcast, mpsc};
-        let (live, _) = broadcast::channel::<serde_json::Value>(8);
+        let (tx, _) = broadcast::channel::<std::sync::Arc<crate::serve::host::LiveFrame>>(8);
+        let live = crate::serve::host::LiveBus(tx);
         let (mgmt, _rx) = mpsc::unbounded_channel();
         Shared {
             cwd,

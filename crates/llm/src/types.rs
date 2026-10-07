@@ -81,15 +81,56 @@ impl Content {
     }
 }
 
+/// Image bytes → base64, cached on (mtime, len) — an attached image used
+/// to re-read + re-encode on EVERY request of the session (each turn's
+/// message list carries the block again). Attachments are immutable by
+/// convention; the stat pair still re-checks in case one was rewritten.
+async fn resolve_image(path: &str) -> anyhow::Result<std::sync::Arc<str>> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, (u64, u64, std::sync::Arc<str>)>>> =
+        OnceLock::new();
+    let meta = tokio::fs::metadata(path).await?;
+    let key = (
+        meta.modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+        meta.len(),
+    );
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(path)
+        .and_then(|(mt, ln, d)| (*mt == key.0 && *ln == key.1).then(|| d.clone()))
+    {
+        return Ok(hit);
+    }
+    let bytes = tokio::fs::read(path).await?;
+    use base64::Engine;
+    let data: std::sync::Arc<str> = base64::engine::general_purpose::STANDARD
+        .encode(bytes)
+        .into();
+    let mut c = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if c.len() >= 64 {
+        c.clear();
+    }
+    c.insert(path.to_string(), (key.0, key.1, data.clone()));
+    Ok(data)
+}
+
 /// A content block resolved for the wire — `Image` has been read off disk
 /// and base64'd (or degraded to a text marker when the file is gone).
 #[derive(Debug)]
 pub enum ResolvedBlock {
     Text(String),
-    /// (mime, base64 data)
+    /// (mime, base64 data) — Arc so a cached attachment hands the same
+    /// allocation to every request that re-embeds it
     Image {
         mime: String,
-        data: String,
+        data: std::sync::Arc<str>,
     },
 }
 
@@ -100,14 +141,11 @@ impl Content {
     pub async fn resolve(&self) -> ResolvedBlock {
         match self {
             Content::Text { text } => ResolvedBlock::Text(text.clone()),
-            Content::Image { path, mime } => match tokio::fs::read(path).await {
-                Ok(bytes) => {
-                    use base64::Engine;
-                    ResolvedBlock::Image {
-                        mime: mime.clone(),
-                        data: base64::engine::general_purpose::STANDARD.encode(bytes),
-                    }
-                }
+            Content::Image { path, mime } => match resolve_image(path).await {
+                Ok(data) => ResolvedBlock::Image {
+                    mime: mime.clone(),
+                    data,
+                },
                 Err(_) => ResolvedBlock::Text(format!("[missing image: {path}]")),
             },
         }

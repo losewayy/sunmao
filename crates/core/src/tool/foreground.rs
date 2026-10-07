@@ -82,7 +82,8 @@ pub(super) async fn job_run(
     ctx: &Arc<crate::context::Context>,
 ) -> anyhow::Result<LocalShell> {
     let paths = jobs::JobPaths::create(ctx, jobs::next_job_id())?;
-    let notifier = jobs::JobNotifier::from_ctx(ctx).await;
+    // the notifier pins a second handle onto the session log — only a run
+    // that detaches ever uses it, so build it there, not per call
     let mut run = match spawn_run(list, cwd, Some(&paths)) {
         Ok(r) => r,
         Err(e) => {
@@ -105,6 +106,7 @@ pub(super) async fn job_run(
         // keeps writing it, and completion arrives as a pushed fact.
         let output = run.out.text();
         let (id, log_path, pid) = (run.id.clone(), run.log_path.clone(), run.pid);
+        let notifier = jobs::JobNotifier::from_ctx(ctx).await;
         jobs::hand_off(
             run,
             notifier,
@@ -128,10 +130,11 @@ pub(super) async fn job_run(
         preflight: notes.join("\n"),
         ended: jobs::ended_note(end.ended, label),
     };
-    jobs::conclude(&notifier, &ctx.jobs, &run.id, &run.dir, end.code, false).await;
-    // an inline run leaves nothing behind: its result is the tool result, and
-    // both the jobs panel and the session roster read the disk — a plain `ls`
-    // must not become a row in either
+    // an inline run leaves nothing behind: its result is the tool result,
+    // both the jobs panel and the session roster read the disk — a plain
+    // `ls` must not become a row in either. Skipping conclude() saves the
+    // exit.json write + a jobs.changed broadcast whose only effect was a
+    // full jobs-dir rescan on the frontend.
     jobs::retire(&ctx.jobs, &run.id, &run.dir);
     Ok(LocalShell::Done(run_out))
 }

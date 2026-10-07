@@ -75,13 +75,16 @@ impl ToolImpl for RunCodeTool {
             "Run a JavaScript program in a sandbox that orchestrates this session's tools. \
              `await tools.<Name>(args)` calls any registered tool through the normal \
              permission/approval pipeline (arg shape = that tool's schema; result = \
-             {ok, output}); `await describe()` lists the callable tools; `await store(key, \
-             value)`/`await load(key)` persist JSON values across calls. Use Promise.all \
-             for parallel calls and keep intermediate data in the script — only `return`ed \
-             values enter the transcript. The sandbox has no fs/network/import: tools are \
-             the only capabilities. The script's completion value is the result — end with \
-             an expression; top-level `await`/`return` also work (a script that can't parse \
-             plainly retries inside an async wrapper).",
+             {ok, output}, shell tools also carry a real `exit_code`); `await describe()` \
+             lists the callable tools; `await store(key, value)`/`await load(key)` persist \
+             JSON values across calls. `console.log/warn/error` output rides back with the \
+             result under a [console] section — log checkpoints in long scripts. Use \
+             Promise.all for parallel calls and keep intermediate data in the script — \
+             only `return`ed values enter the transcript. The sandbox has no \
+             fs/network/import: tools are the only capabilities. The script's completion \
+             value is the result — end with an expression; top-level `await`/`return` \
+             also work (a script that can't parse plainly retries inside an async \
+             wrapper).",
             json!({
                 "type": "object",
                 "properties": {

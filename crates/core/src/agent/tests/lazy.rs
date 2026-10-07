@@ -52,6 +52,9 @@ fn small_catalog_stays_eager() {
     let ctx = ctx_with(builtin_registry());
     let n = names(&ctx);
     assert!(n.contains("WebFetch") && n.contains("HtmlArtifact"));
+    // RunCode is a real standard-mode capability — the ptc driver owns the
+    // "advertised nowhere else" carve-out, not the standard surface
+    assert!(n.contains("RunCode"));
     assert!(!n.contains("SearchTools") && !n.contains("FusionExecute"));
 }
 
@@ -75,6 +78,9 @@ async fn fat_catalog_defers_and_searchtools_promotes() {
         "Grep",
         "Task",
         "SearchTools",
+        // RunCode must NOT fall off the wire when the catalog grows — the
+        // eager surface already ships it, so the lazy one must too
+        "RunCode",
     ] {
         assert!(n.contains(hot), "hot tool {hot} must stay advertised");
     }

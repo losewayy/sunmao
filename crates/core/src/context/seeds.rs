@@ -273,6 +273,37 @@ impl Context {
     /// empty `FusionState` — its next delegation spawns a fresh Sidekick
     /// (the abandoned one's log stays resumable on disk, like any
     /// orphaned sub-agent).
+    /// Union every persisted pin record back in — a restarted session's
+    /// model must see every tool it saw before the restart, or the surface
+    /// "restart-shrink" bug is just the mid-session one moved a boundary
+    /// over.
+    pub fn reseed_tool_surface(&self, events: &[crate::session::SessionEvent]) {
+        let mut pins = self.advertised_pins.lock_or_recover();
+        for ev in events {
+            if let crate::session::SessionEvent::ToolSurface { pinned } = ev {
+                for n in pinned {
+                    pins.insert(n.clone());
+                }
+            }
+        }
+    }
+
+    /// Append the current pin set as a durable `ToolSurface` fact — only
+    /// when it moved since the last write, so a stable surface costs zero
+    /// log lines. Runs at a request boundary (the caller's async turn
+    /// loop), never mid-tool-pair.
+    pub async fn persist_tool_surface(&self) {
+        let pins = self.advertised_pins.lock_or_recover().clone();
+        if pins.is_empty() || pins == *self.persisted_pins.lock_or_recover() {
+            return;
+        }
+        let ev = crate::session::SessionEvent::ToolSurface {
+            pinned: pins.iter().cloned().collect(),
+        };
+        self.sessions.lock().await.append_audit(&ev).await;
+        *self.persisted_pins.lock_or_recover() = pins;
+    }
+
     pub fn reseed_turn_mode(&self, events: &[crate::session::SessionEvent]) {
         let mode = events
             .iter()

@@ -357,6 +357,10 @@ impl App {
                     lane,
                     call_id,
                 } => self.tool_done(name, *ok, output, *depth, *lane, Some(call_id)),
+                E::ToolSurface { .. } => {
+                    // advertised-tool pin snapshot — durable fact, not a
+                    // transcript row; folds silently like PtcStore/Usage
+                }
                 E::PtcStore { .. } => {
                     // sandbox KV bookkeeping — durable fact, not a
                     // transcript row (same posture as Goal/Todos are…

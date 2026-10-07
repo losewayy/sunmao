@@ -212,6 +212,10 @@ pub struct Context {
     /// shrinking tool list also busts provider prompt caches: the tools
     /// block anchors the prefix.)
     pub advertised_pins: std::sync::Mutex<std::collections::BTreeSet<String>>,
+    /// The pin set as last persisted into the log — `persist_tool_surface`
+    /// diffs against it so a stable surface doesn't spam one event per
+    /// request.
+    pub persisted_pins: std::sync::Mutex<std::collections::BTreeSet<String>>,
     /// Live sub-agent roster — detached `Task` spawns register here,
     /// completion flips `done`. `/tasks` reads it; sub-agent contexts get
     /// their own (a child's roster is its own spawn tree's, not ours).
@@ -489,6 +493,7 @@ impl Context {
             hook_tail: std::sync::Mutex::new(Vec::new()),
             promoted_tools: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             advertised_pins: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+            persisted_pins: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             jobs: crate::tool::jobs::new_table(),
             todos: std::sync::Mutex::new(todos),

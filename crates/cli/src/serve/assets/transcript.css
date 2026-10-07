@@ -11,7 +11,12 @@
 .tx mark{background:var(--c-hi);color:inherit;border-radius:var(--r-xs)}
 .tx mark.cur{box-shadow:var(--ring-accent)}
 /* ---------- transcript ---------- */
-.scroller{position:absolute;inset:0;overflow-y:auto;padding:var(--s-64) var(--s-24) calc(var(--s-64) * 2 + var(--s-40));scroll-padding-bottom:calc(var(--s-64) * 2 + var(--s-40))}
+/* bottom clearance rides the MEASURED composer height (--off-hero-bottom
+   is published by composer's ResizeObserver), not a static guess — the
+   queue/attachment/hero-proj rows grow the card and a stale constant is
+   why the last lines end up under the glass. The +s-24 keeps a gap under
+   the composer's rounded edge. */
+.scroller{position:absolute;inset:0;overflow-y:auto;padding:var(--s-64) var(--s-24) calc(var(--off-hero-bottom, 168px) + var(--s-24));scroll-padding-bottom:calc(var(--off-hero-bottom, 168px) + var(--s-24))}
 .tx{max-width:var(--w-read);margin:0 auto}
 .msg{margin-top:var(--s-32)}
 .msg:first-child{margin-top:var(--s-4)}

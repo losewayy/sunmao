@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 use sunmao_llm::types::{Message, ToolCall};
 
@@ -206,6 +206,27 @@ pub struct SessionLog {
     /// Shared so `fork_writer` can hand a detached child a handle that
     /// keeps appending to THIS log after the parent swaps sessions.
     mem: std::sync::Arc<tokio::sync::Mutex<Vec<SessionEvent>>>,
+    /// incremental parse cache — the file is append-only, so `events()`
+    /// re-reads only the tail since the last call instead of re-parsing
+    /// the whole log every LLM iteration. `epoch` bumps on a shrink
+    /// (rewind/rewrite) so folded state can tell one epoch from the next.
+    parse_cache: tokio::sync::Mutex<Option<ParseCache>>,
+    /// incremental fold — pre-repair `Message` list plus how many events
+    /// it consumed; `repair_dangling_calls` runs per call on the clone so
+    /// a ToolResult appended later still repairs the earlier orphan.
+    fold_cache: tokio::sync::Mutex<Option<FoldCache>>,
+}
+
+struct ParseCache {
+    off: u64,
+    epoch: u64,
+    events: Vec<SessionEvent>,
+}
+
+struct FoldCache {
+    epoch: u64,
+    consumed: usize,
+    msgs: Vec<Message>,
 }
 
 impl SessionLog {
@@ -231,6 +252,8 @@ impl SessionLog {
             path,
             file: Some(file),
             mem: std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            parse_cache: tokio::sync::Mutex::new(None),
+            fold_cache: tokio::sync::Mutex::new(None),
         })
     }
 
@@ -278,6 +301,8 @@ impl SessionLog {
             path: path.to_path_buf(),
             file: Some(file),
             mem: std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            parse_cache: tokio::sync::Mutex::new(None),
+            fold_cache: tokio::sync::Mutex::new(None),
         })
     }
 
@@ -287,6 +312,8 @@ impl SessionLog {
             path: PathBuf::new(),
             file: None,
             mem: std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            parse_cache: tokio::sync::Mutex::new(None),
+            fold_cache: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -309,6 +336,8 @@ impl SessionLog {
             path: self.path.clone(),
             file,
             mem: self.mem.clone(),
+            parse_cache: tokio::sync::Mutex::new(None),
+            fold_cache: tokio::sync::Mutex::new(None),
         })
     }
 
@@ -340,19 +369,64 @@ impl SessionLog {
 
     /// The full event vector — for transcript replay (TUI resume renders
     /// blocks from these) and any consumer that wants facts, not the fold.
+    /// Append-only lets us be incremental: only bytes past the last read
+    /// get parsed; a shrink (rewind) starts a fresh epoch.
     pub async fn events(&self) -> anyhow::Result<Vec<SessionEvent>> {
         if self.file.is_none() {
             return Ok(self.mem.lock().await.clone());
         }
-        let file = tokio::fs::File::open(&self.path).await?;
-        let mut lines = tokio::io::BufReader::new(file).lines();
-        let mut out = Vec::new();
-        while let Some(line) = lines.next_line().await? {
-            if let Ok(ev) = serde_json::from_str::<SessionEvent>(&line) {
-                out.push(ev);
+        let mut c = self.parse_cache.lock().await;
+        let meta_len = tokio::fs::metadata(&self.path).await?.len();
+        let mut pc = match c.take() {
+            Some(pc) if meta_len >= pc.off => pc,
+            Some(pc) => ParseCache {
+                off: 0,
+                epoch: pc.epoch + 1,
+                events: Vec::new(),
+            },
+            None => ParseCache {
+                off: 0,
+                epoch: 1,
+                events: Vec::new(),
+            },
+        };
+        if meta_len > pc.off {
+            use tokio::io::{AsyncReadExt, AsyncSeekExt};
+            let mut file = tokio::fs::File::open(&self.path).await?;
+            file.seek(std::io::SeekFrom::Start(pc.off)).await?;
+            let mut buf = Vec::new();
+            file.read_to_end(&mut buf).await?;
+            // only consume up to the last newline — a writer mid-append may
+            // leave a partial tail line; advancing `off` past it would drop
+            // the event permanently once the line completes
+            let upto = buf
+                .iter()
+                .rposition(|&b| b == b'\n')
+                .map(|i| i + 1)
+                .unwrap_or(0);
+            for line in buf[..upto].split(|&b| b == b'\n') {
+                if line.is_empty() {
+                    continue;
+                }
+                if let Ok(ev) = serde_json::from_slice::<SessionEvent>(line) {
+                    pc.events.push(ev);
+                }
             }
+            pc.off += upto as u64;
         }
+        let out = pc.events.clone();
+        *c = Some(pc);
         Ok(out)
+    }
+
+    /// The (parse generation, event count) the fold cache keys on —
+    /// rewind bumps `epoch`, so a stale fold never leaks across epochs.
+    async fn fold_key(&self) -> (u64, usize) {
+        let c = self.parse_cache.lock().await;
+        match &*c {
+            Some(pc) => (pc.epoch, pc.events.len()),
+            None => (0, 0),
+        }
     }
 
     /// Fold the whole log into the message list the provider sees.
@@ -372,17 +446,24 @@ impl SessionLog {
             }
             return Ok(repair_dangling_calls(out));
         }
-        let file = tokio::fs::File::open(&self.path).await?;
-        let mut lines = tokio::io::BufReader::new(file).lines();
-        while let Some(line) = lines.next_line().await? {
-            match serde_json::from_str::<SessionEvent>(&line) {
-                Ok(ev) => reduce_event(&mut out, &ev),
-                Err(e) => {
-                    tracing::warn!("{}: skipping corrupt event line — {e}", self.path.display())
-                }
-            }
+        let events = self.events().await?;
+        let (epoch, total) = self.fold_key().await;
+        let mut fc = self.fold_cache.lock().await;
+        let mut fold = match fc.take() {
+            Some(f) if f.epoch == epoch && f.consumed <= total => f,
+            _ => FoldCache {
+                epoch,
+                consumed: 0,
+                msgs: Vec::new(),
+            },
+        };
+        for ev in &events[fold.consumed..] {
+            reduce_event(&mut fold.msgs, ev);
         }
-        Ok(repair_dangling_calls(out))
+        fold.consumed = total;
+        let out = repair_dangling_calls(fold.msgs.clone());
+        *fc = Some(fold);
+        Ok(out)
     }
 }
 

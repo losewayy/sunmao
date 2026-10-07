@@ -95,8 +95,11 @@
 .tm.e{font:var(--fs-xs) var(--font-ui);color:var(--c-err)}
 .tool-h .chev{color:var(--c-text-3);transition:transform var(--dur-fast) var(--ease-out)}
 .tool.open .chev{transform:rotate(90deg)}
-.tool-o{display:none;padding:0 var(--s-10) var(--s-10) var(--s-32)}
-.tool.open .tool-o{display:block}
+/* collapse rides height (0↔auto, eased) instead of a display flip — the
+   "pop" was the hard display toggle; padding-bottom collapses with it so
+   the closed state is truly 0px */
+.tool-o{display:block;height:0;overflow:hidden;padding:0 var(--s-10) 0 var(--s-32);transition:height var(--dur-base) var(--ease-out),padding-bottom var(--dur-base) var(--ease-out)}
+.tool.open .tool-o{height:auto;padding-bottom:var(--s-10)}
 .tool-o pre{margin:0;padding:var(--s-8) var(--s-10);border-radius:var(--r-md);background:var(--c-sunken);font:var(--fs-xs)/var(--lh-code) var(--font-mono);color:var(--c-text-2);white-space:pre;overflow-x:auto;user-select:text}
 .tool-o .diff{margin:0;padding:var(--s-2) 0;border-radius:var(--r-md);background:var(--c-sunken);font:var(--fs-xs)/var(--lh-code) var(--font-mono);overflow-x:auto;user-select:text}
 .diff .dl{display:flex;white-space:pre}
@@ -167,8 +170,8 @@
 .tx>.note-line,.tx>.audit,.tx>.approve,.tx>.notice{margin-top:var(--s-12)}
 .think .i{color:var(--c-text-3);transition:transform var(--dur-fast) var(--ease-out)}
 .think.open .i{transform:rotate(90deg)}
-.think-o{display:none;padding:var(--s-8) var(--s-12);border-radius:var(--r-lg);font-size:var(--fs-sm);line-height:var(--lh-body);color:var(--c-text-2);width:fit-content;max-width:100%;white-space:pre-wrap;user-select:text}
-.think.open+.think-o{display:block}
+.think-o{display:block;height:0;overflow:hidden;padding:0 var(--s-12);border-radius:var(--r-lg);font-size:var(--fs-sm);line-height:var(--lh-body);color:var(--c-text-2);width:fit-content;max-width:100%;white-space:pre-wrap;user-select:text;transition:height var(--dur-base) var(--ease-out),padding var(--dur-base) var(--ease-out)}
+.think.open+.think-o{height:auto;padding:var(--s-8) var(--s-12)}
 .think.live .i{animation:k-breathe var(--loop-breathe) var(--ease-in-out) infinite}
 .notice{display:flex;align-items:flex-start;gap:var(--s-10);width:fit-content;max-width:100%;padding:var(--s-10) var(--s-12);border-radius:var(--r-lg);font-size:var(--fs-sm);line-height:var(--lh-code);color:var(--c-text-2)}
 .notice .i{margin-top:var(--s-2);color:var(--c-text-3)}

@@ -17,17 +17,23 @@ sunmao.register({
       title: t('待办'),
       icon: 'square-check',
       mount(el, host) {
-        let items = [];
+        // null = TodoWrite never ran this session; [] = it ran and cleared.
+        // Collapsing the two hides "I emptied the list" from the agent's own
+        // audit trail.
+        let items = null;
         const MARK = { done: '☑', in_progress: '▶', pending: '☐' };
         const render = () => {
-          el.innerHTML = `<section class="df"><div class="df-h"><span>${host.t('待办')}</span><span class="df-cnt">${items.filter(i => i.status === 'done').length}/${items.length}</span></div>` +
-            (items.length
-              ? `<div class="plg-todos">${items.map(i => `<div class="plg-todo ${host.esc(i.status || 'pending')}"><span class="plg-mark">${MARK[i.status] || '☐'}</span><span>${host.esc(i.content || '')}</span></div>`).join('')}</div>`
-              : `<div class="empty-hint">${host.t('会话还没有任务列表')}</div>`) +
+          const done = (items || []).filter(i => i.status === 'done').length;
+          el.innerHTML = `<section class="df"><div class="df-h"><span>${host.t('待办')}</span>${items ? `<span class="df-cnt">${done}/${items.length}</span>` : ''}</div>` +
+            (items === null
+              ? `<div class="empty-hint">${host.t('会话还没有任务列表')}</div>`
+              : items.length === 0
+                ? `<div class="empty-hint">${host.t('任务列表已清空')}</div>`
+                : `<div class="plg-todos">${items.map(i => `<div class="plg-todo ${host.esc(i.status || 'pending')}"><span class="plg-mark">${MARK[i.status] || '☐'}</span><span>${host.esc(i.content || '')}</span></div>`).join('')}</div>`) +
             `</section>`;
         };
         host.on('live', ev => { if (ev.type === 'todos') { items = ev.items || []; render(); } });
-        host.on('session', () => { items = []; render(); });
+        host.on('session', () => { items = null; render(); });
         render();
       },
     }],

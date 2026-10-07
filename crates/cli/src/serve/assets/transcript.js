@@ -287,8 +287,7 @@ function goalLive() { return !!curGoal && (curGoal.status === 'in_progress' || c
 function renderGoalChip() {
   const el = $('#cmp-goal');
   if (!goalLive()) { el.hidden = true; el.textContent = ''; return; }
-  const obj = curGoal.objective || '';
-  const cut = [...obj].slice(0, 18).join('') + ([...obj].length > 18 ? '…' : '');
+  const cut = [...(curGoal.objective || '')].slice(0, 18).join('') + ([...(curGoal.objective || '')].length > 18 ? '…' : '');
   el.innerHTML = `<b>◎</b>${esc(cut)} · ${GOAL_STATUS[curGoal.status] || curGoal.status} · ${t('轮 {n}/{m}', { n: curGoal.rounds, m: curGoal.max_rounds })}`;
   el.hidden = false;
 }
@@ -467,12 +466,13 @@ function renderReplay(events, anim) {
       append(host, `<div class="notice glass enter">${ic(ev.ok ? 'check' : 'x', 'i sm')}<span>${t(ev.ok ? '子代理 {id} 完成' : '子代理 {id} 失败', { id: `<code>${esc(ev.id)}</code>` })}</span></div>`);
       logEv('tool_result', `task ${ev.id} ${ev.ok ? 'ok' : 'err'}`);
     } else if (ty === 'todos') {
-      // durable state, not transcript — a replay shows it once, as a note
+      // durable state, not transcript — a replay shows it once, as a
+      // note; an empty write still marks "the list WAS cleared".
       const items = ev.items || [];
-      if (items.length) {
-        const mark = { done: 'x', in_progress: '>', pending: ' ' };
-        addNote('task list:\n' + items.map(i => `- [${mark[i.status] || ' '}] ${i.content}`).join('\n'));
-      }
+      const mark = { done: 'x', in_progress: '>', pending: ' ' };
+      addNote(items.length
+        ? 'task list:\n' + items.map(i => `- [${mark[i.status] || ' '}] ${i.content}`).join('\n')
+        : 'task list cleared');
     } else if (ty === 'goal' && ev.goal) {
       // status/objective flips are transcript-worthy; round bumps just
       // re-render the chip — otherwise a long run's replay is all noise
@@ -560,10 +560,10 @@ function liveEvent(raw) {
   else if (ty === 'turn_boundary') { stampBoundary(ev.ordinal || 0); }
   else if (ty === 'todos') {
     const items = ev.items || [];
-    if (items.length) {
-      const mark = { done: 'x', in_progress: '>', pending: ' ' };
-      addNote('task list:\n' + items.map(i => `- [${mark[i.status] || ' '}] ${i.content}`).join('\n'));
-    }
+    const mark = { done: 'x', in_progress: '>', pending: ' ' };
+    addNote(items.length
+      ? 'task list:\n' + items.map(i => `- [${mark[i.status] || ' '}] ${i.content}`).join('\n')
+      : 'task list cleared');
   }
   else if (ty === 'goal' && ev.goal) {
     if (applyGoalEvent(ev.goal, true)) {

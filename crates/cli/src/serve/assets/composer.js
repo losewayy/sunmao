@@ -41,6 +41,19 @@ function restoreDraft(at) {
   ta.value = at.text; autoGrow(); slashCheck(true);
   toast(t('发送失败，草稿已恢复'), 'alert', 'warn');
 }
+/* the outgoing text chain: builtin expanders first, then plugin transforms
+   (registered via host.onSend) — a transform returns new text to rewrite,
+   or false to veto the send. Shared by send() and steerSend(). */
+function draftPayload(text) {
+  let payload = quoteBlocks() + expandPastes(text);
+  for (const tr of PLUGIN_TRANSFORM) {
+    let r;
+    try { r = tr.fn(payload, pluginHost(tr.plugin)); } catch (e) { console.warn('plugin onSend failed', tr.plugin, e); continue; }
+    if (r === false) { toast(t('被插件 {id} 拦下', { id: tr.plugin }), 'alert', 'warn'); return null; }
+    if (typeof r === 'string') payload = r;
+  }
+  return payload;
+}
 function send() {
   const ta = $('#input'), text = ta.value.trim();
   if (!text && !pendingAtts.length && !pendingQuotes.length) return ta.focus();
@@ -89,7 +102,8 @@ function send() {
   // the box follow — a quotes-only send is a valid prompt, the block itself
   // being the message (the agent still reads the passage as quoted, while
   // the user never sees raw text pasted into the draft)
-  const payload = quoteBlocks() + expandPastes(text);
+  const payload = draftPayload(text);
+  if (payload === null) return; // a plugin transform vetoed the send
   // chips are the carrier — no in-text marker; every pending attachment
   // rides this prompt (the × on a chip is how one gets retracted)
   const atts = pendingAtts.slice();
@@ -139,7 +153,8 @@ function steerSend() {
     return send();
   }
   // quotes are text, so they steer with the draft instead of being dropped
-  const payload = quoteBlocks() + expandPastes(text);
+  const payload = draftPayload(text);
+  if (payload === null) return;
   // the same four-way snapshot send() takes: the Tauri lane's failure lands
   // after wsSend returned true, i.e. after the clear below already consumed
   // the stash and the cards

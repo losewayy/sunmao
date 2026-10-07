@@ -112,14 +112,17 @@ impl ToolImpl for RunCodeTool {
         let out = tokio::task::spawn_blocking(move || run_script(ctx, &a.code, timeout)).await;
         Ok(match out {
             Ok(Ok(text)) => ToolResult {
+                exit_code: None,
                 output: text,
                 ok: true,
             },
             Ok(Err(e)) => ToolResult {
+                exit_code: None,
                 output: e,
                 ok: false,
             },
             Err(e) => ToolResult {
+                exit_code: None,
                 output: format!("script engine panicked: {e}"),
                 ok: false,
             },
@@ -265,15 +268,38 @@ fn run_script(ctx: Arc<Context>, code: &str, timeout: Duration) -> Result<String
             tokio::select! {
                 r = jctx.async_with(async |jctx| -> Result<String, String> {
                     install_surface(&jctx, &ctx, tx).map_err(|e| format!("install: {e}"))?;
-                    let p = eval_code(&jctx, &code)?;
-                    let v = p
-                        .into_future::<rquickjs::Value>()
-                        .await
-                        .map_err(|_| format!("script rejected: {}", caught_desc(&jctx.catch(), &jctx)))?;
-                    jctx.json_stringify(&v)
+                    // console.log rides back appended to whatever the script
+                    // produced — on error paths it is often the whole reason
+                    // the run can be diagnosed at all
+                    let take_logs = |jctx: &rquickjs::Ctx| -> String {
+                        jctx.eval::<rquickjs::String, _>("__logs.join('\\n')")
+                            .ok()
+                            .and_then(|s| s.to_string().ok())
+                            .unwrap_or_default()
+                    };
+                    let p = match eval_code(&jctx, &code) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            let logs = take_logs(&jctx);
+                            return Err(if logs.is_empty() { e } else { format!("{e}\n[console]\n{logs}") });
+                        }
+                    };
+                    let v = match p.into_future::<rquickjs::Value>().await {
+                        Ok(v) => v,
+                        Err(_) => {
+                            let mut e = format!("script rejected: {}", caught_desc(&jctx.catch(), &jctx));
+                            let logs = take_logs(&jctx);
+                            if !logs.is_empty() { e += &format!("\n[console]\n{logs}"); }
+                            return Err(e);
+                        }
+                    };
+                    let mut out = jctx.json_stringify(&v)
                         .map_err(|e| e.to_string())?
                         .map(|s| s.to_string().unwrap_or_default())
-                        .ok_or_else(|| "script returned a non-JSON-serializable value".to_string())
+                        .ok_or_else(|| "script returned a non-JSON-serializable value".to_string())?;
+                    let logs = take_logs(&jctx);
+                    if !logs.is_empty() { out += &format!("\n\n[console]\n{logs}"); }
+                    Ok(out)
                 }) => match r {
                     Err(_) if reason.load(Ordering::Relaxed) == 1 => {
                         Err(format!("script exceeded its {timeout:?} budget — killed"))
@@ -404,6 +430,7 @@ impl ToolImpl for SearchToolsTool {
         }
         .unwrap_or_else(|_| "[]".into());
         Ok(ToolResult {
+            exit_code: None,
             output: out,
             ok: true,
         })

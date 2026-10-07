@@ -176,9 +176,12 @@ async fn dispatch(
         "load" => {
             let key = args["key"].as_str().unwrap_or_default();
             let v = ctx.ptc_store.lock_or_recover().get(key).cloned();
+            // `found` lets JS distinguish "never set" (→ undefined) from
+            // "stored null" (→ null) — they used to collapse to one null
             Ok(format!(
-                "{{\"value\":{}}}",
-                v.unwrap_or_else(|| "null".into())
+                "{{\"value\":{},\"found\":{}}}",
+                v.clone().unwrap_or_else(|| "null".into()),
+                v.is_some()
             ))
         }
         "describe" => {
@@ -189,7 +192,9 @@ async fn dispatch(
                 .collect();
             Ok(serde_json::to_string(&decls).unwrap_or_else(|_| "[]".into()))
         }
-        other => Err(format!("unknown op {other:?}")),
+        other => Err(format!(
+            "unknown op {other:?} — valid ops: tool, store, load, describe"
+        )),
     };
     let _ = reply.send(res);
 }
@@ -257,6 +262,7 @@ async fn tool_call(
         )
         .await;
         ToolResult {
+            exit_code: None,
             output: format!("blocked by hook: {reason}"),
             ok: false,
         }
@@ -281,6 +287,7 @@ async fn tool_call(
                     Some(s) => match tokio::time::timeout(Duration::from_secs(s), call_fut).await {
                         Ok(r) => r,
                         Err(_) => ToolResult {
+                            exit_code: None,
                             output: format!(
                                 "tool {name} exceeded its {s}s timeout — raise or remove its row in .sunmao/tool-timeouts.txt"
                             ),
@@ -291,6 +298,7 @@ async fn tool_call(
                 }
             }
             Err(denial) => ToolResult {
+                exit_code: None,
                 output: denial,
                 ok: false,
             },
@@ -360,5 +368,11 @@ async fn tool_call(
             tail.push(format!("PostToolUse hook on {name} says: {reason}"));
         }
     }
-    Ok(json!({"ok": result.ok, "output": result.output}).to_string())
+    // exit_code rides as a real field so a script can branch on it instead
+    // of scraping `[exit code N]` out of the output text
+    let mut res = json!({"ok": result.ok, "output": result.output});
+    if let Some(c) = result.exit_code {
+        res["exit_code"] = json!(c);
+    }
+    Ok(res.to_string())
 }

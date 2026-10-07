@@ -63,6 +63,7 @@ impl ToolImpl for BashTool {
             Ok(l) => l,
             Err(e) => {
                 return Ok(ToolResult {
+                    exit_code: None,
                     output: format!("cannot parse command: {e}"),
                     ok: false,
                 });
@@ -104,6 +105,7 @@ async fn foreground(
     let run = super::foreground::job_run(list, command, ctx.cwd.clone(), timeout_secs, notes, ctx)
         .await?;
     Ok(ToolResult {
+        exit_code: run.exit_code(),
         output: run.render(),
         ok: run.ok(),
     })
@@ -351,6 +353,7 @@ async fn spawn_background(
     let log_path = run.log_path.clone();
     jobs::hand_off(run, notifier, ctx.jobs.clone(), None);
     Ok(ToolResult {
+        exit_code: None,
         output: format!(
             "{preamble}job {} started; log: {}",
             paths.id,

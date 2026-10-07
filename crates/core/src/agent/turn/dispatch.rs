@@ -120,6 +120,7 @@ impl AgentLoop {
             )
             .await;
             crate::tool::ToolResult {
+                exit_code: None,
                 output: format!("blocked by hook: {reason}"),
                 ok: false,
             }
@@ -162,6 +163,7 @@ impl AgentLoop {
                     // a bare `notified()` would swallow it.
                     let cancel = self.ctx.cancel_signal();
                     let aborted = || crate::tool::ToolResult {
+                        exit_code: None,
                         output: "cancelled by user".into(),
                         ok: false,
                     };
@@ -174,7 +176,7 @@ impl AgentLoop {
                             Some(s) => tokio::select! {
                                 r = &mut call_fut => r,
                                 () = cancel.wait() => aborted(),
-                                () = tokio::time::sleep(std::time::Duration::from_secs(s)) => crate::tool::ToolResult {
+                                () = tokio::time::sleep(std::time::Duration::from_secs(s)) => crate::tool::ToolResult { exit_code: None,
                                     output: format!("tool {} exceeded its {s}s timeout — raise or remove its row in .sunmao/tool-timeouts.txt, or (for Bash) pass a larger timeout_secs / background:true", call.function.name),
                                     ok: false,
                                 },
@@ -187,6 +189,7 @@ impl AgentLoop {
                     }
                 }
                 Err(denial) => crate::tool::ToolResult {
+                    exit_code: None,
                     output: denial,
                     ok: false,
                 },

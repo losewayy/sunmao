@@ -1,3 +1,5 @@
+// arch: allow-god-file one sandbox-behavior suite — splitting mid-flow
+// would scatter tests that share the run() harness and session fixtures
 use super::*;
 use crate::session::{SessionEvent, SessionLog};
 use crate::tool::builtin_registry;
@@ -507,6 +509,7 @@ async fn runcode_unawaited_call_is_drained_into_the_log() {
         async fn call(&self, _a: Value, _c: &Arc<Context>) -> anyhow::Result<ToolResult> {
             tokio::time::sleep(Duration::from_millis(300)).await;
             Ok(ToolResult {
+                exit_code: None,
                 output: "slow-ok".into(),
                 ok: true,
             })
@@ -539,5 +542,71 @@ async fn runcode_unawaited_call_is_drained_into_the_log() {
         1,
         "the unawaited call must land its fact: {evs:?}"
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// console.log collects in-sandbox and rides back appended to the result —
+/// on a rejected script the lines up to the throw still surface, which is
+/// the whole point of having a debug channel at all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runcode_console_log_round_trip() {
+    let dir = crate::fresh_test_dir("ptc-console");
+    std::fs::create_dir_all(&dir).unwrap();
+    let ctx = test_ctx(&dir);
+    let res = run(
+        &ctx,
+        r#"console.log("a", 1, {x: 2}); console.warn("w"); return 7"#,
+    )
+    .await;
+    assert!(res.ok, "{}", res.output);
+    assert!(res.output.starts_with("7"), "{}", res.output);
+    assert!(res.output.contains("[console]"), "{}", res.output);
+    assert!(res.output.contains("a 1 {\"x\":2}"), "{}", res.output);
+    assert!(res.output.contains("[warn] w"), "{}", res.output);
+    // a rejected script still yields the lines it printed
+    let res = run(&ctx, r#"console.log("before"); throw new Error("boom")"#).await;
+    assert!(!res.ok);
+    assert!(res.output.contains("boom"), "{}", res.output);
+    assert!(res.output.contains("[console]"), "{}", res.output);
+    assert!(res.output.contains("before"), "{}", res.output);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The bridge surfaces a real `exit_code` on shell results — a script can
+/// retry on it without scraping `[exit code N]` out of the output text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runcode_tool_reply_carries_exit_code() {
+    let dir = crate::fresh_test_dir("ptc-exit");
+    std::fs::create_dir_all(&dir).unwrap();
+    let ctx = test_ctx(&dir);
+    let res = run(
+        &ctx,
+        r#"const r = await tools.Bash({command: "exit 7"}); return r.exit_code"#,
+    )
+    .await;
+    assert!(res.ok, "{}", res.output);
+    assert_eq!(res.output, "7", "{}", res.output);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Lossy values surface as `warn` on the store reply instead of silently
+/// hollowing out; `load` distinguishes a never-set key (undefined) from a
+/// stored null — the old round-trip collapsed both into null.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runcode_store_warns_and_load_marks_found() {
+    let dir = crate::fresh_test_dir("ptc-store");
+    std::fs::create_dir_all(&dir).unwrap();
+    let ctx = test_ctx(&dir);
+    let res = run(
+        &ctx,
+        r#"const r = await store("k", {s: new Set([1]), n: NaN, b: 5n});
+           return [r.warn || "NO_WARN", typeof await load("nope"), typeof await load("k")]"#,
+    )
+    .await;
+    assert!(res.ok, "{}", res.output);
+    assert!(res.output.contains("Set"), "{}", res.output);
+    assert!(res.output.contains("NaN"), "{}", res.output);
+    assert!(res.output.contains("BigInt"), "{}", res.output);
+    assert!(res.output.contains("undefined"), "{}", res.output);
     std::fs::remove_dir_all(&dir).ok();
 }

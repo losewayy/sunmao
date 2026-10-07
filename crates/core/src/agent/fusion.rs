@@ -187,6 +187,7 @@ impl ToolImpl for FusionExecuteTool {
             delegate(ctx, &a).await
         } else {
             Ok(ToolResult {
+                exit_code: None,
                 output: "missing `spec` — a fresh delegation needs the complete \
                          brief (`steer` alone only resumes a live Sidekick)"
                     .into(),
@@ -202,6 +203,7 @@ impl ToolImpl for FusionExecuteTool {
 async fn delegate(ctx: &Arc<Context>, a: &Args) -> anyhow::Result<ToolResult> {
     if ctx.depth + 1 >= crate::task::MAX_DEPTH {
         return Ok(ToolResult {
+            exit_code: None,
             output: format!("sub-agent depth limit reached ({})", crate::task::MAX_DEPTH),
             ok: false,
         });
@@ -298,6 +300,7 @@ async fn rework(ctx: &Arc<Context>, a: &Args) -> anyhow::Result<ToolResult> {
             (Some(s), Some(id)) => (s.clone(), id.clone()),
             _ => {
                 return Ok(ToolResult {
+                    exit_code: None,
                     output: "steer needs a live delegation — call FusionExecute \
                              without `steer` to spawn the Sidekick first"
                         .into(),

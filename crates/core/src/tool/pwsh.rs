@@ -73,6 +73,7 @@ pub(crate) async fn bash(
         .await
         .map_err(anyhow::Error::msg)?;
     Ok(ToolResult {
+        exit_code: run.exit_code(),
         output: run.render(),
         ok: run.ok(),
     })
@@ -129,7 +130,7 @@ pub(crate) async fn local_shell(
     let run_out = ShellRun {
         exit_code: end.code,
         stdout: run.out.text(),
-        stderr: run.err.text(),
+        stderr: declixml(&run.err.text()),
         preflight: String::new(),
         ended: jobs::ended_note(end.ended, label),
     };
@@ -155,10 +156,82 @@ pub async fn run_foreground(
     Ok(ShellRun {
         exit_code: end.code,
         stdout: run.out.text(),
-        stderr: run.err.text(),
+        stderr: declixml(&run.err.text()),
         preflight: String::new(),
         ended: jobs::ended_note(end.ended, label),
     })
+}
+
+/// Redirected pwsh serializes stderr as CLIXML — `#< CLIXML` + `<S S="Error">`
+/// elements whose payload is `_xNNNN_`-escaped (ESC becomes `_x001B_`, so
+/// ANSI codes arrive double-encoded). A model can't read that; lift the
+/// `<S>` payloads, undo the escapes, and strip the ANSI sequences they hide.
+/// Non-CLIXML stderr passes through untouched.
+fn declixml(stderr: &str) -> String {
+    if !stderr.trim_start().starts_with("#< CLIXML") {
+        return stderr.to_string();
+    }
+    let mut out = String::new();
+    let mut rest = stderr;
+    while let Some(i) = rest.find("<S ") {
+        rest = &rest[i..];
+        let (Some(gt), Some(end)) = (rest.find('>'), rest.find("</S>")) else {
+            break;
+        };
+        if gt < end {
+            out.push_str(&rest[gt + 1..end]);
+        }
+        rest = &rest[end + 4..];
+    }
+    strip_ansi(&unescape_clixml(&out))
+}
+
+/// `_xHHHH_` → the char it encodes (CR/LF/ESC/whatever pwsh hid).
+fn unescape_clixml(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '_' && it.peek() == Some(&'x') {
+            let tail: String = it.by_ref().take(6).collect();
+            // tail is "xHHHH_" — 1 + 4 hex + '_'
+            if tail.len() == 6
+                && tail.starts_with('x')
+                && tail.ends_with('_')
+                && let Some(v) = u32::from_str_radix(&tail[1..5], 16)
+                    .ok()
+                    .and_then(char::from_u32)
+            {
+                out.push(v);
+                continue;
+            }
+            out.push('_');
+            out.push_str(&tail);
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// CSI/OSC-free text: drop `ESC[…final` sequences (colors, cursor moves).
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\x1b' && it.peek() == Some(&'[') {
+            it.next();
+            // consume params/intermediates until the final byte @..~
+            while let Some(&n) = it.peek() {
+                it.next();
+                if ('@'..='~').contains(&n) {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Start a pwsh run as a job. The child is owned by its own wait task, so
@@ -271,6 +344,7 @@ async fn spawn_background(
     let log_path = run.log_path.clone();
     jobs::hand_off(run, notifier, ctx.jobs.clone(), None);
     Ok(ToolResult {
+        exit_code: None,
         output: format!("job {} started; log: {}", paths.id, log_path.display()),
         ok: true,
     })
@@ -475,5 +549,29 @@ mod tests {
         let out = std::fs::read_to_string(&log).unwrap_or_default();
         assert!(out.contains("pwsh-third"), "the run must finish: {out}");
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod declixml_tests {
+    use super::*;
+
+    #[test]
+    fn declixml_lifts_error_text_and_strips_escapes() {
+        let raw = "#< CLIXML\r\n<Objs Version=\"1.1.0.1\"><S S=\"Error\">_x001B_[31;1mbadcmd : \u{672f}\u{8bed} _x001B_[0m_x000D__x000A_</S></Objs>";
+        let out = declixml(raw);
+        assert!(out.contains("badcmd :"), "{out}");
+        assert!(out.contains('\u{672f}'), "{out}");
+        assert!(!out.contains("_x001B_"), "{out}");
+        assert!(!out.contains('\x1b'), "{out}");
+        assert!(!out.contains("<S"), "{out}");
+        // CRLF escapes decode to real newlines
+        assert!(out.contains('\n'), "{out}");
+    }
+
+    #[test]
+    fn declixml_passes_plain_stderr_through() {
+        let raw = "rm : cannot remove\nplain error";
+        assert_eq!(declixml(raw), raw);
     }
 }

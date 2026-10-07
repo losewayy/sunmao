@@ -16,11 +16,16 @@ use anyhow::Context as _;
 use serde_json::Value;
 use sunmao_llm::types::Tool;
 
+#[derive(Default)]
 pub struct ToolResult {
     pub output: String,
     /// Failed tool calls are still delivered to the model as output —
     /// models recover from errors better when the error is legible.
     pub ok: bool,
+    /// The process exit code when the tool ran one (Bash/Pwsh) — the
+    /// structured signal a sandboxed script needs for conditional retry
+    /// instead of scraping `[exit code N]` out of `output` text.
+    pub exit_code: Option<i32>,
 }
 
 #[async_trait::async_trait]
@@ -142,6 +147,7 @@ impl ToolRegistry {
         let tool = self.tools.read_or_recover().get(name).cloned();
         let Some(tool) = tool else {
             return ToolResult {
+                exit_code: None,
                 output: format!("unknown tool: {name}"),
                 ok: false,
             };
@@ -150,6 +156,7 @@ impl ToolRegistry {
             Ok(v) => v,
             Err(e) => {
                 return ToolResult {
+                    exit_code: None,
                     output: format!("invalid arguments for {name}: {e}"),
                     ok: false,
                 };
@@ -158,6 +165,7 @@ impl ToolRegistry {
         match tool.call(args, ctx).await {
             Ok(r) => r,
             Err(e) => ToolResult {
+                exit_code: None,
                 output: format!("{name} failed: {e:#}"),
                 ok: false,
             },

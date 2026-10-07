@@ -108,6 +108,7 @@ impl ToolImpl for TodoWriteTool {
         let a: Args = serde_json::from_value(args)?;
         if a.todos.iter().any(|t| t.content.trim().is_empty()) {
             return Ok(ToolResult {
+                exit_code: None,
                 output: "TodoWrite rejected: every item needs non-empty content".into(),
                 ok: false,
             });
@@ -155,6 +156,7 @@ impl ToolImpl for TodoWriteTool {
             ));
         }
         Ok(ToolResult {
+            exit_code: None,
             output: out,
             ok: true,
         })

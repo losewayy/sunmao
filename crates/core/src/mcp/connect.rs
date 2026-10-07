@@ -126,6 +126,7 @@ impl ToolImpl for McpTool {
             tracing::warn!("mcp ui resource {uri}: {e:#}");
         }
         Ok(ToolResult {
+            exit_code: None,
             output: out.trim_end().to_string(),
             ok: res.is_error != Some(true),
         })

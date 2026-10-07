@@ -85,7 +85,7 @@ impl AnthropicClient {
                                     "source": {
                                         "type": "base64",
                                         "media_type": mime,
-                                        "data": data,
+                                        "data": data.as_ref(),
                                     },
                                 }));
                             }

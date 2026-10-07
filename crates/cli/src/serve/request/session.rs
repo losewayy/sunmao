@@ -40,13 +40,38 @@ pub(super) async fn session_new(s: &Arc<Shared>, body: &[u8]) -> HostResponse {
 /// else the first prompt the user typed (hook/local-shell evidence skipped,
 /// first line, ≤ 80 chars; `null` for a log with neither) and `mtime` in
 /// epoch ms — `crate::sessions::log_title` owns the scan.
+/// Rail metadata for one log — the (mtime, len) pair is a complete identity
+/// for an append-only file, so the title scan runs once per change, not
+/// once per /sessions fetch.
 pub(super) fn session_meta(path: &std::path::Path) -> serde_json::Value {
-    let mtime = std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .ok()
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<std::path::PathBuf, (u64, u64, Option<String>)>>> =
+        OnceLock::new();
+    let meta = std::fs::metadata(path).ok();
+    let mtime = meta
+        .as_ref()
+        .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64);
-    let title = crate::sessions::log_title(path);
+    let len = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let title = {
+        let mut c = cache.lock().unwrap_or_else(|e| e.into_inner());
+        match c.get(path) {
+            Some(&(mt, ln, ref t)) if mt == mtime.unwrap_or(0) && ln == len => t.clone(),
+            _ => {
+                let t = crate::sessions::log_title(path);
+                // bound it — a project with thousands of logs shouldn't grow
+                // a cache to match; evict the whole thing rather than order
+                if c.len() >= 512 {
+                    c.clear();
+                }
+                c.insert(path.to_path_buf(), (mtime.unwrap_or(0), len, t.clone()));
+                t
+            }
+        }
+    };
     serde_json::json!({ "title": title, "mtime": mtime })
 }
 

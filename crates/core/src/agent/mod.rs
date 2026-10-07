@@ -308,6 +308,14 @@ impl AgentLoop {
         if let Some(models) = self.ctx.models.as_ref() {
             models.reload();
         }
+        if let Ok(_permit) = self.ctx.turn_lock.try_lock() {
+            // no turn in flight — reconcile inline so callers and tests keep
+            // their "reload → settled mode" sequencing
+            if let Some(problem) = self.reconcile_fusion_mode() {
+                tracing::warn!("Fusion mode disabled after model reload: {problem}");
+            }
+            return;
+        }
         let agent = self.clone();
         tokio::spawn(async move {
             let _turn_permit = agent.ctx.turn_lock.lock().await;

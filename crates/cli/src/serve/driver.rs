@@ -111,7 +111,7 @@ pub(super) async fn driver(s: Arc<Shared>, host: Arc<Host>) {
         // the tab's chip row clears and the message lands as a user bubble.
         let leftovers = host.agent.drain_steer();
         if !leftovers.is_empty() {
-            let _ = s.live.send(serde_json::json!({
+            s.live.send(serde_json::json!({
                 "type":"steer_queue","sess":host.id,"items":[],
             }));
             let obs = WsObserver::new(s.live.clone(), host.id.clone());
@@ -159,7 +159,7 @@ pub(super) async fn driver(s: Arc<Shared>, host: Arc<Host>) {
             .input_pending
             .fetch_sub(1, Ordering::Relaxed);
         // chip gone the moment the turn claims it — and every tab sees it
-        let _ = s.live.send(super::host::input_queue_frame(&host));
+        s.live.send(super::host::input_queue_frame(&host));
         dispatch_input(&s, &host, input).await;
     }
 }
@@ -178,7 +178,7 @@ async fn dispatch_input(s: &Arc<Shared>, host: &Arc<Host>, input: Input) {
     } = input;
     let sess = host.id.clone();
     let emit = |v: serde_json::Value| {
-        let _ = s.live.send(v);
+        s.live.send(v);
     };
     host.busy.fetch_add(1, Ordering::Relaxed);
     emit(serde_json::json!({"type":"busy","sess":sess,"busy":true}));
@@ -261,12 +261,11 @@ async fn dispatch_input(s: &Arc<Shared>, host: &Arc<Host>, input: Input) {
 async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, cmd_line: &str, client: u64) -> bool {
     let sess = host.id.clone();
     let note = |t: String| {
-        let _ = s
-            .live
+        s.live
             .send(serde_json::json!({"type":"note","sess":sess,"text":t}));
     };
     let switch = |new_id: String| {
-        let _ = s.live.send(serde_json::json!({
+        s.live.send(serde_json::json!({
             "type": "session", "sess": new_id, "id": new_id, "from": sess,
             "client": client,
         }));
@@ -304,7 +303,7 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, cmd_line: &str, cli
                                     &WsObserver::new(s.live.clone(), sess.clone()),
                                 )
                                 .await;
-                            let _ = s.live.send(serde_json::json!({
+                            s.live.send(serde_json::json!({
                                 "type":"mode","sess":sess,"mode":m.as_str(),
                             }));
                         }
@@ -327,7 +326,7 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, cmd_line: &str, cli
                             &WsObserver::new(s.live.clone(), sess.clone()),
                         )
                         .await;
-                    let _ = s.live.send(super::host::effort_frame(host).await);
+                    s.live.send(super::host::effort_frame(host).await);
                     note(commands::effort_note(
                         host.agent.reasoning_effort().as_deref(),
                     ));
@@ -400,12 +399,12 @@ async fn dispatch_builtin(s: &Arc<Shared>, host: &Arc<Host>, cmd_line: &str, cli
                 Some(sel) => match host.agent.swap_model(&sel) {
                     Some(label) => {
                         host.agent.record_model_change(&sel, &label).await;
-                        let _ = s.live.send(serde_json::json!({
+                        s.live.send(serde_json::json!({
                             "type":"model","sess":sess,"label":label,
                         }));
                         // the new model's level vocabulary — tabs' effort
                         // picker refreshes on its own frame
-                        let _ = s.live.send(super::host::effort_frame(host).await);
+                        s.live.send(super::host::effort_frame(host).await);
                     }
                     None => note(commands::model_unknown(&sel)),
                 },

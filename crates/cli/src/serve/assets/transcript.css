@@ -18,6 +18,14 @@
    the composer's rounded edge. */
 .scroller{position:absolute;inset:0;overflow-y:auto;padding:var(--s-64) var(--s-24) calc(var(--off-hero-bottom, 168px) + var(--s-24));scroll-padding-bottom:calc(var(--off-hero-bottom, 168px) + var(--s-24))}
 .tx{max-width:var(--w-read);margin:0 auto}
+/* read-column resize handles — thin strips parked on the column's edges
+   (the column is centered: edge = center ± min(w-read, stage-48)/2).
+   A hairline lights on hover/drag like the rail/dock edges do. */
+.tx-edge{position:absolute;top:0;bottom:0;width:var(--s-12);cursor:ew-resize;z-index:calc(var(--z-composer) - 1);touch-action:none}
+.tx-edge.l{left:calc(50% - min(var(--w-read),100% - var(--s-48)) / 2 - var(--s-6))}
+.tx-edge.r{left:calc(50% + min(var(--w-read),100% - var(--s-48)) / 2 - var(--s-6))}
+.tx-edge::after{content:'';position:absolute;left:calc(50% - var(--bw-hairline) / 2);top:var(--s-32);bottom:var(--s-32);width:var(--bw-hairline);border-radius:var(--r-full);background:var(--c-text-3);opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
+.tx-edge:hover::after,.tx-edge:active::after,#app[data-dragging] .tx-edge::after{opacity:.55}
 .msg{margin-top:var(--s-32)}
 .msg:first-child{margin-top:var(--s-4)}
 .msg>*+*{margin-top:var(--s-8)}

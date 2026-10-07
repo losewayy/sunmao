@@ -32,10 +32,12 @@ function apply() {
      auto (dock shrinks wide) and calc() dies (stage right:0 → composer
      slides under the dock). sanitize heals it on every apply */
   const app = $('#app');
-  const dw = Math.max(240, Math.min(innerWidth * 0.5, +S.dockW || 0));
-  const rw = Math.max(180, Math.min(innerWidth * 0.4, +S.railW || 0));
-  if (dw) app.style.setProperty('--w-dock', Math.round(dw) + 'px');
-  if (rw) app.style.setProperty('--w-rail', Math.round(rw) + 'px');
+  // guard on the RAW stored value: the clamp floors are themselves truthy,
+  // so an unset pref would otherwise write the floor over the token default
+  const dw = +S.dockW || 0, rw = +S.railW || 0, tw = +S.readW || 0;
+  if (dw) app.style.setProperty('--w-dock', Math.round(Math.max(240, Math.min(innerWidth * 0.5, dw))) + 'px');
+  if (rw) app.style.setProperty('--w-rail', Math.round(Math.max(180, Math.min(innerWidth * 0.4, rw))) + 'px');
+  if (tw) app.style.setProperty('--w-read', Math.round(Math.max(420, Math.min(innerWidth - 200, tw))) + 'px');
   paintWall();
   syncSettingsUI();
 }

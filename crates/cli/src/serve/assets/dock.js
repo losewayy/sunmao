@@ -174,9 +174,13 @@ function brSyncAll() {
   for (const t of sessionTabs()) if (t.kind === 'browser') brSyncNative(t);
 }
 /* the whole grid can move under a native webview: dock width drags, window
-   resizes, zoom steps, tab/dock/view flips — re-sync on all of them */
-window.addEventListener('resize', brSyncAll);
-new ResizeObserver(brSyncAll).observe($('#dock'));
+   resizes, zoom steps, tab/dock/view flips — re-sync on all of them.
+   Coalesced to one sync per frame: a resize drag fires these continuously
+   and each sync is a setBounds IPC into the guest. */
+let brSyncRaf = 0;
+function brSyncAllSoon() { if (!brSyncRaf) brSyncRaf = requestAnimationFrame(() => { brSyncRaf = 0; brSyncAll(); }); }
+window.addEventListener('resize', brSyncAllSoon);
+new ResizeObserver(brSyncAllSoon).observe($('#dock'));
 
 /* ---- browser pane ---- */
 function mountBrowser(b) {

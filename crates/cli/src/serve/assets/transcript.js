@@ -265,7 +265,7 @@ function setBusy(on) {
   busy = !!on;
   if (!busy) clearStopping();
   $('#cmp-busy').hidden = !busy;
-  $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy && !curGoal;
+  $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy && !goalLive();
   // one button morphs instead of swapping two: busy Enter queues the
   // message for the next turn while Ctrl+Enter steers mid-turn, so the
   // click target flips to cancel
@@ -279,13 +279,14 @@ function setBusy(on) {
   renderRail();
 }
 
-/* ---- goal chip — mirrors the TUI footer chip: objective (truncated),
-   status, round counter. `complete`/`abandoned` still pin it until a
-   later event clears curGoal. */
+/* ---- goal chip — mirrors the TUI footer chip. Only LIVE states pin the
+   strip: complete/abandoned already land as transcript notes, so pinning
+   them forever just burns composer space. `blocked` still asks for help. */
 const GOAL_STATUS = { in_progress: t('进行中'), complete: t('已完成'), blocked: t('受阻'), abandoned: t('已放弃') };
+function goalLive() { return !!curGoal && (curGoal.status === 'in_progress' || curGoal.status === 'blocked'); }
 function renderGoalChip() {
   const el = $('#cmp-goal');
-  if (!curGoal) { el.hidden = true; el.textContent = ''; return; }
+  if (!goalLive()) { el.hidden = true; el.textContent = ''; return; }
   const obj = curGoal.objective || '';
   const cut = [...obj].slice(0, 18).join('') + ([...obj].length > 18 ? '…' : '');
   el.innerHTML = `<b>◎</b>${esc(cut)} · ${GOAL_STATUS[curGoal.status] || curGoal.status} · ${t('轮 {n}/{m}', { n: curGoal.rounds, m: curGoal.max_rounds })}`;
@@ -297,7 +298,7 @@ function applyGoalEvent(g, log) {
   const prev = curGoal;
   curGoal = g;
   renderGoalChip();
-  $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy && !curGoal;
+  $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy && !goalLive();
   if (log) logEv('goal', `${g.status} · ${t('轮 {n}/{m}', { n: g.rounds, m: g.max_rounds })}`);
   return !prev || prev.status !== g.status || prev.objective !== g.objective;
 }

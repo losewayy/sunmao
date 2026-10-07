@@ -314,7 +314,7 @@ pub fn command_body(cwd: &Path, extra_roots: &[PathBuf], name: &str) -> Option<S
         if n == name {
             return Some(format!(
                 "The user invoked the `/{name}` skill. Read {} and follow it.",
-                path.display().to_string().replace("\\\\?\\", "")
+                sunmao_core::paths::display_path(&path)
             ));
         }
     }

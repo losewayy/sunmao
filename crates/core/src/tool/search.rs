@@ -41,7 +41,16 @@ impl ToolImpl for GlobTool {
         // `repo[1]` would otherwise be parsed as a char class and silently
         // match nothing (or error). Escape it; the user pattern keeps its
         // metachars.
-        let cwd = glob::Pattern::escape(&ctx.cwd.to_string_lossy().replace('\\', "/"));
+        // verbatim `\\?\` cwd breaks every glob — `//?/F:/…` matches
+        // nothing; display_path strips it before the pattern is spliced.
+        // A U+FFFD in the cwd means a non-UTF-8 path — error honestly
+        // instead of silently returning `[no matches]`.
+        let cwd_disp = crate::paths::display_path_fwd(&ctx.cwd);
+        anyhow::ensure!(
+            !cwd_disp.contains('\u{FFFD}'),
+            "cwd contains non-UTF-8 characters and cannot be globbed"
+        );
+        let cwd = glob::Pattern::escape(&cwd_disp);
         let pat = if std::path::Path::new(&a.pattern).is_absolute() {
             // join() semantics: an absolute pattern ignores the cwd
             a.pattern.replace('\\', "/")
@@ -51,10 +60,15 @@ impl ToolImpl for GlobTool {
         let mut hits = Vec::new();
         for entry in glob::glob(&pat).with_context(|| format!("bad pattern: {}", a.pattern))? {
             if let Ok(p) = entry {
+                // entries inherit the pattern's spelling — strip the plain
+                // (non-verbatim) cwd and normalize separators so hits come
+                // back as clean `dir/file` relative paths
                 let rel = p
-                    .strip_prefix(&ctx.cwd)
-                    .map(|r| r.display().to_string())
-                    .unwrap_or_else(|_| p.display().to_string());
+                    .strip_prefix(&cwd_disp)
+                    .unwrap_or(&p)
+                    .display()
+                    .to_string()
+                    .replace('\\', "/");
                 hits.push(rel);
             }
             if hits.len() >= 200 {
@@ -69,6 +83,7 @@ impl ToolImpl for GlobTool {
             out = "[no matches]".into();
         }
         Ok(ToolResult {
+            exit_code: None,
             output: out,
             ok: true,
         })
@@ -157,6 +172,7 @@ impl GrepTool {
             Ok(Ok(o)) => o,
             Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(ToolResult {
+                    exit_code: None,
                     output: "ripgrep (rg) not found on PATH".into(),
                     ok: false,
                 });
@@ -164,6 +180,7 @@ impl GrepTool {
             Ok(Err(e)) => return Err(e.into()),
             Err(_) => {
                 return Ok(ToolResult {
+                    exit_code: None,
                     output: format!("ripgrep timed out after {}s", timeout.as_secs()),
                     ok: false,
                 });
@@ -196,7 +213,11 @@ impl GrepTool {
         } else if res.is_empty() {
             res = "[no matches]".into();
         }
-        Ok(ToolResult { output: res, ok })
+        Ok(ToolResult {
+            exit_code: None,
+            output: res,
+            ok,
+        })
     }
 }
 
@@ -246,6 +267,27 @@ mod tests {
         assert!(res.ok);
         assert!(res.output.contains("a.txt"), "{}", res.output);
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// A verbatim `\\?\`-prefixed cwd (what `canonicalize`/`current_dir`
+    /// yield on Windows) must not poison relative glob patterns — spliced
+    /// raw it produced `//?/C:/…` which silently matched nothing.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn glob_relative_pattern_with_verbatim_cwd() {
+        let dir = crate::fresh_test_dir("glob-verbatim");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "x").unwrap();
+        let verbatim = std::path::PathBuf::from(format!(r"\\?\{}", dir.display()));
+        let ctx = test_ctx(&verbatim);
+        let res = GlobTool
+            .call(json!({"pattern": "*.txt"}), &ctx)
+            .await
+            .unwrap();
+        assert!(res.ok);
+        assert!(res.output.contains("a.txt"), "{}", res.output);
+        assert!(!res.output.contains(r"\\?\"), "{}", res.output);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// rg exit >= 2 is a real error — stderr must reach the model instead of

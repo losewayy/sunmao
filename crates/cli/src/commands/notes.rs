@@ -198,7 +198,7 @@ pub fn hooks_text(rows: &[sunmao_core::hooks::trust::HookRow]) -> String {
                     r.matcher.as_str()
                 },
                 r.command,
-                r.source.display().to_string().replace("\\\\?\\", ""),
+                sunmao_core::paths::display_path(&r.source),
             )
         })
         .collect::<Vec<_>>()
@@ -320,7 +320,7 @@ pub fn artifacts_text(cwd: &Path) -> String {
             "artifacts ({}):\n{}\n  dir: {}",
             rows.len(),
             rows.join("\n"),
-            dir.display().to_string().replace("\\\\?\\", "")
+            sunmao_core::paths::display_path(&dir)
         )
     }
 }

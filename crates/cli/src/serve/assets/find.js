@@ -15,7 +15,7 @@ function openFind() {
   // every keystroke used to TreeWalker-scan the whole transcript — debounce
   // like the rail search does (250ms is already the house interval)
   let findT = 0;
-  inp.addEventListener('input', () => { findIdx = -1; clearTimeout(findT); findT = setTimeout(findApply, 150); });
+  inp.addEventListener('input', () => { findIdx = -1; clearTimeout(findT); findT = setTimeout(findApply, DEBOUNCE_SEARCH); });
   inp.addEventListener('keydown', e => {
     if (e.key === 'Escape') { e.preventDefault(); closeFind(); return; }
     if (e.key === 'Enter') { e.preventDefault(); findJump(e.shiftKey ? -1 : 1); }

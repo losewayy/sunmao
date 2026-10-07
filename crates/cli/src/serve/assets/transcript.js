@@ -1,3 +1,5 @@
+// arch: allow-god-file the transcript is one render pipeline — dispatch,
+// streaming deltas, replay, and the event log share its block helpers
 /* transcript blocks, live fold, approvals, event log, replay — markdown
    render lives in md.js (highlight/mdInline/mdRender/mdTable/texMath) */
 'use strict';

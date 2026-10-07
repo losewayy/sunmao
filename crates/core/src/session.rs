@@ -1,3 +1,5 @@
+// arch: allow-god-file the event log, its fold, and its repair pass are one
+// seam — splitting parse/reduce/repair apart scatters a single invariant
 //! Event-sourced session log — the kernel's single source of truth.
 //!
 //! One `<id>.jsonl` per session; every fact is an appended line. The live

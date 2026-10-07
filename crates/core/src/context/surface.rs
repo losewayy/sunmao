@@ -11,8 +11,11 @@ use super::{Context, MutexRecover, RwLockRecover};
 const LAZY_ADVERTISE_AT: usize = 20;
 /// The always-advertised set once the surface goes lazy — the everyday
 /// file/shell/plan tools plus `SearchTools` itself (the discovery path
-/// must never be one of the deferred). Cold-but-promoted names rejoin
-/// per request via `promoted_tools`.
+/// must never be one of the deferred) and `RunCode` (deliberately part of
+/// the standard surface too — catalog growth must not silently drop it,
+/// which is exactly what happened to the under-threshold eager surface
+/// revealing it by accident). Cold-but-promoted names rejoin per request
+/// via `promoted_tools`.
 const LAZY_HOT: &[&str] = &[
     "Read",
     "Write",
@@ -23,6 +26,7 @@ const LAZY_HOT: &[&str] = &[
     "Task",
     "TodoWrite",
     "SearchTools",
+    "RunCode",
 ];
 
 impl Context {
@@ -45,12 +49,13 @@ impl Context {
                 .filter(|t| matches!(t.function.name.as_str(), "RunCode" | "SearchTools"))
                 .collect();
         }
-        // FusionExecute joins the registry with the builtins so the Lead's
-        // surface can keep it — under Standard it must never appear (same
-        // posture as SearchTools: dead schema weight for a call the shape
-        // can't use). The fusion surface itself (armed Lead's read set,
-        // escalated Lead back to standard-minus-delegate) is
-        // `fusion::lead_decl`'s call — the table lives with the policy.
+        // `SearchTools`/`FusionExecute` are withheld under the eager standard
+        // surface — dead schema weight while every decl is already on the
+        // wire. `RunCode` stays: it is a real capability the model can drive
+        // (the ptc driver's whole loop), not a discovery crutch. The fusion
+        // surface itself (armed Lead's read set, escalated Lead back to
+        // standard-minus-delegate) is `fusion::lead_decl`'s call — the table
+        // lives with the policy.
         if *self.turn_mode.read_or_recover() == crate::agent::TurnMode::Fusion {
             let escalated = self.fusion.lock_or_recover().escalated;
             return decls

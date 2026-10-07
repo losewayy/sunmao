@@ -23,6 +23,11 @@ window.PLUGIN_PAGES = new Map(); // 'plg:<id>'  → {slot, plugin, host}
 const PLUGIN_PAGES = window.PLUGIN_PAGES;
 const PLUGIN_EVENTS = [];        // {plugin, ev, fn} — 'live' frames, 'session' switches
 const PLUGIN_IDS = new Set();
+/* sticky last-value per live-frame type — panes mount lazily (on first tab
+   open), long after replay frames already flowed. The cache lets a fresh
+   mount see the CURRENT state instead of an empty world; cleared on
+   session switch so another session's frames can't bleed through. */
+const PLUGIN_LAST_LIVE = {};
 
 const pluginHost = plugin => ({
   plugin,
@@ -37,6 +42,8 @@ const pluginHost = plugin => ({
 });
 
 function pluginEmit(ev, data) {
+  if (ev === 'session') for (const k of Object.keys(PLUGIN_LAST_LIVE)) delete PLUGIN_LAST_LIVE[k];
+  if (ev === 'live' && data && typeof data === 'object' && data.type) PLUGIN_LAST_LIVE[data.type] = data;
   for (const l of PLUGIN_EVENTS.slice()) {
     if (l.ev !== ev) continue;
     try { l.fn(data); } catch (e) { console.warn('plugin', l.plugin, ev, e); }
@@ -44,13 +51,19 @@ function pluginEmit(ev, data) {
 }
 
 /* Dock panes mount lazily on first activation — connection.js's dockTab
-   calls this with the pane name it just showed. */
+   calls this with the pane name it just showed. After a successful mount
+   the pane's own 'live' listeners get the cached latest frames, so a pane
+   opened mid-session renders current state, not a blank. */
 function pluginDockActivated(name) {
   const entry = PLUGIN_DOCK.get(name);
   if (!entry || entry.mounted) return;
   try {
     entry.slot.mount($(`.dock-pane[data-pane="${name}"] .plg-body`), entry.host);
     entry.mounted = true; // only on success — a throwing mount may retry
+    for (const l of PLUGIN_EVENTS.slice()) {
+      if (l.plugin === entry.plugin && l.ev === 'live')
+        for (const ev of Object.values(PLUGIN_LAST_LIVE)) { try { l.fn(ev); } catch (e) { console.warn('plugin replay', name, e); } }
+    }
   } catch (e) { console.warn('plugin mount failed', name, e); }
 }
 

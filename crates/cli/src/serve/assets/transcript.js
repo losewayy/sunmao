@@ -341,6 +341,9 @@ function renderReplay(events, anim) {
   const pendingCalls = new Map(); // call_id -> tool element
   for (const ev of events || []) {
     const ty = ev.type;
+    // plugin panes see replayed state too — a todos frame during resume
+    // must land the pane's list, not only live ones
+    window.pluginEmit?.('live', ev);
     if (ty === 'started') {
       modelLabel = ev.model || modelLabel;
       renderComposerModel();

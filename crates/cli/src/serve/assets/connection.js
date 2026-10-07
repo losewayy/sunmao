@@ -7,6 +7,9 @@ const projectName = p => String(p || '').split(/[\\/]/).filter(Boolean).pop() ||
 /* Under the Tauri shell the ws degrades to an IPC pair (GUI.md §8):
    session_events carries a JS Channel for host→page frames (parsed JSON
    objects on onmessage) and host_call carries page→host frames. */
+/* frame types that must carry a `sess` tag — module-level so route()
+   doesn't allocate a Set per ws message */
+const SESS_TYPES = new Set(['live', 'note', 'approval', 'approval_done', 'steer_queue', 'input_queue', 'model', 'fusion_models', 'mode', 'effort', 'busy']);
 function wsSend(v, onFail) {
   if (TAURI) {
     if (!connected) return false;
@@ -92,7 +95,6 @@ function route(v) {
   // attributed to whatever this tab happens to be viewing (audit-gui #13)
   // — every emitter tags, so an untagged one is already an anomaly:
   // drop it to the event log rather than mis-draw it.
-  const SESS_TYPES = new Set(['live', 'note', 'approval', 'approval_done', 'steer_queue', 'input_queue', 'model', 'fusion_models', 'mode', 'effort', 'busy']);
   const sess = typeof v.sess === 'string' ? v.sess : null;
   if (SESS_TYPES.has(v.type) && sess == null) { logEv('note', `untagged ${v.type} frame dropped`); return; }
   switch (v.type) {

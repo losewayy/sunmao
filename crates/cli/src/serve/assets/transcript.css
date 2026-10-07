@@ -26,7 +26,13 @@
 .tx-edge.r{left:calc(50% + min(var(--w-read),100% - var(--s-48)) / 2 - var(--s-6))}
 .tx-edge::after{content:'';position:absolute;left:calc(50% - var(--bw-hairline) / 2);top:var(--s-32);bottom:var(--s-32);width:var(--bw-hairline);border-radius:var(--r-full);background:var(--c-text-3);opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
 .tx-edge:hover::after,.tx-edge:active::after,#app[data-dragging] .tx-edge::after{opacity:.55}
-.msg{margin-top:var(--s-32)}
+/* scrolling content never blurs — backdrop-filter on a scrolling surface
+   repaints every frame; floating chrome (.pop/.toast/.findbar) keeps it.
+   .tools>.bubble.step already exempted itself the same way */
+#scroller .glass{backdrop-filter:none;-webkit-backdrop-filter:none}
+/* off-screen transcript blocks skip layout+paint — `auto` remembers each
+   block's last rendered height so the scrollbar doesn't jump */
+.msg{content-visibility:auto;contain-intrinsic-size:auto 200px;margin-top:var(--s-32)}
 .msg:first-child{margin-top:var(--s-4)}
 .msg>*+*{margin-top:var(--s-8)}
 .msg-h{display:flex;align-items:center;gap:var(--s-8);height:var(--h-xs);padding-left:var(--s-4);font-size:var(--fs-xs);font-weight:var(--fw-strong);color:color-mix(in srgb,var(--c-text) 86%,transparent);text-shadow:var(--sh-text)}

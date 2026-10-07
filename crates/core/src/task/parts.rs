@@ -241,6 +241,7 @@ pub(crate) async fn build_sub_ctx(
         // history (an MCP tool the parent saw eagerly must not be forced
         // onto a child that never advertised it)
         advertised_pins: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+        persisted_pins: std::sync::Mutex::new(std::collections::BTreeSet::new()),
         live_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         // the child's list is its own plan, not a copy of the parent's —
         // sub-session logs only carry their own Todos events.

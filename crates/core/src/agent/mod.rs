@@ -510,6 +510,7 @@ impl AgentLoop {
         self.ctx.reseed_effort(&events);
         self.ctx.reseed_turn_mode(&events);
         self.ctx.reseed_fusion_models(&events);
+        self.ctx.reseed_tool_surface(&events);
         if let Some(problem) = self.reconcile_fusion_mode() {
             tracing::warn!("Fusion mode disabled after session swap: {problem}");
         }

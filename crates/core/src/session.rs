@@ -177,6 +177,12 @@ pub enum SessionEvent {
     /// rail) take the LAST one as the title, overriding first-prompt
     /// derivation.
     SessionMeta { title: String },
+    /// Snapshot of the session's advertised-tool pin set — the names the
+    /// model has already been shown. Durable so a restart can't narrow the
+    /// tool surface a resumed session depends on; the fold ignores it
+    /// (audit fact, not conversation). `reseed_tool_surface` unions every
+    /// record back into `advertised_pins`.
+    ToolSurface { pinned: Vec<String> },
     /// A file's pre-write bytes were snapshotted into the session's
     /// checkpoint ledger (`checkpoints.rs`). Durable audit fact, not
     /// model-facing — the fold ignores it; `/rewind` reads the manifest

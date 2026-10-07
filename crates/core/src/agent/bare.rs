@@ -73,6 +73,7 @@ impl AgentLoop {
                 }
             }
             let decls = self.ctx.advertised_tools();
+            self.ctx.persist_tool_surface().await;
             let effort = self.ctx.reasoning_effort.read_or_recover().clone();
             let req = ChatRequest {
                 messages: &messages,

@@ -255,6 +255,7 @@ impl AgentLoop {
                 messages.push(Message::user(note.clone()));
             }
             let decls = self.ctx.advertised_tools();
+            self.ctx.persist_tool_surface().await;
             let effort = self.ctx.turn_effort();
             let req = ChatRequest {
                 messages: &messages,

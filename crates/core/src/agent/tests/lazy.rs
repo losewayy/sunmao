@@ -133,3 +133,63 @@ fn crossing_the_threshold_never_drops_an_advertised_tool() {
     let later = names(&ctx);
     assert!(before.iter().all(|n| later.contains(n)) && later.contains("mcp__srv2__tool7"));
 }
+
+#[tokio::test]
+async fn tool_surface_persists_and_reseeds_across_restart() {
+    // the restart half of the monotonic promise: pins live in memory, so
+    // a fresh Context over the same session log must come back seeing
+    // every name the model saw before the restart
+    let dir = crate::fresh_test_dir("surface-persist");
+    let log = SessionLog::open(&dir, "s1").await.unwrap();
+    let reg = builtin_registry();
+    reg.register(FakeTool("mcp__srv__visible"));
+    let ctx = std::sync::Arc::new(Context::new(
+        std::sync::Arc::new(MockProvider {
+            responses: std::sync::Mutex::new(Default::default()),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }),
+        log,
+        reg,
+        dir.clone(),
+    ));
+    assert!(names(&ctx).contains("mcp__srv__visible"));
+    ctx.persist_tool_surface().await;
+
+    // restart: brand-new context, same session id, catalog now fat enough
+    // to flip lazy — the reseeded pin must keep the tool on the surface
+    let log2 = SessionLog::open(&dir, "s1").await.unwrap();
+    let events = log2.events().await.unwrap();
+    let reg2 = builtin_registry();
+    reg2.register(FakeTool("mcp__srv__visible"));
+    for i in 0..10 {
+        let n: &'static str = Box::leak(format!("mcp__srv2__tool{i}").into_boxed_str());
+        reg2.register(FakeTool(n));
+    }
+    let ctx2 = ctx_with(reg2);
+    ctx2.reseed_tool_surface(&events);
+    let after = names(&ctx2);
+    assert!(
+        after.contains("mcp__srv__visible"),
+        "restart-shrink: a once-advertised tool must survive resume"
+    );
+    assert!(
+        !after.contains("mcp__srv2__tool0"),
+        "a tool never advertised still defers — the lazy budget holds"
+    );
+
+    // an unchanged surface appends nothing — no one-line-per-request spam
+    ctx.persist_tool_surface().await;
+    let count = ctx
+        .sessions
+        .lock()
+        .await
+        .events()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|e| {
+            serde_json::to_value(e).unwrap()["type"].as_str() == Some("tool_surface")
+        })
+        .count();
+    assert_eq!(count, 1, "persist diffs; it does not append per request");
+}

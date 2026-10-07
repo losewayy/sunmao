@@ -90,7 +90,7 @@ pub(crate) async fn local_shell(
     ctx: &crate::context::Context,
 ) -> Result<LocalShell, String> {
     let paths = jobs::JobPaths::create(ctx, jobs::next_job_id()).map_err(|e| format!("{e:#}"))?;
-    let notifier = jobs::JobNotifier::from_ctx(ctx).await;
+    // notifier only matters on detach — build it there (see foreground.rs)
     let mut run = match spawn_run(command, cwd, Some(&paths)) {
         Ok(r) => r,
         Err(e) => {
@@ -111,6 +111,7 @@ pub(crate) async fn local_shell(
     if matches!(fg, jobs::Foreground::Detached) {
         let output = run.out.text();
         let (id, log_path, pid) = (run.id.clone(), run.log_path.clone(), run.pid);
+        let notifier = jobs::JobNotifier::from_ctx(ctx).await;
         jobs::hand_off(
             run,
             notifier,
@@ -134,8 +135,8 @@ pub(crate) async fn local_shell(
         preflight: String::new(),
         ended: jobs::ended_note(end.ended, label),
     };
-    jobs::conclude(&notifier, &ctx.jobs, &run.id, &run.dir, end.code, false).await;
-    // same rule as the deno path: an inline run retires itself, dir and all
+    // same rule as the deno path: an inline run retires itself, dir and
+    // all — no exit.json, no jobs.changed nudge, no row left behind
     jobs::retire(&ctx.jobs, &run.id, &run.dir);
     Ok(LocalShell::Done(run_out))
 }

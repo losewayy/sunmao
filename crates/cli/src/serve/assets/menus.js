@@ -24,15 +24,19 @@ function sessionMenu(id) {
    dispatch stays the single implementation. */
 function goalPop(at) {
   const g = curGoal;
-  pop(at, `<div class="lbl">${t('会话目标')}</div>` +
-    (g ? `<div class="goal-cur">${esc(g.objective || '')}<small>${esc(GOAL_STATUS[g.status] || g.status)} · ${t('轮 {n}/{m}', { n: g.rounds, m: g.max_rounds })}</small></div>`
-       : `<div class="hint">${t('还没设目标 — 设了之后模型会自己追到完成或受阻')}</div>`) +
-    `<div class="field"><input id="gp-in" placeholder="${esc(t('目标 — 例：修好登录页的 500'))}" value="${esc(g ? g.objective || '' : '')}" spellcheck="false" autocomplete="off"></div>` +
-    `<div class="field"><button class="btn btn-sm" id="gp-set">${g ? t('更新目标') : t('设置目标')}</button>` +
-    (g ? `<button class="btn btn-sm ghost" id="gp-clear">${t('放弃目标')}</button>` : '') + `</div>`,
-    { place: 'top', onMount(p) {
+  const st = g ? (GOAL_STATUS[g.status] || g.status) : '';
+  const live = g && (g.status === 'in_progress' || g.status === 'blocked');
+  pop(at, `
+    <div class="gcard-h"><b>${ic('zap', 'i')} ${esc(t('会话目标'))}</b>${g ? `<span class="gcard-st ${live ? 'live' : 'done'}">${esc(st)} · ${esc(t('轮 {n}/{m}', { n: g.rounds, m: g.max_rounds }))}</span>` : ''}</div>
+    ${g ? `<div class="gcard-obj">${esc(g.objective || '')}</div>`
+        : `<div class="gcard-obj dim">${esc(t('还没设目标 — 设了之后模型会自己追到完成或受阻'))}</div>`}
+    <textarea id="gp-in" class="gcard-in" rows="2" placeholder="${esc(t('目标 — 例：修好登录页的 500'))}" spellcheck="false">${esc(g ? g.objective || '' : '')}</textarea>
+    <div class="gcard-act"><button class="btn btn-sm" id="gp-set">${g ? t('更新目标') : t('设置目标')}</button>${live ? `<button class="btn btn-sm ghost" id="gp-clear">${t('放弃目标')}</button>` : ''}</div>`,
+    { place: 'top', cls: 'gcard', onMount(p) {
       const inp = $('#gp-in', p);
-      inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#gp-set', p).click(); } });
+      inp.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#gp-set', p).click(); }
+      });
       $('#gp-set', p).addEventListener('click', () => {
         const v = inp.value.trim();
         if (!v) return inp.focus();

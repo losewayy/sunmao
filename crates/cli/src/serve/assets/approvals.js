@@ -26,7 +26,7 @@ function collapse(card, html) {
 }
 function syncWait() {
   $('#cmp-wait').hidden = pendingApprovals.size === 0;
-  $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy && !curGoal;
+  $('#cmp-top').hidden = pendingApprovals.size === 0 && !busy && !goalLive();
   renderRail();
 }
 function decide(verdict, id) {

@@ -121,6 +121,13 @@ pub enum SessionEvent {
     FusionModelsChange {
         lead: Option<String>,
         sidekick: Option<String>,
+        /// Per-role effort dials — `serde(default)` keeps logs written
+        /// before the dials existed parseable (they read as unset → the
+        /// session effort applies, matching the old semantics).
+        #[serde(default)]
+        lead_effort: Option<String>,
+        #[serde(default)]
+        sidekick_effort: Option<String>,
     },
     /// The Lead issued a delegation spec (`FusionExecute`) — the full spec
     /// is durable because "what the Lead asked the Sidekick to change" is

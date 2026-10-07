@@ -149,6 +149,8 @@ async fn stale_session_roles_downgrade_fusion_on_resume() {
     log.append(&SessionEvent::FusionModelsChange {
         lead: Some("default/lead".into()),
         sidekick: Some("default/gone".into()),
+        lead_effort: None,
+        sidekick_effort: None,
     })
     .await
     .unwrap();
@@ -371,5 +373,98 @@ async fn fusion_model_overrides_are_session_scoped_and_resume() {
             .unwrap()
             .contains("fusion_lead")
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn fusion_efforts_are_per_role_and_survive_resume() {
+    let dir = crate::fresh_test_dir("fusion-efforts");
+    std::fs::create_dir_all(dir.join(".sunmao/sessions")).unwrap();
+    std::fs::write(
+        dir.join(".sunmao/models.json"),
+        r#"{"providers":{"default":{"base_url":"http://unused/v1","catalog":[{"id":"lead"},{"id":"sidekick"}]}}}"#,
+    )
+    .unwrap();
+    let provider = || -> Arc<dyn ProviderAdapter> {
+        Arc::new(MockProvider {
+            responses: queued(vec![]),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        })
+    };
+    let log = SessionLog::open(&dir.join(".sunmao/sessions"), "s-fusion-eff")
+        .await
+        .unwrap();
+    let log_path = log.path().to_path_buf();
+    let models = || {
+        Arc::new(
+            crate::models::ModelResolver::load(
+                &dir,
+                crate::models::ProviderDef {
+                    base_url: "http://unused/v1".into(),
+                    dialect: "openai".into(),
+                    ..Default::default()
+                },
+                "default",
+            )
+            .with_adapter("default/lead", provider())
+            .with_adapter("default/sidekick", provider()),
+        )
+    };
+    let mut raw = Context::new(provider(), log, builtin_registry(), dir.clone());
+    raw.models = Some(models());
+    let ctx = Arc::new(raw);
+    let agent = AgentLoop::new(ctx.clone());
+
+    // roles' dials are independent of each other and of the session effort
+    agent
+        .set_fusion_effort(crate::context::FusionModelRole::Lead, Some("high".into()))
+        .await
+        .unwrap();
+    agent
+        .set_fusion_effort(
+            crate::context::FusionModelRole::Sidekick,
+            Some("low".into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        agent.fusion_efforts(),
+        (Some("high".into()), Some("low".into()))
+    );
+    *ctx.reasoning_effort.write().unwrap() = Some("medium".into());
+    // standard mode: the session dial; fusion mode: the Lead's own dial
+    assert_eq!(ctx.turn_effort().as_deref(), Some("medium"));
+    *ctx.turn_mode.write().unwrap() = TurnMode::Fusion;
+    assert_eq!(ctx.turn_effort().as_deref(), Some("high"));
+    // a cleared dial falls back to the session override again
+    agent
+        .set_fusion_effort(crate::context::FusionModelRole::Lead, None)
+        .await
+        .unwrap();
+    assert_eq!(ctx.turn_effort().as_deref(), Some("medium"));
+    agent
+        .set_fusion_effort(crate::context::FusionModelRole::Lead, Some("high".into()))
+        .await
+        .unwrap();
+
+    // durable: the event carries the dials and resume reseeds them
+    let text = std::fs::read_to_string(&log_path).unwrap();
+    assert!(text.contains("\"lead_effort\":\"high\""), "{text}");
+    assert!(text.contains("\"sidekick_effort\":\"low\""), "{text}");
+    drop(agent);
+    drop(ctx);
+    let log = SessionLog::open(&dir.join(".sunmao/sessions"), "s-fusion-eff")
+        .await
+        .unwrap();
+    let mut resumed = Context::new(provider(), log, builtin_registry(), dir.clone());
+    resumed.models = Some(models());
+    let resumed = Arc::new(resumed);
+    let agent = AgentLoop::new(resumed.clone());
+    assert_eq!(
+        agent.fusion_efforts(),
+        (Some("high".into()), Some("low".into()))
+    );
+    *resumed.turn_mode.write().unwrap() = TurnMode::Fusion;
+    assert_eq!(resumed.turn_effort().as_deref(), Some("high"));
     std::fs::remove_dir_all(&dir).ok();
 }

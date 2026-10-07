@@ -1,10 +1,16 @@
-use super::Context;
+use super::{Context, RwLockRecover};
 use sunmao_llm::ProviderAdapter;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct FusionModelSettings {
     pub lead: Option<String>,
     pub sidekick: Option<String>,
+    /// Per-role reasoning effort — `None` falls back to the session's
+    /// `/effort` (shared with every sub-agent). A set value is the role's
+    /// own dial: the Lead reads it instead of the session override, the
+    /// Sidekick's child Context pins it at spawn.
+    pub lead_effort: Option<String>,
+    pub sidekick_effort: Option<String>,
 }
 
 impl Context {
@@ -34,5 +40,25 @@ impl Context {
             .unwrap()
             .clone()
             .unwrap_or_else(|| self.llm.clone())
+    }
+
+    /// The effort the next request on THIS context runs at: a Fusion turn's
+    /// Lead honors its own dial when set, else the session `/effort`
+    /// override (which sub-agents still inherit via the shared Arc).
+    /// A Sidekick child's effort is pinned on its Context at spawn — this
+    /// reads whatever was pinned, so no per-role branch is needed there.
+    pub(crate) fn turn_effort(&self) -> Option<String> {
+        if *self.turn_mode.read().unwrap() == crate::agent::TurnMode::Fusion
+            && let Some(lead_effort) = self
+                .fusion_models
+                .read()
+                .unwrap()
+                .lead_effort
+                .clone()
+                .filter(|e| !e.is_empty())
+        {
+            return Some(lead_effort);
+        }
+        self.reasoning_effort.read_or_recover().clone()
     }
 }

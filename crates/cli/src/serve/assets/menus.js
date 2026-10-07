@@ -228,16 +228,22 @@ function saveFusionModel(role, selector) {
   if (MODELS) MODELS[role === 'lead' ? 'fusion_lead' : 'fusion_sidekick'] = selector || null;
   wsSend({ type: 'fusion_model', role, sel: selector || null });
 }
+function saveFusionEffort(role, level) {
+  if (MODELS) MODELS[role === 'lead' ? 'fusion_lead_effort' : 'fusion_sidekick_effort'] = level || null;
+  wsSend({ type: 'fusion_effort', role, level: level || null });
+}
 function fusionPop(anchor) {
   if (!anchor) return;
   if (popAnchor === anchor) return closePop();
   const role = v => v || t('未设置');
+  const eff = v => v || t('默认');
   const ready = !!(MODELS && MODELS.fusion_ready);
+  // one row per role — model on the left, ITS effort on the right: the two
+  // dials are independent, each overriding the session effort for that role
   pop(anchor, `
     <div class="fcard-h"><b>Fusion</b><span>${esc(t('Lead 规划与验证 · Sidekick 委派执行'))}</span></div>
-    <div class="fcard-row"><span>Lead</span><button type="button" class="fcard-sel" id="fc-lead"><span class="mono">${esc(role(MODELS && MODELS.fusion_lead))}</span>${ic('chev-d')}</button></div>
-    <div class="fcard-row"><span>${esc(t('思考强度'))}</span><button type="button" class="fcard-sel" id="fc-effort"><span class="mono">${esc(effortLevel || t('默认'))}</span>${ic('chev-d')}</button></div>
-    <div class="fcard-row"><span>Sidekick</span><button type="button" class="fcard-sel" id="fc-side"><span class="mono">${esc(role(MODELS && MODELS.fusion_sidekick))}</span>${ic('chev-d')}</button></div>
+    <div class="fcard-row"><span>Lead</span><button type="button" class="fcard-sel" id="fc-lead"><span class="mono">${esc(role(MODELS && MODELS.fusion_lead))}</span>${ic('chev-d')}</button><button type="button" class="fcard-sel sm" id="fc-lead-eff"><span class="mono">${esc(eff(MODELS && MODELS.fusion_lead_effort))}</span>${ic('chev-d')}</button></div>
+    <div class="fcard-row"><span>Sidekick</span><button type="button" class="fcard-sel" id="fc-side"><span class="mono">${esc(role(MODELS && MODELS.fusion_sidekick))}</span>${ic('chev-d')}</button><button type="button" class="fcard-sel sm" id="fc-side-eff"><span class="mono">${esc(eff(MODELS && MODELS.fusion_sidekick_effort))}</span>${ic('chev-d')}</button></div>
     ${ready ? '' : `<div class="fcard-hint">${esc(t('两个角色都选好后自动开启 Fusion'))}</div>`}`,
     { place: 'top', align: 'end', cls: 'fcard', onMount(p) {
       // the pickers are their own popovers, and this card already owns the
@@ -253,9 +259,20 @@ function fusionPop(anchor) {
           onSelect: sel => { saveFusionModel(role, sel); fusionPop(anchor); },
         });
       };
+      // role effort rides the same picker chrome as the session effort,
+      // plus a leading 默认 row that clears the override
+      const pickEff = role => {
+        closePop();
+        const cur = MODELS && MODELS[role === 'lead' ? 'fusion_lead_effort' : 'fusion_sidekick_effort'];
+        menuPop(anchor, [
+          { v: '', t: t('默认（跟随会话强度）'), on: !cur },
+          ...effortLevels.map(l => ({ v: l, t: l, mono: true, on: l === cur })),
+        ], v => { saveFusionEffort(role, v || null); fusionPop(anchor); }, { place: 'top', align: 'end' });
+      };
       $('#fc-lead', p).addEventListener('click', e => { e.stopPropagation(); pick('lead'); });
       $('#fc-side', p).addEventListener('click', e => { e.stopPropagation(); pick('sidekick'); });
-      $('#fc-effort', p).addEventListener('click', e => { e.stopPropagation(); closePop(); effortPop(anchor); });
+      $('#fc-lead-eff', p).addEventListener('click', e => { e.stopPropagation(); pickEff('lead'); });
+      $('#fc-side-eff', p).addEventListener('click', e => { e.stopPropagation(); pickEff('sidekick'); });
     } });
 }
 

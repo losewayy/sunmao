@@ -109,6 +109,12 @@ impl AgentLoop {
         (settings.lead, settings.sidekick)
     }
 
+    /// The roles' effort dials — `None` means the session `/effort` applies.
+    pub fn fusion_efforts(&self) -> (Option<String>, Option<String>) {
+        let settings = self.ctx.fusion_models.read().unwrap().clone();
+        (settings.lead_effort, settings.sidekick_effort)
+    }
+
     /// Explain why this session cannot enter Fusion yet.
     pub fn fusion_model_problem(&self) -> Option<String> {
         let (lead, sidekick) = self.fusion_models();
@@ -192,9 +198,44 @@ impl AgentLoop {
             log.append(&SessionEvent::FusionModelsChange {
                 lead: settings.lead.clone(),
                 sidekick: settings.sidekick.clone(),
+                lead_effort: settings.lead_effort.clone(),
+                sidekick_effort: settings.sidekick_effort.clone(),
             })
             .await
             .map_err(|error| format!("Fusion model save failed: {error:#}"))?;
+        }
+        *self.ctx.fusion_models.write().unwrap() = settings;
+        Ok(())
+    }
+
+    /// Persist one role's effort dial — same durability contract as
+    /// `set_fusion_model` (one `fusion_models_change` fact carries the
+    /// whole four-field snapshot). `None` clears back to inheriting the
+    /// session `/effort`; effort levels are freeform, matching `/effort`.
+    pub async fn set_fusion_effort(
+        &self,
+        role: crate::context::FusionModelRole,
+        level: Option<String>,
+    ) -> Result<(), String> {
+        let level = level
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty() && value != "default");
+        let _turn_permit = self.ctx.turn_lock.lock().await;
+        let mut settings = self.ctx.fusion_models.read().unwrap().clone();
+        match role {
+            crate::context::FusionModelRole::Lead => settings.lead_effort = level,
+            crate::context::FusionModelRole::Sidekick => settings.sidekick_effort = level,
+        }
+        {
+            let mut log = self.ctx.sessions.lock().await;
+            log.append(&SessionEvent::FusionModelsChange {
+                lead: settings.lead.clone(),
+                sidekick: settings.sidekick.clone(),
+                lead_effort: settings.lead_effort.clone(),
+                sidekick_effort: settings.sidekick_effort.clone(),
+            })
+            .await
+            .map_err(|error| format!("Fusion effort save failed: {error:#}"))?;
         }
         *self.ctx.fusion_models.write().unwrap() = settings;
         Ok(())

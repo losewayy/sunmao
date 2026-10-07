@@ -10,7 +10,7 @@ members = [
 
 [workspace.package]
 edition = "2024"
-version = "0.2.0"
+version = "0.2.1"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/losewayy/sunmao"
 rust-version = "1.85"
@@ -35,6 +35,21 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-
 tokio-stream = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.dev]
+# Incremental artifacts for this workspace grew unbounded (154 GB and climbing:
+# 675 unit dirs, each holding its own per-session object files). Off means one
+# clean recompile of a crate after an edit instead of an incremental one, in
+# exchange for the directory staying flat.
+incremental = false
+# Full debug info (the default 2) is the other half of the bloat: every .o and
+# .pdb carries it. 1 keeps line-numbered backtraces at a fraction of the size.
+debug = 1
+
+[profile.dev.package."*"]
+# Dependencies are never stepped through in a debugger, so their symbols are
+# pure overhead. This is what actually shrinks deps/.
+debug = false
 
 [profile.release]
 lto = "thin"

@@ -2,7 +2,7 @@
 
 All notable changes to sunmao. Dates are commit-era, not release dates.
 
-## [0.2.0] — current
+## [0.2.1] — current
 
 Kernel is a real runtime: two provider dialects, ten native tools, hooks,
 permissions, approvals across three frontends, MCP client (stdio + HTTP),

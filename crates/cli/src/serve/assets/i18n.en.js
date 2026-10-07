@@ -385,4 +385,5 @@ const I18N_EN_CHROME = {
   "插件操作失败：{msg}": "Plugin operation failed: {msg}",
   "待办": "Todos",
   "会话还没有任务列表": "No task list in this session yet",
+  "默认（跟随会话强度）": "Default (session effort)",
 };

@@ -162,10 +162,19 @@ pub(super) fn seed_fusion_models(path: &std::path::Path) -> super::FusionModelSe
     {
         for line in text.lines().rev() {
             if line.contains("\"fusion_models_change\"")
-                && let Ok(crate::session::SessionEvent::FusionModelsChange { lead, sidekick }) =
-                    serde_json::from_str::<crate::session::SessionEvent>(line)
+                && let Ok(crate::session::SessionEvent::FusionModelsChange {
+                    lead,
+                    sidekick,
+                    lead_effort,
+                    sidekick_effort,
+                }) = serde_json::from_str::<crate::session::SessionEvent>(line)
             {
-                return super::FusionModelSettings { lead, sidekick };
+                return super::FusionModelSettings {
+                    lead,
+                    sidekick,
+                    lead_effort,
+                    sidekick_effort,
+                };
             }
         }
     }
@@ -286,12 +295,17 @@ impl Context {
             .iter()
             .rev()
             .find_map(|event| match event {
-                crate::session::SessionEvent::FusionModelsChange { lead, sidekick } => {
-                    Some(super::FusionModelSettings {
-                        lead: lead.clone(),
-                        sidekick: sidekick.clone(),
-                    })
-                }
+                crate::session::SessionEvent::FusionModelsChange {
+                    lead,
+                    sidekick,
+                    lead_effort,
+                    sidekick_effort,
+                } => Some(super::FusionModelSettings {
+                    lead: lead.clone(),
+                    sidekick: sidekick.clone(),
+                    lead_effort: lead_effort.clone(),
+                    sidekick_effort: sidekick_effort.clone(),
+                }),
                 _ => None,
             })
             .unwrap_or_default();

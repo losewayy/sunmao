@@ -64,16 +64,17 @@ pub(super) async fn view(s: &Arc<Shared>, sess: Option<String>) -> HostResponse 
             f
         }
     };
-    let (fusion_models, fusion_ready, turn_mode) = host
+    let (fusion_models, fusion_efforts, fusion_ready, turn_mode) = host
         .as_ref()
         .map(|host| {
             (
                 host.agent.fusion_models(),
+                host.agent.fusion_efforts(),
                 host.agent.fusion_ready(),
                 host.agent.turn_mode().as_str(),
             )
         })
-        .unwrap_or(((None, None), false, "standard"));
+        .unwrap_or(((None, None), (None, None), false, "standard"));
     HostResponse::json(serde_json::json!({
         "providers": providers_view(&file, resolver.as_deref()),
         "routes": file.routes,
@@ -86,6 +87,8 @@ pub(super) async fn view(s: &Arc<Shared>, sess: Option<String>) -> HostResponse 
             .filter(|sel| default_model_problem(sel, &file, &default_provider).is_none()),
         "fusion_lead": fusion_models.0,
         "fusion_sidekick": fusion_models.1,
+        "fusion_lead_effort": fusion_efforts.0,
+        "fusion_sidekick_effort": fusion_efforts.1,
         "fusion_ready": fusion_ready,
         "turn_mode": turn_mode,
         "selectors": resolver.as_ref().map(|m| m.selectors()).unwrap_or_default(),

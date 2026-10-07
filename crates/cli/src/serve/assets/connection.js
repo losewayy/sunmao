@@ -284,6 +284,8 @@ function route(v) {
         if (MODELS) {
           MODELS.fusion_lead = v.lead || null;
           MODELS.fusion_sidekick = v.sidekick || null;
+          MODELS.fusion_lead_effort = v.lead_effort || null;
+          MODELS.fusion_sidekick_effort = v.sidekick_effort || null;
           MODELS.fusion_ready = !!v.ready;
         } else refreshModels();
         fusionPending = false;

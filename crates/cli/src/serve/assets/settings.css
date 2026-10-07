@@ -190,6 +190,12 @@
 .fcard-sel:hover{background:var(--c-fill-2);box-shadow:var(--ring-2)}
 .fcard-sel:focus-visible{outline:var(--focus-outline);outline-offset:var(--s-2)}
 .fcard-sel .mono{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-sm)}
+/* the role's effort dial sits beside its model picker — compact width, the
+   model selector keeps the row's flex space */
+.fcard-sel.sm{max-width:38%;height:var(--h-md);font-size:var(--fs-2xs);color:var(--c-text-2)}
+.fcard-sel.sm .mono{font-size:var(--fs-2xs)}
+.fcard-row .fcard-sel{flex:1 1 auto}
+.fcard-row .fcard-sel.sm{flex:0 0 auto}
 .fcard-hint{padding:var(--s-8) var(--s-16) var(--s-4);font-size:var(--fs-2xs);color:var(--c-text-3)}
 .models .mi.on{background:var(--c-accent-tint);box-shadow:var(--ring-accent)}
 .models .mi.on .i{color:var(--c-accent)}

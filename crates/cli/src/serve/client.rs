@@ -491,34 +491,41 @@ impl Client {
                     }
                 }
             }
-            "fusion_model" => {
+            // fusion_model {role, sel} sets a role's model; fusion_effort
+            // {role, level} its dial ("" = inherit) — same reply frame.
+            "fusion_model" | "fusion_effort" => {
                 let role = match v["role"].as_str() {
                     Some("lead") => sunmao_core::context::FusionModelRole::Lead,
                     Some("sidekick") => sunmao_core::context::FusionModelRole::Sidekick,
                     _ => {
-                        self.emit(serde_json::json!({
-                            "type":"note","sess":self.viewing,"text":"[unknown Fusion model role]",
-                        }));
+                        self.emit(serde_json::json!({"type":"note","sess":self.viewing,"text":"[unknown Fusion role]"}));
                         return;
                     }
                 };
-                let selector = v["sel"].as_str().map(str::to_string);
                 if let Some(h) = self.viewing_host() {
-                    match h.agent.set_fusion_model(role, selector).await {
-                        Ok(()) => {
-                            let (lead, sidekick) = h.agent.fusion_models();
-                            let _ = self.s.live.send(serde_json::json!({
-                                "type":"fusion_models","sess":h.id,"lead":lead,"sidekick":sidekick,
-                                "ready":h.agent.fusion_ready(),
-                            }));
+                    let is_effort = v["type"].as_str() == Some("fusion_effort");
+                    let val = v[if is_effort { "level" } else { "sel" }]
+                        .as_str()
+                        .map(str::to_string);
+                    let res = if is_effort {
+                        h.agent.set_fusion_effort(role, val).await
+                    } else {
+                        h.agent.set_fusion_model(role, val).await
+                    };
+                    let (lead, sidekick) = h.agent.fusion_models();
+                    let (lead_effort, sidekick_effort) = h.agent.fusion_efforts();
+                    let mut frame = serde_json::json!({
+                        "type":"fusion_models","sess":h.id,"lead":lead,"sidekick":sidekick,
+                        "lead_effort":lead_effort,"sidekick_effort":sidekick_effort,
+                        "ready":h.agent.fusion_ready(),
+                    });
+                    if let Err(error) = res {
+                        frame["error"] = serde_json::json!(error);
+                        self.emit(frame);
+                    } else {
+                        let _ = self.s.live.send(frame);
+                        if !is_effort {
                             let _ = self.s.live.send(super::host::effort_frame(&h).await);
-                        }
-                        Err(error) => {
-                            let (lead, sidekick) = h.agent.fusion_models();
-                            self.emit(serde_json::json!({
-                                "type":"fusion_models","sess":h.id,"lead":lead,"sidekick":sidekick,
-                                "ready":h.agent.fusion_ready(),"error":error,
-                            }));
                         }
                     }
                 }

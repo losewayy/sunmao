@@ -212,8 +212,14 @@ async fn delegate(ctx: &Arc<Context>, a: &Args) -> anyhow::Result<ToolResult> {
     let sys_prompt = crate::prompt::PromptAssembler::new(&ctx.cwd)
         .with_extra_roots(&ctx.extra_plugin_roots)
         .assemble_fusion_sidekick();
-    let (sub_id, sub_ctx) =
+    let (sub_id, mut sub_ctx) =
         crate::task::parts::spawn_parts(ctx, None, llm_override, Some(sys_prompt)).await;
+    // a configured Sidekick effort detaches the child from the session
+    // `/effort` Arc — the role keeps its own dial for this delegation's
+    // lifetime; unset keeps the shared Arc so session changes still reach it
+    if let Some(effort) = ctx.fusion_models.read().unwrap().sidekick_effort.clone() {
+        sub_ctx.reasoning_effort = std::sync::Arc::new(std::sync::RwLock::new(Some(effort)));
+    }
 
     // The spec's file grant — canonicalized the way the gate's
     // whitelist_covers will resolve the child's Write/Edit paths. An

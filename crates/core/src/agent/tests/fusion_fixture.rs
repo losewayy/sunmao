@@ -124,6 +124,7 @@ pub(crate) fn fusion_context(
         *raw.fusion_models.write().unwrap() = FusionModelSettings {
             lead: Some("default/lead".into()),
             sidekick: Some("default/sidekick".into()),
+            ..Default::default()
         };
     }
     raw

@@ -5,7 +5,8 @@ use sunmao_core::context::RwLockRecover as _;
 /// A Shared whose factory never runs — `log_path`/`session_dirs` are
 /// pure filesystem lookups, so the make-closure just errors if called.
 fn shared_at(cwd: std::path::PathBuf) -> Shared {
-    let (tx, _) = broadcast::channel::<std::sync::Arc<crate::serve::host::LiveFrame>>(8);
+    let (tx, _) =
+        tokio::sync::broadcast::channel::<std::sync::Arc<crate::serve::host::LiveFrame>>(8);
     let live = crate::serve::host::LiveBus(tx);
     let (mgmt, _rx) = mpsc::unbounded_channel::<SessionOp>();
     Shared {
@@ -77,7 +78,8 @@ async fn concurrent_adopt_of_one_session_yields_one_host() {
     let sdir = dir.join("sess");
     std::fs::create_dir_all(&sdir).unwrap();
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let (tx, _) = broadcast::channel::<std::sync::Arc<crate::serve::host::LiveFrame>>(8);
+    let (tx, _) =
+        tokio::sync::broadcast::channel::<std::sync::Arc<crate::serve::host::LiveFrame>>(8);
     let live = crate::serve::host::LiveBus(tx);
     let (mgmt, _rx) = mpsc::unbounded_channel::<SessionOp>();
     let calls2 = calls.clone();
@@ -151,7 +153,8 @@ fn shared_with_models(
     model_override: Option<&str>,
     stubs: &[&str],
 ) -> Arc<Shared> {
-    let (tx, _) = broadcast::channel::<std::sync::Arc<crate::serve::host::LiveFrame>>(8);
+    let (tx, _) =
+        tokio::sync::broadcast::channel::<std::sync::Arc<crate::serve::host::LiveFrame>>(8);
     let live = crate::serve::host::LiveBus(tx);
     let (mgmt, _rx) = mpsc::unbounded_channel::<SessionOp>();
     let stubs: Vec<String> = stubs.iter().map(|s| s.to_string()).collect();

@@ -33,10 +33,10 @@ async fn lagged_bus_survives() {
     // the forwarder hasn't polled yet (this test runtime yields only
     // when we await) — the burst wraps the ring → Lagged on next recv
     for _ in 0..8 {
-        let _ = s.live.send(serde_json::json!({"type":"noise"}));
+        s.live.send(serde_json::json!({"type":"noise"}));
     }
     // drain the hello + lagged gap; the marker must still arrive
-    let _ = s.live.send(serde_json::json!({"type":"marker"}));
+    s.live.send(serde_json::json!({"type":"marker"}));
     let mut seen = false;
     for _ in 0..16 {
         match tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await {

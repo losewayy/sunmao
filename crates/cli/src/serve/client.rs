@@ -69,9 +69,8 @@ impl Client {
                         // to leave the client permanently deaf
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(_) => break,
+                        // text was serialized once at emit, not per subscriber
                         Ok(v) => {
-                            // pre-serialized at emit — one memcpy, not a
-                            // re-serialize per subscriber
                             if out.send(v.text.to_string()).is_err() {
                                 break;
                             }
@@ -94,9 +93,8 @@ impl Client {
             id: CLIENT_IDS.fetch_add(1, Ordering::Relaxed) + 1,
             forward,
         };
-        // a page that just attached is about to build the composer chip, so
-        // settle the session's default level first — a client never sees the
-        // "provider default" state, only the level it would run at
+        // settle the default level before the composer chip asks — a client
+        // never sees "provider default", only the level it would run at
         if let Some(h) = host.as_ref() {
             h.agent.resolve_effort_default().await;
         }
@@ -247,7 +245,7 @@ impl Client {
                             .input_pending
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         h.queue_notify.notify_one();
-                        let _ = self.s.live.send(input_queue_frame(&h));
+                        self.s.live.send(input_queue_frame(&h));
                     }
                 }
             }
@@ -262,7 +260,7 @@ impl Client {
                     && let Some(h) = self.viewing_host()
                 {
                     h.agent.push_steer(self.id, text);
-                    let _ = self.s.live.send(serde_json::json!({
+                    self.s.live.send(serde_json::json!({
                         "type":"steer_queue","sess":h.id,
                         "items":h.agent.steer_queue(),
                     }));
@@ -274,14 +272,14 @@ impl Client {
             "input_remove" | "input_move" | "input_edit" => {
                 if let Some(h) = self.viewing_host() {
                     super::host::queue_op(&h, &v);
-                    let _ = self.s.live.send(input_queue_frame(&h));
+                    self.s.live.send(input_queue_frame(&h));
                 }
             }
             "steer_cancel" => {
                 if let Some(h) = self.viewing_host() {
                     h.agent
                         .cancel_steer(v["idx"].as_u64().unwrap_or(0) as usize);
-                    let _ = self.s.live.send(serde_json::json!({
+                    self.s.live.send(serde_json::json!({
                         "type":"steer_queue","sess":h.id,
                         "items":h.agent.steer_queue(),
                     }));
@@ -382,8 +380,8 @@ impl Client {
                 if let Some(h) = self.viewing_host() {
                     h.agent.cancel();
                     super::driver::flush_pending(&h);
-                    let _ = self.s.live.send(super::host::input_queue_frame(&h));
-                    let _ = self.s.live.send(serde_json::json!({
+                    self.s.live.send(super::host::input_queue_frame(&h));
+                    self.s.live.send(serde_json::json!({
                         "type": "steer_queue", "sess": h.id, "items": Vec::<String>::new(),
                     }));
                 }
@@ -403,7 +401,7 @@ impl Client {
                 if let Some(h) = target
                     && let Some(card) = h.approvals.map.lock_or_recover().remove(&id)
                 {
-                    let _ = self.s.live.send(serde_json::json!({
+                    self.s.live.send(serde_json::json!({
                         "type": "approval_done", "sess": h.id, "id": id,
                     }));
                     let _ = card.tx.send(verdict);
@@ -479,10 +477,10 @@ impl Client {
                     match h.agent.swap_model(sel) {
                         Some(label) => {
                             h.agent.record_model_change(sel, &label).await;
-                            let _ = self.s.live.send(serde_json::json!({
+                            self.s.live.send(serde_json::json!({
                                 "type":"model","sess":h.id,"label":label,
                             }));
-                            let _ = self.s.live.send(super::host::effort_frame(&h).await);
+                            self.s.live.send(super::host::effort_frame(&h).await);
                         }
                         None => {
                             self.emit(serde_json::json!({
@@ -525,9 +523,9 @@ impl Client {
                         frame["error"] = serde_json::json!(error);
                         self.emit(frame);
                     } else {
-                        let _ = self.s.live.send(frame);
+                        self.s.live.send(frame);
                         if !is_effort {
-                            let _ = self.s.live.send(super::host::effort_frame(&h).await);
+                            self.s.live.send(super::host::effort_frame(&h).await);
                         }
                     }
                 }
@@ -543,7 +541,7 @@ impl Client {
                             &WsObserver::new(self.s.live.clone(), h.id.clone()),
                         )
                         .await;
-                    let _ = self.s.live.send(super::host::effort_frame(&h).await);
+                    self.s.live.send(super::host::effort_frame(&h).await);
                 }
             }
             "mode" => {
@@ -556,11 +554,11 @@ impl Client {
                             .await
                         {
                             Ok(()) => {
-                                let _ = self.s.live.send(serde_json::json!({
+                                self.s.live.send(serde_json::json!({
                                     "type":"note","sess":h.id,
                                     "text":format!("[turn mode → {}]", tm.as_str()),
                                 }));
-                                let _ = self.s.live.send(super::host::effort_frame(&h).await);
+                                self.s.live.send(super::host::effort_frame(&h).await);
                             }
                             Err(e) => {
                                 self.emit(serde_json::json!({
@@ -578,7 +576,7 @@ impl Client {
                                     &WsObserver::new(self.s.live.clone(), h.id.clone()),
                                 )
                                 .await;
-                            let _ = self.s.live.send(serde_json::json!({
+                            self.s.live.send(serde_json::json!({
                                 "type":"mode","sess":h.id,"mode":m.as_str(),
                             }));
                         }

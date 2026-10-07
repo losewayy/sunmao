@@ -338,7 +338,7 @@ pub(super) async fn put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> H
             // the catalog this write just replaced: re-announce it now, or
             // the composer keeps yesterday's ladder until a model swap or a
             // restart. Broadcast, not `emit` — every open page needs it.
-            let _ = s.live.send(effort_frame(&h).await);
+            s.live.send(effort_frame(&h).await);
         }
     }
     s.emit(serde_json::json!({"type": "models_changed"}));

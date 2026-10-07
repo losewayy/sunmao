@@ -99,7 +99,7 @@ impl Client {
                         .input_pending
                         .fetch_add(1, Ordering::Relaxed);
                     h.queue_notify.notify_one();
-                    let _ = self.s.live.send(input_queue_frame(&h));
+                    self.s.live.send(input_queue_frame(&h));
                 }
                 self.emit(serde_json::json!({"type":"ui_result","id":v["id"],"result":{}}));
             }

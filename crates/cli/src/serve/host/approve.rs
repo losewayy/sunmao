@@ -81,7 +81,7 @@ impl Approver for ServeApprover {
                 why: why.to_string(),
             },
         );
-        let _ = self.pending.live.send(serde_json::json!({
+        self.pending.live.send(serde_json::json!({
             "type": "approval", "id": id, "sess": self.pending.sess,
             "tool": tool, "detail": detail, "why": why,
         }));
@@ -103,7 +103,7 @@ impl Approver for ServeApprover {
                 .collect()
         };
         for id in drained {
-            let _ = self.pending.live.send(serde_json::json!({
+            self.pending.live.send(serde_json::json!({
                 "type": "approval_done", "sess": self.pending.sess,
                 "id": id, "why": "cancelled",
             }));
@@ -128,7 +128,7 @@ impl WsObserver {
 }
 impl Observer for WsObserver {
     fn on_event(&self, ev: &LiveEvent) {
-        let _ = self.live.send(serde_json::json!({
+        self.live.send(serde_json::json!({
             "type": "live",
             "sess": self.sess,
             "event": serde_json::to_value(ev).unwrap_or_default(),

@@ -500,6 +500,10 @@ function updateHero() {
   // the hidden flag — otherwise `out` never comes off and the hero
   // (logo, title, mode switch) stays permanently invisible
   const h = $('#hero'), empty = !TX.children.length;
+  // the composer's project-pick row exists only on the empty surface —
+  // glued to the same emptiness truth as the hero
+  const pj = $('#cmp-proj');
+  if (pj) { pj.hidden = !empty; $('#cp-cur').textContent = empty ? projectName(cwd) || cwd || '' : ''; }
   const visible = !h.hidden && !h.classList.contains('out');
   if (visible === empty) return;
   if (empty) { h.hidden = false; h.classList.remove('out', 'play'); void h.offsetWidth; h.classList.add('play'); return; }

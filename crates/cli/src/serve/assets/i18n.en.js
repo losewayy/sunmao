@@ -386,4 +386,6 @@ const I18N_EN_CHROME = {
   "待办": "Todos",
   "会话还没有任务列表": "No task list in this session yet",
   "默认（跟随会话强度）": "Default (session effort)",
+  "选择项目": "Choose project",
+  "在另一个文件夹里开始新对话 — 打开系统目录选择器": "Start a new chat in another folder — opens the system directory picker",
 };

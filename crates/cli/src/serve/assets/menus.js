@@ -381,6 +381,12 @@ function act(name, el) {
       return;
     }
     case 'new-chat': return newChat();
+    case 'pick-proj':
+      // hero-state composer row — straight to the OS folder dialog,
+      // a picked dir becomes a new session in that project
+      return pickDirNative()
+        .then(path => { if (path) newChat(path); })
+        .catch(er => toast(t('目录选择失败：{msg}', { msg: er.message || er }), 'alert', 'warn'));
     case 'hero-mode': return heroModePick(el.dataset.hm);
     case 'goal': if (popAnchor === el) return closePop(); return goalPop(el);
     case 'grants-clear': return revokeGrant('*');

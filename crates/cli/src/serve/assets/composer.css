@@ -2,6 +2,13 @@
    prompts), attachment chips, input row and its mode/model/send buttons. */
 /* ---------- composer ---------- */
 .composer{position:absolute;left:50%;bottom:var(--s-16);transform:translateX(-50%);width:min(var(--w-read),calc(100% - var(--s-48)));border-radius:var(--r-2xl);--ga:var(--glass-raised);border-color:var(--c-stroke-2);box-shadow:var(--sh-inset-hi),var(--sh-2);z-index:var(--z-composer);overflow:hidden}
+/* hero-state project pick — full-width quiet row at the composer's top */
+.cmp-proj{display:flex;align-items:center;gap:var(--s-8);width:100%;padding:var(--s-10) var(--s-16) 0;border:0;background:none;font:var(--fs-sm) var(--font-ui);color:var(--c-text-2);cursor:pointer;text-align:left;transition:color var(--dur-fast) var(--ease-out)}
+.cmp-proj:hover{color:var(--c-text)}
+.cmp-proj .i{width:var(--icon-sm);height:var(--icon-sm);color:var(--c-text-3)}
+.cmp-proj:hover .i{color:var(--c-accent)}
+.cmp-proj .cp-cur{margin-left:auto;font-size:var(--fs-2xs);color:var(--c-text-3);max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmp-proj[hidden]{display:none}
 .cmp-top{display:flex;align-items:center;gap:var(--s-2);height:var(--h-xl);padding:0 var(--s-6);border-radius:calc(var(--r-2xl) - var(--bw-hairline)) calc(var(--r-2xl) - var(--bw-hairline)) 0 0;background:var(--c-fill-1)}/* token-exempt: §6 nested-corner rule */
 .cmp-top[hidden]{display:none}
 .cmp-top,.cmp-atts,.cmp-queue,.cmp-quotes{animation:k-rise var(--dur-fast) var(--ease-out)}

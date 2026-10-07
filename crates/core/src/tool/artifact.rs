@@ -81,6 +81,7 @@ impl ToolImpl for HtmlArtifactTool {
             String::new()
         };
         Ok(ToolResult {
+            exit_code: None,
             output: format!(
                 "artifact '{}' → {} ({} bytes){rev_note}",
                 a.name,

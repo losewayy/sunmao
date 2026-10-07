@@ -47,6 +47,7 @@ impl ToolImpl for WebFetchTool {
         const CAP: usize = 24 * 1024;
         let truncated = resp.chars().take(CAP).collect::<String>();
         Ok(ToolResult {
+            exit_code: None,
             output: truncated,
             ok: true,
         })

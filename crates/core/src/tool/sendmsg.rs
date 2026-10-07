@@ -55,6 +55,7 @@ impl ToolImpl for SendMessageTool {
         let a: Args = serde_json::from_value(args)?;
         let Some(queue) = &ctx.parent_steer else {
             return Ok(ToolResult {
+                exit_code: None,
                 output: "no parent session — the interactive agent has nothing to message".into(),
                 ok: false,
             });
@@ -71,6 +72,7 @@ impl ToolImpl for SendMessageTool {
             ),
         ));
         Ok(ToolResult {
+            exit_code: None,
             output: "message queued for the parent session".into(),
             ok: true,
         })

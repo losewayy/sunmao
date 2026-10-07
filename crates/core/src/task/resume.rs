@@ -126,6 +126,7 @@ pub(super) async fn resume_sub(
         )
         .await;
         Ok(ToolResult {
+            exit_code: None,
             output: format!("resumed {sub_id} in the background"),
             ok: true,
         })

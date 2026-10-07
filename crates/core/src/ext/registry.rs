@@ -355,6 +355,7 @@ impl ToolImpl for ExtTool {
             )
             .await?;
         Ok(crate::tool::ToolResult {
+            exit_code: None,
             output: reply
                 .get("content")
                 .map(|c| {

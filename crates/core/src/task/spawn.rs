@@ -483,11 +483,13 @@ pub(crate) async fn run_spawn(
                 }
             }
             ToolResult {
+                exit_code: None,
                 output: "[sub-agent cancelled]".into(),
                 ok: false,
             }
         }
         Ok(_) => ToolResult {
+            exit_code: None,
             output: if text.is_empty() {
                 "[sub-agent finished with no text output]".into()
             } else {
@@ -496,6 +498,7 @@ pub(crate) async fn run_spawn(
             ok: true,
         },
         Err(e) => ToolResult {
+            exit_code: None,
             output: format!("sub-agent failed: {e:#}"),
             ok: false,
         },

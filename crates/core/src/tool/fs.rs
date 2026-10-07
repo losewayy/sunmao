@@ -99,6 +99,7 @@ impl ToolImpl for ReadTool {
             }
         }
         Ok(ToolResult {
+            exit_code: None,
             output: out,
             ok: true,
         })
@@ -146,6 +147,7 @@ impl ToolImpl for WriteTool {
         // is how blind edits happen. New files are exempt.
         if path.exists() && !ctx.has_read(&path) {
             return Ok(ToolResult {
+                exit_code: None,
                 output: format!(
                     "refused: {} exists but was not Read this session. Read it first.",
                     path.display()
@@ -160,6 +162,7 @@ impl ToolImpl for WriteTool {
             .await
             .with_context(|| format!("cannot write {}", path.display()))?;
         Ok(ToolResult {
+            exit_code: None,
             output: format!("wrote {} bytes to {}", a.content.len(), path.display()),
             ok: true,
         })
@@ -214,6 +217,7 @@ impl ToolImpl for EditTool {
         if a.old_string.is_empty() {
             if path.exists() && !ctx.has_read(&path) {
                 return Ok(ToolResult {
+                    exit_code: None,
                     output: format!(
                         "refused: {} exists and was not Read this session. Read it first (or use Write for a new file).",
                         path.display()
@@ -224,6 +228,7 @@ impl ToolImpl for EditTool {
             ctx.checkpoint_file(&path).await?;
             tokio::fs::write(&path, &a.new_string).await?;
             return Ok(ToolResult {
+                exit_code: None,
                 output: format!("created {}", path.display()),
                 ok: true,
             });
@@ -231,6 +236,7 @@ impl ToolImpl for EditTool {
 
         if !ctx.has_read(&path) {
             return Ok(ToolResult {
+                exit_code: None,
                 output: format!(
                     "refused: {} was not Read this session. Read it first.",
                     path.display()
@@ -256,6 +262,7 @@ impl ToolImpl for EditTool {
         ctx.checkpoint_file(&path).await?;
         tokio::fs::write(&path, &new_text).await?;
         Ok(ToolResult {
+            exit_code: None,
             output: format!("edited {}", path.display()),
             ok: true,
         })

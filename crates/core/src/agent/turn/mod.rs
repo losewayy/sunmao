@@ -388,6 +388,7 @@ impl AgentLoop {
                 // malformed JSON args → failed result fed back, no dispatch
                 if let Some(err) = malformed.get(&call.id) {
                     let result = crate::tool::ToolResult {
+                        exit_code: None,
                         output: format!("malformed tool call: {err}"),
                         ok: false,
                     };

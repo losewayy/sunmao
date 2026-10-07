@@ -215,6 +215,7 @@ impl ToolImpl for UpdateGoalTool {
         if let Some(obj) = a.objective {
             if obj.trim().is_empty() {
                 return Ok(ToolResult {
+                    exit_code: None,
                     output: "UpdateGoal rejected: objective is empty".into(),
                     ok: false,
                 });
@@ -228,6 +229,7 @@ impl ToolImpl for UpdateGoalTool {
         }
         let Some(goal) = goal else {
             return Ok(ToolResult {
+                exit_code: None,
                 output: "UpdateGoal rejected: no goal exists — pass `objective` to set one".into(),
                 ok: false,
             });
@@ -277,6 +279,7 @@ impl ToolImpl for UpdateGoalTool {
         }
         ctx.apply_goal(goal.clone()).await?;
         Ok(ToolResult {
+            exit_code: None,
             output: format!("goal: {}\n{note}", goal.render()),
             ok: true,
         })

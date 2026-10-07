@@ -52,6 +52,7 @@ impl ToolImpl for JobOutputTool {
         let a: Args = serde_json::from_value(args)?;
         if !a.id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
             return Ok(ToolResult {
+                exit_code: None,
                 output: "bad job id".into(),
                 ok: false,
             });
@@ -61,6 +62,7 @@ impl ToolImpl for JobOutputTool {
             Ok(d) => d,
             Err(_) => {
                 return Ok(ToolResult {
+                    exit_code: None,
                     output: format!("no such job: {}", a.id),
                     ok: false,
                 });
@@ -78,6 +80,7 @@ impl ToolImpl for JobOutputTool {
             Err(_) => "running".into(),
         };
         Ok(ToolResult {
+            exit_code: None,
             output: format!(
                 "[{id} {status}] bytes {start}..{end}/{total}
 log: {path}
@@ -133,6 +136,7 @@ impl ToolImpl for JobListTool {
         let entries = jobs::snapshot(&ctx.jobs);
         if entries.is_empty() {
             return Ok(ToolResult {
+                exit_code: None,
                 output: "no background jobs in this session".into(),
                 ok: true,
             });
@@ -166,6 +170,7 @@ impl ToolImpl for JobListTool {
             ));
         }
         Ok(ToolResult {
+            exit_code: None,
             output: out,
             ok: true,
         })
@@ -208,12 +213,14 @@ impl ToolImpl for JobStopTool {
         let a: Args = serde_json::from_value(args)?;
         let Some(entry) = jobs::stop_wire(&ctx.jobs, &a.id) else {
             return Ok(ToolResult {
+                exit_code: None,
                 output: format!("no such job: {}", a.id),
                 ok: false,
             });
         };
         if !entry.status.is_running() {
             return Ok(ToolResult {
+                exit_code: None,
                 output: format!("job {} already finished ({})", a.id, entry.status.label()),
                 ok: false,
             });
@@ -222,6 +229,7 @@ impl ToolImpl for JobStopTool {
         entry.stop.kill();
         let pid = entry.pid.map(|p| format!(" (pid {p})")).unwrap_or_default();
         Ok(ToolResult {
+            exit_code: None,
             output: format!(
                 "stopping job {}{pid}; its completion will still be reported",
                 a.id

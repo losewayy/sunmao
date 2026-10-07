@@ -56,6 +56,7 @@ pub(super) async fn settle(
         })
         .await;
         return Ok(ToolResult {
+            exit_code: None,
             output: format!("[delegation accepted — verify clean]\n{out}"),
             ok: true,
         });
@@ -77,6 +78,7 @@ pub(super) async fn settle(
              FusionExecute with `steer` to retry the same Sidekick]",
         );
         return Ok(ToolResult {
+            exit_code: None,
             output: out,
             ok: false,
         });
@@ -120,6 +122,7 @@ pub(super) async fn settle(
         ));
     }
     Ok(ToolResult {
+        exit_code: None,
         output: out,
         ok: false,
     })

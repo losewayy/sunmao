@@ -135,10 +135,12 @@ impl ToolImpl for TaskTool {
             };
             return match ctx.steer_sub(sub_id, msg.to_string()) {
                 Ok(()) => Ok(ToolResult {
+                    exit_code: None,
                     output: format!("steered {sub_id}"),
                     ok: true,
                 }),
                 Err(e) => Ok(ToolResult {
+                    exit_code: None,
                     output: e.to_string(),
                     ok: false,
                 }),
@@ -265,6 +267,7 @@ impl ToolImpl for TaskTool {
                 ids.push(spawn_detached(ctx, &it.prompt, def.as_ref(), llm.clone()).await);
             }
             return Ok(ToolResult {
+                exit_code: None,
                 output: format!(
                     "{} background sub-agent(s) launched: {}\nresults arrive as <task-result> messages in this session; \
                      full transcripts live at .sunmao/sessions/<id>.jsonl",
@@ -297,6 +300,7 @@ impl ToolImpl for TaskTool {
             merged.push_str(&format!("## task {} {mark}\n{}\n\n", i + 1, r.output));
         }
         Ok(ToolResult {
+            exit_code: None,
             output: merged.trim_end().to_string(),
             ok: all_ok,
         })

@@ -42,6 +42,14 @@ impl LocalShell {
         }
     }
 
+    /// The finished run's exit code; a detached run hasn't produced one yet.
+    pub fn exit_code(&self) -> Option<i32> {
+        match self {
+            Self::Done(run) => Some(run.exit_code),
+            Self::Detached { .. } => None,
+        }
+    }
+
     /// Did the command succeed? A run that is still going is not a failure.
     pub fn ok(&self) -> bool {
         match self {

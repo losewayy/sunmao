@@ -18,6 +18,7 @@ impl crate::tool::ToolImpl for FakeTool {
         _c: &std::sync::Arc<Context>,
     ) -> anyhow::Result<crate::tool::ToolResult> {
         Ok(crate::tool::ToolResult {
+            exit_code: None,
             output: "ok".into(),
             ok: true,
         })

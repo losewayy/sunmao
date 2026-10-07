@@ -194,6 +194,7 @@ impl AgentLoop {
                         args: serde_json::Value::Null,
                     });
                     crate::tool::ToolResult {
+                        exit_code: None,
                         output: format!("malformed tool call: {err}"),
                         ok: false,
                     }
@@ -221,6 +222,7 @@ impl AgentLoop {
                     // so an already-requested cancel aborts the call here
                     let cancel = self.ctx.cancel_signal();
                     let aborted = || crate::tool::ToolResult {
+                        exit_code: None,
                         output: "cancelled by user".into(),
                         ok: false,
                     };
@@ -231,7 +233,7 @@ impl AgentLoop {
                             Some(s) => tokio::select! {
                                 r = &mut call_fut => r,
                                 () = cancel.wait() => aborted(),
-                                () = tokio::time::sleep(std::time::Duration::from_secs(s)) => crate::tool::ToolResult {
+                                () = tokio::time::sleep(std::time::Duration::from_secs(s)) => crate::tool::ToolResult { exit_code: None,
                                     output: format!("tool {} exceeded its {s}s timeout — see tool-timeouts.txt", call.function.name),
                                     ok: false,
                                 },

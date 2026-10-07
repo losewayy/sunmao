@@ -21,7 +21,10 @@ sunmao.register({
         // Collapsing the two hides "I emptied the list" from the agent's own
         // audit trail.
         let items = null;
-        const MARK = { done: '☑', in_progress: '▶', pending: '☐' };
+        // marks are drawn, not typed: hollow ring = pending, accent ring+dot
+        // = in flight, filled ok circle + check = done (see .plg-mk styles)
+        const mark = s => s === 'done' ? `<i class="plg-mk done">${host.ic('check', 'i xs')}</i>`
+          : `<i class="plg-mk ${host.esc(s === 'in_progress' ? 'prog' : 'pend')}"></i>`;
         const render = () => {
           const done = (items || []).filter(i => i.status === 'done').length;
           el.innerHTML = `<section class="df"><div class="df-h"><span>${host.t('待办')}</span>${items ? `<span class="df-cnt">${done}/${items.length}</span>` : ''}</div>` +
@@ -29,7 +32,7 @@ sunmao.register({
               ? `<div class="empty-hint">${host.t('会话还没有任务列表')}</div>`
               : items.length === 0
                 ? `<div class="empty-hint">${host.t('任务列表已清空')}</div>`
-                : `<div class="plg-todos">${items.map(i => `<div class="plg-todo ${host.esc(i.status || 'pending')}"><span class="plg-mark">${MARK[i.status] || '☐'}</span><span>${host.esc(i.content || '')}</span></div>`).join('')}</div>`) +
+                : `<div class="plg-todos">${items.map(i => `<div class="plg-todo ${host.esc(i.status || 'pending')}">${mark(i.status)}<span class="plg-txt">${host.esc(i.content || '')}</span></div>`).join('')}</div>`) +
             `</section>`;
         };
         host.on('live', ev => { if (ev.type === 'todos') { items = ev.items || []; render(); } });

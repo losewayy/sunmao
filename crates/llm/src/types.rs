@@ -99,7 +99,7 @@ async fn resolve_image(path: &str) -> anyhow::Result<std::sync::Arc<str>> {
             .unwrap_or(0),
         meta.len(),
     );
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cache = CACHE.get_or_init(|| Mutex::new(ImageCache::new()));
     if let Some(hit) = cache
         .lock()
         .unwrap_or_else(|e| e.into_inner())

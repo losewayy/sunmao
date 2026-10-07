@@ -189,9 +189,10 @@ pub(crate) async fn build_sub_ctx(
         lane_counter: ctx.lane_counter.clone(),
         cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         cancel_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
-        // the child runs the same shell — the choice is session-level
+        // the child runs the same shells — the choice is session-level
         // (SUNMAO_SHELL / .sunmao/shell.txt resolved on the parent)
         shell: ctx.shell,
+        local_shell: ctx.local_shell,
         tool_timeouts: ctx.tool_timeouts.clone(),
         read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),
         // the child's ledger is its own — keyed to its session id, not the

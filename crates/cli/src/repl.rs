@@ -213,7 +213,7 @@ pub async fn run(
                 continue;
             }
             let ctx = agent.context().clone();
-            match sunmao_core::tool::run_local_shell(cmd, cwd.to_path_buf(), 120, ctx.shell, &ctx)
+            match sunmao_core::tool::run_local_shell(cmd, cwd.to_path_buf(), 120, ctx.local_shell, &ctx)
                 .await
             {
                 Ok(run) => {

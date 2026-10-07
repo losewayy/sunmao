@@ -73,11 +73,17 @@ pub(super) async fn put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> H
 pub(super) fn shell_view(s: &Arc<Shared>, sess: Option<String>) -> HostResponse {
     let cwd = project_dir(s, sess);
     let res = sunmao_core::tool::ShellBackend::resolve_with(&cwd);
+    let local = sunmao_core::tool::ShellBackend::resolve_local_with(&cwd);
+    let name = |b| match b {
+        sunmao_core::tool::ShellBackend::Pwsh => "pwsh",
+        sunmao_core::tool::ShellBackend::Posix => "posix",
+    };
     HostResponse::json(serde_json::json!({
-        "backend": match res.backend {
-            sunmao_core::tool::ShellBackend::Pwsh => "pwsh",
-            sunmao_core::tool::ShellBackend::Posix => "posix",
-        },
+        "backend": name(res.backend),
+        // the `!` local shell resolves the same pins but auto defaults to
+        // the operator's dialect — pwsh on Windows — while the agent's
+        // `Bash` auto is Posix
+        "local_backend": name(local.backend),
         "source": res.source.label(),
         "pwsh_on_path": sunmao_core::tool::ShellBackend::pwsh_on_path(),
         "pwsh_requested_but_missing": res.pwsh_requested_but_missing,

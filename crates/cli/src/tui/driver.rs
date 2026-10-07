@@ -397,7 +397,9 @@ pub(super) fn spawn(
                 }
                 Submit::Bash(cmd) => {
                     // `!` local shell — the user runs it, so no approval
-                    // gate and no LLM involvement. Runs on `ctx.shell` —
+                    // gate and no LLM involvement. Runs on `ctx.local_shell` —
+                    // the operator's dialect, not the agent's: auto keeps
+                    // pwsh on Windows even though `Bash` defaults Posix.
                     // whichever backend `shell.txt` / `SUNMAO_SHELL` picked
                     // (Posix|deno_task_shell, or Pwsh); the durable fact
                     // folds into the next turn's context via LocalShell.
@@ -417,7 +419,7 @@ pub(super) fn spawn(
                     // killing it, and the rendered note hands the user the
                     // job id; completion arrives as a `[job … done]` note.
                     let (ok, output, code) = match sunmao_core::tool::run_local_shell(
-                        &cmd, shell_cwd, 120, ctx.shell, &ctx,
+                        &cmd, shell_cwd, 120, ctx.local_shell, &ctx,
                     )
                     .await
                     {

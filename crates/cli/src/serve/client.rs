@@ -356,7 +356,7 @@ impl Client {
                         // same job-aware run the TUI's `!` and the `Bash` tool
                         // make: a timeout moves the command to the background
                         let (ok, output, code) = match sunmao_core::tool::run_local_shell(
-                            &cmd, cwd, 120, ctx.shell, &ctx,
+                            &cmd, cwd, 120, ctx.local_shell, &ctx,
                         )
                         .await
                         {

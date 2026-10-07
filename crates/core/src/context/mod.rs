@@ -87,6 +87,10 @@ pub struct Context {
     /// `.sunmao/shell.txt` / `~/.sunmao/shell.txt` / platform auto-detect at
     /// context build (see `tool::ShellBackend`).
     pub shell: crate::tool::ShellBackend,
+    /// The `!` local shell's backend — resolved separately so the
+    /// interactive dialect follows the operator's platform habit (pwsh
+    /// on Windows) even though the agent's `Bash` auto-picks Posix.
+    pub local_shell: crate::tool::ShellBackend,
     /// Per-tool watchdog seconds (`assets/tool-timeouts.txt` merged with
     /// `.sunmao/tool-timeouts.txt` + plugin dirs). A listed tool's call is
     /// abandoned past its budget — Bash is exempt (its own `timeout_secs`
@@ -440,6 +444,7 @@ impl Context {
         }
         let readonly_verbs = crate::agent::mode::readonly_verbs(&verb_extra);
         let shell = crate::tool::ShellBackend::resolve(&cwd);
+        let local_shell = crate::tool::ShellBackend::resolve_local(&cwd);
         let tool_timeouts = std::sync::Arc::new(tool_timeout_table(&cwd));
         let sessions = Arc::new(tokio::sync::Mutex::new(sessions));
         let mut hook_engine = HookEngine::load(&cwd, &session_id, &[]);
@@ -464,6 +469,7 @@ impl Context {
             cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             cancel_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
             shell,
+            local_shell,
             tool_timeouts,
             read_paths: std::sync::Mutex::new(std::collections::HashSet::new()),
             checkpoints: std::sync::Mutex::new(checkpoints),

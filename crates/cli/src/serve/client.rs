@@ -70,7 +70,9 @@ impl Client {
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(_) => break,
                         Ok(v) => {
-                            if out.send(v.to_string()).is_err() {
+                            // pre-serialized at emit — one memcpy, not a
+                            // re-serialize per subscriber
+                            if out.send(v.text.to_string()).is_err() {
                                 break;
                             }
                         }

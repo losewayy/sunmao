@@ -10,7 +10,7 @@ use sunmao_core::context::MutexRecover;
 
 use sunmao_core::agent::{LiveEvent, Observer};
 use sunmao_core::approval::{Approval, Approver};
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::oneshot;
 
 /// One unanswered approval card — the reply oneshot plus the payload the
 /// card was raised with (a tab switching into a session re-renders cards
@@ -33,16 +33,12 @@ pub(crate) struct Pending {
     next: Arc<AtomicU64>,
     /// approval requests go out over the same live bus as LiveEvents,
     /// tagged with this session's id
-    live: broadcast::Sender<serde_json::Value>,
+    live: super::LiveBus,
     sess: String,
 }
 
 impl Pending {
-    pub(crate) fn new(
-        live: broadcast::Sender<serde_json::Value>,
-        next: Arc<AtomicU64>,
-        sess: String,
-    ) -> Self {
+    pub(crate) fn new(live: super::LiveBus, next: Arc<AtomicU64>, sess: String) -> Self {
         Self {
             map: Mutex::new(HashMap::new()),
             next,
@@ -119,11 +115,11 @@ impl Approver for ServeApprover {
 /// as the session-neutral wire shape (tagged enum) — frontends never see
 /// a second dialect; `sess` is the tab's routing key.
 pub(crate) struct WsObserver {
-    live: broadcast::Sender<serde_json::Value>,
+    live: super::LiveBus,
     sess: String,
 }
 impl WsObserver {
-    pub(crate) fn new(live: broadcast::Sender<serde_json::Value>, sess: impl Into<String>) -> Self {
+    pub(crate) fn new(live: super::LiveBus, sess: impl Into<String>) -> Self {
         Self {
             live,
             sess: sess.into(),

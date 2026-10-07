@@ -5,7 +5,9 @@ use super::*;
 /// reached it until reconnect. `Lagged` is recoverable: skip the gap.
 #[tokio::test]
 async fn lagged_bus_survives() {
-    let (live, _) = tokio::sync::broadcast::channel::<serde_json::Value>(4);
+    let (live, _) =
+        tokio::sync::broadcast::channel::<std::sync::Arc<crate::serve::host::LiveFrame>>(4);
+    let live = crate::serve::host::LiveBus(live);
     let (mgmt, _rx) = mpsc::unbounded_channel();
     let s = Arc::new(Shared {
         cwd: std::env::temp_dir(),
@@ -69,7 +71,9 @@ async fn connect_views_the_newest_adopted_session() {
     std::fs::create_dir_all(&sdir).unwrap();
     // a real factory — adopt drives factory.build → Context → AgentLoop
     let s = {
-        let (live, _) = tokio::sync::broadcast::channel::<serde_json::Value>(8);
+        let (live, _) =
+            tokio::sync::broadcast::channel::<std::sync::Arc<crate::serve::host::LiveFrame>>(8);
+        let live = crate::serve::host::LiveBus(live);
         let (mgmt, _rx) = mpsc::unbounded_channel();
         Arc::new(Shared {
             cwd: dir.clone(),
@@ -152,7 +156,9 @@ async fn hello_and_replay_carry_the_turn_mode() {
     )
     .unwrap();
     let s = {
-        let (live, _) = tokio::sync::broadcast::channel::<serde_json::Value>(8);
+        let (live, _) =
+            tokio::sync::broadcast::channel::<std::sync::Arc<crate::serve::host::LiveFrame>>(8);
+        let live = crate::serve::host::LiveBus(live);
         let (mgmt, _rx) = mpsc::unbounded_channel();
         Arc::new(Shared {
             cwd: dir.clone(),

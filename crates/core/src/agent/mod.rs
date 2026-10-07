@@ -298,15 +298,23 @@ impl AgentLoop {
         });
     }
 
-    /// Reload the models file at a turn fence and reconcile Fusion selectors.
+    /// Reload the models file and reconcile Fusion selectors.
+    /// The file read doesn't need the turn fence — a GET /models during a
+    /// long turn used to stall behind it for the whole turn, when only the
+    /// *reconcile* must serialize against turn boundaries. Reconcile rides
+    /// a spawned task: the file view answers immediately while the fusion
+    /// check still lands at a real fence.
     pub async fn reload_models(&self) {
-        let _turn_permit = self.ctx.turn_lock.lock().await;
         if let Some(models) = self.ctx.models.as_ref() {
             models.reload();
-            if let Some(problem) = self.reconcile_fusion_mode() {
+        }
+        let agent = self.clone();
+        tokio::spawn(async move {
+            let _turn_permit = agent.ctx.turn_lock.lock().await;
+            if let Some(problem) = agent.reconcile_fusion_mode() {
                 tracing::warn!("Fusion mode disabled after model reload: {problem}");
             }
-        }
+        });
     }
 
     /// The project dir this session runs in — a resume/fork across

@@ -353,6 +353,41 @@ new ResizeObserver(() => {
   $('.stage').style.setProperty('--off-hero-bottom', (h + 16) + 'px');
 }).observe($('#composer'));
 
+/* transcript column resize — either .tx-edge drags --w-read on #app
+   (symmetric: the column is centered, so dx doubles). Same seam as the
+   rail/dock edges; S.readW persists and settings.js apply() restores it
+   with the same clamps. */
+for (const side of ['l', 'r']) {
+  const edge = $('#tx-edge-' + side), app = $('#app');
+  edge.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    try { edge.setPointerCapture(e.pointerId); } catch {}
+    app.dataset.dragging = '1';
+    const x0 = e.clientX, w0 = $('#tx').getBoundingClientRect().width;
+    const move = ev => {
+      const dx = (ev.clientX - x0) * (side === 'r' ? 1 : -1);
+      // the stage's left/right are transition-animated — measuring its rect
+      // mid-swing poisons the cap; derive the FINAL stage width from the
+      // chrome vars instead (they're already at their settled values)
+      const cw = getComputedStyle(app);
+      const railW = app.dataset.rail === 'off' ? 0 : parseFloat(cw.getPropertyValue('--w-rail')) || 252;
+      const dockW = app.dataset.dock === 'on' ? (parseFloat(cw.getPropertyValue('--w-dock')) || 264) : 0;
+      const max = innerWidth - railW - dockW - 80;
+      const w = Math.max(420, Math.min(max, w0 + dx * 2));
+      app.style.setProperty('--w-read', Math.round(w) + 'px');
+      S.readW = Math.round(w);
+    };
+    const up = () => {
+      delete app.dataset.dragging;
+      edge.removeEventListener('pointermove', move);
+      edge.removeEventListener('pointerup', up);
+      save();
+    };
+    edge.addEventListener('pointermove', move);
+    edge.addEventListener('pointerup', up);
+  });
+}
+
 /* the hero's launch-mode switch. A session's loop driver froze into its
    Started event, so "run this task as X" can't mutate the shell under
    the hero — but the hero only sits on EMPTY sessions, which are free

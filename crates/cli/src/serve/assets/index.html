@@ -238,6 +238,12 @@
       <div class="cmp-queue" id="cmp-queue" hidden></div>
       <div class="cmp-atts" id="cmp-atts" hidden></div>
       <div class="cmp-quotes" id="cmp-quotes" hidden></div>
+      <!-- hero-state project pick: an empty session IS the new-chat
+           surface, so the folder button lives inside the composer —
+           one click → OS-native directory picker → newChat(path) -->
+      <button class="cmp-proj" id="cmp-proj" data-act="pick-proj" data-tip="在另一个文件夹里开始新对话 — 打开系统目录选择器" data-i18n-tip="在另一个文件夹里开始新对话 — 打开系统目录选择器" hidden>
+        <svg class="i"><use href="#i-folder"/></svg><span data-i18n="选择项目">选择项目</span><span class="cp-cur mono" id="cp-cur"></span>
+      </button>
       <div class="cmp-row">
         <textarea id="input" rows="1" placeholder="描述任务，/ 调用命令" data-i18n-ph="描述任务，/ 调用命令" aria-label="消息" data-i18n-al="消息"></textarea>
       </div>

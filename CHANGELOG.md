@@ -10,6 +10,7 @@ ACP v2 server, event-sourced sessions with resume/fork/dataflow, CJK-native
 TUI.
 
 **post-0.2 additions**
+- **gui**: the bundle icon is two blocks locked into one — a literal 榫卯 joint — replacing the placeholder; the serve page's favicon follows it, and the README picks up the mark plus serve screenshots.
 - **tools**: a foreground command that hits its timeout is handed to the background instead of being killed. Jobs have a registry, a durable completion message folded into the conversation, and `JobList`/`JobStop`/`JobOutput`; the panel lists background runs only, and a job that finishes in the foreground leaves nothing behind.
 - **im**: the deeper audit's findings, each with a test that fails without the fix. The Telegram bot token no longer reaches a log (reqwest prints the URL it failed on, and the token was in the base URL), QQ advances its reply sequence per chunk instead of reusing one pair, cursor keys are scoped to the credential, token TTLs and frame sizes are bounded, and a partly delivered message is never resent from the top.
 - **web**: fetch no longer panics on any page with a non-ASCII dash or quote, a panic that left the tool call without a result and hung the turn. It decodes by the response's charset, caps the body at 2 MiB, reuses one HTTP client, and refuses loopback and private addresses unless `SUNMAO_WEBFETCH_ALLOW_PRIVATE=1`.

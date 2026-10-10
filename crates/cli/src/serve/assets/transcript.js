@@ -411,7 +411,7 @@ function renderReplay(events, anim) {
           const h = msgHost();
           // Keep the plain-Markdown append atomic for replay parity: the
           // canonical op log observes DOM appends before later innerHTML writes.
-          if (!c.includes('```sunmao-ui\n') && !c.includes('```sunmao-ui\r\n'))
+          if (!/(?:```|~~~)sunmao-ui\r?\n/.test(c))
             append(h, `<div class="bubble glass">${mdRender(c)}</div>`);
           else {
             const b = append(h, '<div class="bubble glass"></div>');

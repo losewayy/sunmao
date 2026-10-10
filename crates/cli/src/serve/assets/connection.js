@@ -412,14 +412,15 @@ const jput = v => ({ method: 'PUT', headers: { 'content-type': 'application/json
 const jpost = v => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(v) });
 const modelApiPath = path => sessionId ? `${path}?sess=${encodeURIComponent(sessionId)}` : path;
 async function refreshModels() {
-  try {
-    MODELS = await api(modelApiPath('/models'));
-    models = MODELS.selectors || [];
-    if (MODELS.turn_mode) setTurnMode(MODELS.turn_mode);
-  } catch { MODELS = null; }
+  await loadSettingsSection('providers',async sess =>
+    api(sess ? '/models?sess=' + encodeURIComponent(sess) : '/models'),
+    data => {
+      MODELS = data;
+      models = MODELS.selectors || [];
+      if (MODELS.turn_mode) setTurnMode(MODELS.turn_mode);
+    }, renderProviders);
   fusionPending = false;
   renderComposerModel();
-  if (view === 'settings' && setPage === 'providers') renderProviders();
   if (popEl && popEl.classList.contains('models')) renderModelRows(popEl, $('#mp-in') ? $('#mp-in').value.trim() : '');
 }
 const provNames = () => Object.keys((MODELS && MODELS.providers) || {}).sort();
@@ -491,8 +492,8 @@ async function saveProviders(edit, ok) {
   } catch (e) { toast(t('保存失败：{msg}', { msg: e.message }), 'alert', 'warn'); }
 }
 async function refreshShell() {
-  try { SHELL = await api('/shell'); } catch { SHELL = null; }
-  if (view === 'settings' && setPage === 'shell') renderShell();
+  return loadSettingsSection('shell',async () => api('/shell'),
+    data => { SHELL = data; }, renderShell);
 }
 
 

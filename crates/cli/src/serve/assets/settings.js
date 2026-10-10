@@ -197,13 +197,13 @@ const card = rows => `<div class="card glass cfg">${rows.join('')}</div>`;
 const sec = (h, p, body) => `<div class="sec">${h ? `<div class="sec-h"><h2>${h}</h2>${p ? `<p>${p}</p>` : ''}</div>` : ''}${body}</div>`;
 const head = (t, d) => `<h1>${t}</h1>${d ? `<p class="lead">${d}</p>` : ''}`;
 // Prevent render-triggered request storms and ignore responses for old sessions.
-const SETTINGS_LOAD = Object.fromEntries(['grants','hooks','mcp','plugins'].map(k =>
+const SETTINGS_LOAD = Object.fromEntries(['grants','hooks','mcp','plugins','providers','shell'].map(k =>
   [k,{status:'idle',error:'',ticket:0}]));
 function resetSessionSettingsLoads() {
   for (const e of Object.values(SETTINGS_LOAD)) {
     e.ticket++; e.status='idle'; e.error='';
   }
-  GRANTS = HOOKS = MCPS = PLUGIN_CAT = null;
+  GRANTS = HOOKS = MCPS = PLUGIN_CAT = MODELS = SHELL = null;
 }
 async function loadSettingsSection(kind, request, accept, redraw) {
   const e = SETTINGS_LOAD[kind];
@@ -287,7 +287,7 @@ async function saveDefaultModel(sel) {
 function renderProviders() {
   if (view !== 'settings' || setPage !== 'providers') return;
   const host = $('#set-generic');
-  if (!MODELS) { host.innerHTML = head(t('模型与提供商'), '') + '<div class="empty-hint">' + t('正在读取模型配置…') + '</div>'; refreshModels(); return; }
+  if (!MODELS) { settingsFetchState('providers',t('模型与提供商'),refreshModels); return; }
   const names = Object.keys(MODELS.providers || {}).sort();
   let html = head(t('模型与提供商'), '');
   html += '<div class="card glass cfg pv"><div class="cr"><div class="l"><b>' +
@@ -407,7 +407,7 @@ function provForm(n, p) {
     <label>Base URL<input data-f="base_url" value="${val('base_url')}" placeholder="https://api.example.com/v1"></label>
     <label>${t('协议')}<button class="pv-sel" type="button" data-pv="dialect" data-v="${val('dialect', 'openai')}"><span>${esc(DIALECTS.find(d => d.v === val('dialect', 'openai'))?.t || 'Chat Completions')}</span>${ic('chev-d')}</button></label>
     <label>API Key<input data-f="api_key" type="password" value="${val('api_key')}" placeholder="${p && p.api_key_set ? esc(t('已配置 — 留空保持不变')) : esc(t('sk-… 或留空（本地服务）'))}"><small>${t('密钥保存在项目的 .sunmao/models.json；推荐改用 api_key_env 环境变量')}</small></label>
-    <div class="pv-mh"><span class="pv-ml">${t('模型（勾选要用的）')}</span><span class="pv-mr"><button class="btn ghost sm" data-pv="fetch" ${v.fetching ? 'disabled' : ''}>${ic('download')}${v.fetched ? t('重新拉取') : t('拉取模型')}</button></span></div>
+    <div class="pv-mh"><span class="pv-ml">${t('模型（勾选要用的）')}</span><span class="pv-mr"><button class="btn ghost sm" data-pv="check" ${v.fetching ? 'disabled' : ''}>${ic('shield-check')}${t('测试模型目录')}</button><button class="btn ghost sm" data-pv="fetch" ${v.fetching ? 'disabled' : ''}>${ic('download')}${v.fetched ? t('重新拉取') : t('拉取模型')}</button></span></div>
     ${list}
     <div class="pv-add"><input data-f="addmodel" placeholder="${esc(t('手写 model id'))}" spellcheck="false"><button class="btn ghost sm" data-pv="addmodel">${ic('plus')}${t('添加')}</button></div>
     <div class="pv-acts"><button class="btn allow sm" data-pv="save">${ic('check')}${t('保存')}</button><button class="btn ghost sm" data-pv="cancel">${t('取消')}</button></div>
@@ -476,6 +476,24 @@ async function providerAction(kind, el) {
     return renderProviders();
   }
   if (kind === 'del') { return saveProviders({ name: n, del: true }, t('已删除 {n}', { n })); }
+  if (kind === 'check') {
+    if (!pvEdit || pvEdit.fetching) return;
+    const base = g('base_url'), key = g('api_key');
+    const dialect = cardEl.querySelector('[data-pv="dialect"]')?.dataset.v || 'openai';
+    const saved = pvEdit.name && MODELS.providers[pvEdit.name];
+    const inline = !saved || !!key || base !== saved.base_url || dialect !== saved.dialect;
+    const request = inline ? {base_url:base,api_key:key || undefined,dialect} :
+      {provider:pvEdit.name};
+    try {
+      const result = await api(modelApiPath('/models/fetch'),jpost(request));
+      toast(t('模型目录接口可访问：{n} 个模型（不代表聊天接口已验证）',
+        {n:(result.catalog || []).length}), 'check');
+    } catch (err) {
+      toast(t('模型目录请求失败（聊天接口可能仍然可用）：{msg}',
+        {msg:String(err.message || err).slice(0,180)}),'alert','warn');
+    }
+    return;
+  }
   if (kind === 'fetch') {
     if (!pvEdit) return;
     pvEdit.fetching = true;
@@ -546,7 +564,7 @@ function shellCur() { return SHELL && SHELL.source === 'auto-detect' ? 'auto' : 
 function renderShell() {
   if (view !== 'settings' || setPage !== 'shell') return;
   const host = $('#set-generic');
-  if (!SHELL) { host.innerHTML = head(t('终端'), '') + '<div class="empty-hint">' + t('正在读取设置…') + '</div>'; refreshShell(); return; }
+  if (!SHELL) { settingsFetchState('shell',t('终端'),refreshShell); return; }
   const name = { pwsh: 'PowerShell 7', posix: t('内置 POSIX') }[SHELL.backend] || SHELL.backend;
   const source = ({
     'auto-detect': t('自动选择'),

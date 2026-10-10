@@ -41,7 +41,7 @@ async function probeApp(el, name) {
 
 function postToIsland(el, msg) {
   const sb = $('iframe', el);
-  if (sb && sb.contentWindow) sb.contentWindow.postMessage(msg, '*');
+  if (sb && sb.contentWindow) sb.contentWindow.postMessage(msg, new URL(sb.src, location.href).origin);
 }
 
 let appUiSeq = 0;
@@ -188,19 +188,17 @@ function handleAppMsg(el, it, d) {
 }
 
 // island → host: messages come from the sandbox iframe's contentWindow.
-// The sandbox is `sandbox=""` — opaque origin — so `postMessage('*')` on
-// our side is forced (there's no origin to target), and on receipt the
-// origin string is literally 'null'. Validate BOTH: source has to be a
-// live island frame AND origin has to be the opaque 'null' — anything else
-// means the frame dropped sandbox or something else is talking.
+// The outer sandbox proxy has its own origin and is permitted
+// allow-same-origin, while the inner View is opaque. Check both the
+// live iframe window and its exact URL origin before handling messages.
 window.addEventListener('message', ev => {
   const d = ev.data;
   if (!d || d.jsonrpc !== '2.0') return;
-  if (ev.origin !== 'null') return;
-  for (const isl of $$('.island')) {
+  for (const isl of $('.island')) {
     const it = islandApps.get(isl);
     const sb = isl && $('iframe', isl);
-    if (it && sb && ev.source === sb.contentWindow) {
+    if (it && sb && ev.source === sb.contentWindow &&
+        ev.origin === new URL(sb.src, location.href).origin) {
       handleAppMsg(isl, it, d);
       return;
     }

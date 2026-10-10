@@ -329,6 +329,7 @@ fn js_asset(name: &str) -> Option<&'static str> {
         "settings.js" => super::SETTINGS_JS,
         "diff.js" => super::DIFF_JS,
         "md.js" => super::MD_JS,
+        "native-ui.js" => super::NATIVE_UI_JS,
         "transcript.js" => super::TRANSCRIPT_JS,
         "approvals.js" => super::APPROVALS_JS,
         "islands.js" => super::ISLANDS_JS,

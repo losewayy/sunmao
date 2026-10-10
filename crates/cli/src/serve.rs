@@ -80,6 +80,7 @@ const WALLPAPER_JS: &str = include_str!("serve/assets/wallpaper.js");
 const SETTINGS_JS: &str = include_str!("serve/assets/settings.js");
 const DIFF_JS: &str = include_str!("serve/assets/diff.js");
 const MD_JS: &str = include_str!("serve/assets/md.js");
+const NATIVE_UI_JS: &str = include_str!("serve/assets/native-ui.js");
 const TRANSCRIPT_JS: &str = include_str!("serve/assets/transcript.js");
 const APPROVALS_JS: &str = include_str!("serve/assets/approvals.js");
 const ISLANDS_JS: &str = include_str!("serve/assets/islands.js");

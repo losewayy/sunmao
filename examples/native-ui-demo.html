@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sunmao Native UI — 离线演示</title>
+<style>
+:root { color-scheme:dark;--c-fill-2:#242b37;--c-stroke:#455064;--c-accent:#73a4ff;
+--c-ok:#45c89d;--c-warn:#e9b25d;--c-text:#eaf0fb }
+*{box-sizing:border-box}body{font:15px/1.55 system-ui,-apple-system,sans-serif;background:#131822;color:var(--c-text);margin:0}
+main{margin:36px auto;max-width:870px;padding:0 20px 40px}h1{font-size:26px;margin:0}
+small{color:#9ba9be}.head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:22px}
+.shell{border:1px solid #3d4859;border-radius:18px;padding:22px;background:#1a202b;box-shadow:0 12px 40px #0003}
+.bubble{display:grid;gap:10px;min-height:100px}.native-card{background:#202836}.native-row>.native-metric{flex:1 1 150px}
+.native-metric{background:#19212e;border:1px solid #354052;border-radius:12px;padding:13px}
+button{color:inherit;cursor:pointer}#restart{border:1px solid #52627a;background:#26344a;border-radius:8px;padding:9px 13px}
+#log{font-size:13px;color:#a5b6cb;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:20px}
+.note{margin-top:16px;color:#91a0b5;font-size:13px}
+</style>
+<link rel="stylesheet" href="../crates/cli/src/serve/assets/native-ui.css">
+</head>
+<body>
+<main>
+ <div class="head"><div><h1>sunmao · Streaming Native UI</h1><small>无需联网的本地预览 · 模拟逐段 Token 到达</small></div><button id="restart">重新生成</button></div>
+ <section class="shell"><div id="answer" class="bubble"></div></section>
+ <div class="note">滑块、输入框可以在后续组件还在生成时使用；已操作的状态不会被新流覆盖。点击「继续分析」只记录一条模拟 Agent 请求，不连接真实工具。</div>
+ <div id="log" aria-live="polite"></div>
+</main>
+<script src="../crates/cli/src/serve/assets/native-ui.js"></script>
+<script>
+'use strict';
+const host=document.querySelector('#answer'), output=document.querySelector('#log');
+let timer=null, source='', index=0;
+const expression=(op,...args)=>({op,args});
+const patches=[
+  {op:'state',key:'batch',value:8},
+  {op:'state',key:'precision',value:'fp8'},
+  {op:'state',key:'note',value:'测试配置'},
+  {op:'upsert',id:'pane',type:'card'},
+  {op:'upsert',id:'title',type:'heading',parent:'pane',props:{text:'Inference Dashboard'}},
+  {op:'upsert',id:'info',type:'text',parent:'pane',props:{text:'以下数据仅用于演示前端联动，并非真实 Benchmark。'}},
+  {op:'upsert',id:'metrics',type:'row',parent:'pane'},
+  {op:'upsert',id:'tok',type:'metric',parent:'metrics',props:{label:'模拟吞吐量 (tokens/s)',value:expression('mul',{var:'batch'},112),unit:'tok/s',digits:0}},
+  {op:'upsert',id:'kv',type:'metric',parent:'metrics',props:{label:'KV Cache 估算',value:expression('mul',{var:'batch'},0.125),unit:'GiB',digits:2}},
+  {op:'upsert',id:'batch',type:'slider',parent:'pane',props:{label:'并发请求数',bind:'batch',min:1,max:128,step:1}},
+  {op:'upsert',id:'precision',type:'select',parent:'pane',props:{label:'KV 精度',bind:'precision',options:['fp16','fp8','int4']}},
+  {op:'upsert',id:'remark',type:'input',parent:'pane',props:{label:'实验备注',bind:'note'}},
+  {op:'upsert',id:'warning',type:'badge',parent:'pane',props:{text:'高并发配置：请检查显存容量',when:expression('gt',{var:'batch'},60)}},
+  {op:'upsert',id:'chart',type:'chart',parent:'pane',props:{label:'吞吐曲线示意',series:[{key:'base',label:'基线'},{key:'opt',label:'优化后'}],data:[{x:'1',base:100,opt:120},{x:'4',base:300,opt:410},{x:'8',base:550,opt:730},{x:'16',base:800,opt:1160},{x:'32',base:960,opt:1550}]}},
+  {op:'upsert',id:'table',type:'table',parent:'pane',props:{columns:[{key:'x',label:'并发'},{key:'base',label:'基线'},{key:'opt',label:'优化'}],rows:[{x:1,base:100,opt:120},{x:8,base:550,opt:730},{x:16,base:800,opt:1160}]}},
+  {op:'upsert',id:'actions',type:'row',parent:'pane'},
+  {op:'upsert',id:'run',type:'button',parent:'actions',props:{label:'继续分析',action:'ask',text:'分析模拟配置：batch={batch}, precision={precision}, note={note}'}},
+  {op:'upsert',id:'reset',type:'button',parent:'actions',props:{label:'重置参数',action:'reset'}},
+  {op:'state',key:'batch',value:32} // intentionally arrives late; must not override a user adjustment
+];
+const chunks=[];for(const p of patches){const l=JSON.stringify(p)+'\n';const split=Math.floor(l.length/2);chunks.push(l.slice(0,split),l.slice(split));}
+window.wsSend=(msg)=>{if(msg?.type==='ui_message') output.textContent='模拟收到用户点击：\n'+msg.text;};
+const md=s=>s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+function tick(){if(index<chunks.length){source+=chunks[index++];NativeUI.render(host,source,md);}else{source+='```\n';NativeUI.render(host,source,md);clearInterval(timer);timer=null;}}
+function restart(){if(timer)clearInterval(timer);host.replaceChildren();source='这是一个普通文字段落，后面将逐步长出交互组件。\n```sunmao-ui\n';index=0;output.textContent='';timer=setInterval(tick,160);tick();}
+document.querySelector('#restart').addEventListener('click',restart);
+restart();
+</script>
+</body>
+</html>

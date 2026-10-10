@@ -88,7 +88,7 @@ const TG_VERBS = [
 // node order the replay-parity op log observes identical to the DOM's.
 function absorbStep(host) {
   const b = host.lastElementChild;
-  if (!b || !b.classList.contains('bubble') || b.textContent.length > STEP_MAX || $('pre', b)) return;
+  if (!b || !b.classList.contains('bubble') || b.textContent.length > STEP_MAX || $('pre', b) || b.querySelector('.native-ui')) return;
   b.remove();
   const g = toolGroup(host); // the previous card if the bubble followed one
   b.classList.remove('glass', 'enter'); b.classList.add('step');
@@ -165,7 +165,7 @@ let curPaint = 0, thinkPaint = 0;
 function flushDelta() {
   if (curPaint) { cancelAnimationFrame(curPaint); curPaint = 0; }
   if (thinkPaint) { cancelAnimationFrame(thinkPaint); thinkPaint = 0; }
-  if (curBubble) curBubble.innerHTML = mdRender(curText);
+  if (curBubble) NativeUI.render(curBubble, curText, mdRender);
   if (curThink) curThink.textContent = curThinkText;
 }
 function sealBubble() { flushDelta(); curBubble = null; }
@@ -198,7 +198,7 @@ function contentDelta(t) {
   sealThink(); // reply text seals the reasoning stream that preceded it
   bubble();
   curText += t;
-  if (!curPaint) curPaint = requestAnimationFrame(() => { curPaint = 0; if (curBubble) curBubble.innerHTML = mdRender(curText); keepBottom(); });
+  if (!curPaint) curPaint = requestAnimationFrame(() => { curPaint = 0; if (curBubble) NativeUI.render(curBubble, curText, mdRender); keepBottom(); });
 }
 function reasoningDelta(txt) {
   if (!txt) return;
@@ -402,7 +402,7 @@ function renderReplay(events, anim) {
         logEv('message', t('你：') + c.slice(0, 60));
       } else if (m.role === 'assistant') {
         const c = msgText(m);
-        if (c) { const h = msgHost(); append(h, `<div class="bubble glass">${mdRender(c)}</div>`); }
+        if (c) { const h = msgHost(); const b = append(h, '<div class="bubble glass"></div>'); NativeUI.render(b, c, mdRender); }
         logEv('message', t('{b}：', { b: brand() }) + c.slice(0, 60) + (m.tool_calls ? ` (+${m.tool_calls.length} calls)` : ''));
       } else if (m.role === 'tool') {
         continue; // paired tool_result covers it

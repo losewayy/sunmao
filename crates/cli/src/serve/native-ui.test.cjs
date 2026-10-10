@@ -193,7 +193,7 @@ test('reset controls preserves the reference held by live DOM listeners', () => 
 test('serve native UI guide has a valid runtime example', () => {
   const { readFileSync } = require('node:fs');
   const { join } = require('node:path');
-  const guide = readFileSync(join(__dirname,'assets/native-ui.md'),'utf8');
+  const guide = readFileSync(join(__dirname,'assets/native-ui.md'),'utf8').replace(/\r\n/g,'\n');
   assert.match(guide,/Decide on your own/);
   assert.match(guide,/Use ordinary/);
   const begin = guide.indexOf('~~~sunmao-ui\n');

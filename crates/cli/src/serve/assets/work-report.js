@@ -66,7 +66,21 @@ function workReportDraw() {
   ];
   host.innerHTML = '<div class="fl-t">' + esc(status) + '</div>' +
     rows.map(r => '<div class="fl-i">'+esc(r)+'</div>').join('') +
-    v.modified.slice(-6).map(p => '<div class="fl-i" data-tip="'+esc(p)+'">'+esc(p)+'</div>').join('');
+    v.modified.slice(-6).map(p => '<div class="fl-i" data-tip="'+esc(p)+'">'+esc(p)+'</div>').join('') +
+    '<div class="pv-acts"><button type="button" class="btn ghost sm" data-report-rewind>' +
+    t('选择回退点') + '</button>' + (v.modified.length ?
+      '<button type="button" class="btn ghost sm" data-report-review>' +
+      t('定位最近的文件修改') + '</button>' : '') + '</div>';
+  host.querySelector('[data-report-rewind]')?.addEventListener('click', ev =>
+    rewindPick(sessionId,ev.currentTarget));
+  host.querySelector('[data-report-review]')?.addEventListener('click', () => {
+    const edits = $('.tool',TX).filter(el => /^(Edit|Write)$/.test($('.nm',el)?.textContent?.trim() || ''));
+    const last = edits[edits.length - 1];
+    if (!last) return toast(t('本轮文件修改卡片不在当前记录里'),'alert','warn');
+    const group = last.closest('.tools');
+    if (group && group.classList.contains('fold')) foldGroup(group,false);
+    last.scrollIntoView({behavior:motion.reduced() ? 'instant' : 'smooth',block:'center'});
+  });
 }
 function workReportReset(draw=true) {workSummaryState=WorkSummary.fresh();if(draw)workReportDraw();}
 function workReportEvent(ev,draw=true) {workSummaryState=WorkSummary.apply(workSummaryState,ev);if(draw)workReportDraw();}

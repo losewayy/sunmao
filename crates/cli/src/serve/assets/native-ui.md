@@ -36,3 +36,10 @@ Example of a parameter explorer:
 {"op":"upsert","id":"analyze","type":"button","parent":"panel","props":{"label":"Analyze","action":"ask","text":"Analyze batch size {batch}"}}
 ~~~
 Use Markdown when UI would not meaningfully clarify the answer.
+
+For a panel that later answers should update in place, use the optional first
+JSONL line {"op":"surface","id":"benchmark"} before the first upsert. When
+following up, reuse the same surface ID as the first line, then send only
+set/upsert/remove/state patches for the existing component IDs. This is
+replayable from successive assistant messages; ordinary local widget
+selections are not persisted yet.

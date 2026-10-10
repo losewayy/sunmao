@@ -206,3 +206,25 @@ test('serve native UI guide has a valid runtime example', () => {
   assert.equal(compiler.state.batch,8);
   assert.equal(compiler.invalid,0);
 });
+
+test('scoped patches address a stable panel and reject rewrites', () => {
+  const first='{"op":"surface","id":"bench"}\n{"op":"set","id":"metric","props":{"value":5}}\n';
+  const scope=UI.surfaceHeader(first);
+  assert.equal(scope.id,'bench');
+  assert.equal(UI.scopedDelta('',scope.body),scope.body);
+  assert.equal(UI.scopedDelta(scope.body,scope.body + '{"op":"remove","id":"metric"}\n'),
+    '{"op":"remove","id":"metric"}\n');
+  assert.equal(UI.scopedDelta(scope.body,'different'),null);
+  assert.equal(UI.surfaceHeader('{"op":"surface","id":"../escape"}\n'),null);
+});
+test('across messages, patches preserve user input in a reused compiler', () => {
+  const c=new UI.Compiler();
+  const initial='{"op":"state","key":"batch","value":8}\n' +
+    '{"op":"upsert","id":"v","type":"metric","props":{"value":8}}\n';
+  c.push(initial,true);
+  c.touch('batch',24);
+  c.push(initial + '{"op":"state","key":"batch","value":64}\n' +
+    '{"op":"set","id":"v","props":{"value":{"var":"batch"}}}\n',true);
+  assert.equal(c.state.batch,24);
+  assert.deepEqual(c.nodes.get('v').props.value,{var:'batch'});
+});

@@ -11,6 +11,7 @@ const NativeUI = (() => {
   const KEY = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
   const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
   const panels = new WeakMap();
+  const surfaces = new Map(); // stable per-session panels; reset before replay
   const safeNumber = x => typeof x === 'number' && Number.isFinite(x);
   const safeScalar = x => typeof x === 'boolean' || safeNumber(x) || (typeof x === 'string' && x.length <= 256);
 
@@ -363,6 +364,21 @@ const NativeUI = (() => {
     }
   }
 
+  // A stable surface header is the first complete JSONL line of a UI fence.
+  // Subsequent assistant messages may append updates to the same panel.
+  function surfaceHeader(body) {
+    const end = body.indexOf('\n');
+    if (end < 0 || end > 1024) return null;
+    try {
+      const value = JSON.parse(body.slice(0,end));
+      if (value?.op === 'surface' && KEY.test(value.id || ''))
+        return {id:value.id,body:body.slice(end+1)};
+    } catch {}
+    return null;
+  }
+  const scopedDelta = (previous,next) => next.startsWith(previous) ? next.slice(previous.length) : null;
+  function resetSurfaces() {surfaces.clear();}
+
   function render(host, source, markdown) {
     source = String(source);
     if (!source.includes('```sunmao-ui\n') && !source.includes('```sunmao-ui\r\n')) {
@@ -385,11 +401,41 @@ const NativeUI = (() => {
       }
       if (slot.element.parentElement !== host) host.appendChild(slot.element);
       if (slot.kind === 'md' && slot.body !== seg.body) slot.element.innerHTML = markdown(seg.body);
-      if (slot.kind === 'ui') slot.panel.update(seg.body,seg.closed);
+      if (slot.kind === 'ui') {
+        const scoped = surfaceHeader(seg.body);
+        if (scoped) {
+          if (slot.surfaceKey && slot.surfaceKey !== scoped.id) {
+            slot.element.textContent = 'Native UI surface cannot change during streaming';
+          } else {
+            if (!slot.surfaceKey) {
+              slot.surfaceKey = scoped.id;
+              const existing = surfaces.get(scoped.id);
+              if (existing) {
+                slot.panel = existing;
+                slot.element.hidden = true; // updates paint the original panel
+              } else surfaces.set(scoped.id,slot.panel);
+              slot.applied = '';
+            }
+            const delta = scopedDelta(slot.applied,scoped.body);
+            if (delta === null) {
+              slot.element.textContent = 'Native UI patch stream changed; reopen session to replay';
+            } else if (delta || (seg.closed && !slot.finished)) {
+              slot.applied = scoped.body;
+              slot.panel.update(slot.panel.compiler.body + delta,seg.closed);
+              slot.finished = seg.closed;
+            }
+          }
+        } else if (!slot.surfaceKey) {
+          // Delay a likely incomplete surface header rather than treating it
+          // as a malformed patch during token-by-token rendering.
+          if (!seg.body.startsWith('{"op":"surface"') || seg.body.includes('\n'))
+            slot.panel.update(seg.body,seg.closed);
+        }
+      }
       slot.body = seg.body;
     }
     while (slots.length > segs.length) slots.pop().element.remove();
   }
-  return { parts, value, Compiler, render, Panel };
+  return { parts, value, Compiler, render, Panel, surfaceHeader, scopedDelta, resetSurfaces };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = NativeUI;

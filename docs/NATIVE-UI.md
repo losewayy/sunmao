@@ -117,3 +117,14 @@ server-originated patch events, persisted user widget state, generalized
 Agent actions or deterministic model-independent UI selection. Prompt guidance enables
 best-effort UI choice in new serve sessions; cross-turn patch events need
 separate auditable contracts and tests.
+
+
+## Cross-turn panel patches (development)
+
+An optional first JSONL line `{"op":"surface","id":"bench"}` gives a panel a
+stable, session-scoped identity. A later assistant message can reuse that ID
+and emit incremental `set`, `upsert`, `remove` or `state` patches, updating
+the original panel instead of creating a duplicate. All patches remain normal
+assistant text in the append-only session log, so replay reconstructs them in
+order. Stream rewrites are rejected for shared panels; re-open to replay.
+User-touched widget values are still local and do not persist after reopening.

@@ -349,7 +349,8 @@ function eventsHTML() {
 function clearTranscript() {
   // same teardown a replay runs — /clear must release island resources
   // and drop bookkeeping, not just the pixels
-  for (const isl of $$('.island')) teardownIsland(isl);
+  for (const isl of $('.island')) teardownIsland(isl);
+  NativeUI.resetSurfaces();
   TX.innerHTML = '';
   pendingApprovals.clear(); runningTools.length = 0;
   closeMsg(); syncWait(); workReportReset(); updateHero();
@@ -360,7 +361,8 @@ function renderReplay(events, anim) {
   root.dataset.replaying = '';
   // app islands about to be dropped get a resource-teardown first —
   // SEP-1865 says the View releases its side on this request
-  for (const isl of $$('.island')) teardownIsland(isl);
+  for (const isl of $('.island')) teardownIsland(isl);
+  NativeUI.resetSurfaces();
   TX.innerHTML = ''; EVLOG.length = 0; turnSeq = 0;
   workReportReset(false);
   pendingApprovals.clear(); runningTools.length = 0;
@@ -446,7 +448,7 @@ function renderReplay(events, anim) {
     } else if (ty === 'compacted') {
       // compaction boundary — earlier history was summarized away, so the
       // transcript clears exactly like the TUI's blocks.clear()
-      TX.innerHTML = ''; closeMsg(); runningTools.length = 0; pendingCalls.clear();
+      NativeUI.resetSurfaces(); TX.innerHTML = ''; closeMsg(); runningTools.length = 0; pendingCalls.clear();
       addNote(`[context compacted]${ev.summary ? '\n' + ev.summary : ''}`);
       logEv('note', 'compacted');
     } else if (ty === 'artifact') {
@@ -570,7 +572,7 @@ function liveEvent(raw) {
   // of this exact log would (audit-gui #11): compacted clears, todos and
   // task_done land as their note/notice rows
   else if (ty === 'compacted') {
-    TX.innerHTML = ''; pendingApprovals.clear(); runningTools.length = 0;
+    NativeUI.resetSurfaces(); TX.innerHTML = ''; pendingApprovals.clear(); runningTools.length = 0;
     closeMsg(); syncWait();
     addNote(`[context compacted]${ev.summary ? '\n' + ev.summary : ''}`);
     logEv('note', 'compacted');

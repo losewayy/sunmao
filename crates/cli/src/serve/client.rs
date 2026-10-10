@@ -594,7 +594,7 @@ impl Client {
                 }
             }
             // ── MCP Apps bridge (SEP-1865 / GUI.md §5) — `client/ui.rs` ──
-            "ui_call" | "ui_read" | "ui_message" | "ui_audit" => self.handle_ui(v).await,
+            "ui_call" | "ui_read" | "ui_message" | "ui_audit" | "ui_state" => self.handle_ui(v).await,
             _ => {}
         }
     }

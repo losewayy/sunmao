@@ -308,6 +308,9 @@ function route(v) {
         if (previous !== effortLevel) toast(t('思考强度 → {level}', { level: v.level || t('默认') }), 'sparkles');
       }
       break;
+    case 'ui_state':
+      if (sess === sessionId) NativeUI.applyState(v.surface,v.key,v.value);
+      break;
     case 'busy':
       busySessions[v.busy ? 'add' : 'delete'](sess);
       if (sess === sessionId) setBusy(v.busy); else renderRail();

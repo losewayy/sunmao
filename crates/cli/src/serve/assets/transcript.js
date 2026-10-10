@@ -373,6 +373,7 @@ function renderReplay(events, anim) {
   const pendingCalls = new Map(); // call_id -> tool element
   for (const ev of events || []) {
     workReportEvent(ev, false);
+    if (ev.type === 'ui_state') NativeUI.applyState(ev.surface,ev.key,ev.value);
     const ty = ev.type;
     // plugin panes see replayed state too — a todos frame during resume
     // must land the pane's list, not only live ones

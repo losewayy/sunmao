@@ -9,11 +9,51 @@ use sunmao_core::context::MutexRecover;
 use super::Client;
 use crate::serve::host::{Input, WsObserver, input_queue_frame};
 
+
+/// A scalar control value is data, never executable code. Do not persist
+/// unchecked arbitrary JSON (or large strings) into the session log.
+fn valid_ui_key(s: &str) -> bool {
+    (1..=64).contains(&s.len())
+        && s.as_bytes()[0].is_ascii_alphabetic()
+        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+fn valid_ui_value(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Bool(_) | serde_json::Value::Number(_) => true,
+        serde_json::Value::String(s) => s.len() <= 256,
+        _ => false,
+    }
+}
+
 impl Client {
     /// Dispatch one `ui_*` inbound frame. Split from `handle` only for the
     /// file-shape budget — same receiver, same semantics.
     pub(super) async fn handle_ui(&mut self, v: serde_json::Value) {
         match v["type"].as_str().unwrap_or("") {
+            "ui_state" => {
+                let surface = v["surface"].as_str().unwrap_or("");
+                let key = v["key"].as_str().unwrap_or("");
+                let value = &v["value"];
+                if !valid_ui_key(surface) || !valid_ui_key(key) || !valid_ui_value(value) {
+                    return;
+                }
+                let Some(h) = self.viewing_host() else { return };
+                let event = sunmao_core::SessionEvent::UiState {
+                    surface: surface.into(),
+                    key: key.into(),
+                    value: value.clone(),
+                };
+                let result = {
+                    let mut log = h.agent.context().sessions.lock().await;
+                    log.append(&event).await
+                };
+                if result.is_ok() {
+                    self.s.live.send(serde_json::json!({
+                        "type":"ui_state","sess":h.id,
+                        "surface":surface,"key":key,"value":value,
+                    }));
+                }
+            }
             "ui_call" => {
                 let name = v["name"].as_str().unwrap_or("");
                 let (server, tool) = name
@@ -119,5 +159,19 @@ impl Client {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod native_state_tests {
+    use super::{valid_ui_key,valid_ui_value};
+    #[test]
+    fn only_small_scalar_values_and_safe_keys_are_accepted() {
+        assert!(valid_ui_key("batch_1"));
+        assert!(!valid_ui_key("constructor/__proto__"));
+        assert!(valid_ui_value(&serde_json::json!(22)));
+        assert!(valid_ui_value(&serde_json::json!(true)));
+        assert!(!valid_ui_value(&serde_json::json!({"__proto__":1})));
+        assert!(!valid_ui_value(&serde_json::json!("x".repeat(257))));
     }
 }

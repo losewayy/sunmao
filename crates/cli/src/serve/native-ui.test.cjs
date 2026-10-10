@@ -228,3 +228,11 @@ test('across messages, patches preserve user input in a reused compiler', () => 
   assert.equal(c.state.batch,24);
   assert.deepEqual(c.nodes.get('v').props.value,{var:'batch'});
 });
+
+test('durable scalar UI state is validated and can arrive before a panel',()=>{
+  UI.resetSurfaces();
+  assert.equal(UI.applyState('bench','batch',24),true);
+  assert.equal(UI.applyState('bench','x',{bad:1}),false);
+  assert.equal(UI.applyState('../no','batch',8),false);
+  UI.resetSurfaces();
+});

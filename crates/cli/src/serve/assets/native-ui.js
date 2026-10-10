@@ -12,6 +12,7 @@ const NativeUI = (() => {
   const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
   const panels = new WeakMap();
   const surfaces = new Map(); // stable per-session panels; reset before replay
+  const pendingValues = new Map(); // events may precede the finished assistant message
   const safeNumber = x => typeof x === 'number' && Number.isFinite(x);
   const safeScalar = x => typeof x === 'boolean' || safeNumber(x) || (typeof x === 'string' && x.length <= 256);
 
@@ -260,7 +261,16 @@ const NativeUI = (() => {
   }
 
   class Panel {
-    constructor(host) { this.host = host; this.compiler = new Compiler(); this.els = new Map(); this.host.classList.add('native-panel'); this.renderedRevision = 0; }
+    constructor(host) { this.host = host; this.compiler = new Compiler(); this.els = new Map(); this.saveTimers = new Map(); this.surfaceId = null; this.host.classList.add('native-panel'); this.renderedRevision = 0; }
+    saveControl(key,next) {
+      if (!this.surfaceId || typeof wsSend !== 'function') return;
+      clearTimeout(this.saveTimers.get(key));
+      const surface = this.surfaceId;
+      this.saveTimers.set(key,setTimeout(() => {
+        this.saveTimers.delete(key);
+        wsSend({type:'ui_state',surface,key,value:next});
+      },350));
+    }
     update(body, closed) {
       const changed = this.compiler.push(body, closed);
       if (this.compiler.revision !== this.renderedRevision) {
@@ -318,7 +328,7 @@ const NativeUI = (() => {
           if (kind !== 'select') input.type = kind === 'toggle' ? 'checkbox' : kind === 'slider' ? 'range' : 'text';
           input.addEventListener('input', () => {
             const next = kind === 'slider' ? Number(input.value) : kind === 'toggle' ? input.checked : input.value;
-            if (this.compiler.touch(key, next)) this.draw();
+            if (this.compiler.touch(key, next)) { this.draw(); this.saveControl(key,next); }
           });
           dom.replaceChildren(el('label','native-label',labelText(p.label)),input,el('span','native-control-value'));
         }
@@ -377,7 +387,28 @@ const NativeUI = (() => {
     return null;
   }
   const scopedDelta = (previous,next) => next.startsWith(previous) ? next.slice(previous.length) : null;
-  function resetSurfaces() {surfaces.clear();}
+  function applyState(surface,key,next) {
+    if (!KEY.test(surface || '') || !KEY.test(key || '') || !safeScalar(next)) return false;
+    const panel = surfaces.get(surface);
+    if (panel) {
+      if (!panel.compiler.touch(key,next)) return false;
+      panel.draw();
+    } else {
+      if (!pendingValues.has(surface)) pendingValues.set(surface,new Map());
+      const controls = pendingValues.get(surface);
+      if (controls.size < 128 || controls.has(key)) controls.set(key,next);
+    }
+    return true;
+  }
+  function resetSurfaces() {
+    for (const panel of surfaces.values()) {
+      for (const timer of panel.saveTimers.values()) clearTimeout(timer);
+      panel.saveTimers.clear();
+    }
+    surfaces.clear();
+    pendingValues.clear();
+  }
+
 
   function render(host, source, markdown) {
     source = String(source);
@@ -413,7 +444,13 @@ const NativeUI = (() => {
               if (existing) {
                 slot.panel = existing;
                 slot.element.hidden = true; // updates paint the original panel
-              } else surfaces.set(scoped.id,slot.panel);
+              } else {
+                slot.panel.surfaceId = scoped.id;
+                surfaces.set(scoped.id,slot.panel);
+                for (const [key,value] of pendingValues.get(scoped.id) || [])
+                  slot.panel.compiler.touch(key,value);
+                pendingValues.delete(scoped.id);
+              }
               slot.applied = '';
             }
             const delta = scopedDelta(slot.applied,scoped.body);
@@ -436,6 +473,6 @@ const NativeUI = (() => {
     }
     while (slots.length > segs.length) slots.pop().element.remove();
   }
-  return { parts, value, Compiler, render, Panel, surfaceHeader, scopedDelta, resetSurfaces };
+  return { parts, value, Compiler, render, Panel, surfaceHeader, scopedDelta, resetSurfaces, applyState };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = NativeUI;

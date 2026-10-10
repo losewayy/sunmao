@@ -128,3 +128,14 @@ the original panel instead of creating a duplicate. All patches remain normal
 assistant text in the append-only session log, so replay reconstructs them in
 order. Stream rewrites are rejected for shared panels; re-open to replay.
 User-touched widget values are still local and do not persist after reopening.
+
+
+## Durable user control values
+
+For panels declaring a stable `surface` header, slider/input/select/toggle
+changes are debounced and sent as bounded `ui_state` transport frames.
+The host validates names and scalar values before adding a `UiState` fact to
+the session log; sibling tabs receive a scoped live notification. On replay,
+those facts restore the last user-touched values. They never call tools or
+expand permissions. Unscoped panels remain ephemeral. Restore-after-fork
+and multiple-tab conflict rules still need full live dogfood testing.

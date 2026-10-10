@@ -20,14 +20,15 @@ const NativeUI = (() => {
   function parts(source) {
     const chunks = String(source).match(/[^\n]*\n|[^\n]+$/g) || [];
     const result = [];
-    let kind = 'md', body = '';
+    let kind = 'md', body = '', fence = '```';
     for (const chunk of chunks) {
       const full = chunk.endsWith('\n');
       const line = chunk.replace(/\r?\n$/, '');
-      if (kind === 'md' && full && /^```sunmao-ui[ \t]*$/.test(line)) {
+      if (kind === 'md' && full && /^(?:```|~~~)sunmao-ui[ \t]*$/.test(line)) {
+        fence = line.startsWith('~~~') ? '~~~' : '```';
         if (body) result.push({ kind, body, closed: true });
         kind = 'ui'; body = '';
-      } else if (kind === 'ui' && /^```[ \t]*$/.test(line)) {
+      } else if (kind === 'ui' && line.trim() === fence) {
         result.push({ kind, body, closed: true });
         kind = 'md'; body = '';
       } else body += chunk;
@@ -412,7 +413,7 @@ const NativeUI = (() => {
 
   function render(host, source, markdown) {
     source = String(source);
-    if (!source.includes('```sunmao-ui\n') && !source.includes('```sunmao-ui\r\n')) {
+    if (!/(?:```|~~~)sunmao-ui\r?\n/.test(source)) {
       panels.delete(host); host.innerHTML = markdown(source); return;
     }
     // At most 32 islands per message; excess content displays as ordinary text.

@@ -236,3 +236,13 @@ test('durable scalar UI state is validated and can arrive before a panel',()=>{
   assert.equal(UI.applyState('../no','batch',8),false);
   UI.resetSurfaces();
 });
+
+test('tilde fenced native UI blocks render as stream parts', () => {
+  const source = 'One\n~~~sunmao-ui\n' +
+    '{"op":"upsert","id":"panel","type":"card"}\n~~~\nTwo';
+  const blocks = UI.parts(source);
+  assert.deepEqual(blocks.map(p => p.kind),['md','ui','md']);
+  const c = new UI.Compiler();
+  assert.equal(c.push(blocks[1].body,true),true);
+  assert.equal(c.nodes.get('panel').type,'card');
+});

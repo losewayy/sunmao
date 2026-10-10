@@ -146,3 +146,7 @@ Slider, toggle and select values on scoped panels are persisted. New native
 input fields remain local unless the user explicitly sends their contents
 through a normal prompt. All session logs may contain user-provided data;
 review their privacy before exporting them.
+
+Native UI fences accept either three backticks or three tildes, so models
+copying the standalone skill's Markdown example render correctly. The closing
+fence must use the same marker as the opening fence.

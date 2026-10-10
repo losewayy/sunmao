@@ -9,13 +9,13 @@ use sunmao_core::context::MutexRecover;
 use super::Client;
 use crate::serve::host::{Input, WsObserver, input_queue_frame};
 
-
 /// A scalar control value is data, never executable code. Do not persist
 /// unchecked arbitrary JSON (or large strings) into the session log.
 fn valid_ui_key(s: &str) -> bool {
     (1..=64).contains(&s.len())
         && s.as_bytes()[0].is_ascii_alphabetic()
-        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 fn valid_ui_value(value: &serde_json::Value) -> bool {
     match value {
@@ -164,7 +164,7 @@ impl Client {
 
 #[cfg(test)]
 mod native_state_tests {
-    use super::{valid_ui_key,valid_ui_value};
+    use super::{valid_ui_key, valid_ui_value};
     #[test]
     fn only_small_scalar_values_and_safe_keys_are_accepted() {
         assert!(valid_ui_key("batch_1"));

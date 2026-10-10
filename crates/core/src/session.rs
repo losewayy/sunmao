@@ -64,7 +64,11 @@ pub enum SessionEvent {
     },
     /// User-adjusted Native UI control state. Fold-ignored but durable and
     /// replayable by the browser. Never an Agent tool invocation.
-    UiState { surface: String, key: String, value: serde_json::Value },
+    UiState {
+        surface: String,
+        key: String,
+        value: serde_json::Value,
+    },
     /// Token usage for one LLM request — the accounting side of audit.
     Usage { usage: sunmao_llm::types::Usage },
     /// A hook-induced fact (input rewrite, veto, injected context) — durable

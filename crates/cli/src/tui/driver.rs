@@ -419,7 +419,11 @@ pub(super) fn spawn(
                     // killing it, and the rendered note hands the user the
                     // job id; completion arrives as a `[job … done]` note.
                     let (ok, output, code) = match sunmao_core::tool::run_local_shell(
-                        &cmd, shell_cwd, 120, ctx.local_shell, &ctx,
+                        &cmd,
+                        shell_cwd,
+                        120,
+                        ctx.local_shell,
+                        &ctx,
                     )
                     .await
                     {

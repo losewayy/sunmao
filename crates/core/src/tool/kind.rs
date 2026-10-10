@@ -82,7 +82,12 @@ impl ShellBackend {
     /// beats the project pin, which beats the user-level pin; explicit
     /// values always win over auto-detection.
     pub fn resolve_with(cwd: &Path) -> ShellResolution {
-        Self::pick(Self::layers(cwd), cfg!(windows), Self::pwsh_on_path(), false)
+        Self::pick(
+            Self::layers(cwd),
+            cfg!(windows),
+            Self::pwsh_on_path(),
+            false,
+        )
     }
 
     /// The `!` local shell — same pin layers, but the auto default follows

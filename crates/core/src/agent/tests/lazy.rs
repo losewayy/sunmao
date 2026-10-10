@@ -187,9 +187,7 @@ async fn tool_surface_persists_and_reseeds_across_restart() {
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|e| {
-            serde_json::to_value(e).unwrap()["type"].as_str() == Some("tool_surface")
-        })
+        .filter(|e| serde_json::to_value(e).unwrap()["type"].as_str() == Some("tool_surface"))
         .count();
     assert_eq!(count, 1, "persist diffs; it does not append per request");
 }

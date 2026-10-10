@@ -109,7 +109,10 @@ pub(super) fn put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> HostRes
             );
         }
         if servers.contains_key(name) {
-            return HostResponse::err(409, "MCP server name exists; remove it before replacing".into());
+            return HostResponse::err(
+                409,
+                "MCP server name exists; remove it before replacing".into(),
+            );
         }
         if servers.len() >= 32 {
             return HostResponse::err(400, "too many MCP servers".into());

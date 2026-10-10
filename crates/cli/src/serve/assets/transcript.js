@@ -352,7 +352,7 @@ function clearTranscript() {
   for (const isl of $$('.island')) teardownIsland(isl);
   TX.innerHTML = '';
   pendingApprovals.clear(); runningTools.length = 0;
-  closeMsg(); syncWait(); updateHero();
+  closeMsg(); syncWait(); workReportReset(); updateHero();
 }
 
 function renderReplay(events, anim) {
@@ -362,6 +362,7 @@ function renderReplay(events, anim) {
   // SEP-1865 says the View releases its side on this request
   for (const isl of $$('.island')) teardownIsland(isl);
   TX.innerHTML = ''; EVLOG.length = 0; turnSeq = 0;
+  workReportReset(false);
   pendingApprovals.clear(); runningTools.length = 0;
   closeMsg(); syncWait();
   // the goal is session state the replay re-derives — wipe it here so a
@@ -369,6 +370,7 @@ function renderReplay(events, anim) {
   curGoal = null; renderGoalChip();
   const pendingCalls = new Map(); // call_id -> tool element
   for (const ev of events || []) {
+    workReportEvent(ev, false);
     const ty = ev.type;
     // plugin panes see replayed state too — a todos frame during resume
     // must land the pane's list, not only live ones
@@ -513,6 +515,7 @@ function renderReplay(events, anim) {
   // orphans: tool calls with no result = interrupted
   for (const p of pendingCalls.values()) setTool(p.el, 'err', t('已中断'));
   foldSettled(TX);
+  workReportDraw();
   updateHero();
   refreshDataflow();
   findRefresh();
@@ -555,6 +558,7 @@ function liveEvent(raw) {
   if (!ev || typeof ev !== 'object') return;
   const ty = ev.type;
   if (!ty) return; // {} — unserializable tuple variant placeholder
+  workReportEvent(ev);
   window.pluginEmit?.('live', ev); // plugin panes get the raw frame too
   const text = ev.text ?? ev.content ?? ev.delta ?? (typeof ev[0] === 'string' ? ev[0] : null);
   if (ty === 'content') { if (text == null) return; if (!curText) logEv('message', t('{b}：…', { b: brand() })); contentDelta(text); }

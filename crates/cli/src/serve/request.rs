@@ -255,6 +255,8 @@ impl HostHandle {
             ("GET", ["hooks"]) => ops::hooks_list(s, query_arg(query, "sess")),
             ("PUT", ["hooks"]) => ops::hooks_put(s, query_arg(query, "sess"), body).await,
             ("GET", ["mcp"]) => ops::mcp_list(s, query_arg(query, "sess")),
+            ("GET", ["mcp", "config"]) => mcp_config::view(s, query_arg(query, "sess")),
+            ("PUT", ["mcp", "config"]) => mcp_config::put(s, query_arg(query, "sess"), body),
             ("GET", ["plugins"]) => plugins::plugins_list(s, query_arg(query, "sess")),
             ("GET", ["plugins", name]) => plugins::plugin_get(s, name, query_arg(query, "sess")),
             ("PUT", ["plugins"]) => plugins::plugins_put(s, query_arg(query, "sess"), body),
@@ -502,6 +504,7 @@ mod fopen;
 mod fs;
 #[path = "request/models.rs"]
 mod models;
+mod mcp_config;
 #[path = "request/ops.rs"]
 mod ops;
 mod plugins;

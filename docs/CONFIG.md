@@ -196,3 +196,13 @@ Each case prints `PASS`/`FAIL name — <failures>`; a summary line and a nonzero
 
 Multi-step cases — `steps: [{prompt, expect}]` instead of the flat `prompt`/`expect` (mixing both is a parse error): each step is its own `run_turn` on the SAME session, so step 2 sees step 1's transcript. Per-step assertions scope to that turn's `ToolCall` events and reply; failures read `step N: <failure>`.
 
+
+
+### GUI remote MCP management
+
+The Web/Tauri settings page can add or delete project-local remote MCP URL
+entries through GET/PUT `/mcp/config?sess=…`. This edits `.sunmao/mcp.json`
+without connecting or executing any server. HTTPS and local HTTP are allowed;
+URLs containing embedded credentials or query tokens are rejected. Changes
+are visible to **new sessions**, not live MCP connections. Command-based
+MCP servers still require editing mcp.json and the separate trust-pin gate.

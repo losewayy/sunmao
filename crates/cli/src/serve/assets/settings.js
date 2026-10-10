@@ -656,25 +656,58 @@ function renderHooks() {
       : '<div class="empty-hint">' + t('当前会话没有加载任何钩子 — 项目 .sunmao/hooks.json 或插件清单会出现在这里') + '</div>');
 }
 
-/* mcp page — the session's MCP server roster (`GET /mcp`; `/mcp` text is
-   the terminal rendering of the same structs). Read-only: servers are
-   configured in .sunmao/mcp.json / plugin manifests. */
-let MCPS = null;
+/* Project MCP configuration remains a cold-plug operation. This editor
+   only changes remote HTTP entries in mcp.json, never launches commands. */
+let MCPS = null, MCP_CONFIG = [], mcpAdding = false;
 async function refreshMcp() {
-  return loadSettingsSection('mcp',async sess => (await api('/mcp?sess=' + encodeURIComponent(sess))).servers || [],
-    data => { MCPS=data; },renderMcp);
+  return loadSettingsSection('mcp', async sess => {
+    const q = '?sess=' + encodeURIComponent(sess);
+    const [live, config] = await Promise.all([api('/mcp'+q),api('/mcp/config'+q)]);
+    return {servers:live.servers || [],configured:config.configured || []};
+  }, data => {MCPS=data.servers;MCP_CONFIG=data.configured;},renderMcp);
+}
+async function mcpConfigAction(body) {
+  try {
+    await api('/mcp/config?sess='+encodeURIComponent(sessionId),jput(body));
+    mcpAdding=false;
+    await refreshMcp();
+    toast(t('已保存到项目配置；请新建会话以连接 MCP 服务器'),'check');
+  } catch(err) {toast(t('MCP 保存失败：{msg}',{msg:String(err.message || err).slice(0,180)}),'alert','warn');}
 }
 function renderMcp() {
   if (view !== 'settings' || setPage !== 'mcp') return;
   const host = $('#set-generic');
-  if (!MCPS) { settingsFetchState('mcp',t('MCP 服务器'),refreshMcp); return; }
-  host.innerHTML = head(t('MCP 服务器'), t('本会话挂载的 MCP 服务器 — 在 .sunmao/mcp.json 或插件清单中配置。'))
-    + (MCPS.length
-      ? sec('', '', card(MCPS.map(m =>
-          `<div class="cr"><div class="l" style="flex:1;min-width:0"><b>${esc(m.name)}<span class="tag" style="margin-left:var(--s-6)">${esc(m.transport)}</span></b><span>${t('{tools} 工具 · {prompts} 提示词 · {resources} 资源', { tools: m.tools, prompts: m.prompts, resources: m.resources })}</span></div><span class="sd ${m.connected ? 'run' : 'off'}"></span></div>`)))
-      : '<div class="empty-hint">' + t('当前会话没有连接 MCP 服务器') + '</div>');
+  if (!MCPS) {settingsFetchState('mcp',t('MCP 服务器'),refreshMcp);return;}
+  const rows = MCPS.map(m => `<div class="cr"><div class="l"><b>${esc(m.name)}</b>` +
+    `<span>${esc(m.transport)} · ${m.tools} tools · ${m.resources} resources</span></div>` +
+    `<span class="sd ${m.connected ? 'run' : 'off'}"></span></div>`).join('');
+  const entries = MCP_CONFIG.map(m => `<div class="cr"><div class="l"><b>${esc(m.name)}</b>` +
+    `<span>${esc(m.transport)} · ${t('项目配置')}</span></div>` +
+    `<button type="button" class="btn ghost sm warn" data-mcp-remove="${esc(m.name)}">${t('删除')}</button></div>`).join('');
+  const form = mcpAdding ? `<div class="card glass cfg"><label>${t('服务器名称')}<input id="mcp-add-name" placeholder="my-server" maxlength="64"></label>` +
+    `<label>${t('远程 MCP URL')}<input id="mcp-add-url" placeholder="https://example.com/mcp" spellcheck="false"></label>` +
+    `<div class="pv-acts"><button class="btn allow sm" id="mcp-add-save">${t('保存')}</button>` +
+    `<button class="btn ghost sm" id="mcp-add-cancel">${t('取消')}</button></div></div>` : '';
+  host.innerHTML = head(t('MCP 服务器'),t('当前连接状态来自会话；修改项目配置只影响新会话。')) +
+    '<div class="sec"><div class="sec-h"><h2>' + t('当前连接') + '</h2></div>' +
+    (rows ? `<div class="card glass cfg">${rows}</div>` : `<div class="empty-hint">${t('当前会话没有连接 MCP 服务器')}</div>`) + '</div>' +
+    '<div class="sec"><div class="sec-h"><h2>' + t('项目配置') + '</h2></div>' +
+    (entries ? `<div class="card glass cfg">${entries}</div>` : `<div class="empty-hint">${t('当前项目未配置 MCP')}</div>`) +
+    '<div class="set-foot"><button class="btn ghost sm" id="mcp-add-open">' + t('添加远程 MCP') + '</button></div>' + form + '</div>' +
+    `<div class="empty-hint">${t('仅支持 HTTPS 或本机 HTTP。命令行 MCP 与复杂鉴权请使用 mcp.json；新会话生效。')}</div>`;
+  host.querySelector('#mcp-add-open')?.addEventListener('click',()=>{mcpAdding=true;renderMcp();});
+  host.querySelector('#mcp-add-cancel')?.addEventListener('click',()=>{mcpAdding=false;renderMcp();});
+  host.querySelector('#mcp-add-save')?.addEventListener('click',()=>{
+    const name=host.querySelector('#mcp-add-name').value.trim();
+    const url=host.querySelector('#mcp-add-url').value.trim();
+    if (!name || !url) return toast(t('名称和 URL 必填'),'alert','warn');
+    mcpConfigAction({name,url});
+  });
+  host.querySelectorAll('[data-mcp-remove]').forEach(button => button.addEventListener('click',()=>{
+    const name=button.dataset.mcpRemove;
+    if (window.confirm(t('确认从当前项目配置删除 {n}？',{n:name}))) mcpConfigAction({name,remove:true});
+  }));
 }
-
 /* plugins page — the project's `.sunmao/plugins/*.js` inventory. Enabling
    pins the file's current sha256 into `.sunmao/plugins.json` (same ledger
    shape as trusted-hooks); a tampered file shows a warning until it's

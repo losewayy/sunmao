@@ -406,7 +406,17 @@ function renderReplay(events, anim) {
         logEv('message', t('你：') + c.slice(0, 60));
       } else if (m.role === 'assistant') {
         const c = msgText(m);
-        if (c) { const h = msgHost(); const b = append(h, '<div class="bubble glass"></div>'); NativeUI.render(b, c, mdRender); }
+        if (c) {
+          const h = msgHost();
+          // Keep the plain-Markdown append atomic for replay parity: the
+          // canonical op log observes DOM appends before later innerHTML writes.
+          if (!c.includes('```sunmao-ui\n') && !c.includes('```sunmao-ui\r\n'))
+            append(h, `<div class="bubble glass">${mdRender(c)}</div>`);
+          else {
+            const b = append(h, '<div class="bubble glass"></div>');
+            NativeUI.render(b, c, mdRender);
+          }
+        }
         logEv('message', t('{b}：', { b: brand() }) + c.slice(0, 60) + (m.tool_calls ? ` (+${m.tool_calls.length} calls)` : ''));
       } else if (m.role === 'tool') {
         continue; // paired tool_result covers it

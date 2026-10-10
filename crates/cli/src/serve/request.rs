@@ -502,9 +502,9 @@ mod channels;
 mod fopen;
 #[path = "request/fs.rs"]
 mod fs;
+mod mcp_config;
 #[path = "request/models.rs"]
 mod models;
-mod mcp_config;
 #[path = "request/ops.rs"]
 mod ops;
 mod plugins;

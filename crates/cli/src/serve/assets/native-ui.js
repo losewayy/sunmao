@@ -328,7 +328,7 @@ const NativeUI = (() => {
           if (kind !== 'select') input.type = kind === 'toggle' ? 'checkbox' : kind === 'slider' ? 'range' : 'text';
           input.addEventListener('input', () => {
             const next = kind === 'slider' ? Number(input.value) : kind === 'toggle' ? input.checked : input.value;
-            if (this.compiler.touch(key, next)) { this.draw(); this.saveControl(key,next); }
+            if (this.compiler.touch(key, next)) { this.draw(); if (kind !== 'input') this.saveControl(key,next); }
           });
           dom.replaceChildren(el('label','native-label',labelText(p.label)),input,el('span','native-control-value'));
         }

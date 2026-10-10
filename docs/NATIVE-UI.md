@@ -139,3 +139,10 @@ the session log; sibling tabs receive a scoped live notification. On replay,
 those facts restore the last user-touched values. They never call tools or
 expand permissions. Unscoped panels remain ephemeral. Restore-after-fork
 and multiple-tab conflict rules still need full live dogfood testing.
+
+Plain freeform text inputs are deliberately **not** auto-persisted to
+session logs, to reduce the chance of recording a secret or sensitive note.
+Slider, toggle and select values on scoped panels are persisted. New native
+input fields remain local unless the user explicitly sends their contents
+through a normal prompt. All session logs may contain user-provided data;
+review their privacy before exporting them.

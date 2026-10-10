@@ -9,7 +9,7 @@ const projectName = p => String(p || '').split(/[\\/]/).filter(Boolean).pop() ||
    objects on onmessage) and host_call carries page→host frames. */
 /* frame types that must carry a `sess` tag — module-level so route()
    doesn't allocate a Set per ws message */
-const SESS_TYPES = new Set(['live', 'note', 'approval', 'approval_done', 'steer_queue', 'input_queue', 'model', 'fusion_models', 'mode', 'effort', 'busy']);
+const SESS_TYPES = new Set(['live', 'note', 'approval', 'approval_done', 'steer_queue', 'input_queue', 'model', 'fusion_models', 'mode', 'effort', 'busy', 'ui_state']);
 function wsSend(v, onFail) {
   if (TAURI) {
     if (!connected) return false;

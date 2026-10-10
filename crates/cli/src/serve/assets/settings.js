@@ -196,6 +196,44 @@ const row = (b, s, ctl) => `<div class="cr"><div class="l"><b>${b}</b>${s ? `<sp
 const card = rows => `<div class="card glass cfg">${rows.join('')}</div>`;
 const sec = (h, p, body) => `<div class="sec">${h ? `<div class="sec-h"><h2>${h}</h2>${p ? `<p>${p}</p>` : ''}</div>` : ''}${body}</div>`;
 const head = (t, d) => `<h1>${t}</h1>${d ? `<p class="lead">${d}</p>` : ''}`;
+// Prevent render-triggered request storms and ignore responses for old sessions.
+const SETTINGS_LOAD = Object.fromEntries(['grants','hooks','mcp','plugins'].map(k =>
+  [k,{status:'idle',error:'',ticket:0}]));
+function resetSessionSettingsLoads() {
+  for (const e of Object.values(SETTINGS_LOAD)) {
+    e.ticket++; e.status='idle'; e.error='';
+  }
+  GRANTS = HOOKS = MCPS = PLUGIN_CAT = null;
+}
+async function loadSettingsSection(kind, request, accept, redraw) {
+  const e = SETTINGS_LOAD[kind];
+  if (e.status === 'loading') return;
+  const sess = sessionId, ticket = ++e.ticket;
+  e.status='loading'; e.error='';
+  if (view === 'settings' && setPage === kind) redraw();
+  try {
+    const data = await request(sess);
+    if (ticket !== e.ticket || sess !== sessionId) return;
+    accept(data); e.status='ready';
+  } catch (err) {
+    if (ticket !== e.ticket || sess !== sessionId) return;
+    e.status='error';
+    e.error=String(err?.message || err || 'unknown error').slice(0,300);
+  }
+  if (view === 'settings' && setPage === kind) redraw();
+}
+function settingsFetchState(kind, title, retry) {
+  const e = SETTINGS_LOAD[kind];
+  if (e.status === 'idle') retry();
+  const failed = e.status === 'error';
+  const message = failed ? t('加载失败：{msg}', {msg:e.error}) : t('正在读取设置…');
+  const host = $('#set-generic');
+  host.innerHTML = head(title,'') + '<div class="empty-hint" role="status">' +
+    esc(message) + '</div>' + (failed ? '<div class="set-foot"><button type="button" class="btn ghost sm" data-settings-retry>' +
+    t('重新尝试') + '</button></div>' : '');
+  if (failed) host.querySelector('[data-settings-retry]')?.addEventListener('click',retry);
+}
+
 
 /* providers page — edits ride PUT /models (writes .sunmao/models.json,
    every live host reloads). `pvEdit` is the open editor state; keys are
@@ -213,6 +251,11 @@ let pvListH = ''; // dragged list height — outlives the per-form pvEdit
 // protocol names are the vendors' own (Chat Completions, Responses,
 // Anthropic Messages): a wire dialect is a proper noun, not a translated
 // label, so these stay English in every UI language
+const PROVIDER_STARTERS = [
+  {name:'openai',base_url:'https://api.openai.com/v1',dialect:'openai-responses'},
+  {name:'anthropic',base_url:'https://api.anthropic.com',dialect:'anthropic'},
+  {name:'deepseek',base_url:'https://api.deepseek.com/v1',dialect:'openai'},
+];
 const DIALECTS = [
   { v: 'openai', t: 'Chat Completions', d: '/chat/completions + SSE' },
   { v: 'openai-responses', t: 'Responses', d: '/responses + response_id chaining' },
@@ -247,6 +290,11 @@ function renderProviders() {
   if (!MODELS) { host.innerHTML = head(t('模型与提供商'), '') + '<div class="empty-hint">' + t('正在读取模型配置…') + '</div>'; refreshModels(); return; }
   const names = Object.keys(MODELS.providers || {}).sort();
   let html = head(t('模型与提供商'), '');
+  html += '<div class="card glass cfg pv"><div class="cr"><div class="l"><b>' +
+    t('快速添加模型提供商') + '</b><span>' + t('预填地址与协议；保存前请核对账号的 API 地址') +
+    '</span></div></div><div class="pv-acts">' +
+    PROVIDER_STARTERS.map((p,i) => `<button class="btn ghost sm" data-pv="preset" data-n="${i}">${esc(p.name)}</button>`).join('') +
+    '</div></div>';
   const def = (MODELS.default_model) || t('默认');
   html += card([row(t('默认模型'), t('新对话默认用它；已经在谈的会话不受影响'),
     `<button class="pill plain" data-pv="defmodel"><span class="mono">${esc(def)}</span>${ic('chev-d')}</button>`)]);
@@ -358,7 +406,7 @@ function provForm(n, p) {
     <label>${t('名称')}<input data-f="name" value="${esc(v.formName != null ? v.formName : n)}" placeholder="${esc(t('如 default、deepseek'))}"></label>
     <label>Base URL<input data-f="base_url" value="${val('base_url')}" placeholder="https://api.example.com/v1"></label>
     <label>${t('协议')}<button class="pv-sel" type="button" data-pv="dialect" data-v="${val('dialect', 'openai')}"><span>${esc(DIALECTS.find(d => d.v === val('dialect', 'openai'))?.t || 'Chat Completions')}</span>${ic('chev-d')}</button></label>
-    <label>API Key<input data-f="api_key" type="password" value="${val('api_key')}" placeholder="${p && p.api_key_set ? esc(t('已配置 — 留空保持不变')) : esc(t('sk-… 或留空（本地服务）'))}"></label>
+    <label>API Key<input data-f="api_key" type="password" value="${val('api_key')}" placeholder="${p && p.api_key_set ? esc(t('已配置 — 留空保持不变')) : esc(t('sk-… 或留空（本地服务）'))}"><small>${t('密钥保存在项目的 .sunmao/models.json；推荐改用 api_key_env 环境变量')}</small></label>
     <div class="pv-mh"><span class="pv-ml">${t('模型（勾选要用的）')}</span><span class="pv-mr"><button class="btn ghost sm" data-pv="fetch" ${v.fetching ? 'disabled' : ''}>${ic('download')}${v.fetched ? t('重新拉取') : t('拉取模型')}</button></span></div>
     ${list}
     <div class="pv-add"><input data-f="addmodel" placeholder="${esc(t('手写 model id'))}" spellcheck="false"><button class="btn ghost sm" data-pv="addmodel">${ic('plus')}${t('添加')}</button></div>
@@ -369,6 +417,12 @@ async function providerAction(kind, el) {
   if (kind === 'defmodel') return defaultModelPop(el);
   const cardEl = el.closest('.pv');
   const g = f => { const i = cardEl && cardEl.querySelector(`[data-f="${f}"]`); return i ? i.value.trim() : ''; };
+  if (kind === 'preset') {
+    const p = PROVIDER_STARTERS[Number(el.dataset.n)];
+    if (!p) return;
+    pvEdit = {...p,formName:p.name,name:null,sel:new Set(),cands:[]};
+    return renderProviders();
+  }
   if (kind === 'add') { pvEdit = { name: null, sel: new Set(), cands: [] }; return renderProviders(); }
   if (kind === 'cancel') { pvEdit = null; return renderProviders(); }
   if (kind === 'addmodel') {
@@ -526,8 +580,8 @@ function shellPick(el) {
    synchronous like MODELS/SHELL. */
 let GRANTS = null;
 async function refreshGrants() {
-  try { GRANTS = (await api('/session?id=' + encodeURIComponent(sessionId))).grants || []; } catch { GRANTS = null; }
-  if (view === 'settings' && setPage === 'grants') renderGrants();
+  return loadSettingsSection('grants',async sess => (await api('/session?id=' + encodeURIComponent(sess))).grants || [],
+    data => { GRANTS=data; },renderGrants);
 }
 async function revokeGrant(key) {
   try {
@@ -540,7 +594,7 @@ async function revokeGrant(key) {
 function renderGrants() {
   if (view !== 'settings' || setPage !== 'grants') return;
   const host = $('#set-generic');
-  if (!GRANTS) { host.innerHTML = head(t('已授权命令'), '') + '<div class="empty-hint">' + t('正在读取授权…') + '</div>'; refreshGrants(); return; }
+  if (!GRANTS) { settingsFetchState('grants',t('已授权命令'),refreshGrants); return; }
   host.innerHTML = head(t('已授权命令'), t('审批卡上点了「本会话都别问了」留下的许可 —— 只放行完全相同的一条调用，撤销后下一次仍会询问。'))
     + (GRANTS.length
       ? sec('', '', card([
@@ -558,8 +612,8 @@ function renderGrants() {
 let HOOKS = null;
 const HK_STATUS = { user: t('用户层'), pinned: t('已信任'), untrusted: t('未信任') };
 async function refreshHooks() {
-  try { HOOKS = (await api('/hooks?sess=' + encodeURIComponent(sessionId))).hooks || []; } catch { HOOKS = null; }
-  if (view === 'settings' && setPage === 'hooks') renderHooks();
+  return loadSettingsSection('hooks',async sess => (await api('/hooks?sess=' + encodeURIComponent(sess))).hooks || [],
+    data => { HOOKS=data; },renderHooks);
 }
 async function setHookTrust(index, trusted) {
   try {
@@ -571,7 +625,7 @@ async function setHookTrust(index, trusted) {
 function renderHooks() {
   if (view !== 'settings' || setPage !== 'hooks') return;
   const host = $('#set-generic');
-  if (!HOOKS) { host.innerHTML = head(t('钩子'), '') + '<div class="empty-hint">' + t('正在读取钩子…') + '</div>'; refreshHooks(); return; }
+  if (!HOOKS) { settingsFetchState('hooks',t('钩子'),refreshHooks); return; }
   const KIND = { hook: t('钩子'), mcp: 'MCP', ext: t('扩展'), perm: t('权限') };
   host.innerHTML = head(t('钩子'), t('会话加载的命令钩子与子进程规约 —— 未信任的不会执行，信任记录在 .sunmao/trusted-hooks.json。'))
     + (HOOKS.length
@@ -589,13 +643,13 @@ function renderHooks() {
    configured in .sunmao/mcp.json / plugin manifests. */
 let MCPS = null;
 async function refreshMcp() {
-  try { MCPS = (await api('/mcp?sess=' + encodeURIComponent(sessionId))).servers || []; } catch { MCPS = null; }
-  if (view === 'settings' && setPage === 'mcp') renderMcp();
+  return loadSettingsSection('mcp',async sess => (await api('/mcp?sess=' + encodeURIComponent(sess))).servers || [],
+    data => { MCPS=data; },renderMcp);
 }
 function renderMcp() {
   if (view !== 'settings' || setPage !== 'mcp') return;
   const host = $('#set-generic');
-  if (!MCPS) { host.innerHTML = head(t('MCP 服务器'), '') + '<div class="empty-hint">' + t('正在读取 MCP 服务器…') + '</div>'; refreshMcp(); return; }
+  if (!MCPS) { settingsFetchState('mcp',t('MCP 服务器'),refreshMcp); return; }
   host.innerHTML = head(t('MCP 服务器'), t('本会话挂载的 MCP 服务器 — 在 .sunmao/mcp.json 或插件清单中配置。'))
     + (MCPS.length
       ? sec('', '', card(MCPS.map(m =>
@@ -609,13 +663,13 @@ function renderMcp() {
    re-approved at its new bytes. `data-plgt` toggles through menus.js. */
 let PLUGIN_CAT = null;
 async function refreshPlugins() {
-  try { PLUGIN_CAT = await api('/plugins?sess=' + encodeURIComponent(sessionId)); } catch { PLUGIN_CAT = null; }
-  if (view === 'settings' && setPage === 'plugins') renderPlugins();
+  return loadSettingsSection('plugins',async sess => await api('/plugins?sess=' + encodeURIComponent(sess)),
+    data => { PLUGIN_CAT=data; },renderPlugins);
 }
 function renderPlugins() {
   if (view !== 'settings' || setPage !== 'plugins') return;
   const host = $('#set-generic');
-  if (!PLUGIN_CAT) { host.innerHTML = head(t('插件'), '') + '<div class="empty-hint">' + t('正在读取插件目录…') + '</div>'; refreshPlugins(); return; }
+  if (!PLUGIN_CAT) { settingsFetchState('plugins',t('插件'),refreshPlugins); return; }
   const list = PLUGIN_CAT.plugins || [];
   host.innerHTML = head(t('插件'), t('项目插件 — {dir} 下的 .js 文件。启用即按当前内容哈希钉扎；文件被改动后会停服并标红，需重新批准。', { dir: esc(PLUGIN_CAT.dir || '') }))
     + (list.length

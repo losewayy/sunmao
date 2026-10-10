@@ -132,7 +132,7 @@ function route(v) {
       driver = v.driver || '';
       syncHeroMode();
       refreshSessions(); refreshModels(); refreshProjects();
-      refreshRoster(); refreshJobs(); refreshGrants(); HOOKS = MCPS = null;
+      refreshRoster(); refreshJobs(); resetSessionSettingsLoads(); refreshGrants();
       renderCrumb();
       break;
     case 'live':
@@ -191,7 +191,7 @@ function route(v) {
       syncWait();
       driver = v.driver || '';
       syncHeroMode();
-      refreshSessions(); refreshModels(); refreshRoster(); refreshJobs(); refreshGrants(); HOOKS = MCPS = null; renderCrumb();
+      refreshSessions(); refreshModels(); refreshRoster(); refreshJobs(); resetSessionSettingsLoads(); refreshGrants(); renderCrumb();
       break;
     case 'approval':
       waitingSessions.add(sess);

@@ -150,3 +150,6 @@ review their privacy before exporting them.
 Native UI fences accept either three backticks or three tildes, so models
 copying the standalone skill's Markdown example render correctly. The closing
 fence must use the same marker as the opening fence.
+
+The Native UI reset button also records the restored defaults for scoped
+slider/select/toggle controls. Freeform text fields stay ephemeral.

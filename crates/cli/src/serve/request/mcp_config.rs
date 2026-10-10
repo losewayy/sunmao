@@ -108,7 +108,10 @@ pub(super) fn put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> HostRes
                 "use HTTPS or localhost HTTP, without embedded credentials or query tokens".into(),
             );
         }
-        if !servers.contains_key(name) && servers.len() >= 32 {
+        if servers.contains_key(name) {
+            return HostResponse::err(409, "MCP server name exists; remove it before replacing".into());
+        }
+        if servers.len() >= 32 {
             return HostResponse::err(400, "too many MCP servers".into());
         }
         servers.insert(name.into(), serde_json::json!({"url":url}));

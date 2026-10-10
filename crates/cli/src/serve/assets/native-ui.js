@@ -363,6 +363,14 @@ const NativeUI = (() => {
         button.onclick = () => {
           if (p.action === 'reset') {
             this.compiler.resetControls(); this.draw();
+            // Reset is itself a user gesture. Persist reset defaults for
+            // structured controls, otherwise replay would restore stale values.
+            for (const n of this.compiler.nodes.values()) {
+              if (!['slider','toggle','select'].includes(n.type)) continue;
+              const key = n.props.bind;
+              if (KEY.test(key || '') && safeScalar(state[key]))
+                this.saveControl(key,state[key]);
+            }
           } else if (p.action === 'copy' && typeof p.text === 'string') {
             navigator.clipboard?.writeText(p.text.slice(0,8192)).catch(() => {});
           } else if (p.action === 'ask' && typeof p.text === 'string' && typeof wsSend === 'function') {

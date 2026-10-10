@@ -189,3 +189,20 @@ test('reset controls preserves the reference held by live DOM listeners', () => 
   c.touch('batch',32);
   assert.equal(original.batch,32);
 });
+
+test('serve native UI guide has a valid runtime example', () => {
+  const { readFileSync } = require('node:fs');
+  const { join } = require('node:path');
+  const guide = readFileSync(join(__dirname,'assets/native-ui.md'),'utf8');
+  assert.match(guide,/Decide on your own/);
+  assert.match(guide,/Use ordinary/);
+  const begin = guide.indexOf('~~~sunmao-ui\n');
+  const end = guide.indexOf('\n~~~',begin);
+  assert.ok(begin >= 0 && end > begin);
+  const example = guide.slice(begin + '~~~sunmao-ui\n'.length,end);
+  const compiler = new UI.Compiler();
+  assert.equal(compiler.push(example,true),true);
+  assert.equal(compiler.nodes.get('slider').type,'slider');
+  assert.equal(compiler.state.batch,8);
+  assert.equal(compiler.invalid,0);
+});

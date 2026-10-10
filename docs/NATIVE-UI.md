@@ -65,9 +65,10 @@ prose after it:
 ~~~
 
 The optional skill `examples/skills/native-ui/SKILL.md` teaches a compatible
-model this format. The prototype does **not** force arbitrary model providers
-to emit the syntax automatically. When Native UI is inappropriate or the
-frontend does not support it (e.g. TUI), use regular Markdown instead.
+model this format. New browser/desktop sessions now include optional native UI guidance in the
+system prompt. Models can choose a UI when helpful without an explicit user
+request, but this is model-dependent, not guaranteed. Existing sessions and
+an explicit --system override keep their original prompt.
 
 ## Streaming and safety invariants
 
@@ -113,5 +114,6 @@ MCP Apps compatibility in the integrated application, performance at large
 transcript sizes, exact parity with all replay paths, and privacy compliance
 of actual Git commit metadata. Native UI does not yet have cross-turn
 server-originated patch events, persisted user widget state, generalized
-Agent actions or model-level automatic UI selection. Those need explicit
-seams and tests, rather than direct tool access from generated markup.
+Agent actions or deterministic model-independent UI selection. Prompt guidance enables
+best-effort UI choice in new serve sessions; cross-turn patch events need
+separate auditable contracts and tests.

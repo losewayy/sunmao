@@ -488,13 +488,17 @@ pub(crate) async fn new_session(
         .unwrap_or_else(|| sunmao_core::agent::LoopDriver::resolve(&cwd, &s.roots));
     // precedence: --model flag > this project's `default_model` > launch model
     let model = s.start_model(&cwd);
-    let prompt = match &s.prompt_override {
+    let mut prompt = match &s.prompt_override {
         Some(p) => p.clone(),
         None => sunmao_core::prompt::PromptAssembler::new(&cwd)
             .with_extra_roots(&s.roots)
             .with_driver(driver)
             .assemble(None),
     };
+    if s.prompt_override.is_none() {
+        prompt.push_str("\n\n");
+        prompt.push_str(include_str!("assets/native-ui.md").trim());
+    }
     if let Some(d) = loop_drv {
         s.pending_drivers.lock_or_recover().insert(id.clone(), d);
     }

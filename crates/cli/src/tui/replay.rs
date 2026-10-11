@@ -361,6 +361,9 @@ impl App {
                     // advertised-tool pin snapshot — durable fact, not a
                     // transcript row; folds silently like PtcStore/Usage
                 }
+                E::UiState { .. } => {
+                    // Browser-only control state: durable but no TUI transcript row.
+                }
                 E::PtcStore { .. } => {
                     // sandbox KV bookkeeping — durable fact, not a
                     // transcript row (same posture as Goal/Todos are…

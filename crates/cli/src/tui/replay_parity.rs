@@ -192,6 +192,13 @@ fn fixture() -> Vec<E> {
             bytes: 2048,
             rev: 2,
         },
+        // Durable browser-only state changes must not create TUI/GUI
+        // transcript rows; the browser restores the control by surface ID.
+        E::UiState {
+            surface: "bench".into(),
+            key: "batch".into(),
+            value: serde_json::json!(32),
+        },
         // a second same-name pair — post-compaction so the verb-grouping
         // case survives into the canonical transcript
         tc(call("c8", "Read", r#"{"path":"a.txt"}"#), 0, 0),

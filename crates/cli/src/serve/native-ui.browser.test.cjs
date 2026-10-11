@@ -5,23 +5,33 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const {pathToFileURL} = require('node:url');
 const { spawnSync } = require('node:child_process');
-const CHROME = process.env.CHROME || ['chromium','google-chrome','chrome'].find(cmd =>
-  spawnSync('sh',['-c',`command -v ${cmd}`],{encoding:'utf8'}).status === 0);
+const candidates = process.platform === 'win32'
+  ? [path.join(process.env.PROGRAMFILES || 'C:\\Program Files','Google','Chrome','Application','chrome.exe'),
+     path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)','Google','Chrome','Application','chrome.exe')]
+  : ['chromium','google-chrome','chrome'];
+const CHROME = process.env.CHROME || candidates.find(cmd => process.platform === 'win32'
+  ? fs.existsSync(cmd)
+  : spawnSync('sh',['-c',`command -v ${cmd}`],{encoding:'utf8'}).status === 0);
+test('Chrome is available for explicitly enabled UI smoke tests',
+  {skip:process.env.SUNMAO_BROWSER_TEST !== '1'},()=>assert.ok(CHROME,'Chrome not found'));
+
 
 test('native UI preserves live DOM controls and sends actions only on click', {skip:!CHROME || process.env.SUNMAO_BROWSER_TEST !== '1'}, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(),'sunmao-browser-'));
   try {
-    const js = 'file://' + path.resolve(__dirname,'assets/native-ui.js');
+    const js = pathToFileURL(path.resolve(__dirname,'assets/native-ui.js')).href;
     const fixture = `<!doctype html><html><meta charset="utf-8"><body><div id="host"></div><pre id="results"></pre>
 <script src="${js}"></script><script>
-let sent = [];
+let sessionId='s', sent = [];
 function wsSend(msg) { sent.push(msg); }
 function check(ok,why) { if (!ok) throw new Error(why); }
 try {
   const host = document.getElementById('host');
   const patch = p => JSON.stringify(p) + '\\n';
   const lines = [
+    {op:'surface',id:'bench'},
     {op:'state',key:'batch',value:8},
     {op:'state',key:'name',value:'initial'},
     {op:'upsert',id:'panel',type:'card'},
@@ -59,14 +69,24 @@ try {
   check(slider.value === '24','later model patch stole local input');
   check(host.querySelector('.native-badge').textContent === 'Later streamed','late badge missing');
   check(sent.length === 0,'stream update triggered an agent action');
+  const follow = document.createElement('div');document.body.appendChild(follow);
+  NativeUI.render(follow, '\x60\x60\x60sunmao-ui\\n' +
+    patch({op:'surface',id:'bench'}) +
+    patch({op:'set',id:'metric',props:{label:'Revised example'}}) +
+    '\x60\x60\x60\\n',markdown);
+  check(follow.querySelector('.native-ui')?.hidden,'follow-up update should not duplicate prior panel');
+  check(host.textContent.includes('Revised example'),'cross-turn patch did not update original panel');
+  check(host.querySelector('.native-slider input')===slider,'cross-turn patch replaced slider');
+  check(NativeUI.applyState('bench','batch',32),'persisted UI state rejected');
+  check(slider.value==='32','durable UI state was not restored');
   host.querySelector('.native-button button').click();
-  check(sent.length === 1 && sent[0].text === 'Analyze 24 typed','button action payload');
+  check(sent.length === 1 && sent[0].text === 'Analyze 32 typed','button action payload');
   document.getElementById('results').textContent = JSON.stringify({ok:true,controls:2,polylineCount:2,tables:1,agentMessages:sent.length});
 } catch(e) { document.getElementById('results').textContent = JSON.stringify({ok:false,error:String(e.stack||e)}); }
 </script></body></html>`;
     const file = path.join(dir,'index.html');fs.writeFileSync(file,fixture);
     const proc = spawnSync(CHROME,['--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage',
-      '--allow-file-access-from-files','--virtual-time-budget=2500','--dump-dom','file://'+file],
+      '--allow-file-access-from-files','--virtual-time-budget=2500','--dump-dom',pathToFileURL(file).href],
       {encoding:'utf8',timeout:18000,maxBuffer:1024*1024});
     assert.equal(proc.status,0,proc.stderr.slice(-2000));
     const match = proc.stdout.match(/<pre id="results">([^<]+)<\/pre>/);

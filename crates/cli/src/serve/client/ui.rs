@@ -38,6 +38,11 @@ impl Client {
                     return;
                 }
                 let Some(h) = self.viewing_host() else { return };
+                // Do not let delayed UI control frames leak into a newly
+                // selected session, even if the browser is still connected.
+                if v["sess"].as_str() != Some(h.id.as_str()) {
+                    return;
+                }
                 let event = sunmao_core::SessionEvent::UiState {
                     surface: surface.into(),
                     key: key.into(),

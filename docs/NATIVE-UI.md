@@ -153,3 +153,7 @@ fence must use the same marker as the opening fence.
 
 The Native UI reset button also records the restored defaults for scoped
 slider/select/toggle controls. Freeform text fields stay ephemeral.
+
+The automated CI now runs the Chrome browser smoke test on Windows, covering
+incremental rendering, controls, real user-click action gating, and reuse of a
+stable surface across assistant turns.

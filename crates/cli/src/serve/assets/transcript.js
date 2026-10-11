@@ -349,7 +349,7 @@ function eventsHTML() {
 function clearTranscript() {
   // same teardown a replay runs — /clear must release island resources
   // and drop bookkeeping, not just the pixels
-  for (const isl of $('.island')) teardownIsland(isl);
+  for (const isl of $$('.island')) teardownIsland(isl);
   NativeUI.resetSurfaces();
   TX.innerHTML = '';
   pendingApprovals.clear(); runningTools.length = 0;
@@ -361,7 +361,7 @@ function renderReplay(events, anim) {
   root.dataset.replaying = '';
   // app islands about to be dropped get a resource-teardown first —
   // SEP-1865 says the View releases its side on this request
-  for (const isl of $('.island')) teardownIsland(isl);
+  for (const isl of $$('.island')) teardownIsland(isl);
   NativeUI.resetSurfaces();
   TX.innerHTML = ''; EVLOG.length = 0; turnSeq = 0;
   workReportReset(false);

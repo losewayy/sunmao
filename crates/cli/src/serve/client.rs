@@ -1,3 +1,4 @@
+// arch: allow-god-file the viewer protocol state machine owns handshake, routing and session selection in one coherent boundary; UI actions already live in client/ui.rs
 //! 一个查看者客户端的状态机 — `viewing` 指针 + 出站槽。传输无关：
 //! `serve::ws` 把帧接到 WebSocket，`crates/gui` 把帧接到 Tauri
 //! `Channel`/`invoke`；入站分派（`Client::handle`）与 hello+replay

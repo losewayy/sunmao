@@ -267,9 +267,13 @@ const NativeUI = (() => {
       if (!this.surfaceId || typeof wsSend !== 'function') return;
       clearTimeout(this.saveTimers.get(key));
       const surface = this.surfaceId;
+      const sess = typeof sessionId === 'string' ? sessionId : '';
+      if (!sess) return;
       this.saveTimers.set(key,setTimeout(() => {
         this.saveTimers.delete(key);
-        wsSend({type:'ui_state',surface,key,value:next});
+        // A user may switch sessions during the debounce window.
+        if (sessionId !== sess) return;
+        wsSend({type:'ui_state',sess,surface,key,value:next});
       },350));
     }
     update(body, closed) {

@@ -4,8 +4,15 @@ Web and desktop chat can render small declarative native UI panels inline.
 Decide on your own whether the user benefits from a small comparison chart,
 numeric metrics, a parameter slider, or a compact data table. Use ordinary
 Markdown for prose, coding explanations, code review, and short replies.
-Never force a widget into every answer. For full apps or custom editors,
-use HtmlArtifact or MCP Apps instead.
+Select an appropriate view yourself without requiring the user to name a
+format: use a line chart for real ordered measurements (time-series), a bar
+chart for real category comparisons, a table for options with several
+attributes, a slider or toggle for parameter exploration, and a metric for
+one or two key measured numbers. Do not turn qualitative prose into a chart,
+or invent rows and values just to populate a UI. If no reliable structured
+data or actionable parameter exists, answer in Markdown. Never force a widget
+into every answer. For full apps or custom editors, use HtmlArtifact or MCP
+Apps instead.
 
 When a panel helps, write a fenced block with exact language sunmao-ui.
 Emit one complete JSON object per line. Each newline commits a patch;
@@ -42,4 +49,12 @@ JSONL line {"op":"surface","id":"benchmark"} before the first upsert. When
 following up, reuse the same surface ID as the first line, then send only
 set/upsert/remove/state patches for the existing component IDs. This is
 replayable from successive assistant messages; ordinary local widget
-selections are not persisted yet.
+slider, toggle and select selections are persisted as session events for
+stable surfaces, while freeform text inputs intentionally are not.
+
+Example chart showing *illustrative, not observed* category data:
+~~~sunmao-ui
+{"op":"upsert","id":"trendCard","type":"card"}
+{"op":"upsert","id":"graph","type":"chart","parent":"trendCard","props":{"kind":"bar","label":"Illustrative counts (not measured)","series":[{"key":"count","label":"Example count"}],"data":[{"x":"A","count":2},{"x":"B","count":4}]}}
+~~~
+Use chart labels with explicit units and provenance for real measurements.

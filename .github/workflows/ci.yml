@@ -23,6 +23,10 @@ jobs:
         with:
           node-version: '22'
       - run: node --test crates/cli/src/serve/native-ui.test.cjs crates/cli/src/serve/settings-load.test.cjs crates/cli/src/serve/work-report.test.cjs crates/cli/src/serve/approval-ux.test.cjs
+      - name: Browser Native UI E2E (Chrome)
+        env:
+          SUNMAO_BROWSER_TEST: '1'
+        run: node --test crates/cli/src/serve/native-ui.browser.test.cjs
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace

@@ -246,3 +246,19 @@ test('tilde fenced native UI blocks render as stream parts', () => {
   assert.equal(c.push(blocks[1].body,true),true);
   assert.equal(c.nodes.get('panel').type,'card');
 });
+
+test('all model guide UI examples compile without invalid patches', () => {
+  const {readFileSync}=require('node:fs');
+  const {join}=require('node:path');
+  const guide=readFileSync(join(__dirname,'assets/native-ui.md'),'utf8').replace(/\r\n/g,'\n');
+  const blocks=[...guide.matchAll(/~~~sunmao-ui\n([\s\S]*?)\n~~~/g)];
+  assert.ok(blocks.length>=2);
+  let seenChart=false;
+  for(const [,body] of blocks){
+    const c=new UI.Compiler();
+    assert.equal(c.push(body,true),true);
+    assert.equal(c.invalid,0);
+    seenChart ||= [...c.nodes.values()].some(n=>n.type==='chart');
+  }
+  assert.equal(seenChart,true);
+});

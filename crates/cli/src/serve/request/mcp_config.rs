@@ -39,10 +39,11 @@ fn valid_name(name: &str) -> bool {
 
 fn valid_env(name: &str) -> bool {
     (1..=64).contains(&name.len())
-        && name.bytes().next().is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
         && name
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            .next()
+            .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
 fn valid_url(input: &str) -> bool {

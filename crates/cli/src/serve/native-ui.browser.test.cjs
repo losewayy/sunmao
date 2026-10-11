@@ -81,6 +81,14 @@ try {
   check(slider.value==='32','durable UI state was not restored');
   host.querySelector('.native-button button').click();
   check(sent.length === 1 && sent[0].text === 'Analyze 32 typed','button action payload');
+  // A rewritten assistant message must unregister an old scoped panel.
+  NativeUI.render(host,'Plain markdown now',markdown);
+  const fresh = document.createElement('div');document.body.appendChild(fresh);
+  NativeUI.render(fresh, '\x60\x60\x60sunmao-ui\\n' +
+    patch({op:'surface',id:'bench'}) +
+    patch({op:'upsert',id:'panel',type:'card'}) +
+    '\x60\x60\x60\\n',markdown);
+  check(!!fresh.querySelector('.native-card'),'removed surface was reused offscreen');
   document.getElementById('results').textContent = JSON.stringify({ok:true,controls:2,polylineCount:2,tables:1,agentMessages:sent.length});
 } catch(e) { document.getElementById('results').textContent = JSON.stringify({ok:false,error:String(e.stack||e)}); }
 </script></body></html>`;

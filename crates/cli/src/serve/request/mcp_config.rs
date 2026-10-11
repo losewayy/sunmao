@@ -37,6 +37,14 @@ fn valid_name(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
+fn valid_env(name: &str) -> bool {
+    (1..=64).contains(&name.len())
+        && name.bytes().next().is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
 fn valid_url(input: &str) -> bool {
     if input.len() > 2048 {
         return false;
@@ -117,7 +125,15 @@ pub(super) fn put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> HostRes
         if servers.len() >= 32 {
             return HostResponse::err(400, "too many MCP servers".into());
         }
-        servers.insert(name.into(), serde_json::json!({"url":url}));
+        let auth_env = input["auth_env"].as_str().unwrap_or("");
+        if !auth_env.is_empty() && !valid_env(auth_env) {
+            return HostResponse::err(400, "auth_env must name an environment variable".into());
+        }
+        let mut spec = serde_json::json!({"url":url});
+        if !auth_env.is_empty() {
+            spec["auth_env"] = auth_env.into();
+        }
+        servers.insert(name.into(), spec);
     }
     let Some(dir) = path.parent() else {
         return HostResponse::err(500, "invalid path".into());
@@ -137,7 +153,7 @@ pub(super) fn put(s: &Arc<Shared>, sess: Option<String>, body: &[u8]) -> HostRes
 
 #[cfg(test)]
 mod tests {
-    use super::{valid_name, valid_url};
+    use super::{valid_env, valid_name, valid_url};
     #[test]
     fn project_mcp_editor_rejects_unsafe_inputs() {
         assert!(valid_name("my-mcp"));
@@ -147,5 +163,8 @@ mod tests {
         assert!(!valid_url("http://example.com/mcp"));
         assert!(!valid_url("https://u:secret@example.com/mcp"));
         assert!(!valid_url("https://example.com/mcp?token=secret"));
+        assert!(valid_env("MCP_API_TOKEN"));
+        assert!(!valid_env("MCP-SECRET"));
+        assert!(!valid_env("1MCP_TOKEN"));
     }
 }

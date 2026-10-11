@@ -423,22 +423,38 @@ const NativeUI = (() => {
   }
 
 
+  function detachSlot(slot) {
+    if (!slot) return;
+    if (slot.surfaceKey && !slot.element.hidden &&
+        surfaces.get(slot.surfaceKey) === slot.panel) {
+      for (const timer of slot.panel.saveTimers.values()) clearTimeout(timer);
+      slot.panel.saveTimers.clear();
+      surfaces.delete(slot.surfaceKey);
+    }
+    slot.element.remove();
+  }
+
+  function discardHost(host) {
+    for (const slot of panels.get(host) || []) detachSlot(slot);
+    panels.delete(host);
+  }
+
   function render(host, source, markdown) {
     source = String(source);
     if (!/(?:```|~~~)sunmao-ui\r?\n/.test(source)) {
-      panels.delete(host); host.innerHTML = markdown(source); return;
+      discardHost(host); host.innerHTML = markdown(source); return;
     }
     // At most 32 islands per message; excess content displays as ordinary text.
     const segs = parts(source);
     if (segs.length > 65 || source.length > 1048576) {
-      panels.delete(host); host.textContent = source.slice(0,65536); return;
+      discardHost(host); host.textContent = source.slice(0,65536); return;
     }
     let slots = panels.get(host);
     if (!slots) { host.replaceChildren(); slots = []; panels.set(host,slots); }
     for (let i = 0; i < segs.length; i++) {
       const seg = segs[i]; let slot = slots[i];
       if (!slot || slot.kind !== seg.kind) {
-        slot?.element.remove();
+        detachSlot(slot);
         const element = el('div',seg.kind === 'md' ? 'native-md' : 'native-ui');
         slot = {kind:seg.kind,element,body:null,panel:seg.kind==='ui'?new Panel(element):null};
         slots[i] = slot;
@@ -484,7 +500,7 @@ const NativeUI = (() => {
       }
       slot.body = seg.body;
     }
-    while (slots.length > segs.length) slots.pop().element.remove();
+    while (slots.length > segs.length) detachSlot(slots.pop());
   }
   return { parts, value, Compiler, render, Panel, surfaceHeader, scopedDelta, resetSurfaces, applyState };
 })();

@@ -206,3 +206,9 @@ without connecting or executing any server. HTTPS and local HTTP are allowed;
 URLs containing embedded credentials or query tokens are rejected. Changes
 are visible to **new sessions**, not live MCP connections. Command-based
 MCP servers still require editing mcp.json and the separate trust-pin gate.
+
+The project MCP GUI editor supports an optional `auth_env` entry for a
+remote HTTP server. Enter only the variable name, such as `MCP_API_TOKEN`,
+never the token itself. The backend validates the identifier and writes the
+reference to `mcp.json`, relying on existing runtime token resolution. The
+editor never reads, displays, or stores the secret value.

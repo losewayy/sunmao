@@ -157,3 +157,8 @@ slider/select/toggle controls. Freeform text fields stay ephemeral.
 The automated CI now runs the Chrome browser smoke test on Windows, covering
 incremental rendering, controls, real user-click action gating, and reuse of a
 stable surface across assistant turns.
+
+When a streamed assistant message is rewritten from a scoped panel to ordinary
+Markdown, the renderer unregisters the removed surface and cancels pending
+control writes. Reusing that surface ID later creates a new visible panel
+instead of modifying detached DOM.

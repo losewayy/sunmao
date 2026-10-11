@@ -25,3 +25,20 @@ test('summary is replay-derived and cannot be forged by assistant prose',()=>{
   s=Report.apply(s,{type:'message',message:{role:'assistant',content:'I changed 50 files'}});
   assert.equal(s.calls,0);assert.equal(s.modified.size,0);
 });
+
+test('task progress mirrors durable TodoWrite facts across turns and compaction',()=>{
+  let s=Report.fresh();
+  s=Report.apply(s,{type:'todos',items:[
+    {content:'Inspect sources',status:'done'},
+    {content:'Build and test',status:'in_progress'},
+    {content:'Ship',status:'pending'}]});
+  assert.equal(Report.view(s).todos.length,3);
+  s=Report.apply(s,{type:'message',message:{role:'user'}});
+  assert.equal(Report.view(s).todos[1].status,'in_progress');
+  s=Report.apply(s,{type:'compacted',summary:'checkpoint'});
+  assert.equal(Report.view(s).todos[0].status,'done');
+  s=Report.apply(s,{type:'todos',items:[{content:'Ship',status:'done'}]});
+  assert.equal(Report.view(s).todos.length,1);
+  s=Report.apply(s,{type:'todos',items:[{content:'bad',status:'unsafe'}]});
+  assert.equal(Report.view(s).todos.length,0);
+});

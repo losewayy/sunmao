@@ -3,7 +3,7 @@
 'use strict';
 const WorkSummary = (() => {
   const fresh = () => ({calls:0,done:0,failed:0,tests:0,testFails:0,
-    modified:new Set(),pending:new Map(),outcome:'idle'});
+    modified:new Set(),pending:new Map(),todos:[],outcome:'idle'});
   const argsOf = x => {
     if (x && typeof x === 'object') return x;
     if (typeof x === 'string') {try {return JSON.parse(x);} catch {}}
@@ -12,7 +12,18 @@ const WorkSummary = (() => {
   const shellTest = cmd => /(?:^|[;&|\s])(?:cargo\s+test|node\s+--test|npm\s+test|pnpm\s+test|pytest|go\s+test|dotnet\s+test)(?:\s|$)/i.test(cmd);
   function apply(state,ev) {
     if (!ev || typeof ev !== 'object') return state;
-    if ((ev.type === 'message' && ev.message?.role === 'user') || ev.type === 'user_message' || ev.type === 'compacted') return fresh();
+    if ((ev.type === 'message' && ev.message?.role === 'user') || ev.type === 'user_message' || ev.type === 'compacted') {
+      const next = fresh();
+      next.todos = state.todos; // task plan survives turn boundaries and compaction
+      return next;
+    }
+    if (ev.type === 'todos') {
+      state.todos = Array.isArray(ev.items) ? ev.items.slice(0,32)
+        .filter(it => it && typeof it.content === 'string' &&
+          ['pending','in_progress','done'].includes(it.status))
+        .map(it => ({content:it.content.slice(0,256),status:it.status})) : [];
+      return state;
+    }
     const call = ev.type === 'tool_call' ? ev.call : null;
     if (ev.type === 'tool_call' || ev.type === 'tool_start') {
       const name = String(call?.function?.name || ev.name || '');
@@ -46,18 +57,19 @@ const WorkSummary = (() => {
     return state;
   }
   const view = s => ({calls:s.calls,done:s.done,failed:s.failed,
-    tests:s.tests,testFails:s.testFails,modified:[...s.modified],outcome:s.outcome});
+    tests:s.tests,testFails:s.testFails,modified:[...s.modified],todos:s.todos,outcome:s.outcome});
   return {fresh,apply,view};
 })();
 let workSummaryState = WorkSummary.fresh();
 function workReportDraw() {
   const host = $('#df-report-body'); if (!host) return;
   const v = WorkSummary.view(workSummaryState);
-  if (!v.calls && !v.modified.length) {
+  if (!v.calls && !v.modified.length && !v.todos.length) {
     host.innerHTML = '<div class="empty-row">' + t('本轮尚无工具操作') + '</div>'; return;
   }
   const status = v.outcome === 'running' ? t('进行中') :
-    v.outcome === 'completed' ? t('已结束') : t('已结束或中断');
+    v.outcome === 'completed' ? t('已结束') :
+    v.outcome === 'idle' ? t('任务计划') : t('已结束或中断');
   const rows = [
     t('已完成工具调用') + ': ' + v.done + ' / ' + v.calls,
     t('失败的工具调用') + ': ' + v.failed,
@@ -67,6 +79,13 @@ function workReportDraw() {
   host.innerHTML = '<div class="fl-t">' + esc(status) + '</div>' +
     rows.map(r => '<div class="fl-i">'+esc(r)+'</div>').join('') +
     v.modified.slice(-6).map(p => '<div class="fl-i" data-tip="'+esc(p)+'">'+esc(p)+'</div>').join('') +
+    (v.todos.length ?
+      '<div class="fl-t">' + t('任务进度') + ' ' +
+      v.todos.filter(it => it.status === 'done').length + ' / ' + v.todos.length + '</div>' +
+      v.todos.slice(0,12).map(it => {
+        const mark = it.status === 'done' ? '✓' : it.status === 'in_progress' ? '●' : '○';
+        return '<div class="fl-i">' + esc(mark + ' ' + it.content) + '</div>';
+      }).join('') : '') +
     '<div class="pv-acts"><button type="button" class="btn ghost sm" data-report-rewind>' +
     t('选择回退点') + '</button>' + (v.modified.length ?
       '<button type="button" class="btn ghost sm" data-report-review>' +

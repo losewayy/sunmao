@@ -686,6 +686,7 @@ function renderMcp() {
     `<button type="button" class="btn ghost sm warn" data-mcp-remove="${esc(m.name)}">${t('删除')}</button></div>`).join('');
   const form = mcpAdding ? `<div class="card glass cfg"><label>${t('服务器名称')}<input id="mcp-add-name" placeholder="my-server" maxlength="64"></label>` +
     `<label>${t('远程 MCP URL')}<input id="mcp-add-url" placeholder="https://example.com/mcp" spellcheck="false"></label>` +
+    `<label>${t('Bearer Token 环境变量（可选）')}<input id="mcp-add-auth-env" placeholder="MCP_API_TOKEN" spellcheck="false" maxlength="64"><small>${t('只输入环境变量名，不要输入 Token 内容；在启动 sunmao 前设置环境变量。')}</small></label>` +
     `<div class="pv-acts"><button class="btn allow sm" id="mcp-add-save">${t('保存')}</button>` +
     `<button class="btn ghost sm" id="mcp-add-cancel">${t('取消')}</button></div></div>` : '';
   host.innerHTML = head(t('MCP 服务器'),t('当前连接状态来自会话；修改项目配置只影响新会话。')) +
@@ -694,14 +695,15 @@ function renderMcp() {
     '<div class="sec"><div class="sec-h"><h2>' + t('项目配置') + '</h2></div>' +
     (entries ? `<div class="card glass cfg">${entries}</div>` : `<div class="empty-hint">${t('当前项目未配置 MCP')}</div>`) +
     '<div class="set-foot"><button class="btn ghost sm" id="mcp-add-open">' + t('添加远程 MCP') + '</button></div>' + form + '</div>' +
-    `<div class="empty-hint">${t('仅支持 HTTPS 或本机 HTTP。命令行 MCP 与复杂鉴权请使用 mcp.json；新会话生效。')}</div>`;
+    `<div class="empty-hint">${t('仅支持 HTTPS 或本机 HTTP；MCP 工具仍遵循 Agent 审批权限。命令行 MCP 与复杂鉴权仍使用 mcp.json，新会话生效。')}</div>`;
   host.querySelector('#mcp-add-open')?.addEventListener('click',()=>{mcpAdding=true;renderMcp();});
   host.querySelector('#mcp-add-cancel')?.addEventListener('click',()=>{mcpAdding=false;renderMcp();});
   host.querySelector('#mcp-add-save')?.addEventListener('click',()=>{
     const name=host.querySelector('#mcp-add-name').value.trim();
     const url=host.querySelector('#mcp-add-url').value.trim();
     if (!name || !url) return toast(t('名称和 URL 必填'),'alert','warn');
-    mcpConfigAction({name,url});
+    const auth_env=host.querySelector('#mcp-add-auth-env').value.trim();
+    mcpConfigAction({name,url,auth_env});
   });
   host.querySelectorAll('[data-mcp-remove]').forEach(button => button.addEventListener('click',()=>{
     const name=button.dataset.mcpRemove;

@@ -445,13 +445,10 @@ function act(name, el) {
 // overlay; the same full-size URL the kernel serves is what a transcript
 // img already points at, so the viewer needs no new fetch path
 function openImv(src, cap) {
-  const imv = $('#imv'), img = $('#imv-img'), lab = $('#imv-cap');
-  imv.classList.remove('out');
-  img.src = src; lab.textContent = cap || '';
-  imv.hidden = false;
+  window.SunmaoUI.openImage({ host: $('#imv'), src, caption: cap || '', label: t('图片预览'), closeLabel: t('关闭'), onClosed: syncOverlay });
   brOverlay(true);
 }
-function closeImv() { const v = $('#imv'); v.classList.add('out'); setTimeout(() => { if (v.classList.contains('out')) { v.hidden = true; v.classList.remove('out'); $('#imv-img').src = ''; } }, motion.dur('fast')); brOverlay(null); }
+function closeImv() { window.SunmaoUI.closeImage(); }
 
 /* ================= global input ================= */
 document.addEventListener('click', e => {
@@ -489,6 +486,7 @@ document.addEventListener('click', e => {
   const mf = t.closest('[data-mf]'); if (mf) return toggleField(mf.dataset.mf, mf.dataset.mk, mf.dataset.mid);
 });
 document.addEventListener('keydown', e => {
+  if (e.defaultPrevented) return;
   const typing = e.target.closest && e.target.closest('input,textarea,[contenteditable]');
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
   if (e.key === 'Escape') { if (!$('#imv').hidden) return closeImv(); if (!$('#palette').hidden) return closePalette(); if (popEl) return closePop(); if (findBar) return closeFind(); if (view === 'settings') return go('back'); if (typing) e.target.blur(); return; }

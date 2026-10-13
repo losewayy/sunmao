@@ -110,7 +110,7 @@ fn collect_assets(dir: &Path, out: &mut Vec<PathBuf>) {
             collect_assets(&p, out);
         } else if matches!(
             p.extension().and_then(|x| x.to_str()),
-            Some("html" | "js" | "css")
+            Some("html" | "js" | "css" | "ts" | "tsx")
         ) {
             out.push(p);
         }
@@ -530,7 +530,15 @@ fn check_design_tokens(root: &Path, violations: &mut Vec<String>) {
     // .js files — token checks that scanned the inline script scan these now
     let mut js_files: Vec<PathBuf> = Vec::new();
     collect_assets(&dir, &mut js_files);
-    js_files.retain(|p| p.extension().map(|x| x == "js").unwrap_or(false));
+    // Check hand-written component sources, not third-party timers in the generated bundle.
+    collect_assets(&root.join("frontend/src"), &mut js_files);
+    js_files.retain(|p| {
+        p != &dir.join("ecosystem.js")
+            && matches!(
+                p.extension().and_then(|x| x.to_str()),
+                Some("js" | "ts" | "tsx")
+            )
+    });
     js_files.sort();
     let js_srcs: Vec<(String, String)> = js_files
         .iter()

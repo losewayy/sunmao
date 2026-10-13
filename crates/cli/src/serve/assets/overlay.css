@@ -7,7 +7,7 @@
 .pop.up.show{transform:none}
 .pop.slash{min-width:var(--w-pop-slash);max-height:var(--h-pop-slash);overflow-y:auto}
 .mi{display:flex;align-items:center;gap:var(--s-10);width:100%;min-height:var(--h-lg);padding:var(--s-6) var(--s-10);border-radius:var(--r-md);font-size:var(--fs-sm);color:var(--c-text);transition:background var(--dur-instant) var(--ease-out)}
-.mi:hover,.mi.hl{background:var(--c-fill-2)}
+.mi:hover,.mi.hl,.mi[data-selected="true"]{background:var(--c-fill-2)}
 .mi:disabled{color:var(--c-text-3);cursor:not-allowed}
 .mi:disabled:hover{background:transparent}
 .mi:disabled>.i{color:var(--c-text-3)}
@@ -60,23 +60,28 @@
 #palette{position:fixed;inset:0;z-index:var(--z-modal)}
 #palette[hidden]{display:none}
 #palette .scrim{position:absolute;inset:0;background:var(--c-scrim);-webkit-backdrop-filter:blur(var(--s-4));backdrop-filter:blur(var(--s-4));animation:k-fade var(--dur-base) var(--ease-out)}
-#palette.out{opacity:0;transition:opacity var(--dur-fast) var(--ease-in)}
-#palette .box{position:absolute;left:50%;top:var(--off-palette-top);width:var(--w-palette);transform:translateX(-50%);border-radius:var(--r-xl);overflow:hidden;--ga:var(--glass-float);box-shadow:var(--sh-inset-hi),var(--sh-3);animation:k-drop var(--dur-base) var(--ease-out)}
+#palette .box{position:absolute;left:50%;top:var(--off-palette-top);width:min(var(--w-palette),calc(100vw - var(--s-32)));transform:translateX(-50%);border-radius:var(--r-xl);overflow:hidden;--ga:var(--glass-float);box-shadow:var(--sh-inset-hi),var(--sh-3);animation:k-drop var(--dur-base) var(--ease-out)}
+#palette [data-ending-style],#imv [data-ending-style]{opacity:0;animation:none;transition:opacity var(--dur-fast) var(--ease-in)}
 #palette .in{display:flex;align-items:center;gap:var(--s-10);height:var(--h-3xl);padding:0 var(--s-16);color:var(--c-text-2)}
 #palette .in input{flex:1;border:0;outline:0;background:none;font-size:var(--fs-lg);color:var(--c-text)}
 #palette .in input::placeholder{color:var(--c-text-3)}
 #palette .plist{position:relative;max-height:var(--h-pal-list);overflow-y:auto;padding:var(--s-6);box-shadow:inset 0 var(--bw-hairline) 0 var(--c-stroke)}
 #palette .pg{padding:var(--s-8) var(--s-10) var(--s-4);font-size:var(--fs-2xs);color:var(--c-text-3)}
+#palette [cmdk-group-heading]{padding:var(--s-8) var(--s-10) var(--s-4);font-size:var(--fs-2xs);color:var(--c-text-3)}
+#palette [cmdk-item]{cursor:pointer;outline:none}
+#palette [cmdk-group][hidden]{display:none}
 #palette .pf2{display:flex;gap:var(--s-16);align-items:center;height:var(--h-lg);padding:0 var(--s-12);font-size:var(--fs-2xs);color:var(--c-text-3);box-shadow:inset 0 var(--bw-hairline) 0 var(--c-stroke)}
 #palette .pf2 kbd{font-size:var(--fs-2xs);color:var(--c-text-2);margin-right:var(--s-4)}
 #palette .none{padding:var(--s-16) var(--s-12);font-size:var(--fs-sm);color:var(--c-text-3)}
 #imv{position:fixed;inset:0;z-index:var(--z-modal)}
 #imv[hidden]{display:none}
 #imv .scrim{position:absolute;inset:0;background:var(--c-scrim);animation:k-fade var(--dur-base) var(--ease-out)}
-#imv.out{opacity:0;transition:opacity var(--dur-fast) var(--ease-in)}
 #imv .stage{position:absolute;inset:0;margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--s-10);padding:var(--s-24);pointer-events:none}
 #imv .stage img{max-width:92vw;max-height:86vh;border-radius:var(--r-lg);object-fit:contain;pointer-events:auto;cursor:zoom-out;box-shadow:var(--sh-3);animation:k-rise var(--dur-base) var(--ease-out)}
-#imv .stage figcaption{font-size:var(--fs-xs);color:var(--c-text-2);pointer-events:auto}
+#imv .stage p{font-size:var(--fs-xs);color:var(--c-text-2);pointer-events:auto;margin:0}
+#imv .imv-image{pointer-events:auto;line-height:var(--lh-none);padding:0;border:0;background:none;cursor:zoom-out;max-width:100%}
+#imv .imv-close{position:absolute;top:var(--s-16);right:var(--s-16);pointer-events:auto;--ga:var(--glass-float)}
+.sr-only{position:absolute;width:var(--bw-hairline);height:var(--bw-hairline);padding:0;margin:calc(var(--bw-hairline) * -1);overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
 /* floats just above the composer zone — --off-hero-bottom already marks
    where the composer card ends; sit one gap beyond it instead of a fixed
    offset that can land inside the card */

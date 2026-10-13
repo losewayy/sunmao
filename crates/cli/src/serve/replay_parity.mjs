@@ -407,6 +407,8 @@ const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];
 if (!scripts.length) { console.error('no <script> block found'); process.exit(2); }
 const srcs = [];
 for (const [, attrs, body] of scripts) {
+  // Component renderers run in the DOM test suite; parity drives only the event fold.
+  if (/\bdata-replay-skip\b/.test(attrs)) continue;
   const m = /\bsrc\s*=\s*["']([^"']+)["']/.exec(attrs);
   srcs.push(m ? readFileSync(join(dirname(htmlPath), m[1]), 'utf8') : body);
 }

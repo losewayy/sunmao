@@ -22,6 +22,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - run: npm --prefix frontend ci --no-audit --no-fund
+      - run: npm --prefix frontend run check
+      - run: npm --prefix frontend test
       - run: node --test crates/cli/src/serve/native-ui.test.cjs crates/cli/src/serve/settings-load.test.cjs crates/cli/src/serve/work-report.test.cjs crates/cli/src/serve/approval-ux.test.cjs
       - name: Browser Native UI E2E (Chrome)
         env:

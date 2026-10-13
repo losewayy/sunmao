@@ -158,6 +158,11 @@ impl HostHandle {
         let s = &self.s;
         match (method, segs.as_slice()) {
             ("GET" | "HEAD", []) => HostResponse::html(super::INDEX),
+            ("GET" | "HEAD", ["ecosystem.licenses.txt"]) => HostResponse::bytes(
+                200,
+                vec![("content-type".into(), "text/plain; charset=utf-8".into())],
+                super::ECOSYSTEM_LICENSES.as_bytes().to_vec(),
+            ),
             ("GET" | "HEAD", [name]) if name.ends_with(".css") => match css_asset(name) {
                 Some(s) => HostResponse::css(s),
                 None => HostResponse::err(404, "not found".into()),
@@ -321,6 +326,7 @@ fn css_asset(name: &str) -> Option<&'static str> {
 /// both the include_str! const in serve.rs and an arm here.
 fn js_asset(name: &str) -> Option<&'static str> {
     Some(match name {
+        "ecosystem.js" => super::ECOSYSTEM_JS,
         "i18n.en.js" => super::I18N_EN_JS,
         "i18n.en.panels.js" => super::I18N_EN_PANELS_JS,
         "i18n.js" => super::I18N_JS,

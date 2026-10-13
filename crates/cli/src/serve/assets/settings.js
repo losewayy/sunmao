@@ -53,27 +53,34 @@ function renderWallGrid() {
   const dpr = Math.min(2, devicePixelRatio || 1);
   $$('.wt[data-wall]', g).forEach(b => { const c = $('canvas', b), r = c.getBoundingClientRect(); c.width = Math.round((r.width || 112) * dpr); c.height = Math.round((r.height || 70) * dpr); const ctx = c.getContext('2d'); drawWall(ctx, c.width, c.height, b.dataset.wall); });
 }
-function setRange(sel, v, f) { const el = $(sel); el.value = v; el.style.setProperty('--_p', ((v - el.min) / (el.max - el.min) * 100) + '%'); const o = el.parentElement.querySelector('output'); if (o) o.textContent = f(v); }
 function syncSettingsUI() {
   if (view !== 'settings' || setPage !== 'appearance') return;
-  $$('.tc').forEach(b => b.classList.toggle('on', b.dataset.mode === S.mode));
-  $('#sys-now').textContent = matchMedia('(prefers-color-scheme: light)').matches ? t('当前浅色') : t('当前深色');
-  setRange('#rg-op', Math.round(S.panelOpacity * 100), v => v + '%');
-  setRange('#rg-blur', S.blur, v => v + 'px');
-  setRange('#rg-dim', Math.round(S.dim * 100), v => v + '%');
-  setRange('#rg-con', S.contrast, v => String(v));
+  syncAppearanceComponents();
   for (const k of ['accent', 'background', 'foreground']) $('#pv-' + k).innerHTML = `<i class="cdot" style="background:${S[k]}"></i>${S[k].toUpperCase()}`;
-  $('#pv-uif').innerHTML = esc(S.fonts.ui) + ic('chev-d');
-  $('#pv-codef').innerHTML = esc(S.fonts.code) + ic('chev-d');
-  $('#sw-side').setAttribute('aria-checked', String(S.translucentSidebar));
-  $('#pv-motion').innerHTML = esc(t({ system: '跟随系统', full: '完整', reduce: '减少' }[S.motion] || S.motion)) + ic('chev-d');
-  $('#pv-lang').innerHTML = esc(langLabel()) + ic('chev-d');
   $$('.wt[data-wall]').forEach(b => b.classList.toggle('on', b.dataset.wall === S.wallpaper));
 }
-$('#rg-op').addEventListener('input', e => { S.panelOpacity = +e.target.value / 100; commit(); });
-$('#rg-blur').addEventListener('input', e => { S.blur = +e.target.value; commit(); });
-$('#rg-dim').addEventListener('input', e => { S.dim = +e.target.value / 100; commit(); });
-$('#rg-con').addEventListener('input', e => { S.contrast = +e.target.value; commit(); });
+function syncAppearanceComponents() {
+  const fonts = key => [...new Set([...FONTS[key], S.fonts[key]])].map(f => ({ value: f, label: f, description: hasFont(f) ? '' : t('未安装，将回退到下一个字体') }));
+  window.SunmaoUI.updateAppearance({
+    hosts: { sliders: $('#appearance-sliders'), themes: $('#appearance-themes'), side: $('#sw-side'), contrast: $('#appearance-contrast'), fontui: $('#pv-uif'), fontcode: $('#pv-codef'), motion: $('#pv-motion'), lang: $('#pv-lang') },
+    values: { mode: S.mode, side: S.translucentSidebar, opacity: Math.round(S.panelOpacity * 100), blur: S.blur, dim: Math.round(S.dim * 100), contrast: S.contrast, fontui: S.fonts.ui, fontcode: S.fonts.code, motion: S.motion, lang: S.lang || 'auto' },
+    labels: { mode: t('主题'), side: t('半透明侧边栏'), opacity: t('面板不透明度'), blur: t('背景模糊'), dim: t('壁纸暗化'), contrast: t('对比度'), fontui: t('UI 字体'), fontcode: t('代码字体'), motion: t('动效'), lang: t('界面语言') },
+    choices: { mode: [{ value: 'system', label: t('系统') }, { value: 'light', label: t('浅色') }, { value: 'dark', label: t('深色') }], fontui: fonts('ui'), fontcode: fonts('code'), motion: [{ value: 'system', label: t('跟随系统') }, { value: 'full', label: t('完整') }, { value: 'reduce', label: t('减少') }], lang: [{ value: 'auto', label: t('跟随系统') }, { value: 'zh', label: '中文' }, { value: 'en', label: 'English' }] },
+    systemTheme: matchMedia('(prefers-color-scheme: light)').matches ? t('当前浅色') : t('当前深色'),
+    gap: motion.px('--s-6', 6),
+    onChange: changeAppearance,
+    onOverlay(id, open) { if (open) settingsFloats.add(id); else settingsFloats.delete(id); syncOverlay(); },
+  });
+}
+function changeAppearance(key, value) {
+  if (key === 'lang') { S.lang = value; save(); location.reload(); return; }
+  if (key === 'fontui' || key === 'fontcode') S.fonts[key === 'fontui' ? 'ui' : 'code'] = value;
+  else if (key === 'side') S.translucentSidebar = value;
+  else if (key === 'opacity') S.panelOpacity = value / 100;
+  else if (key === 'dim') S.dim = value / 100;
+  else S[key] = value;
+  commit();
+}
 
 const SWATCH = { accent: ['#339CFF', '#2BB3A3', '#4CB782', '#5B7CFA', '#E5608A', '#A0A6B8'], background: ['#16181F', '#1A1A17', '#121A1F', '#0F1115', '#1B1822', '#202329'], foreground: ['#E8E9F0', '#F2EFE8', '#DDE3EA', '#FFFFFF', '#CDD3DE', '#E9E4D8'] };
 const CLABEL = { accent: t('强调色'), background: t('背景'), foreground: t('前景') };
@@ -110,39 +117,18 @@ const ctxLen = n => typeof n === 'number' && Number.isFinite(n)
   : (n ? String(n) : '');
 const MOD_MARK = { image: t('图'), audio: t('音'), video: t('视'), file: t('档') };
 const modMarks = m => ((m.input_modalities && m.input_modalities.length) ? m.input_modalities : (m.vision ? ['image'] : [])).map(k => MOD_MARK[k] || k).join('');
-function renderModelRows(p, q, options = {}) {
-  q = (q || '').toLowerCase();
+function modelRows(options = {}) {
   const rows = [];
-  const selected = options.selected || '';
-  if (options.emptyLabel && (!q || options.emptyLabel.toLowerCase().includes(q))) {
-    const on = !selected;
-    rows.push(`<button class="mi${on ? ' on' : ''}" data-v="" aria-selected="${on}">${on ? ic('check', 'i sm ck') : ''}<span class="mt"><span>${esc(options.emptyLabel)}</span></span></button>`);
-  }
-  if (options.showCurrent !== false && !options.onSelect && modelLabel && (!q || modelLabel.toLowerCase().includes(q)))
-    rows.push(`<div class="lbl">${t('当前')}</div><div class="mi cur"><span class="mt mono"><span>${esc(modelLabel)}</span><small>${t('本会话正在使用')}</small></span>${ic('check', 'i sm ck')}</div>`);
+  if (options.emptyLabel) rows.push({ value: '', label: options.emptyLabel, group: '' });
   const routes = (MODELS && MODELS.routes) || {};
-  if (turnMode === 'fusion' && !options.onSelect)
-    rows.push(`<div class="hint" data-fusion-note>${esc(t('Fusion 已开：本会话由 Lead / Sidekick 模型搭档执行 — 在模型芯片的 Fusion 卡中选择。'))}</div>`);
   for (const [r, chain] of Object.entries(routes)) {
-    const sel = '@' + r, d = Array.isArray(chain) ? chain.join(' → ') : String(chain);
-    if (!q || (sel + ' ' + d).toLowerCase().includes(q)) {
-      const on = sel === selected;
-      rows.push(`<button class="mi${on ? ' on' : ''}" data-v="${esc(sel)}" aria-selected="${on}">${on ? ic('check', 'i sm ck') : ic('zap')}<span class="mt mono"><span>${esc(sel)}</span><small>${esc(d)}</small></span></button>`);
-    }
+    rows.push({ value: '@' + r, label: '@' + r, group: '', description: Array.isArray(chain) ? chain.join(' → ') : String(chain) });
   }
   for (const n of provNames()) {
     const p0 = MODELS.providers[n], cat = p0.catalog || [];
-    const shown = cat.filter(m => !q || `${n}/${m.id}`.toLowerCase().includes(q));
-    const listed = shown.map(m => {
-      const sel = n + '/' + m.id, on = sel === selected;
-      return `<button class="mi${on ? ' on' : ''}" data-v="${esc(sel)}" aria-selected="${on}">${on ? ic('check', 'i sm ck') : ''}<span class="mt mono"><span>${esc(sel)}</span></span></button>`;
-    }).join('');
-    if (listed) rows.push(`<div class="lbl">${esc(n)} · ${t('{n} 个模型', { n: cat.length })}</div>` + listed);
+    for (const m of cat) rows.push({ value: n + '/' + m.id, label: n + '/' + m.id, group: n + ' · ' + t('{n} 个模型', { n: cat.length }) });
   }
-  const emptyHint = options.allowFreeform === false
-    ? t('没有匹配的已保存模型')
-    : t('无匹配 — 输入 provider/model 或模型 id，回车直接切换');
-  $('.mp-list', p).innerHTML = rows.join('') || `<div class="hint">${emptyHint}</div>`;
+  return rows;
 }
 function modelPop(el, options = {}) {
   if (popAnchor === el) return closePop();
@@ -152,27 +138,14 @@ function modelPop(el, options = {}) {
     else wsSend({ type: 'model', sel: value });
   };
   const placeholder = options.allowFreeform === false ? t('搜索已保存的模型') : t('provider/model 或 @route — 回车切换');
-  pop(el, `<div class="field"><input id="mp-in" placeholder="${esc(placeholder)}" spellcheck="false" autocomplete="off"></div><div class="mp-list scroll"></div>`, { place: options.place || 'top', align: options.align || 'end', cls: 'models', onMount(p) {
-    const inp = $('#mp-in', p);
-    renderModelRows(p, '', options);
-    inp.addEventListener('input', () => renderModelRows(p, inp.value.trim(), options));
-    inp.addEventListener('keydown', e => {
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      const query = inp.value.trim();
-      if (options.allowFreeform === false) {
-        if (!query) return;
-        const first = p.querySelector('.mp-list .mi[data-v]');
-        if (first) choose(first.dataset.v);
-        return;
-      }
-      if (query) choose(query);
+  pop(el, '', { place: options.place || 'top', align: options.align || 'end', cls: 'models', onMount(p) {
+    return window.SunmaoUI.mountModelPicker(p, {
+      anchor: el, rows: options.rows || modelRows(options), selected: options.onSelect ? (options.selected || '') : (options.selected || modelLabel || ''), label: t('模型'), placeholder,
+      empty: options.allowFreeform === false ? t('没有匹配的已保存模型') : t('无匹配 — 输入 provider/model 或模型 id，回车直接切换'), allowFreeform: options.allowFreeform !== false,
+      current: options.showCurrent !== false && !options.onSelect && modelLabel ? { label: modelLabel, description: t('本会话正在使用') } : null,
+      hint: turnMode === 'fusion' && !options.onSelect ? t('Fusion 已开：本会话由 Lead / Sidekick 模型搭档执行 — 在模型芯片的 Fusion 卡中选择。') : '',
+      onSelect: choose, onClose: () => { if (popEl === p) closePop(); },
     });
-    p.addEventListener('click', e => {
-      const b = e.target.closest('.mi'); if (!b || !b.hasAttribute('data-v')) return;
-      choose(b.dataset.v);
-    });
-    setTimeout(() => inp.focus(), 20);
   } });
 }
 
@@ -270,11 +243,7 @@ const DIALECTS = [
    model on the pill instead. */
 function defaultModelPop(el) {
   const cur = (MODELS && MODELS.default_model) || '';
-  const items = [
-    { label: t('默认模型') },
-    ...((MODELS && MODELS.selectors) || []).map(s => ({ v: s, t: s, mono: true, on: s === cur })),
-  ];
-  menuPop(el, items, v => saveDefaultModel(v), { place: 'top', align: 'end' });
+  modelPop(el, { selected: cur, allowFreeform: false, showCurrent: false, rows: ((MODELS && MODELS.selectors) || []).map(s => ({ value: s, label: s, group: '' })), onSelect: saveDefaultModel });
 }
 async function saveDefaultModel(sel) {
   try {
@@ -765,6 +734,7 @@ function settingsPage(p) {
   setPage = p;
   $('#snav').innerHTML = SET_NAV.map(([k, t, i]) => `<button class="nav-i${k === p ? ' on' : ''}" data-page="${k}">${ic(i)}<span>${t}</span></button>`).join('');
   const isA = p === 'appearance';
+  if (!isA) window.SunmaoUI?.hideAppearance();
   $('#set-appearance').hidden = !isA; $('#set-generic').hidden = isA;
   if (!isA) {
     $('#set-generic').innerHTML = PAGES[p]();

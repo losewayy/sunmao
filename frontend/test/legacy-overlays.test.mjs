@@ -77,3 +77,15 @@ test('available viewport room does not expand a menu past its CSS height limit',
     f.test.closePop();
   } finally { await f.window.happyDOM.close(); }
 });
+
+test('legacy popover cleanup leaves component-owned select portals intact', async () => {
+  const f = fixture();
+  try {
+    const select = f.document.createElement('div');
+    select.className = 'pop ui-select-popup';
+    f.document.body.appendChild(select);
+    f.test.pop(f.document.getElementById('anchor'), 'menu');
+    assert.equal(select.isConnected, true, 'shared styling does not grant legacy code ownership of a React portal');
+    f.test.closePop();
+  } finally { await f.window.happyDOM.close(); }
+});

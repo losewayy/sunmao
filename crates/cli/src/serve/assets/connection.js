@@ -549,6 +549,7 @@ function renderCrumb() {
 }
 function show(v) {
   closePop();
+  if (v !== 'settings') window.SunmaoUI?.hideAppearance();
   view = v; if (v !== 'settings') lastMain = v;
   app.dataset.view = v;
   $('#v-session').hidden = v !== 'session';

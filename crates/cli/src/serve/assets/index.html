@@ -182,34 +182,14 @@
             <div class="sec-h"><h2 data-i18n="壁纸">壁纸</h2></div>
             <div class="card glass">
               <div class="wgrid" id="wgrid"></div>
-              <div class="sliders">
-                <div class="sl"><label for="rg-op" data-i18n-tail="面板不透明度">面板不透明度<output>56%</output></label><input type="range" id="rg-op" min="30" max="90" step="1"></div>
-                <div class="sl"><label for="rg-blur" data-i18n-tail="背景模糊">背景模糊<output>24px</output></label><input type="range" id="rg-blur" min="0" max="40" step="1"></div>
-                <div class="sl"><label for="rg-dim" data-i18n-tail="壁纸暗化">壁纸暗化<output>16%</output></label><input type="range" id="rg-dim" min="0" max="60" step="1"></div>
-              </div>
+              <div class="sliders" id="appearance-sliders"></div>
             </div>
           </div>
 
           <div class="sec">
             <div class="sec-h"><h2 data-i18n="主题">主题</h2></div>
             <div class="card glass">
-              <div class="themes">
-                <button class="tc" data-mode="system" data-tip="跟随系统时按系统的明暗设置切换" data-i18n-tip="跟随系统时按系统的明暗设置切换">
-                  <span class="mini">
-                    <span class="half dk"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln line-1"></span><span class="m-ln line-2"></span><span class="m-ln line-3"></span><span class="m-cp"></span></span>
-                    <span class="half b lt"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln line-1"></span><span class="m-ln line-2"></span><span class="m-ln line-3"></span><span class="m-cp"></span></span>
-                  </span>
-                  <span class="lab" data-i18n-tail="系统"><i class="radio"></i>系统<small id="sys-now"></small></span>
-                </button>
-                <button class="tc" data-mode="light">
-                  <span class="mini"><span class="half lt"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln line-1"></span><span class="m-ln line-2"></span><span class="m-ln line-3"></span><span class="m-cp"></span></span></span>
-                  <span class="lab" data-i18n-tail="浅色"><i class="radio"></i>浅色</span>
-                </button>
-                <button class="tc" data-mode="dark">
-                  <span class="mini"><span class="half dk"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln line-1"></span><span class="m-ln line-2"></span><span class="m-ln line-3"></span><span class="m-cp"></span></span></span>
-                  <span class="lab" data-i18n-tail="深色"><i class="radio"></i>深色</span>
-                </button>
-              </div>
+              <div id="appearance-themes"></div>
             </div>
           </div>
 
@@ -219,12 +199,12 @@
               <div class="cr"><div class="l"><b data-i18n="强调色">强调色</b><span data-i18n="按钮、选中态、进度与链接">按钮、选中态、进度与链接</span></div><button class="pill" data-act="color" data-key="accent" id="pv-accent"></button></div>
               <div class="cr"><div class="l"><b data-i18n="背景">背景</b><span data-i18n="深色模式下玻璃面板的底色">深色模式下玻璃面板的底色</span></div><button class="pill" data-act="color" data-key="background" id="pv-background"></button></div>
               <div class="cr"><div class="l"><b data-i18n="前景">前景</b><span data-i18n="正文文字颜色">正文文字颜色</span></div><button class="pill" data-act="color" data-key="foreground" id="pv-foreground"></button></div>
-              <div class="cr"><div class="l"><b data-i18n="UI 字体">UI 字体</b><span data-i18n="界面与对话正文">界面与对话正文</span></div><button class="pill font" data-act="font" data-key="ui" id="pv-uif"></button></div>
-              <div class="cr"><div class="l"><b data-i18n="代码字体">代码字体</b><span data-i18n="工具名、命令、数字与代码块">工具名、命令、数字与代码块</span></div><button class="pill font" data-act="font" data-key="code" id="pv-codef"></button></div>
-              <div class="cr"><div class="l"><b data-i18n="半透明侧边栏">半透明侧边栏</b><span data-i18n="关闭后侧边栏更不透明，长列表更易读">关闭后侧边栏更不透明，长列表更易读</span></div><button class="sw" role="switch" id="sw-side" data-act="side" aria-label="半透明侧边栏" data-i18n-al="半透明侧边栏"></button></div>
-              <div class="cr"><div class="l"><b data-i18n="对比度">对比度</b><span data-i18n="次级文字与描边的明暗">次级文字与描边的明暗</span></div><div class="rg"><input type="range" id="rg-con" min="0" max="100" step="1" aria-label="对比度" data-i18n-al="对比度"><output>50</output></div></div>
-              <div class="cr"><div class="l"><b data-i18n="动效">动效</b><span data-i18n="跟随系统时按系统的减少动效设置">跟随系统时按系统的减少动效设置</span></div><button class="pill plain" data-act="motion" id="pv-motion"></button></div>
-              <div class="cr"><div class="l"><b data-i18n="界面语言">界面语言</b><span data-i18n="跟随系统即按系统语言自动选择">跟随系统即按系统语言自动选择</span></div><button class="pill plain" data-act="lang" id="pv-lang"></button></div>
+              <div class="cr"><div class="l"><b data-i18n="UI 字体">UI 字体</b><span data-i18n="界面与对话正文">界面与对话正文</span></div><div id="pv-uif"></div></div>
+              <div class="cr"><div class="l"><b data-i18n="代码字体">代码字体</b><span data-i18n="工具名、命令、数字与代码块">工具名、命令、数字与代码块</span></div><div id="pv-codef"></div></div>
+              <div class="cr"><div class="l"><b data-i18n="半透明侧边栏">半透明侧边栏</b><span data-i18n="关闭后侧边栏更不透明，长列表更易读">关闭后侧边栏更不透明，长列表更易读</span></div><div id="sw-side"></div></div>
+              <div class="cr"><div class="l"><b data-i18n="对比度">对比度</b><span data-i18n="次级文字与描边的明暗">次级文字与描边的明暗</span></div><div class="ui-contrast" id="appearance-contrast"></div></div>
+              <div class="cr"><div class="l"><b data-i18n="动效">动效</b><span data-i18n="跟随系统时按系统的减少动效设置">跟随系统时按系统的减少动效设置</span></div><div id="pv-motion"></div></div>
+              <div class="cr"><div class="l"><b data-i18n="界面语言">界面语言</b><span data-i18n="跟随系统即按系统语言自动选择">跟随系统即按系统语言自动选择</span></div><div id="pv-lang"></div></div>
             </div>
           </div>
           <div class="set-foot"><button class="btn quiet sm" data-act="reset-ui" data-i18n-tail="恢复默认"><svg class="i"><use href="#i-reset"/></svg>恢复默认</button></div>
@@ -332,6 +312,7 @@
 <div id="imv" hidden>
 </div>
 <div id="ecosystem-root"></div>
+<div id="settings-components-root"></div>
 <div id="tip" class="glass" role="tooltip"></div>
 <input type="file" id="file-wall" accept="image/*" hidden>
 <script src="i18n.en.js"></script>

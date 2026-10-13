@@ -4,18 +4,21 @@
 /* ================= popovers / tooltip / toast ================= */
 let popEl = null, popAnchor = null;
 let popCleanup = null;
+let popUnmount = null;
+const settingsFloats = new Set();
 function pop(anchor, html, o = {}) {
   closePop();
-  document.querySelectorAll('.pop').forEach(old => old.remove());
+  document.querySelectorAll('.pop[data-legacy-pop]').forEach(old => old.remove());
   const p = document.createElement('div');
   p.className = 'pop glass' + (o.cls ? ' ' + o.cls : '');
+  p.dataset.legacyPop = '';
   p.innerHTML = html; document.body.appendChild(p);
   popEl = p; popAnchor = anchor; anchor.classList && anchor.classList.add('pressed');
   // Content first: `onMount` fills the dynamic lists (model catalog, job
   // tails), so placement measures the box the popover will really have.
   // Measured as an empty shell it landed on the composer and then grew
   // down over the send button.
-  if (o.onMount) o.onMount(p);
+  if (o.onMount) { const unmount = o.onMount(p); if (typeof unmount === 'function') popUnmount = unmount; }
   place(p, anchor, o);
   // a dock guest is a native child window: it paints over whatever the page
   // draws in its rect, so a popover that lands on the pane parks it first
@@ -50,7 +53,9 @@ function closePop() {
   const p = popEl; popEl = null;
   if (popCleanup) popCleanup(); popCleanup = null;
   if (popAnchor && popAnchor.classList) popAnchor.classList.remove('pressed');
-  popAnchor = null; p.classList.remove('show'); setTimeout(() => p.remove(), motion.dur('fast'));
+  popAnchor = null; p.classList.remove('show');
+  const unmount = popUnmount; popUnmount = null;
+  setTimeout(() => { if (unmount) unmount(); p.remove(); }, motion.dur('fast'));
   syncOverlay();
 }
 document.addEventListener('mousedown', e => { if (popEl && !popEl.contains(e.target) && !(popAnchor && popAnchor.contains && popAnchor.contains(e.target))) closePop(); }, true);
@@ -130,7 +135,7 @@ function toast(msg, icon = 'check', cls = '') {
 
 /* ================= palette ================= */
 function syncOverlay() {
-  brOverlay(!$('#palette').hidden || !$('#imv').hidden ? true : popEl ? popEl.getBoundingClientRect() : null);
+  brOverlay(settingsFloats.size || !$('#palette').hidden || !$('#imv').hidden ? true : popEl ? popEl.getBoundingClientRect() : null);
 }
 function openPalette() {
   closePop();

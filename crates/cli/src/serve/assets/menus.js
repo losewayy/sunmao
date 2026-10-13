@@ -453,6 +453,7 @@ function closeImv() { window.SunmaoUI.closeImage(); }
 /* ================= global input ================= */
 document.addEventListener('click', e => {
   const t = e.target;
+  if (t.closest('[data-ecosystem]')) return;
   if (t.closest('.pop') && !t.closest('[data-act]')) return;
   // composer chip thumb → viewer (the chip × keeps working — check first)
   const chip = t.closest('.att-chip');
@@ -489,6 +490,7 @@ document.addEventListener('keydown', e => {
   if (e.defaultPrevented) return;
   const typing = e.target.closest && e.target.closest('input,textarea,[contenteditable]');
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+  if (!mod && e.key !== 'Escape' && e.target.closest?.('[data-ecosystem]')) return;
   if (e.key === 'Escape') { if (!$('#imv').hidden) return closeImv(); if (!$('#palette').hidden) return closePalette(); if (popEl) return closePop(); if (findBar) return closeFind(); if (view === 'settings') return go('back'); if (typing) e.target.blur(); return; }
   if (mod && k === 'f') { e.preventDefault(); return openFind(); }
   if (mod && k === 'k') { e.preventDefault(); return openPalette(); }

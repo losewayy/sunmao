@@ -3,6 +3,7 @@
 //! the parent's session log) plus roster bookkeeping. Child-context
 //! assembly (id+lane+log minting, seam wiring) lives in `parts.rs`; the
 //! TaskTool surface and spawn policy stay in `mod.rs`.
+// arch: allow-god-file the child driver, foreground cancellation guard and detached completion delivery share one lifecycle boundary
 
 use crate::context::MutexRecover;
 use std::sync::Arc;
@@ -122,7 +123,10 @@ pub(crate) fn roster_changed(sink: &Option<Arc<dyn Observer>>, sub_id: &str) {
 /// Register a spawn in the roster — both foreground and detached spawns
 /// register; `done` flips when the result lands. `sub_ctx.lane` is the
 /// claimed lane; the `steer` handle lets the parent push mid-run messages
-/// into the child's queue (`Task{steer:}`, `steer_sub`).
+/// into the child's queue (`Task{steer:}`, `steer_sub`). `background` marks
+/// an already-detached spawn; `detach` is the latch the GUI's
+/// send-to-background button trips while the parent still awaits the call.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn register_task(
     ctx: &Context,
     sub_id: &str,
@@ -131,7 +135,10 @@ pub(crate) fn register_task(
     def: Option<&str>,
     steer: &crate::context::SteerQueue,
     cancel: &crate::context::CancelSignal,
-) {
+    background: bool,
+    detach: Option<crate::tool::KillSwitch>,
+) -> std::sync::Arc<tokio::sync::Notify> {
+    let done_notify = std::sync::Arc::new(tokio::sync::Notify::new());
     let mut digest: String = prompt.chars().take(60).collect();
     if prompt.chars().count() > 60 {
         digest.push('…');
@@ -154,20 +161,25 @@ pub(crate) fn register_task(
         });
     }
     tasks.push(crate::context::TaskEntry {
-        id: sub_id.to_string(),
-        lane,
         agent: def.map(String::from),
-        prompt: digest.split_whitespace().collect::<Vec<_>>().join(" "),
-        done: None,
         steer: Some(steer.clone()),
         cancel: Some(cancel.clone()),
+        detach,
+        background,
+        done_notify: done_notify.clone(),
+        ..crate::context::TaskEntry::pending(
+            sub_id.to_string(),
+            lane,
+            digest.split_whitespace().collect::<Vec<_>>().join(" "),
+        )
     });
     drop(tasks);
     roster_changed(&ctx.live_sink.get().cloned(), sub_id);
+    done_notify
 }
 
 /// Flip the roster entry to finished — the detached completion path and
-/// the foreground return both route here.
+/// the foreground return both route here — and wake any `WaitFor` sleepers.
 pub(crate) fn finish_task(
     tasks: &std::sync::Mutex<Vec<crate::context::TaskEntry>>,
     sub_id: &str,
@@ -176,6 +188,20 @@ pub(crate) fn finish_task(
     let mut tasks = tasks.lock_or_recover();
     if let Some(e) = tasks.iter_mut().find(|t| t.id == sub_id) {
         e.done = Some(ok);
+        e.done_notify.notify_waiters();
+    }
+}
+
+/// Mark a roster entry as user-detached — the parent's `Task` call stopped
+/// waiting on the GUI's button; the card keeps the "前台转后台" tag from
+/// here on.
+pub(crate) fn mark_detached(
+    tasks: &std::sync::Mutex<Vec<crate::context::TaskEntry>>,
+    sub_id: &str,
+) {
+    let mut tasks = tasks.lock_or_recover();
+    if let Some(e) = tasks.iter_mut().find(|t| t.id == sub_id) {
+        e.detached = true;
     }
 }
 
@@ -214,44 +240,180 @@ impl Drop for RosterGuard {
     }
 }
 
-/// Run one sub-agent to completion in the foreground: registers, drives
-/// `run_spawn` (`source` names the hook dialect — `"subagent"` for a fresh
-/// spawn, `"subagent-resume"` for a continuation), then flips the roster.
-async fn drive_foreground(
-    ctx: &Context,
+/// What `drive` hands back: the result channel for the waiter plus the
+/// driver task's handle. The handle exists so `await_result` can abort the
+/// driver the way a dropped foreground future used to — kill, settle the
+/// roster row — instead of only signalling and racing the cleanup.
+pub(super) struct Driven {
+    pub rx: tokio::sync::oneshot::Receiver<ToolResult>,
+    pub join: tokio::task::JoinHandle<()>,
+}
+
+/// Run a spawned child on its own tokio task, delivering the ToolResult
+/// through a oneshot to whoever stays subscribed: the foreground `Task`
+/// call first, nobody after a user detach (a dropped receiver pushes the
+/// result as a `TaskDone` fact instead — the same delivery a
+/// `run_in_background` spawn always had). `spawn_detached` drops its
+/// receiver from the start, so both paths share this one driver.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn drive(
+    parent_tasks: Arc<std::sync::Mutex<Vec<crate::context::TaskEntry>>>,
+    parent_log: Arc<tokio::sync::Mutex<crate::session::SessionLog>>,
+    parent_fence: Arc<tokio::sync::Mutex<()>>,
     sub_id: String,
     sub_ctx: Context,
     prompt: String,
     source: &'static str,
-    agent: Option<&str>,
-) -> ToolResult {
-    let lane = sub_ctx.lane;
-    let steer = sub_ctx.steer.clone();
-    let cancel = sub_ctx.cancel_signal();
-    register_task(ctx, &sub_id, lane, &prompt, agent, &steer, &cancel);
-    // a cancelled select arm drops this future mid-run_spawn — without the
-    // guard the roster row stays "running" forever (and resume refuses it)
-    let _roster = RosterGuard::new(&ctx.live_tasks, &sub_id);
-    let mut res = run_spawn(
-        Arc::new(sub_ctx),
-        prompt,
-        ctx.live_sink.get().cloned(),
-        source,
-    )
-    .await;
-    // the caller gets the child's stable handle — foreground `Task` used
-    // to return bare final text, leaving `steer`/`resume` with nothing to
-    // target; prefix the id so the next call has a name to point at
-    res.output = format!("[task:{sub_id}]\n\n{}", res.output);
-    finish_task(&ctx.live_tasks, &sub_id, res.ok);
-    roster_changed(&ctx.live_sink.get().cloned(), &sub_id);
-    res
+    sink: Option<Arc<dyn Observer>>,
+) -> Driven {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let notify_sink = sink.clone();
+    let id = sub_id;
+    let join = tokio::spawn(async move {
+        let _roster = RosterGuard::new(&parent_tasks, &id);
+        let res = run_spawn(Arc::new(sub_ctx), prompt, sink, source).await;
+        finish_task(&parent_tasks, &id, res.ok);
+        // a waiter takes the result as the tool result; a dropped receiver
+        // (user detach, `run_in_background` spawn) gets the pushed TaskDone.
+        let res = match tx.send(res) {
+            Ok(()) => {
+                roster_changed(&notify_sink, &id);
+                return;
+            }
+            Err(res) => res,
+        };
+        // Nobody waited: the caller detached (GUI button, `run_in_background`
+        // spawn) or died waiting. Push the result into the session that
+        // launched the child — the TaskDone fact lands on the forked log
+        // under the parent's turn fence so it can't splice between a
+        // ToolCall and its ToolResult.
+        let output = crate::agent::truncate_output(&res.output);
+        {
+            let _turn_permit = parent_fence.lock().await;
+            let mut log = parent_log.lock().await;
+            log.append_audit(&SessionEvent::TaskDone {
+                id: id.clone(),
+                ok: res.ok,
+                output,
+            })
+            .await;
+        }
+        if let Some(s) = &notify_sink {
+            // the durable TaskDone fact renders a 子代理 notice on replay —
+            // the live mirror makes a watching session see the same row
+            s.on_event(&LiveEvent::TaskDone {
+                id: id.clone(),
+                ok: res.ok,
+                output: String::new(),
+            });
+            s.on_event(&LiveEvent::Hook {
+                event: "task.bg.done".into(),
+                detail: format!("{} — {}", id, if res.ok { "done" } else { "failed" }),
+            });
+        }
+        roster_changed(&notify_sink, &id);
+    });
+    Driven { rx, join }
 }
 
-/// Run one sub-agent to completion: own context, own session file, own
-/// lane; relays its tool lifecycle to the parent's live sink.
-/// `llm_override` is the resolved call-site `model` selector — wins over
-/// the def's `model:` frontmatter and over inheriting the parent.
+/// The parent log handle a detached completion writes into. Forked BEFORE
+/// the drive task spawns: `ctx.sessions` is a shared Arc the parent's
+/// swap_session can re-point mid-run — appending through it would land the
+/// TaskDone on a session the child never ran in. A failed fork falls back
+/// to the shared Arc — wrong-attribution beats silence.
+pub(super) async fn parent_log_writer(
+    ctx: &Context,
+) -> Arc<tokio::sync::Mutex<crate::session::SessionLog>> {
+    match ctx.sessions.lock().await.fork_writer().await {
+        Ok(w) => Arc::new(tokio::sync::Mutex::new(w)),
+        Err(e) => {
+            tracing::warn!(
+                "sub-agent log fork failed ({e}) — TaskDone attribution may follow a later swap"
+            );
+            ctx.sessions.clone()
+        }
+    }
+}
+
+/// The wait's cancellation contract, restored after the driver moved to its
+/// own task: a caller dropped mid-wait (turn cancel, abort) used to drop
+/// `run_spawn` with it, which died the child and settled the roster row
+/// synchronously. Now the drop only orphans the receiver — the guard
+/// aborts the driver task, which drops `run_spawn` exactly the way the old
+/// direct-await did, and fires the child's cancel signal for the engines
+/// (the child's own Bash runs) that watch it rather than the task.
+struct CancelOnAbort {
+    join: tokio::task::JoinHandle<()>,
+    cancel: crate::context::CancelSignal,
+    armed: bool,
+}
+
+impl Drop for CancelOnAbort {
+    fn drop(&mut self) {
+        if self.armed {
+            self.cancel.cancel();
+            self.join.abort();
+        }
+    }
+}
+
+/// Wait on a driven child: the receiver delivers its ToolResult, the
+/// `detach` latch (GUI send-to-background) ends the wait WITHOUT ending the
+/// child — the driver above notices the dropped receiver and pushes the
+/// result as a TaskDone. A wait that dies unwatched (select arm dropped by
+/// a cancel) kills the child through `CancelOnAbort`, so "cancel" keeps
+/// meaning cancel.
+pub(super) async fn await_result(
+    ctx: &Context,
+    sub_id: &str,
+    driven: Driven,
+    detach: &crate::tool::KillSwitch,
+    child_cancel: crate::context::CancelSignal,
+) -> ToolResult {
+    let mut on_abort = CancelOnAbort {
+        join: driven.join,
+        cancel: child_cancel,
+        armed: true,
+    };
+    let rx = driven.rx;
+    tokio::pin!(rx);
+    let out = tokio::select! {
+        res = &mut rx => {
+            let mut res = res.unwrap_or_else(|_| ToolResult {
+                exit_code: None,
+                output: "[sub-agent ended without reporting]".into(),
+                ok: false,
+            });
+            // the caller gets the child's stable handle — foreground `Task`
+            // used to return bare final text, leaving `steer`/`resume` with
+            // nothing to target; prefix the id so the next call has a name
+            // to point at
+            res.output = format!("[task:{sub_id}]\n\n{}", res.output);
+            res
+        }
+        () = detach.wait() => {
+            mark_detached(&ctx.live_tasks, sub_id);
+            roster_changed(&ctx.live_sink.get().cloned(), sub_id);
+            ToolResult {
+                exit_code: None,
+                output: format!(
+                    "sub-agent {sub_id} moved to the background at the user's request — still running.\n\
+                     its result will arrive as a <task-result> message when it finishes; do not wait or poll.\n\
+                     transcript: .sunmao/sessions/{sub_id}.jsonl"
+                ),
+                ok: true,
+            }
+        }
+    };
+    // either normal exit is a clean hand-over: the result arrived, or the
+    // detach sent the child to the background path — disarm the abort kill
+    on_abort.armed = false;
+    out
+}
+
+/// Run one sub-agent to completion in the foreground: registers (armed with
+/// the GUI's detach latch), drives the child on its own task, and waits on
+/// the reported result — or on the user sending it to the background.
 pub(super) async fn spawn_one(
     ctx: &Context,
     prompt: &str,
@@ -259,15 +421,31 @@ pub(super) async fn spawn_one(
     llm_override: Option<Arc<dyn ProviderAdapter>>,
 ) -> ToolResult {
     let (sub_id, sub_ctx) = spawn_parts(ctx, def, llm_override, None).await;
-    drive_foreground(
+    let detach = crate::tool::KillSwitch::new();
+    let cancel = sub_ctx.cancel_signal();
+    register_task(
         ctx,
-        sub_id,
+        &sub_id,
+        sub_ctx.lane,
+        prompt,
+        def.map(|d| d.name.as_str()),
+        &sub_ctx.steer,
+        &cancel,
+        false,
+        Some(detach.clone()),
+    );
+    let driven = drive(
+        ctx.live_tasks.clone(),
+        parent_log_writer(ctx).await,
+        ctx.turn_lock.clone(),
+        sub_id.clone(),
         sub_ctx,
         prompt.to_string(),
         "subagent",
-        def.map(|d| d.name.as_str()),
+        ctx.live_sink.get().cloned(),
     )
-    .await
+    .await;
+    await_result(ctx, &sub_id, driven, &detach, cancel).await
 }
 
 /// Detached spawn (`run_in_background: true`): the tool returns an id at
@@ -292,14 +470,16 @@ pub(super) async fn spawn_detached(
         def.map(|d| d.name.as_str()),
         &sub_ctx.steer,
         &cancel,
+        true,
+        None,
     );
     detach(ctx, sub_id.clone(), sub_ctx, prompt.to_string(), "subagent").await;
     sub_id
 }
 
-/// The detached driver task shared by fresh spawns and resumes: run the
-/// turn on its own tokio task, append `TaskDone` into the parent log under
-/// the parent's turn fence, flip the roster, notify the live sink.
+/// The detached driver task shared by fresh spawns and resumes: same
+/// `drive` as the foreground path with the receiver dropped up front — a
+/// child nobody waits on delivers itself as a TaskDone fact.
 pub(super) async fn detach(
     ctx: &Context,
     sub_id: String,
@@ -307,66 +487,19 @@ pub(super) async fn detach(
     prompt: String,
     source: &'static str,
 ) {
-    // Fork the writer BEFORE spawning: `ctx.sessions` is a shared Arc the
-    // parent's swap_session can re-point mid-run — appending through it
-    // would land this TaskDone on a session the child never ran in.
-    // The forked handle pins the append to the spawning log (fresh file
-    // handle on the same path / shared buffer for ephemeral); a failed
-    // fork falls back to the shared Arc — wrong-attribution beats silence.
-    let parent_log: Arc<tokio::sync::Mutex<crate::session::SessionLog>> =
-        match ctx.sessions.lock().await.fork_writer().await {
-            Ok(w) => Arc::new(tokio::sync::Mutex::new(w)),
-            Err(e) => {
-                tracing::warn!(
-                    "sub-agent log fork failed ({e}) — TaskDone attribution may follow a later swap"
-                );
-                ctx.sessions.clone()
-            }
-        };
-    let parent_tasks = ctx.live_tasks.clone();
-    // The parent's turn fence: a mid-turn completion must not append the
-    // TaskDone user-message between a ToolCall and its ToolResult — that
-    // would break provider pairing (tool_result must immediately follow
-    // its tool_use) and hard-400 the next request. Waiting for the turn
-    // boundary keeps the pushed fact well-formed.
-    let parent_fence = ctx.turn_lock.clone();
-    let sink = ctx.live_sink.get().cloned();
-    let notify_sink = sink.clone();
-    let id = sub_id;
-    tokio::spawn(async move {
-        let _roster = RosterGuard::new(&parent_tasks, &id);
-        let res = run_spawn(Arc::new(sub_ctx), prompt, sink, source).await;
-        // The child's own log already holds the full transcript — the
-        // parent record stays lean (capped), with `id` pointing there.
-        let output = crate::agent::truncate_output(&res.output);
-        {
-            let _turn_permit = parent_fence.lock().await;
-            let mut log = parent_log.lock().await;
-            log.append_audit(&SessionEvent::TaskDone {
-                id: id.clone(),
-                ok: res.ok,
-                output,
-            })
-            .await;
-        }
-        {
-            finish_task(&parent_tasks, &id, res.ok);
-        }
-        if let Some(s) = notify_sink {
-            // the durable TaskDone fact renders a 子代理 notice on replay —
-            // the live mirror makes a watching session see the same row
-            s.on_event(&LiveEvent::TaskDone {
-                id: id.clone(),
-                ok: res.ok,
-                output: String::new(),
-            });
-            roster_changed(&Some(s.clone()), &id);
-            s.on_event(&LiveEvent::Hook {
-                event: "task.bg.done".into(),
-                detail: format!("{} — {}", id, if res.ok { "done" } else { "failed" }),
-            });
-        }
-    });
+    let _driven = drive(
+        ctx.live_tasks.clone(),
+        parent_log_writer(ctx).await,
+        ctx.turn_lock.clone(),
+        sub_id,
+        sub_ctx,
+        prompt,
+        source,
+        ctx.live_sink.get().cloned(),
+    )
+    .await;
+    // `_driven` drops here — the receiver's fall is what tells the driver
+    // nobody is waiting (a JoinHandle drop never aborts the task itself)
 }
 
 /// Drive a built child context through one turn — SubagentStart/Stop hooks

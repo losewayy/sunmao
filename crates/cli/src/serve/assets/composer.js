@@ -362,10 +362,15 @@ document.addEventListener('mousedown', e => { if (slashEl && !slashEl.contains(e
 
 /* the composer zone isn't fixed — queue/attachment/top rows grow the card
    upward. Track its real top edge so hero and toasts stay above it at any
-   height instead of clearing a static guess. */
+   height instead of clearing a static guess. Growth also lifts the mask
+   fade + the glass over the tail: a scroller riding the bottom (same 240
+   slack keepBottom uses) must re-pin or the newest message slides under
+   the composer right after a send. */
 new ResizeObserver(() => {
   const h = $('#composer').getBoundingClientRect().height;
   $('.stage').style.setProperty('--off-hero-bottom', (h + 16) + 'px');
+  const sc = $('#scroller');
+  if (root.dataset.replaying === undefined && sc.scrollHeight - sc.scrollTop - sc.clientHeight < 240) sc.scrollTop = sc.scrollHeight;
 }).observe($('#composer'));
 
 /* transcript column resize — either .tx-edge drags --w-read on #app
@@ -377,7 +382,7 @@ for (const side of ['l', 'r']) {
   edge.addEventListener('pointerdown', e => {
     e.preventDefault();
     try { edge.setPointerCapture(e.pointerId); } catch {}
-    app.dataset.dragging = '1';
+    app.dataset.dragging = 'tx';
     const x0 = e.clientX, w0 = $('#tx').getBoundingClientRect().width;
     const move = ev => {
       const dx = (ev.clientX - x0) * (side === 'r' ? 1 : -1);

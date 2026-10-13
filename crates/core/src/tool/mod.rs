@@ -221,6 +221,7 @@ pub fn builtin_registry() -> ToolRegistry {
     r.register(JobOutputTool);
     r.register(JobListTool);
     r.register(JobStopTool);
+    r.register(WaitForTool);
     r.register(HtmlArtifactTool);
     r.register(TodoWriteTool);
     r.register(UpdateGoalTool);
@@ -260,8 +261,10 @@ pub(crate) use goal::GOAL_LINE_PREFIX;
 #[cfg(test)]
 pub(crate) use goal::apply_blocker;
 pub use goal::{BLOCKED_MIN_ROUNDS, GoalState, GoalStatus, UpdateGoalTool, status_name};
-pub use jobs::{JobEntry, JobStatus, JobTable};
-pub use jobtools::{JobListTool, JobOutputTool, JobStopTool};
+pub use jobs::{
+    DetachVerdict, JobEntry, JobStatus, JobTable, KillSwitch, detach_wire, job_lost, snapshot,
+};
+pub use jobtools::{JobListTool, JobOutputTool, JobStopTool, WaitForTool};
 pub use kind::{ShellBackend, ShellResolution, ShellSource};
 pub use ptc::{RunCodeTool, SearchToolsTool};
 pub use search::{GlobTool, GrepTool};

@@ -226,6 +226,7 @@ pub(super) fn spawn_run(
         pid: None,
         started_at: jobs::now_ms(),
         kill: kill.clone(),
+        detach: jobs::KillSwitch::new(),
         release: Some(release),
     };
     let (out_mem, err_mem) = (out, err);
@@ -351,7 +352,7 @@ async fn spawn_background(
         });
     }
     let log_path = run.log_path.clone();
-    jobs::hand_off(run, notifier, ctx.jobs.clone(), None);
+    jobs::hand_off(run, notifier, ctx.jobs.clone(), None, false);
     Ok(ToolResult {
         exit_code: None,
         output: format!(

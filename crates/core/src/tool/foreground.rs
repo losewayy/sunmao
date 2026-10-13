@@ -17,13 +17,16 @@ use std::sync::Arc;
 pub enum LocalShell {
     /// Ended inside its budget — or was cancelled / killed at it.
     Done(ShellRun),
-    /// Still running as a job: the budget lapsed and the run was moved to the
-    /// background, where its completion is pushed as a `JobDone` fact.
+    /// Still running as a job: the budget lapsed — or the user asked — and
+    /// the run was moved to the background, where its completion is pushed
+    /// as a `JobDone` fact.
     Detached {
         id: String,
         pid: Option<u32>,
         log_path: std::path::PathBuf,
         output: String,
+        /// The GUI's send-to-background button, vs the timeout auto-detach.
+        by_user: bool,
     },
 }
 
@@ -38,7 +41,8 @@ impl LocalShell {
                 pid,
                 log_path,
                 output,
-            } => jobs::detached_result(id, *pid, log_path, output),
+                by_user,
+            } => jobs::detached_result(id, *pid, log_path, output, *by_user),
         }
     }
 
@@ -101,9 +105,13 @@ pub(super) async fn job_run(
     )
     .await;
 
-    if matches!(fg, jobs::Foreground::Detached) {
+    if matches!(
+        fg,
+        jobs::Foreground::Detached | jobs::Foreground::DetachedByUser
+    ) {
         // The log already holds everything the command produced; the job
         // keeps writing it, and completion arrives as a pushed fact.
+        let by_user = matches!(fg, jobs::Foreground::DetachedByUser);
         let output = run.out.text();
         let (id, log_path, pid) = (run.id.clone(), run.log_path.clone(), run.pid);
         let notifier = jobs::JobNotifier::from_ctx(ctx).await;
@@ -112,12 +120,14 @@ pub(super) async fn job_run(
             notifier,
             ctx.jobs.clone(),
             super::timeout::BACKGROUND_TIMEOUT_SECS,
+            by_user,
         );
         return Ok(LocalShell::Detached {
             id,
             pid,
             log_path,
             output,
+            by_user,
         });
     }
 

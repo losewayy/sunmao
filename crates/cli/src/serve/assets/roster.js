@@ -22,11 +22,16 @@ function renderRoster(tasks) {
   box.innerHTML = tasks.map(task => {
     const s = st(task);
     const tag = task.agent ? `<span class="tag">@${esc(task.agent)}</span>` : '';
+    /* background lineage tags: a `run_in_background` spawn is 后台 from
+       birth, a user-detached row keeps 前台转后台 even after it finishes —
+       same two tags the jobs card speaks. */
+    const bgTag = task.background ? `<span class="tag">${t('后台')}</span>` : task.detached ? `<span class="tag">${t('前台转后台')}</span>` : '';
     // running rows are steerable (the popover sends a task_steer frame);
     // finished rows carry data-sess — the id doubles as the child's log
     // stem, so click lands on the same resume/menu wiring the rail runs
     // (click → 接回日志, right-click → 分叉/导出/删除)
-    const row = `<i class="sd ${s === 'run' ? 'run' : s === 'done' ? 'done' : 'off'}"></i><span class="rt-id mono">${esc(task.id)}</span>${tag}<span class="rt-p">${esc(task.prompt || '')}</span>${s === 'run' ? ic('chev-r', 'i xs rt-go') : ''}`;
+    const detachBtn = task.can_detach ? `<span class="rt-act" data-task-detach="${esc(task.id)}" data-tip="${esc(t('送入后台 — 继续跑，结果完成后推送'))}|">${t('转后台')}</span>` : '';
+    const row = `<i class="sd ${s === 'run' ? 'run' : s === 'done' ? 'done' : 'off'}"></i><span class="rt-id mono">${esc(task.id)}</span>${tag}${bgTag}<span class="rt-p">${esc(task.prompt || '')}</span>${detachBtn}${s === 'run' ? ic('chev-r', 'i xs rt-go') : ''}`;
     if (s === 'run') return `<button class="rt" data-task="${esc(task.id)}" data-tip="${esc(t('发送引导'))}|${esc(t('点击输入要插给它的话'))}">${row}</button>`;
     return `<button class="rt" data-sess="${esc(task.id)}" data-tip="${esc(t('点击查看运行记录 · 右键更多操作'))}">${row}</button>`;
   }).join('') || `<div class="empty-row">${t('没有子代理在跑')}</div>`;
@@ -52,6 +57,15 @@ function taskSteerPop(anchor, id) {
   } });
 }
 document.addEventListener('click', e => {
+  const d = e.target.closest('[data-task-detach]');
+  if (d) {
+    e.stopPropagation();
+    e.preventDefault();
+    wsSend({ type: 'task_detach', sess: sessionId, id: d.dataset.taskDetach });
+    toast(t('已送入后台 {id}', { id: d.dataset.taskDetach }), 'download');
+    refreshRosterSoon();
+    return;
+  }
   const b = e.target.closest('[data-task]');
   if (b) taskSteerPop(b, b.dataset.task);
 });

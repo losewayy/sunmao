@@ -38,7 +38,7 @@
   --c-stroke:rgba(255,255,255,.08);--c-stroke-2:rgba(255,255,255,.13);--c-hi:rgba(255,255,255,.055);
   --c-fill-1:rgba(255,255,255,.045);--c-fill-2:rgba(255,255,255,.075);--c-fill-3:rgba(255,255,255,.12);
   --c-sunken:rgba(0,0,0,.24);--c-code-bg:rgba(255,255,255,.07);
-  --c-scrim:rgba(4,6,10,.28);--c-scrollbar:rgba(255,255,255,.13);
+  --c-scrim:rgba(4,6,10,.5);--c-scrollbar:rgba(255,255,255,.13);
   --c-swatch-ring:rgba(255,255,255,.25);
   --c-page:#07090e;--c-doc:#fbfaf7;
   --glass-rgb:22 24 31;--island-rgb:13 14 19;
@@ -154,7 +154,7 @@
   --c-stroke:rgba(20,24,40,.07);--c-stroke-2:rgba(20,24,40,.14);--c-hi:rgba(255,255,255,.75);
   --c-fill-1:rgba(20,24,40,.04);--c-fill-2:rgba(20,24,40,.07);--c-fill-3:rgba(20,24,40,.11);
   --c-sunken:rgba(20,24,40,.05);--c-code-bg:rgba(20,24,40,.06);
-  --c-scrim:rgba(40,46,64,.14);--c-scrollbar:rgba(20,24,40,.18);
+  --c-scrim:rgba(40,46,64,.24);--c-scrollbar:rgba(20,24,40,.18);
   --c-swatch-ring:rgba(20,24,40,.12);
   --c-page:#e9ecf2;
   --glass-rgb:244 245 248;--island-rgb:250 250 252;

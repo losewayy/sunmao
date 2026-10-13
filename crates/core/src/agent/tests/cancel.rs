@@ -24,13 +24,9 @@ fn register_child(parent: &Context, child: &Context) {
         .live_tasks
         .lock_or_recover()
         .push(crate::context::TaskEntry {
-            id: "sub-test-l1".into(),
-            lane: 1,
-            agent: None,
-            prompt: "probe".into(),
-            done: None,
             steer: Some(child.steer.clone()),
             cancel: Some(child.cancel_signal()),
+            ..crate::context::TaskEntry::pending("sub-test-l1", 1, "probe")
         });
 }
 

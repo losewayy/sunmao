@@ -335,6 +335,7 @@ fn fake_job(id: &str, started_at: u64, status: JobStatus) -> JobEntry {
         foreground: false,
         status,
         stop: jobs::KillSwitch::new(),
+        detach: jobs::KillSwitch::new(),
     }
 }
 

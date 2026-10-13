@@ -58,6 +58,12 @@ pub struct JobEntry {
     pub status: JobStatus,
     /// The backend's kill action, armed once the process exists.
     pub stop: KillSwitch,
+    /// The detach latch — same latch shape as `stop`, a different verdict:
+    /// tripping it tells the waiting foreground caller to stop waiting and
+    /// hand the run to the background watcher (a user's "send to background"
+    /// button), where tripping `stop` kills the tree outright. Background
+    /// spawns carry it too; nobody listens after the hand-off, so it inerts.
+    pub detach: KillSwitch,
 }
 
 impl std::fmt::Debug for JobEntry {
@@ -157,4 +163,28 @@ pub fn snapshot(table: &JobTable) -> Vec<JobEntry> {
 /// The stop wire, cloned out from under the lock (never held across await).
 pub fn stop_wire(table: &JobTable, id: &str) -> Option<JobEntry> {
     table.lock_or_recover().iter().find(|e| e.id == id).cloned()
+}
+
+/// Trip a running job's detach latch — the GUI's "send to background" button
+/// for an inline run. Only foreground rows can still be waiting: a job that
+/// already detached answers "already background" instead of pretending the
+/// request did something.
+pub enum DetachVerdict {
+    Armed,
+    AlreadyBackground,
+    Finished,
+    NoSuch,
+}
+
+pub fn detach_wire(table: &JobTable, id: &str) -> DetachVerdict {
+    let table = table.lock_or_recover();
+    match table.iter().find(|e| e.id == id) {
+        None => DetachVerdict::NoSuch,
+        Some(e) if !e.status.is_running() => DetachVerdict::Finished,
+        Some(e) if !e.foreground => DetachVerdict::AlreadyBackground,
+        Some(e) => {
+            e.detach.kill();
+            DetachVerdict::Armed
+        }
+    }
 }

@@ -1,7 +1,7 @@
 /* overlays — popovers and menus (.pop/.mi), the events log, the command
    palette, the image viewer, toasts and the tooltip. */
 /* ---------- popovers / palette / toast / tooltip ---------- */
-.pop{position:fixed;z-index:var(--z-pop);min-width:var(--w-pop);max-width:var(--w-pop-max);padding:var(--s-6);border-radius:var(--r-lg);opacity:0;transform:translateY(var(--move-1)) scale(var(--scale-pop));transition:opacity var(--dur-fast) var(--ease-in),transform var(--dur-fast) var(--ease-in);--ga:var(--glass-float);box-shadow:var(--sh-inset-hi),var(--sh-3)}
+.pop{position:fixed;z-index:var(--z-pop);min-width:var(--w-pop);max-width:var(--w-pop-max);display:flex;flex-direction:column;padding:var(--s-6);border-radius:var(--r-lg);opacity:0;transform:translateY(var(--move-1)) scale(var(--scale-pop));transition:opacity var(--dur-fast) var(--ease-in),transform var(--dur-fast) var(--ease-in);--ga:var(--glass-float);box-shadow:var(--sh-inset-hi),var(--sh-3)}
 .pop.show{opacity:1;transform:none;transition:opacity var(--dur-base) var(--ease-out),transform var(--dur-base) var(--ease-out)}
 .pop.up{transform-origin:bottom;transform:translateY(calc(var(--move-1) * -1)) scale(var(--scale-pop))}
 .pop.up.show{transform:none}
@@ -59,7 +59,7 @@
 .ev-l .d{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #palette{position:fixed;inset:0;z-index:var(--z-modal)}
 #palette[hidden]{display:none}
-#palette .scrim{position:absolute;inset:0;background:var(--c-scrim);animation:k-fade var(--dur-base) var(--ease-out)}
+#palette .scrim{position:absolute;inset:0;background:var(--c-scrim);-webkit-backdrop-filter:blur(var(--s-4));backdrop-filter:blur(var(--s-4));animation:k-fade var(--dur-base) var(--ease-out)}
 #palette.out{opacity:0;transition:opacity var(--dur-fast) var(--ease-in)}
 #palette .box{position:absolute;left:50%;top:var(--off-palette-top);width:var(--w-palette);transform:translateX(-50%);border-radius:var(--r-xl);overflow:hidden;--ga:var(--glass-float);box-shadow:var(--sh-inset-hi),var(--sh-3);animation:k-drop var(--dur-base) var(--ease-out)}
 #palette .in{display:flex;align-items:center;gap:var(--s-10);height:var(--h-3xl);padding:0 var(--s-16);color:var(--c-text-2)}
@@ -94,6 +94,9 @@
 /* the picker's read-only "current model" row — a state, not an action */
 /* model picker popover — the "current model" row is a state, not an action */
 .pop.models{min-width:var(--w-models-min);max-width:var(--w-models)}
-.pop.models .mp-list{max-height:var(--h-pop-list);overflow-y:auto;margin:var(--s-2) calc(var(--s-4) * -1) 0;padding:0 var(--s-4)}
+/* every menuPop wraps its rows in .mp-list — this is the lane that scrolls
+   when place() shrinks a tall menu to the room on the open side */
+.pop .mp-list{max-height:var(--h-pop-list);overflow-y:auto}
+.pop.models .mp-list{margin:var(--s-2) calc(var(--s-4) * -1) 0;padding:0 var(--s-4)}
 .pop.models .mi .tag{margin-left:auto;flex:none}
 .pop.models .mi.cur{background:var(--c-accent-tint);cursor:default}

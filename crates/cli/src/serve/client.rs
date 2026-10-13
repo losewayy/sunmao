@@ -332,6 +332,62 @@ impl Client {
                     "type":"note","sess":sess,"text":reply,
                 }));
             }
+            // {type:"task_detach", sess, id} — the roster's send-to-background
+            // button for a FOREGROUND sub-agent: the parent's Task call stops
+            // waiting; the child's result lands as a pushed TaskDone.
+            "task_detach" => {
+                let sub_id = v["id"].as_str().unwrap_or("").to_string();
+                let target = v["sess"]
+                    .as_str()
+                    .and_then(|id| self.s.host(id))
+                    .or_else(|| self.viewing_host());
+                let sess = v["sess"].as_str().unwrap_or(&self.viewing).to_string();
+                let reply = match target {
+                    Some(h) if !sub_id.is_empty() => match h.agent.detach_sub(&sub_id).await {
+                        Ok(()) => format!("{sub_id} moved to the background"),
+                        Err(e) => e.to_string(),
+                    },
+                    Some(_) => "task_detach needs id".into(),
+                    None => format!("no session {sess}"),
+                };
+                self.emit(serde_json::json!({
+                    "type":"note","sess":sess,"text":reply,
+                }));
+            }
+            // {type:"job_detach", sess, id} — same gesture for a foreground
+            // Bash run: the tool's wait ends now and the run becomes a
+            // background job whose JobDone lands like any other.
+            "job_detach" => {
+                let job_id = v["id"].as_str().unwrap_or("").to_string();
+                let target = v["sess"]
+                    .as_str()
+                    .and_then(|id| self.s.host(id))
+                    .or_else(|| self.viewing_host());
+                let sess = v["sess"].as_str().unwrap_or(&self.viewing).to_string();
+                let reply = match target {
+                    Some(h) if !job_id.is_empty() => {
+                        match sunmao_core::tool::detach_wire(&h.agent.context().jobs, &job_id) {
+                            sunmao_core::tool::DetachVerdict::Armed => {
+                                format!("{job_id} moved to the background")
+                            }
+                            sunmao_core::tool::DetachVerdict::AlreadyBackground => {
+                                format!("{job_id} already runs in the background")
+                            }
+                            sunmao_core::tool::DetachVerdict::Finished => {
+                                format!("{job_id} already finished")
+                            }
+                            sunmao_core::tool::DetachVerdict::NoSuch => {
+                                format!("no such job: {job_id}")
+                            }
+                        }
+                    }
+                    Some(_) => "job_detach needs id".into(),
+                    None => format!("no session {sess}"),
+                };
+                self.emit(serde_json::json!({
+                    "type":"note","sess":sess,"text":reply,
+                }));
+            }
             // `!` local shell — the user runs it, no approval gate, no LLM.
             // Same deno_task_shell path the TUI's `!` takes; the durable
             // LocalShell fact folds into the next turn's context.

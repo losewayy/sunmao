@@ -32,11 +32,15 @@ const motion = (() => {
       el.style.overflow = prev;
     },
     // expand/collapse a class-toggled body (tool rows, think blocks, tool
-    // groups): open = add class then tween 0→h; close = tween h→0 then the
-    // class comes off (which is what display:none's the body)
+    // groups). Where interpolate-size is on (tokens.css, Chromium 129+) the
+    // CSS height:0↔auto transition animates the fold by itself — the WAAPI
+    // tween would run a second height driver on top of it, which hitched
+    // mid-fold; only old engines still need it. body can be null (a think
+    // chip with no body): the class flip still toggles the chevron.
     async fold(container, body, open, cls = 'open') {
       if (container.classList.contains(cls) === open) return;
-      if (motion.reduced()) { container.classList.toggle(cls, open); return; }
+      const sizeKw = CSS.supports('interpolate-size', 'allow-keywords');
+      if (motion.reduced() || sizeKw || !body) { container.classList.toggle(cls, open); return; }
       if (open) { container.classList.add(cls); await motion.height(body, 0, body.offsetHeight); }
       else { await motion.height(body, body.offsetHeight, 0); container.classList.remove(cls); }
     },
@@ -155,14 +159,14 @@ function setApprovalMode(m) {
   $('#mode-ic').setAttribute('href', '#i-' + (MODE_ICONS[m] || 'shield'));
 }
 /* reasoning-effort override — kernel truth arrives on hello/replay/effort
-   frames; null means "follow the provider's own". effortLevels is the
-   active model's advertised vocabulary (empty = catalog never learned it;
-   the picker still offers 默认). */
+   frames; null means "follow the provider's own" and the chip shows only
+   its icon (a label like "default" would claim a state that isn't set).
+   effortLevels is the active model's advertised vocabulary. */
 let effortLevel = null, effortLevels = [];
 function setEffort(level, levels) {
   effortLevel = level || null;
   if (Array.isArray(levels)) effortLevels = levels;
-  $('#cmp-effort').textContent = effortLevel || t('默认');
+  $('#cmp-effort').textContent = effortLevel || '';
   $('#effort-btn').classList.toggle('lit', !!effortLevel);
 }
 let SESSION_IDS = [], SESSION_META = {};
@@ -236,7 +240,11 @@ let S = (() => {
 uiLang = detectLang(S.lang);
 async function loadUi() {
   try {
-    const v = await api('/ui');
+    /* `?sess=` pins the read to the viewed session's project — without it the
+       server falls back to the newest live session's project, so in a
+       multi-project serve the tab could load (and later overwrite) a
+       DIFFERENT project's ui.json; that's how panel widths went missing */
+    const v = await api('/ui' + (sessionId ? '?sess=' + encodeURIComponent(sessionId) : ''));
     if (v && v.ui) {
       const { state, bad } = healUi(v.ui);
       S = state;
@@ -267,7 +275,7 @@ const save = () => {
   try { localStorage.setItem('sunmao.ui', JSON.stringify(S)); } catch {}
   clearTimeout(uiSaveT);
   uiSaveT = setTimeout(async () => {
-    try { await api('/ui', jput(S)); } catch {}
+    try { await api('/ui' + (sessionId ? '?sess=' + encodeURIComponent(sessionId) : ''), jput(S)); } catch {}
   }, DEBOUNCE_UI_SAVE);
 };
 

@@ -85,6 +85,9 @@ pub(super) async fn view(s: &Arc<Shared>, sess: Option<String>) -> HostResponse 
         "default_model": file
             .default_selector()
             .filter(|sel| default_model_problem(sel, &file, &default_provider).is_none()),
+        // the tier an unpinned default resolves to — the settings pill shows
+        // it instead of a meaningless "默认" placeholder
+        "launch_model": s.model_label.clone(),
         "fusion_lead": fusion_models.0,
         "fusion_sidekick": fusion_models.1,
         "fusion_lead_effort": fusion_efforts.0,

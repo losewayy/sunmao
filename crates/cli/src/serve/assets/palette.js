@@ -31,11 +31,14 @@ function place(p, anchor, o) {
   const upEdge = r.top;
   const w = p.offsetWidth, h = () => p.offsetHeight;
   const up = o.place === 'top' || (r.bottom + gap + h() > innerHeight - 8 && upEdge - gap - h() > 8);
-  if (up) {
-    // too tall for the room above? the scrolling body shrinks — the box
-    // never spills past the window edge
-    const room = upEdge - gap - 8, body = p.querySelector('.mp-list, .scroll');
-    if (h() > room && body) body.style.maxHeight = Math.max(72, room - (h() - body.offsetHeight)) + 'px';
+  // too tall for the room on the open side? the scrolling body shrinks —
+  // the box never spills past the window edge. Downward opens need the
+  // same clamp; a body-less popover scrolls the whole .pop as a fallback.
+  const room = (up ? upEdge - gap : innerHeight - r.bottom - gap) - 8;
+  if (h() > room) {
+    const body = p.querySelector('.mp-list, .scroll');
+    if (body) body.style.maxHeight = Math.max(72, room - (h() - body.offsetHeight)) + 'px';
+    else { p.style.maxHeight = Math.max(72, room) + 'px'; p.style.overflowY = 'auto'; }
   }
   const top = up ? upEdge - gap - h() : r.bottom + gap;
   const left = o.align === 'end' ? r.right - w : r.left;
@@ -52,12 +55,15 @@ function closePop() {
 }
 document.addEventListener('mousedown', e => { if (popEl && !popEl.contains(e.target) && !(popAnchor && popAnchor.contains && popAnchor.contains(e.target))) closePop(); }, true);
 function menuHTML(items) {
-  return items.map(it => {
+  const rows = items.map(it => {
     if (it === '-') return '<div class="sep"></div>';
     if (it.label) return `<div class="lbl">${it.label}</div>`;
     const disabled = it.disabled ? ' disabled aria-disabled="true"' : '';
     return `<button class="mi${it.warn ? ' warn' : ''}${it.disabled ? ' disabled' : ''}" data-v="${esc(it.v)}"${disabled}${it.style ? ` style="${it.style}"` : ''}>${it.icon ? ic(it.icon) : ''}<span class="mt${it.mono ? ' mono' : ''}"><span>${esc(it.t)}</span>${it.d ? `<small>${esc(it.d)}</small>` : ''}</span>${it.k ? `<kbd>${esc(it.k)}</kbd>` : ''}${it.on ? ic('check', 'i sm ck') : ''}</button>`;
   }).join('');
+  // the scrolling lane every menu gets — without it a tall list (the default
+  // model picker, ~50 rows) outgrows the window with nothing to scroll
+  return `<div class="mp-list scroll">${rows}</div>`;
 }
 function menuPop(anchor, items, onPick, o = {}) {
   if (popAnchor === anchor) return closePop();

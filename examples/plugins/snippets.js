@@ -15,7 +15,7 @@ sunmao.register({
   slots: {
     composer: [{
       id: 'snip',
-      icon: 'quote',
+      icon: 'message-text',
       label: null,
       tip: '常用语',
       popover(el, host) {
@@ -30,7 +30,7 @@ sunmao.register({
     palette: [{
       g: 'snippets',
       t: '把输入框草稿存为常用语',
-      i: 'quote',
+      i: 'message-text',
       run(host) {
         const ta = document.querySelector('#input');
         const v = (ta?.value || '').trim();
@@ -45,7 +45,7 @@ sunmao.register({
     sessionMenu: [{
       v: 'send-snip',
       t: '向此会话发一条常用语',
-      i: 'quote',
+      i: 'message-text',
       run(id, host) {
         const list = host.load('list') || [];
         if (!list.length) return host.toast(host.t('还没有常用语'), 'info');

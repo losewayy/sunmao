@@ -27,7 +27,8 @@ sunmao.register({
           : `<i class="plg-mk ${host.esc(s === 'in_progress' ? 'prog' : 'pend')}"></i>`;
         const render = () => {
           const done = (items || []).filter(i => i.status === 'done').length;
-          el.innerHTML = `<section class="df"><div class="df-h"><span>${host.t('待办')}</span>${items ? `<span class="df-cnt">${done}/${items.length}</span>` : ''}</div>` +
+          const pct = items && items.length ? Math.round(done / items.length * 100) : 0;
+          el.innerHTML = `<section class="df">${items && items.length ? `<div class="df-h"><span class="plg-bar"><i style="width:${pct}%"></i></span><span class="df-cnt">${done}/${items.length}</span></div>` : ''}` +
             (items === null
               ? `<div class="empty-hint">${host.t('会话还没有任务列表')}</div>`
               : items.length === 0

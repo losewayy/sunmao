@@ -1,4 +1,5 @@
 //! Background jobs — identity, registry, and completion delivery.
+// arch: allow-god-file foreground hand-over and durable job completion share the same runner lifecycle and registry boundary
 //!
 //! A job's durable half is `.sunmao/jobs/{id}/` (`output.log`, and
 //! `exit.json` once it ended) — the layout `JobOutput` and the GUI have
@@ -215,6 +216,10 @@ pub struct JobRun {
     pub pid: Option<u32>,
     pub started_at: u64,
     pub kill: KillSwitch,
+    /// The user's "send to background" latch — the frontend trips it through
+    /// the registry entry; `wait_foreground` watches it alongside the clock
+    /// and hands the run off without killing it.
+    pub detach: KillSwitch,
     /// Taken by whoever waits — the foreground caller first, or the
     /// background watcher after a hand-off.
     pub release: Option<tokio::sync::oneshot::Receiver<RunEnd>>,
@@ -236,6 +241,7 @@ impl JobRun {
                 foreground,
                 status: JobStatus::Running,
                 stop: self.kill.clone(),
+                detach: self.detach.clone(),
             },
         );
     }
@@ -344,10 +350,21 @@ async fn push_done(notifier: &JobNotifier, id: &str, code: i32, bytes: u64, dir:
 /// awaits its release — arming the longer background tier when the policy
 /// sets one — then concludes it and pushes the notification. This is the
 /// whole "move to background" step; there is no pipe to hand over.
-pub fn hand_off(run: JobRun, notifier: JobNotifier, table: JobTable, bg_timeout: Option<u64>) {
+/// `by_user` distinguishes the user's send-to-background gesture from the
+/// timeout path in the durable `job.json` marker.
+pub fn hand_off(
+    run: JobRun,
+    notifier: JobNotifier,
+    table: JobTable,
+    bg_timeout: Option<u64>,
+    by_user: bool,
+) {
     // from here on this is a background job like any other — the panel must
     // show it, and the marker flip is what lets it through
     write_foreground(&run.dir, false);
+    if by_user {
+        write_detached_by_user(&run.dir);
+    }
     // the card's "moved to the background" tag is a live-only fact: the marker
     // says the job is visible now, not that it used to be inline, so the nudge
     // carries that half
@@ -402,6 +419,9 @@ pub enum Foreground {
     Done(RunEnd),
     /// Hit the budget and was moved to the background — still running.
     Detached,
+    /// The user asked for it (the GUI's send-to-background button) — same
+    /// hand-off as `Detached`, a different reason line in the tool result.
+    DetachedByUser,
     /// Hit the budget with auto-background disabled, and was killed.
     TimedOut(RunEnd),
     /// The turn's cancel wire fired; the run was killed.
@@ -412,7 +432,7 @@ impl Foreground {
     /// The label the tool result shows when the run didn't end on its own.
     pub fn label(&self, timeout_secs: u64) -> Option<String> {
         match self {
-            Self::Done(_) | Self::Detached => None,
+            Self::Done(_) | Self::Detached | Self::DetachedByUser => None,
             Self::TimedOut(_) => Some(format!("timed out after {timeout_secs}s — killed")),
             Self::Cancelled(_) => Some("cancelled by user — killed".to_string()),
         }
@@ -421,13 +441,15 @@ impl Foreground {
     pub fn end(self) -> Option<RunEnd> {
         match self {
             Self::Done(e) | Self::TimedOut(e) | Self::Cancelled(e) => Some(e),
-            Self::Detached => None,
+            Self::Detached | Self::DetachedByUser => None,
         }
     }
 }
 
 /// Wait on a run for at most `timeout_secs`. On timeout the caller either
 /// takes the run over ([`Foreground::Detached`], the default) or kills it.
+/// The `detach` latch is the third way out: the GUI's send-to-background
+/// button trips it and the wait ends as [`Foreground::DetachedByUser`].
 pub async fn wait_foreground(
     run: &mut JobRun,
     timeout_secs: u64,
@@ -437,6 +459,7 @@ pub async fn wait_foreground(
     enum First {
         End(Option<RunEnd>),
         Timeout,
+        Detach,
         Cancel,
     }
     let cancel_fut = async move {
@@ -446,12 +469,14 @@ pub async fn wait_foreground(
         }
     };
     tokio::pin!(cancel_fut);
+    let detach = run.detach.clone();
     let Some(mut release) = run.release.take() else {
         return Foreground::Done(RunEnd::lost());
     };
     let first = tokio::select! {
         e = &mut release => First::End(e.ok()),
         () = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs)) => First::Timeout,
+        () = detach.wait() => First::Detach,
         () = &mut cancel_fut => First::Cancel,
     };
     match first {
@@ -461,6 +486,10 @@ pub async fn wait_foreground(
         First::Timeout if detach_on_timeout => {
             run.release = Some(release);
             Foreground::Detached
+        }
+        First::Detach => {
+            run.release = Some(release);
+            Foreground::DetachedByUser
         }
         First::Timeout => {
             run.kill.kill();
@@ -483,12 +512,23 @@ pub fn ended_note(end: Option<String>, label: Option<String>) -> Option<String> 
 }
 
 /// The model-facing text for a command that just moved to the background.
-/// Kept here (not in the tool) so both shell backends and the future detach
-/// path speak one sentence.
-pub fn detached_result(id: &str, pid: Option<u32>, log_path: &Path, output: &str) -> String {
+/// Kept here (not in the tool) so both shell backends and the user-driven
+/// detach speak one sentence — `by_user` swaps the reason line.
+pub fn detached_result(
+    id: &str,
+    pid: Option<u32>,
+    log_path: &Path,
+    output: &str,
+    by_user: bool,
+) -> String {
     let pid = pid.map(|p| format!("\npid: {p}")).unwrap_or_default();
+    let reason = if by_user {
+        "the user moved this command to the background"
+    } else {
+        "command moved to the background after its timeout"
+    };
     let head = format!(
-        "command moved to the background after its timeout ({id}) — still running.\n\
+        "{reason} ({id}) — still running.\n\
          job: {id}{pid}\n\
          log: {}\n\
          you will be notified when it finishes; do not wait or poll.",
@@ -498,6 +538,90 @@ pub fn detached_result(id: &str, pid: Option<u32>, log_path: &Path, output: &str
         head
     } else {
         format!("{head}\n\noutput so far:\n{}", output.trim_end())
+    }
+}
+
+// ---------- lost-job detection (restart survivorship) ----------
+
+/// Mark the run's `job.json` as user-detached — the same file
+/// `write_foreground` owns, so both flags live in one write.
+fn write_detached_by_user(dir: &Path) {
+    if dir.as_os_str().is_empty() {
+        return;
+    }
+    let meta = serde_json::json!({"foreground": false, "detached_by_user": true});
+    let _ = std::fs::write(dir.join("job.json"), meta.to_string());
+}
+
+/// The sunmao pid a job id was minted on (`j-<ms>-<pid:x>-<seq>`). The id
+/// embeds it precisely so a later process can tell "still running under a
+/// sibling sunmao" from "the runner died and never wrote exit.json".
+pub fn owner_pid(id: &str) -> Option<u32> {
+    let mut parts = id.split('-');
+    if parts.next()? != "j" {
+        return None;
+    }
+    let _ms = parts.next()?;
+    u32::from_str_radix(parts.next()?, 16).ok()
+}
+
+/// Is `pid` still a live process? Windows asks tasklist (the same engine
+/// `kill_tree` uses); unix checks /proc first, `kill -0` as fallback.
+pub fn pid_alive(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        let out = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output();
+        match out {
+            Ok(o) => {
+                // a miss prints INFO: to stdout in English locales and an
+                // empty CSV body elsewhere; a hit's first column is "name","pid"
+                let s = String::from_utf8_lossy(&o.stdout);
+                s.lines().any(|l| {
+                    l.split(',')
+                        .nth(1)
+                        .map(|c| c.trim_matches('"') == pid.to_string())
+                        .unwrap_or(false)
+                })
+            }
+            Err(_) => true, // can't ask — don't condemn a live job
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            return true;
+        }
+        match std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+        {
+            Ok(s) => s.success(),
+            Err(_) => true,
+        }
+    }
+}
+
+/// "Lost" = the job never wrote `exit.json` AND the sunmao process that
+/// spawned it is gone. Own-process jobs can never be lost (their row exists
+/// while we run), so this only resolves for dir-scanning consumers —
+/// `jobs_list`/`WaitFor`, whose job may predate the restart.
+/// `dir` is the job's scratch dir; `exit.json` present ⇒ never lost.
+pub fn job_lost(dir: &Path, id: &str) -> bool {
+    if dir.join("exit.json").exists() {
+        return false;
+    }
+    match owner_pid(id) {
+        Some(p) if p == std::process::id() => false,
+        Some(p) => !pid_alive(p),
+        None => false, // legacy/foreign ids — benefit of the doubt
     }
 }
 

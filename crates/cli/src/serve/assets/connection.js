@@ -48,7 +48,7 @@ function renderComposerModel() {
   const el = $('#cmp-model'), btn = $('#model-btn');
   if (!el) return;
   if (turnMode === 'fusion') {
-    const role = v => v || t('未设置');
+    const role = v => v || t('选择模型');
     el.textContent = 'Fusion';
     if (btn) btn.dataset.tip = t('Lead：{lead} · Sidekick：{sidekick}', {
       lead: role(MODELS && MODELS.fusion_lead),
@@ -134,6 +134,10 @@ function route(v) {
       refreshSessions(); refreshModels(); refreshProjects();
       refreshRoster(); refreshJobs(); resetSessionSettingsLoads(); refreshGrants();
       renderCrumb();
+      /* the boot-time loadUi ran before sessionId existed and may have read
+         the newest-live project's ui.json instead of this session's —
+         re-pull now that the viewed project is known (no-op when they match) */
+      loadUi();
       break;
     case 'live':
       // roster/jobs nudges are refresh signals, not transcript content —
@@ -176,6 +180,7 @@ function route(v) {
         window.pluginEmit?.('session', { sess: sessionId });
         window.loadPlugins?.(); // same project usually, a new one possibly
         if (typeof dockSessionSwap === 'function') dockSessionSwap();
+        loadUi(); // a session in another project owns another ui.json
       }
       if (v.cwd) { cwd = String(v.cwd).replace(/^\\\\\?\\/, ''); $('#df-cwd').textContent = projectName(cwd) || '—'; $('#df-cwd').dataset.tip = cwd; }
       // switching sessions rebuilds the whole transcript — fadeSwap turns
@@ -305,7 +310,7 @@ function route(v) {
       if (sess === sessionId) {
         const previous = effortLevel;
         setEffort(v.level, v.levels);
-        if (previous !== effortLevel) toast(t('思考强度 → {level}', { level: v.level || t('默认') }), 'sparkles');
+        if (previous !== effortLevel) toast(t('思考强度 → {level}', { level: v.level || t('自动') }), 'sparkles');
       }
       break;
     case 'ui_state':
@@ -522,7 +527,7 @@ function renderDock(d) {
 }
 
 /* ================= crumb / views ================= */
-const SET_NAV = [['appearance', t('外观'), 'palette'], ['providers', t('模型与提供商'), 'cpu'], ['channels', t('IM 渠道'), 'shield-check'], ['shell', t('终端'), 'terminal'], ['hooks', t('钩子'), 'zap'], ['mcp', t('MCP 服务器'), 'blocks'], ['plugins', t('插件'), 'grid'], ['grants', t('已授权命令'), 'lock'], ['keys', t('快捷键'), 'keyboard'], ['about', t('关于'), 'info']];
+const SET_NAV = [['appearance', t('外观'), 'palette'], ['providers', t('模型与提供商'), 'cpu'], ['channels', t('IM 渠道'), 'message'], ['shell', t('终端'), 'terminal'], ['hooks', t('钩子'), 'zap'], ['mcp', t('MCP 服务器'), 'blocks'], ['plugins', t('插件'), 'puzzle'], ['grants', t('已授权命令'), 'lock'], ['keys', t('快捷键'), 'keyboard'], ['about', t('关于'), 'info']];
 function renderCrumb() {
   const c = $('#crumb');
   const interactive = view === 'session' && !!sessionId;

@@ -14,12 +14,15 @@ use crate::session::{SessionEvent, SessionLog};
 use crate::tool::ToolResult;
 
 use super::parts::build_sub_ctx;
-use super::spawn::{detach, finish_task, run_spawn};
+use super::spawn::{await_result, detach, drive, parent_log_writer, roster_changed};
 
 /// Resume bookkeeping: a finished entry reopens (new lane + steer handle,
 /// `done` reset — the agent def name survives so a later resume can
 /// re-resolve it); a restart with an empty roster inserts a fresh row
-/// tagged `…-r` to mark the -resume lineage.
+/// tagged `…-r` to mark the -resume lineage. `detached`/`detach` mirror
+/// `register_task`'s foreground-vs-background flags so a resumed child can
+/// be sent to the background like a fresh spawn.
+#[allow(clippy::too_many_arguments)]
 fn roster_reopen(
     ctx: &Context,
     sub_id: &str,
@@ -28,6 +31,8 @@ fn roster_reopen(
     agent: Option<&str>,
     steer: &crate::context::SteerQueue,
     cancel: &crate::context::CancelSignal,
+    background: bool,
+    detach_latch: Option<crate::tool::KillSwitch>,
 ) {
     let mut digest: String = prompt.chars().take(60).collect();
     if prompt.chars().count() > 60 {
@@ -44,19 +49,21 @@ fn roster_reopen(
         }
         e.prompt = digest;
         e.cancel = Some(cancel.clone());
+        e.detach = detach_latch;
+        e.background = background;
+        e.detached = false;
     } else {
         tasks.push(crate::context::TaskEntry {
-            id: sub_id.to_string(),
-            lane,
             agent: Some(format!("{}-r", agent.unwrap_or(sub_id))),
-            prompt: digest,
-            done: None,
             steer: Some(steer.clone()),
             cancel: Some(cancel.clone()),
+            detach: detach_latch,
+            background,
+            ..crate::context::TaskEntry::pending(sub_id.to_string(), lane, digest)
         });
     }
     drop(tasks);
-    super::spawn::roster_changed(&ctx.live_sink.get().cloned(), sub_id);
+    roster_changed(&ctx.live_sink.get().cloned(), sub_id);
 }
 
 /// Continue a finished sub-agent on its own log (`Task{resume}`): the
@@ -107,16 +114,18 @@ pub(super) async fn resume_sub(
     let agent_name = def.map(|d| d.name.as_str());
     let steer = sub_ctx.steer.clone();
     let cancel = sub_ctx.cancel_signal();
-    roster_reopen(
-        ctx,
-        sub_id,
-        sub_ctx.lane,
-        prompt,
-        agent_name,
-        &steer,
-        &cancel,
-    );
     if detached {
+        roster_reopen(
+            ctx,
+            sub_id,
+            sub_ctx.lane,
+            prompt,
+            agent_name,
+            &steer,
+            &cancel,
+            true,
+            None,
+        );
         detach(
             ctx,
             sub_id.to_string(),
@@ -131,20 +140,33 @@ pub(super) async fn resume_sub(
             ok: true,
         })
     } else {
-        // same drop-guard as drive_foreground — a cancelled foreground
-        // resume would otherwise leave the reopened row stuck at
-        // done: None, refusing every later resume as "still running"
-        let _roster = super::spawn::RosterGuard::new(&ctx.live_tasks, sub_id);
-        let res = run_spawn(
-            Arc::new(sub_ctx),
+        // same driver as a fresh foreground spawn: the child runs on its
+        // own task with the detach latch armed — the GUI can send a resumed
+        // child to the background the same way.
+        let detach_latch = crate::tool::KillSwitch::new();
+        roster_reopen(
+            ctx,
+            sub_id,
+            sub_ctx.lane,
+            prompt,
+            agent_name,
+            &steer,
+            &cancel,
+            false,
+            Some(detach_latch.clone()),
+        );
+        let driven = drive(
+            ctx.live_tasks.clone(),
+            parent_log_writer(ctx).await,
+            ctx.turn_lock.clone(),
+            sub_id.to_string(),
+            sub_ctx,
             prompt.to_string(),
-            ctx.live_sink.get().cloned(),
             "subagent-resume",
+            ctx.live_sink.get().cloned(),
         )
         .await;
-        finish_task(&ctx.live_tasks, sub_id, res.ok);
-        super::spawn::roster_changed(&ctx.live_sink.get().cloned(), sub_id);
-        Ok(res)
+        Ok(await_result(ctx, sub_id, driven, &detach_latch, cancel).await)
     }
 }
 

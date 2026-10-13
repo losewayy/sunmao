@@ -265,13 +265,13 @@ const DIALECTS = [
    models.json. A session already under way keeps the model its own log names
    (`Started`/`model.change`), so changing this never retargets one — which is
    the scope line the 终端 page uses for its own new-session-only pick. The
-   clear row reuses the 默认 label: an unset key means the launch model
-   decides, not that a model called "default" is pinned. */
+   list offers only real selectors — "默认" was a placeholder for "nothing
+   pinned" and read as a phantom model; the unset state shows the launch
+   model on the pill instead. */
 function defaultModelPop(el) {
   const cur = (MODELS && MODELS.default_model) || '';
   const items = [
     { label: t('默认模型') },
-    { v: '', t: t('默认'), on: !cur },
     ...((MODELS && MODELS.selectors) || []).map(s => ({ v: s, t: s, mono: true, on: s === cur })),
   ];
   menuPop(el, items, v => saveDefaultModel(v), { place: 'top', align: 'end' });
@@ -289,31 +289,26 @@ function renderProviders() {
   const host = $('#set-generic');
   if (!MODELS) { settingsFetchState('providers',t('模型与提供商'),refreshModels); return; }
   const names = Object.keys(MODELS.providers || {}).sort();
-  let html = head(t('模型与提供商'), '');
-  html += '<div class="card glass cfg pv"><div class="cr"><div class="l"><b>' +
-    t('快速添加模型提供商') + '</b><span>' + t('预填地址与协议；保存前请核对账号的 API 地址') +
-    '</span></div></div><div class="pv-acts">' +
-    PROVIDER_STARTERS.map((p,i) => `<button class="btn ghost sm" data-pv="preset" data-n="${i}">${esc(p.name)}</button>`).join('') +
-    '</div></div>';
-  const def = (MODELS.default_model) || t('默认');
-  html += card([row(t('默认模型'), t('新对话默认用它；已经在谈的会话不受影响'),
+  const def = MODELS.default_model || MODELS.launch_model || '…';
+  let html = head(t('模型与提供商'), '') + card([row(t('默认模型'), t('新对话默认用它；已经在谈的会话不受影响'),
     `<button class="pill plain" data-pv="defmodel"><span class="mono">${esc(def)}</span>${ic('chev-d')}</button>`)]);
-  for (const n of names) {
+  const cards = names.map(n => {
     const p = MODELS.providers[n], cat = p.catalog || [];
-    let body;
-    if (pvEdit && pvEdit.name === n) {
-      body = provForm(n, p);
-    } else {
-      body = `<div class="pv-h"><b class="mono">${esc(n)}</b><span class="pv-sub">${esc((p.dialect || 'openai') + ' · ' + p.base_url)}</span>`
-        + `<span class="tag">${p.api_key_set ? t('key 已配置') : t('无 key')}</span>${n === MODELS.default_provider ? '<span class="tag">' + t('本会话') + '</span>' : ''}`
-        + `<div class="pv-acts"><button class="btn ghost sm" data-pv="edit" data-n="${esc(n)}" data-tip="${esc(t('编辑'))}">${ic('pen', 'i sm')}</button><button class="btn ghost sm" data-pv="del" data-n="${esc(n)}" data-tip="${esc(t('删除'))}">${ic('trash', 'i sm')}</button></div></div>`
-        + (cat.length
-          ? `<div class="pv-cat"><span class="tag pv-count">${t('已选 {n} 个模型', { n: cat.length })}</span>${cat.slice(0, 5).map(m => `<span class="tag" data-tip="${esc(n + '/' + m.id)}">${esc(m.id)}</span>`).join('')}${cat.length > 5 ? `<span class="tag pv-overflow" data-tip="${esc(cat.slice(5).map(m => n + '/' + m.id).join(', '))}">+${cat.length - 5}</span>` : ''}</div>`
-          : `<div class="pv-empty">${t('还没有模型 — 点「编辑」拉取，或手写一个 model id')}</div>`);
-    }
-    html += `<div class="card glass cfg pv">${body}</div>`;
-  }
-  html += `<div class="card glass cfg pv">${pvEdit && pvEdit.name === null ? provForm('', null) : `<button class="btn ghost sm" data-pv="add">${ic('plus')}${t('添加 provider')}</button>`}</div>`;
+    if (pvEdit && pvEdit.name === n) return `<div class="card glass pv">${provForm(n, p)}</div>`;
+    const tags = (p.api_key_set ? `<span class="tag">${t('key 已配置')}</span>` : '') + (n === MODELS.default_provider ? `<span class="tag">${t('本会话')}</span>` : '');
+    return `<div class="card glass pv"><div class="pv-h"><div class="pv-id"><div class="pv-nm"><b class="mono">${esc(n)}</b>${tags}</div><span class="pv-sub">${esc((p.dialect || 'openai') + ' · ' + p.base_url)}</span></div>`
+      + `<div class="pv-acts"><button class="btn ghost sm" data-pv="edit" data-n="${esc(n)}" data-tip="${esc(t('编辑'))}">${ic('pen', 'i sm')}</button><button class="btn ghost sm" data-pv="del" data-n="${esc(n)}" data-tip="${esc(t('删除'))}">${ic('trash', 'i sm')}</button></div></div>`
+      + (cat.length
+        ? `<div class="pv-cat"><span class="tag pv-count">${t('已选 {n} 个模型', { n: cat.length })}</span>${cat.slice(0, 5).map(m => `<span class="tag" data-tip="${esc(n + '/' + m.id)}">${esc(m.id)}</span>`).join('')}${cat.length > 5 ? `<span class="tag pv-overflow" data-tip="${esc(cat.slice(5).map(m => n + '/' + m.id).join(', '))}">+${cat.length - 5}</span>` : ''}</div>`
+        : `<div class="pv-empty">${t('还没有模型 — 点「编辑」拉取，或手写一个 model id')}</div>`)
+      + '</div>';
+  });
+  cards.push(pvEdit && pvEdit.name === null
+    ? `<div class="card glass pv">${provForm('', null)}</div>`
+    : `<div class="card glass pv pv-new"><div class="pv-id"><b>${t('快速添加模型提供商')}</b><span class="pv-sub">${t('预填地址与协议；保存前请核对账号的 API 地址')}</span></div><div class="pv-acts">`
+      + PROVIDER_STARTERS.map((p, i) => `<button class="btn ghost sm" data-pv="preset" data-n="${i}">${esc(p.name)}</button>`).join('')
+      + `<i class="pv-vr"></i><button class="btn ghost sm" data-pv="add">${ic('plus')}${t('添加 provider')}</button></div></div>`);
+  html += `<div class="sec pv-sec"><div class="sec-h"><h2>${t('提供商')}</h2></div><div class="pv-list">${cards.join('')}</div></div>`;
   // the rebuild below replaces every node — capture the list's scroll
   // position and any drag-set height first, restore them right after,
   // or each chip toggle snaps the view back to the top
@@ -649,11 +644,14 @@ function renderHooks() {
     + (HOOKS.length
       ? sec('', '', card(HOOKS.map((h, i) => {
           const act = h.status === 'untrusted' ? `<button class="btn ghost sm" data-ht="${i + 1}:1">${t('信任')}</button>`
-            : h.status === 'pinned' ? `<button class="btn ghost sm warn" data-ht="${i + 1}:0">${t('撤销')}</button>`
-            : `<span class="tag">${esc(HK_STATUS[h.status] || h.status)}</span>`;
-          return `<div class="cr"><div class="l" style="flex:1;min-width:0"><b>${esc(KIND[h.kind] || h.kind)} · ${esc(h.event)}${h.matcher ? ' · ' + esc(h.matcher) : ''}</b><span class="mono" style="overflow-wrap:anywhere">${esc(h.command)}</span></div>${act}</div>`;
+            : h.status === 'pinned' ? `<button class="btn ghost sm warn" data-ht="${i + 1}:0">${t('撤销')}</button>` : '';
+          const tip = h.status === 'user' ? ` data-tip="${esc(t('用户层配置默认信任'))}"` : '';
+          const st = `<span class="tag hk-st ${h.status === 'untrusted' ? 'warn' : 'ok'}"${tip}>${esc(HK_STATUS[h.status] || h.status)}</span>`;
+          const kind = h.kind === 'hook' ? '' : `<span class="tag">${esc(KIND[h.kind] || h.kind)}</span>`;
+          return `<div class="cr"><div class="l hk-l"><b>${kind}${esc(h.event)}${h.matcher ? `<span class="tag">${esc(h.matcher)}</span>` : ''}</b><span class="mono hk-cmd">${esc(h.command)}</span></div><div class="ch-acts">${st}${act}</div></div>`;
         })))
       : '<div class="empty-hint">' + t('当前会话没有加载任何钩子 — 项目 .sunmao/hooks.json 或插件清单会出现在这里') + '</div>');
+  host.querySelectorAll('.hk-cmd').forEach(c => c.addEventListener('click', () => c.classList.toggle('open')));
 }
 
 /* Project MCP configuration remains a cold-plug operation. This editor
@@ -684,7 +682,7 @@ function renderMcp() {
   const entries = MCP_CONFIG.map(m => `<div class="cr"><div class="l"><b>${esc(m.name)}</b>` +
     `<span>${esc(m.transport)} · ${t('项目配置')}</span></div>` +
     `<button type="button" class="btn ghost sm warn" data-mcp-remove="${esc(m.name)}">${t('删除')}</button></div>`).join('');
-  const form = mcpAdding ? `<div class="card glass cfg"><label>${t('服务器名称')}<input id="mcp-add-name" placeholder="my-server" maxlength="64"></label>` +
+  const form = mcpAdding ? `<div class="card glass pv-form mcp-form"><label>${t('服务器名称')}<input id="mcp-add-name" placeholder="my-server" maxlength="64"></label>` +
     `<label>${t('远程 MCP URL')}<input id="mcp-add-url" placeholder="https://example.com/mcp" spellcheck="false"></label>` +
     `<label>${t('Bearer Token 环境变量（可选）')}<input id="mcp-add-auth-env" placeholder="MCP_API_TOKEN" spellcheck="false" maxlength="64"><small>${t('只输入环境变量名，不要输入 Token 内容；在启动 sunmao 前设置环境变量。')}</small></label>` +
     `<div class="pv-acts"><button class="btn allow sm" id="mcp-add-save">${t('保存')}</button>` +

@@ -108,7 +108,11 @@ pub(crate) async fn local_shell(
     )
     .await;
 
-    if matches!(fg, jobs::Foreground::Detached) {
+    if matches!(
+        fg,
+        jobs::Foreground::Detached | jobs::Foreground::DetachedByUser
+    ) {
+        let by_user = matches!(fg, jobs::Foreground::DetachedByUser);
         let output = run.out.text();
         let (id, log_path, pid) = (run.id.clone(), run.log_path.clone(), run.pid);
         let notifier = jobs::JobNotifier::from_ctx(ctx).await;
@@ -117,12 +121,14 @@ pub(crate) async fn local_shell(
             notifier,
             ctx.jobs.clone(),
             super::timeout::BACKGROUND_TIMEOUT_SECS,
+            by_user,
         );
         return Ok(LocalShell::Detached {
             id,
             pid,
             log_path,
             output,
+            by_user,
         });
     }
 
@@ -317,6 +323,7 @@ fn spawn_run(
         pid,
         started_at: jobs::now_ms(),
         kill,
+        detach: jobs::KillSwitch::new(),
         release: Some(release),
     })
 }
@@ -343,7 +350,7 @@ async fn spawn_background(
         });
     }
     let log_path = run.log_path.clone();
-    jobs::hand_off(run, notifier, ctx.jobs.clone(), None);
+    jobs::hand_off(run, notifier, ctx.jobs.clone(), None, false);
     Ok(ToolResult {
         exit_code: None,
         output: format!("job {} started; log: {}", paths.id, log_path.display()),

@@ -270,6 +270,12 @@ async fn delegate(ctx: &Arc<Context>, a: &Args) -> anyhow::Result<ToolResult> {
         Some("fusion-sidekick"),
         &steer,
         &cancel,
+        false,
+        // the sidekick's result feeds verdict::settle, not a TaskDone push —
+        // sending it "to the background" would strand the verdict, so the
+        // roster row stays un-detachable (the GUI hides the button on
+        // `can_detach: false`)
+        None,
     );
     let sidekick = Arc::new(sub_ctx);
     {

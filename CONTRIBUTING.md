@@ -58,6 +58,16 @@ path / user name (want 0 hits, ASCII and UTF-16 both), and run
 `cargo package --list` before publishing the crate. Nothing here should ever
 be committed with a literal builder path in it.
 
+One gap in the recipe above: `CFLAGS`/`CXXFLAGS` are environment variables a
+build script can *replace* — `rquickjs-sys` calls `env::set_var("CFLAGS", …)`
+and drops the trim flag, leaking `OUT_DIR` paths (`…\target\release\build\…`)
+into `__FILE__` strings. For crates that overwrite the env, inject through
+`_CL_` instead — `cl.exe` reads it itself, so no build script can lose it:
+
+```bash
+_CL_="/d1trimfile:F:\\path\\to\\repo\\" cargo tauri build
+```
+
 ## Docs discipline
 
 - `docs/SPEC.md` = design contract (what we intend)

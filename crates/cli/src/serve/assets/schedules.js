@@ -45,7 +45,9 @@ function renderSchedules() {
         <button class="ib sm" data-act="sched-del" data-id="${esc(task.id)}" data-tip="${esc(t('删除'))}">${ic('trash')}</button>
       </div>
     </div>`;
-  }).join('') || `<div class="empty-hint">${t('暂无定时任务——到点它会自动开一条会话跑起来。')}</div>`;
+  }).join('') || `<div class="sch-empty"><span class="sch-empty-i">${ic('clock')}</span><p>${t('暂无定时任务——到点它会自动开一条会话跑起来。')}</p><button class="btn ghost sm" data-act="sched-new">${ic('plus')}${t('新建任务')}</button></div>`;
+  const foot = $('#sch-foot');
+  if (foot) foot.hidden = !SCHEDULES.length;
 }
 
 /* ---- 建/改表单 —— 频率下的条件字段随 kind 显隐 ---- */

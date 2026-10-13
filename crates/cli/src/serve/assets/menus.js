@@ -251,8 +251,8 @@ function saveFusionEffort(role, level) {
 function fusionPop(anchor) {
   if (!anchor) return;
   if (popAnchor === anchor) return closePop();
-  const role = v => v || t('未设置');
-  const eff = v => v || t('默认');
+  const role = v => v || t('选择模型');
+  const eff = v => v || t('跟随会话');
   const ready = !!(MODELS && MODELS.fusion_ready);
   // one row per role — model on the left, ITS effort on the right: the two
   // dials are independent, each overriding the session effort for that role
@@ -276,12 +276,12 @@ function fusionPop(anchor) {
         });
       };
       // role effort rides the same picker chrome as the session effort,
-      // plus a leading 默认 row that clears the override
+      // plus a leading row that clears the override back to the session's
       const pickEff = role => {
         closePop();
         const cur = MODELS && MODELS[role === 'lead' ? 'fusion_lead_effort' : 'fusion_sidekick_effort'];
         menuPop(anchor, [
-          { v: '', t: t('默认（跟随会话强度）'), on: !cur },
+          { v: '', t: t('跟随会话强度'), on: !cur },
           ...effortLevels.map(l => ({ v: l, t: l, mono: true, on: l === cur })),
         ], v => { saveFusionEffort(role, v || null); fusionPop(anchor); }, { place: 'top', align: 'end' });
       };

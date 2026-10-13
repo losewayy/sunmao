@@ -17,15 +17,20 @@
    why the last lines end up under the glass. The +s-24 keeps a gap under
    the composer's rounded edge. */
 .scroller{position:absolute;inset:0;overflow-y:auto;padding:var(--s-64) var(--s-24) calc(var(--off-hero-bottom, 168px) + var(--s-24));scroll-padding-bottom:calc(var(--off-hero-bottom, 168px) + var(--s-24))}
+.scroller{-webkit-mask-image:linear-gradient(transparent,#000 var(--s-48),#000 calc(100% - var(--off-hero-bottom, 168px) - var(--s-16)),transparent calc(100% - var(--off-hero-bottom, 168px) + var(--s-16)));mask-image:linear-gradient(transparent,#000 var(--s-48),#000 calc(100% - var(--off-hero-bottom, 168px) - var(--s-16)),transparent calc(100% - var(--off-hero-bottom, 168px) + var(--s-16)))}/* token-exempt: mask luminance */
 .tx{max-width:var(--w-read);margin:0 auto}
-/* read-column resize handles — thin strips parked on the column's edges
-   (the column is centered: edge = center ± min(w-read, stage-48)/2).
-   A hairline lights on hover/drag like the rail/dock edges do. */
+/* read-column resize handles — a long hairline fading out at both ends,
+   parked s-16 OUTSIDE the column's edge (the column is centered: edge =
+   center ± min(w-read, stage-48)/2, and the s-12 strip starts s-16 past it,
+   so the grip never hugs the glass). Hidden at rest — the strip's ew-resize
+   cursor is the only resting affordance; hovering the strip or its own drag
+   (data-dragging="tx" — rail/dock drags set the flag too and must not light
+   it) fades the hairline in. */
 .tx-edge{position:absolute;top:0;bottom:0;width:var(--s-12);cursor:ew-resize;z-index:calc(var(--z-composer) - 1);touch-action:none}
-.tx-edge.l{left:calc(50% - min(var(--w-read),100% - var(--s-48)) / 2 - var(--s-6))}
-.tx-edge.r{left:calc(50% + min(var(--w-read),100% - var(--s-48)) / 2 - var(--s-6))}
-.tx-edge::after{content:'';position:absolute;left:calc(50% - var(--bw-hairline) / 2);top:var(--s-32);bottom:var(--s-32);width:var(--bw-hairline);border-radius:var(--r-full);background:var(--c-text-3);opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
-.tx-edge:hover::after,.tx-edge:active::after,#app[data-dragging] .tx-edge::after{opacity:.55}
+.tx-edge.l{left:calc(50% - min(var(--w-read),100% - var(--s-48)) / 2 - var(--s-16) - var(--s-12))}
+.tx-edge.r{left:calc(50% + min(var(--w-read),100% - var(--s-48)) / 2 + var(--s-16))}
+.tx-edge::after{content:'';position:absolute;left:calc(50% - var(--s-2) / 2);top:50%;width:var(--s-2);height:calc(var(--s-64) * 2 + var(--s-32));margin-top:calc((var(--s-64) * 2 + var(--s-32)) / -2);border-radius:var(--r-full);background:linear-gradient(to bottom,transparent,var(--c-text-2) 30%,var(--c-text-2) 70%,transparent);opacity:0;transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out)}
+.tx-edge:hover::after,#app[data-dragging="tx"] .tx-edge::after{opacity:.9;transform:scaleY(1.1)}
 /* scrolling content never blurs — backdrop-filter on a scrolling surface
    repaints every frame; floating chrome (.pop/.toast/.findbar) keeps it.
    .tools>.bubble.step already exempted itself the same way */
@@ -33,6 +38,11 @@
 /* off-screen transcript blocks skip layout+paint — `auto` remembers each
    block's last rendered height so the scrollbar doesn't jump */
 .msg{content-visibility:auto;contain-intrinsic-size:auto 200px;margin-top:var(--s-32)}
+/* the tail must never estimate — scrollHeight reads its real height before
+   keepBottom decides, or scroll-to-bottom lands 100px short and the newest
+   message clips under the composer. Rendering the last row is cheap; the
+   skipped render only pays on long backlogs */
+.msg:last-child{content-visibility:visible}
 .msg:first-child{margin-top:var(--s-4)}
 .msg>*+*{margin-top:var(--s-8)}
 .msg-h{display:flex;align-items:center;gap:var(--s-8);height:var(--h-xs);padding-left:var(--s-4);font-size:var(--fs-xs);font-weight:var(--fw-strong);color:color-mix(in srgb,var(--c-text) 86%,transparent);text-shadow:var(--sh-text)}
@@ -189,8 +199,11 @@
 .tx>.note-line,.tx>.audit,.tx>.approve,.tx>.notice{margin-top:var(--s-12)}
 .think .i{color:var(--c-text-3);transition:transform var(--dur-fast) var(--ease-out)}
 .think.open .i{transform:rotate(90deg)}
-.think-o{display:block;height:0;overflow:hidden;padding:0 var(--s-12);border-radius:var(--r-lg);font-size:var(--fs-sm);line-height:var(--lh-body);color:var(--c-text-2);width:fit-content;max-width:100%;white-space:pre-wrap;user-select:text;transition:height var(--dur-base) var(--ease-out),padding var(--dur-base) var(--ease-out)}
-.think.open+.think-o{height:auto;padding:var(--s-8) var(--s-12)}
+/* .glass chrome (hairline border, inset shadow, noise bg clipped to the
+   border box) still paints on a 0-height box — that's the stray line a
+   collapsed fold used to leave. Zero the border, not just its color. */
+.think-o{display:block;height:0;overflow:hidden;padding:0 var(--s-12);border-width:0;box-shadow:none;border-radius:var(--r-lg);font-size:var(--fs-sm);line-height:var(--lh-body);color:var(--c-text-2);width:fit-content;max-width:100%;white-space:pre-wrap;user-select:text;transition:height var(--dur-base) var(--ease-out),padding var(--dur-base) var(--ease-out),border-width var(--dur-base) var(--ease-out)}
+.think.open+.think-o{height:auto;padding:var(--s-8) var(--s-12);border-width:var(--bw-hairline);box-shadow:var(--sh-inset-hi),var(--sh-1)}
 .think.live .i{animation:k-breathe var(--loop-breathe) var(--ease-in-out) infinite}
 .notice{display:flex;align-items:flex-start;gap:var(--s-10);width:fit-content;max-width:100%;padding:var(--s-10) var(--s-12);border-radius:var(--r-lg);font-size:var(--fs-sm);line-height:var(--lh-code);color:var(--c-text-2)}
 .notice .i{margin-top:var(--s-2);color:var(--c-text-3)}

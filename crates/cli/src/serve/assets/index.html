@@ -21,6 +21,9 @@
 <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></symbol>
 <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
 <symbol id="i-blocks" viewBox="0 0 24 24"><rect x="14" y="3" width="7" height="7" rx="1.5"/><path d="M10 21V8a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1H3"/></symbol>
+<symbol id="i-puzzle" viewBox="0 0 24 24"><path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/></symbol>
+<symbol id="i-message" viewBox="0 0 24 24"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></symbol>
+<symbol id="i-message-text" viewBox="0 0 24 24"><path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"/><path d="M7 11h10"/><path d="M7 15h6"/><path d="M7 7h8"/></symbol>
 <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l-.15-.09a2 2 0 0 0-.73 2.73l-.22-.38a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
 <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></symbol>
 <symbol id="i-chev-d" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
@@ -164,7 +167,7 @@
           <div class="sec">
             <div class="card glass cfg" id="sch-list"></div>
           </div>
-          <div class="set-foot"><button class="btn ghost sm" data-act="sched-new" data-i18n-tail="新建任务"><svg class="i"><use href="#i-plus"/></svg>新建任务</button></div>
+          <div class="set-foot" id="sch-foot" hidden><button class="btn ghost sm" data-act="sched-new" data-i18n-tail="新建任务"><svg class="i"><use href="#i-plus"/></svg>新建任务</button></div>
         </div>
       </div>
     </section>
@@ -188,10 +191,10 @@
           </div>
 
           <div class="sec">
-            <div class="sec-h"><h2 data-i18n="主题">主题</h2><p data-i18n="跟随系统时按系统的明暗设置切换">跟随系统时按系统的明暗设置切换</p></div>
+            <div class="sec-h"><h2 data-i18n="主题">主题</h2></div>
             <div class="card glass">
               <div class="themes">
-                <button class="tc" data-mode="system">
+                <button class="tc" data-mode="system" data-tip="跟随系统时按系统的明暗设置切换" data-i18n-tip="跟随系统时按系统的明暗设置切换">
                   <span class="mini">
                     <span class="half dk"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln line-1"></span><span class="m-ln line-2"></span><span class="m-ln line-3"></span><span class="m-cp"></span></span>
                     <span class="half b lt"><span class="m-bg"></span><span class="m-sb"></span><span class="m-ln line-1"></span><span class="m-ln line-2"></span><span class="m-ln line-3"></span><span class="m-cp"></span></span>
@@ -256,7 +259,7 @@
         <button class="cb icon" data-act="cmp-attach" data-tip="添加图片附件" data-i18n-tip="添加图片附件" aria-label="添加附件" data-i18n-al="添加附件"><svg class="i"><use href="#i-plus"/></svg></button>
         <button class="cb mode" data-act="pick-mode" id="mode-btn" data-tip="审批模式" data-i18n-tip="审批模式"><svg class="i"><use href="#i-shield-check" id="mode-ic"/></svg><span id="cmp-mode">auto</span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
         <span class="sp"></span>
-        <button class="cb effort" data-act="pick-effort" id="effort-btn" data-tip="思考强度" data-i18n-tip="思考强度"><svg class="i"><use href="#i-sparkles"/></svg><span id="cmp-effort" data-i18n="默认">默认</span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
+        <button class="cb effort" data-act="pick-effort" id="effort-btn" data-tip="思考强度" data-i18n-tip="思考强度"><svg class="i"><use href="#i-sparkles"/></svg><span id="cmp-effort"></span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
         <button class="cb model" data-act="pick-model" id="model-btn"><span id="cmp-model">…</span><svg class="i xs"><use href="#i-chev-d"/></svg></button>
         <button class="cb send" data-act="send" id="send-btn" data-tip="发送|Enter" data-i18n-tip="发送|Enter" aria-label="发送" data-i18n-al="发送"><svg class="i"><use href="#i-arrow-up"/></svg></button>
       </div>

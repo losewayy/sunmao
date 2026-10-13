@@ -78,6 +78,12 @@ pub(super) fn tasks_list(s: &Arc<Shared>, sess: Option<String>) -> HostResponse 
                         "agent": t.agent,
                         "prompt": t.prompt,
                         "done": t.done,
+                        // the roster card's send-to-background button reads
+                        // these: a `run_in_background` spawn is already there,
+                        // a user-detached row keeps the "前台转后台" tag
+                        "background": t.background,
+                        "detached": t.detached,
+                        "can_detach": t.can_detach(),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -197,34 +203,38 @@ fn job_exit(dir: &std::path::Path) -> Option<i64> {
         .and_then(|v| v["exit_code"].as_i64())
 }
 
-/// `job.json` 的 `foreground` 标记：内联 `Bash` 调用在超时转后台之前一直是
-/// true，而面板是"后台任务"名册，所以这类目录不进列表。标记缺失或损坏按
-/// false 处理 —— 宁可多显示一条，也不静默吞掉一个真后台任务。
-fn job_foreground(dir: &std::path::Path) -> bool {
+/// `job.json` 原文：内联 `Bash` 调用的 `foreground` 在超时转后台之前一直是
+/// true，而面板是"后台任务"名册，所以这类目录不进列表；`detached_by_user`
+/// 区分用户手势和超时自动转台。标记缺失或损坏按默认 false 处理 —— 宁可多
+/// 显示一条，也不静默吞掉一个真后台任务。
+fn job_meta(dir: &std::path::Path) -> serde_json::Value {
     std::fs::read_to_string(dir.join("job.json"))
         .ok()
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .and_then(|v| v["foreground"].as_bool())
-        .unwrap_or(false)
+        .unwrap_or_else(|| serde_json::json!({}))
 }
 
 /// `GET /jobs?sess=…` — 会话项目 `.sunmao/jobs/{id}/` 的目录扫描：
 /// `exit` 即完结码（null = 仍在跑），`mtime` 是目录修改时间（启动时刻的
 /// 近似），`preview` 是日志末尾。只列后台任务：内联前台命令在转后台前
-/// （`job.json` 的 `foreground` 为 true）不出现在面板里。
+/// （`job.json` 的 `foreground` 为 true）不出现在面板里——它们进 `fg`
+/// 数组，那是"转后台"按钮的目标清单。`lost` 标记 runner 进程已死、
+/// exit.json 永远等不到的行（重启后的孤儿）。
 pub(super) fn jobs_list(s: &Arc<Shared>, sess: Option<String>) -> HostResponse {
-    let dir = project_for(s, sess).join(".sunmao").join("jobs");
+    let dir = project_for(s, sess.clone()).join(".sunmao").join("jobs");
     let mut jobs: Vec<serde_json::Value> = std::fs::read_dir(&dir)
         .map(|rd| {
             rd.flatten()
                 .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
                 .filter_map(|e| {
                     let path = e.path();
-                    let foreground = job_foreground(&path);
+                    let meta = job_meta(&path);
+                    let foreground = meta["foreground"].as_bool().unwrap_or(false);
                     if foreground {
                         return None;
                     }
                     let id = e.file_name().to_string_lossy().to_string();
+                    let lost = sunmao_core::tool::job_lost(&path, &id);
                     let exit = job_exit(&path);
                     let mtime = e
                         .metadata()
@@ -234,9 +244,11 @@ pub(super) fn jobs_list(s: &Arc<Shared>, sess: Option<String>) -> HostResponse {
                         .map(|d| d.as_millis() as u64);
                     Some(serde_json::json!({
                         "id": id,
-                        "running": exit.is_none(),
+                        "running": exit.is_none() && !lost,
+                        "lost": lost,
                         "exit": exit,
                         "foreground": foreground,
+                        "detached_by_user": meta["detached_by_user"].as_bool().unwrap_or(false),
                         "mtime": mtime,
                         "preview": log_tail(&path.join("output.log"), 500),
                     }))
@@ -245,8 +257,31 @@ pub(super) fn jobs_list(s: &Arc<Shared>, sess: Option<String>) -> HostResponse {
         })
         .unwrap_or_default();
     jobs.sort_by(|a, b| b["mtime"].as_u64().cmp(&a["mtime"].as_u64()));
+    // the viewed session's in-memory foreground runs — the detach button's
+    // targets. These live only in the JobTable (dir scans can't say "still
+    // awaited"), so a dormant session simply has none.
+    let host = sess
+        .as_deref()
+        .and_then(|id| s.host(id))
+        .or_else(|| s.newest_live_id().and_then(|id| s.host(&id)));
+    let fg: Vec<serde_json::Value> = host
+        .map(|h| {
+            sunmao_core::tool::snapshot(&h.agent.context().jobs)
+                .into_iter()
+                .filter(|e| e.foreground && e.status.is_running())
+                .map(|e| {
+                    serde_json::json!({
+                        "id": e.id,
+                        "command": e.command,
+                        "started_at": e.started_at,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     HostResponse::json(serde_json::json!({
         "jobs": jobs,
+        "fg": fg,
         "cwd": display_path(dir.parent().and_then(|p| p.parent()).unwrap_or(&dir)),
     }))
 }

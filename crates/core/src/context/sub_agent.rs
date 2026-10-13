@@ -18,6 +18,8 @@ pub enum SubSteerError {
     /// The roster entry exists but carries no live handle (a spawn that
     /// never registered one — pre-feature entries can't appear in practice).
     NoHandle(String),
+    /// `detach_sub` on a child that already runs in the background.
+    AlreadyBackground(String),
 }
 
 impl std::fmt::Display for SubSteerError {
@@ -26,6 +28,7 @@ impl std::fmt::Display for SubSteerError {
             Self::NoSuch(id) => write!(f, "no such sub-agent: {id}"),
             Self::Finished(id) => write!(f, "{id} finished, use resume"),
             Self::NoHandle(id) => write!(f, "{id} has no live handle"),
+            Self::AlreadyBackground(id) => write!(f, "{id} already runs in the background"),
         }
     }
 }
@@ -70,6 +73,50 @@ pub struct TaskEntry {
     /// sub-agents (otherwise a foreground Task keeps churning after the
     /// user hit stop). None on legacy rows.
     pub(crate) cancel: Option<CancelSignal>,
+    /// The GUI's send-to-background latch for a FOREGROUND (awaited) spawn:
+    /// tripping it tells the parent's `Task` call to stop waiting; the child
+    /// keeps running and its result lands as a pushed `TaskDone` fact.
+    /// Detached spawns never need it — they left the foreground already.
+    pub(crate) detach: Option<crate::tool::KillSwitch>,
+    /// Spawned already-detached (`run_in_background: true`) — the roster
+    /// card tags these so a user-detached row can say "前台转后台" instead.
+    pub background: bool,
+    /// Flipped by the parent call that caught the detach latch — same UI
+    /// tag source as the jobs panel's `detached` detail.
+    pub detached: bool,
+    /// Signalled once when `done` is written — `WaitFor` sleeps on this
+    /// instead of polling the roster.
+    pub(crate) done_notify: std::sync::Arc<tokio::sync::Notify>,
+}
+
+impl TaskEntry {
+    /// A running row with no live handles — the shape tests and the
+    /// restart-lineage path (`roster_reopen`'s fresh row) want; handles get
+    /// filled in by whichever caller knows them.
+    pub fn pending(id: impl Into<String>, lane: u16, prompt: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            lane,
+            agent: None,
+            prompt: prompt.into(),
+            done: None,
+            steer: None,
+            cancel: None,
+            detach: None,
+            background: false,
+            detached: false,
+            done_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    /// Can the GUI still send this row to the background? Only a running,
+    /// not-yet-background spawn with a live latch qualifies — finished rows,
+    /// `run_in_background` children and detached ones are already there, and
+    /// a row whose completion feeds an internal consumer (the fusion
+    /// sidekick) has nowhere to push.
+    pub fn can_detach(&self) -> bool {
+        self.done.is_none() && !self.background && !self.detached && self.detach.is_some()
+    }
 }
 
 impl Context {
@@ -98,6 +145,33 @@ impl Context {
             live_handle(&tasks, sub_id, |t| t.cancel.clone())?
         };
         cancel.cancel();
+        Ok(())
+    }
+
+    /// Trip a foreground sub-agent's detach latch — the GUI roster's
+    /// send-to-background button. The child's turn keeps running untouched;
+    /// only the parent's `Task` call stops waiting (its result still lands,
+    /// as a pushed TaskDone). Refusals mirror `cancel_sub`: finished rows
+    /// and already-detached rows can't be sent anywhere.
+    pub(crate) fn detach_sub(&self, sub_id: &str) -> Result<(), SubSteerError> {
+        let detach = {
+            let mut tasks = self.live_tasks.lock_or_recover();
+            let t = tasks
+                .iter_mut()
+                .find(|t| t.id == sub_id)
+                .ok_or_else(|| SubSteerError::NoSuch(sub_id.to_string()))?;
+            if t.done.is_some() {
+                return Err(SubSteerError::Finished(sub_id.to_string()));
+            }
+            if t.background || t.detached {
+                return Err(SubSteerError::AlreadyBackground(sub_id.to_string()));
+            }
+            t.detached = true;
+            t.detach
+                .clone()
+                .ok_or_else(|| SubSteerError::NoHandle(sub_id.to_string()))?
+        };
+        detach.kill();
         Ok(())
     }
 }

@@ -58,11 +58,30 @@ const botHead = anim => `<div class="msg-h${anim ? ' enter' : ''}"><i class="dot
 const TX = $('#tx');
 // force=false by default — streamed output must not yank the scroller
 // while the user reads earlier output; only own bubbles/settle force it
-function append(parent, html, force) { const t = document.createElement('template'); t.innerHTML = html.trim(); const first = t.content.firstElementChild; parent.appendChild(t.content); keepBottom(!!force); return first; }
+function append(parent, html, force) {
+  // "was the user at the bottom?" is asked BEFORE the insert — a chunk over
+  // 240px would otherwise push the gap past the threshold and auto-follow
+  // would silently break until the next forced scroll
+  const sc = $('#scroller');
+  const wasAtBottom = !sc || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 240;
+  const t = document.createElement('template'); t.innerHTML = html.trim();
+  const first = t.content.firstElementChild; parent.appendChild(t.content);
+  keepBottom(!!force, wasAtBottom); return first;
+}
 // during replay every append used to read scrollHeight — one forced layout
 // per event, O(events × DOM). Replaying state already owns the flag; the
 // final rAF scroll at the end of renderReplay does the one real scroll.
-function keepBottom(force) { if (root.dataset.replaying !== undefined) return; const sc = $('#scroller'); if (force || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 240) sc.scrollTop = sc.scrollHeight; }
+// `force` is not a one-shot: content-visibility can still report an
+// estimated height for a skipped block, so the same scroll re-runs one
+// frame later — by then the tail row has rendered and scrollHeight is true.
+function keepBottom(force, wasAtBottom) {
+  if (root.dataset.replaying !== undefined) return;
+  const sc = $('#scroller');
+  if (wasAtBottom === undefined) wasAtBottom = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 240;
+  if (!force && !wasAtBottom) return;
+  sc.scrollTop = sc.scrollHeight;
+  if (force) requestAnimationFrame(() => { sc.scrollTop = sc.scrollHeight; });
+}
 /* ---- work cards: a run of tool calls (+ the short narration between
    them) shares one card; 3+ calls earn a summary header and fold once
    the run settles. Failed calls stay visible. ---- */

@@ -72,6 +72,22 @@ impl AgentLoop {
         Ok(())
     }
 
+    /// Send ONE running foreground sub-agent to the background — the GUI
+    /// roster's detach button. The parent's `Task` call stops waiting and
+    /// the child's completion arrives as a pushed `TaskDone` fact, exactly
+    /// like a `run_in_background` spawn. Same audit discipline as
+    /// `cancel_sub`: the gesture is a fact on the PARENT's log.
+    pub async fn detach_sub(&self, sub_id: &str) -> Result<(), crate::context::SubSteerError> {
+        self.ctx.detach_sub(sub_id)?;
+        let mut log = self.ctx.sessions.lock().await;
+        log.append_audit(&crate::session::SessionEvent::Hook {
+            event: "task.detach".into(),
+            detail: sub_id.to_string(),
+        })
+        .await;
+        Ok(())
+    }
+
     /// Claim every queued steer — the turn boundary drains into the log;
     /// the driver drains leftovers after a turn ends (a steer that arrived
     /// mid-shutdown becomes the next submission, never dropped).

@@ -59,13 +59,9 @@ rogue agent
     ctx.live_tasks
         .lock_or_recover()
         .push(crate::context::TaskEntry {
-            id: "sub-rogue".into(),
-            lane: 3,
             agent: Some("rogue".into()),
-            prompt: "x".into(),
             done: Some(true),
-            steer: None,
-            cancel: None,
+            ..crate::context::TaskEntry::pending("sub-rogue", 3, "x")
         });
     let res = ctx
         .tools
@@ -85,13 +81,9 @@ rogue agent
     ctx.live_tasks
         .lock_or_recover()
         .push(crate::context::TaskEntry {
-            id: "sub-ghost".into(),
-            lane: 4,
             agent: Some("deleted-def".into()),
-            prompt: "x".into(),
             done: Some(true),
-            steer: None,
-            cancel: None,
+            ..crate::context::TaskEntry::pending("sub-ghost", 4, "x")
         });
     let res = ctx
         .tools

@@ -374,6 +374,8 @@ mod tests;
 #[cfg(test)]
 mod tests_cancel;
 #[cfg(test)]
+mod tests_detach;
+#[cfg(test)]
 mod tests_resume_policy;
 #[cfg(test)]
 mod tests_steer_resume;

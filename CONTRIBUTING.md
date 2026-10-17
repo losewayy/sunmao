@@ -79,3 +79,16 @@ _CL_="/d1trimfile:F:\\path\\to\\repo\\" cargo tauri build
 
 If code and docs disagree, fix whichever is wrong — never both claim
 different facts.
+
+## Pre-push privacy gate
+
+Run before every push or publish:
+
+1. List every filename in history (`git log --all --name-only | sort -u`) and
+   confirm no local-only document is tracked.
+2. Search the tree and the full history for machine-local absolute paths,
+   personal identifiers, and credential patterns; expect zero hits.
+3. Confirm `.gitignore` covers local-only material, and run
+   `cargo package --list` before publishing a crate.
+4. If anything private ever entered history, rewrite the history — deleting
+   the file in a later commit does not remove it.

@@ -482,4 +482,4 @@ light 主题下现在单独写的 `[data-theme="light"] .x{text-shadow:none}` /
 - 用户改强调色后，pill、用户气泡、焦点环、选中卡底全部跟随（验证派生色链路）。
 - Tauri 壳：`cargo build -p sunmao-gui` 后确认 `tokens.css`/`app.css` 经
   `sunmao` scheme 正常加载（无 CSP 问题，`tauri.conf.json` 当前 `csp:null`）。
-- 仓库里不出现本机绝对路径（AGENTS.md 隐私边界）。
+- 仓库里不出现本机绝对路径（见 AGENTS.md 的 Privacy boundary）。

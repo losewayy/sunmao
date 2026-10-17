@@ -4,6 +4,15 @@ Read this before touching code. sunmao is a Rust agent harness kernel where
 the *seams are the architecture* — changes that violate a seam invariant are
 bugs even if they compile.
 
+## Privacy boundary
+
+This repository is public: public artifacts carry code only. Never commit
+personal context, machine-local paths, credentials, or private working notes —
+not in commits, history, packages, docs, comments, CI output, or release
+binaries. Run the pre-push gate in `CONTRIBUTING.md` before every push or
+publish. If private content ever entered history, rewriting the history is the
+only fix; a later delete commit is not.
+
 ## Workspace
 
 ```text
@@ -130,9 +139,9 @@ live in [`docs/CODE-ARCHITECTURE.md`](docs/CODE-ARCHITECTURE.md). Follow them.
 | dataflow report | `crates/cli/src/dataflow.rs` |
 | env self-check | `crates/cli/src/doctor.rs` |
 
-## 十七、参考实现：Kimi Code（用户指定）
+## 十七、参考实现：Kimi Code
 
-Kimi Code（维护者本地有完整 fork）是本项目的**首选参考实现**。凡是设计取舍（工具行为与默认值、超时与后台任务、会话与通知、UI 交互惯例、配置形态、错误处理）先去看它怎么做的，然后照它的语义实现，不要自己发明；它的默认值与边界就是我们的默认值与边界。只有在 sunmao 自己的接缝上（事件溯源、审批闸、工具声明、i18n、设计 token）才改写形态，语义保持。引用它时给出文件与行号，不要凭印象。
+Kimi Code 是本项目的**首选参考实现**。凡是设计取舍（工具行为与默认值、超时与后台任务、会话与通知、UI 交互惯例、配置形态、错误处理）先去看它怎么做的，然后照它的语义实现，不要自己发明；它的默认值与边界就是我们的默认值与边界。只有在 sunmao 自己的接缝上（事件溯源、审批闸、工具声明、i18n、设计 token）才改写形态，语义保持。引用它时给出文件与行号，不要凭印象。
 
 配套的硬要求：**任何 shell 都必须有超时**。未显式指定时间时用一个默认值，超过上限就按超时处理，绝不允许一个命令无限挂着把回合占死。前台到点优先**转后台**而不是杀掉（长任务合法，只是不该堵着对话），后台另给更长的一档。
 
